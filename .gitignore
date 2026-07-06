@@ -1,0 +1,62 @@
+# ===== AI 도구 (커밋 금지) =====
+.claude/
+.claude*
+CLAUDE.md
+CLAUDE.local.md
+.cursor/
+.aider*
+
+# ===== 빌드 산출물 =====
+build/
+Debug/
+Release/
+bin/
+obj/
+*.o
+*.obj
+*.so
+*.a
+*.elf
+*.bin
+*.hex
+*.map
+*.d
+
+# ===== Qt =====
+*.user
+*.pro.user*
+.qmake.stash
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+Makefile*
+!protocol/Makefile
+
+# ===== STM32CubeIDE / Eclipse =====
+.metadata/
+.settings/
+.cproject
+.mxproject
+*.launch
+
+# ===== IDE / 에디터 =====
+.vscode/
+.idea/
+*.swp
+*~
+
+# ===== DB / 로그 / 민감정보 =====
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pem
+*.key
+*.crt
+secrets*
+.env
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
