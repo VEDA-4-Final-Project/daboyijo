@@ -1,0 +1,66 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2711";
+
+    fragment@0{
+        target = <&i2c1>;
+        __overlay__{
+            status = "okay";
+            wm8960_codec: wm8960@1a{
+                status = "okay";
+                compatible = "wolfson,wm8960";
+                reg = <0x1a>;
+                #sound-dai-cells = <0>;
+
+                clock-names = "mclk";
+                clocks = <&clocks BCM2835_CLK_GP0>;
+
+                wlf,shared-lrclk;
+
+                AVDD-supply = <&reg_3v3>;
+                DVDD-supply = <&reg_3v3>;
+            }
+
+        }
+    }
+
+    fragment@1{
+        target = <&sound>;
+        __overlay__{
+             compatible = "simple-audio-card";
+
+             simple-audio-card,name = "WM8960_Custom_SoundCard";
+             simple-audio-card,format = "i2s";
+
+             simple-audio-card,bitclock-master = <&cpu_dai_link>;
+             simple-audio-card,frame-master = <&cpu_dai_link>;
+             simple-audio-card,routing = 
+                 "Headphone Jack", "LOUT1",
+                 "Headphone Jack", "ROUT1",
+                 "Speaker", "SPKLOUT",
+                 "Speaker", "SPKROUT",
+                 "LINPUT1", "AMIC",
+                 "RINPUT1", "AMIC";
+
+
+             cpu_dai_link: simple-audio-card,cpu {
+                 sound-dai = <&i2s>;
+             };
+
+             simple-audio-card,codec {
+                 sound-dai = <&wm8960_codec>;
+             };
+        }
+    }
+}
+
+        
+
+
+        
+
+
+
+            
