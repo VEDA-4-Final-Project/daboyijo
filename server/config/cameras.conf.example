@@ -10,6 +10,9 @@
 # - RPi 배포 시에는 웹 UI(설정>기본>비디오 프로파일)에서 채널별로
 #   H.264 / 1280x720 이하 / 10~15fps 서브 프로파일을 만들어 그 번호를 사용할 것
 
+# Qt 클라이언트 영상 송출 포트 (생략 시 5500)
+stream_port=5500
+
 0=rtsp://admin:비밀번호@192.168.0.100:554/0/profile2/media.smp
 1=rtsp://admin:비밀번호@192.168.0.100:554/1/profile2/media.smp
 2=rtsp://admin:비밀번호@192.168.0.100:554/2/profile2/media.smp

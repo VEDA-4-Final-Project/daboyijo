@@ -1,17 +1,28 @@
 // 다보이조 중앙 서버 진입점.
-// 현재 단계(2주차): RTSP 4채널 수신 확인 — 채널별 접속 상태와 수신 FPS를 출력한다.
-// 이후 video/ 영상처리(저조도 보정·ROI 마스킹), core/ 교차 검증 룰엔진이 붙는다.
+// 현재 단계(3주차, B안 확정): RTSP 4채널 수신 → 리사이즈 → JPEG 인코딩까지가
+// 실제 파이프라인이자 부하 벤치마크. 5초마다 채널별 수신/처리 fps와
+// CPU·온도를 출력한다. (판정 기준: CPU≤70%, 온도≤70°C, 전 채널 12fps↑)
+// 이후 저조도 보정·ROI 마스킹(video/), TLS 전송·교차 검증(core/)이 붙는다.
 
+#include <algorithm>
+#include <cctype>
 #include <csignal>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include "frame_queue.hpp"
+#include "protocol/video_stream.h"
 #include "rtsp_client.hpp"
+#include "stream_server.hpp"
+#include "system_stats.hpp"
 
 namespace {
 
@@ -26,17 +37,34 @@ struct CameraConfig {
     std::string url;
 };
 
-// config/cameras.conf 파싱. 형식: "채널번호=RTSP URL", '#' 주석
-std::vector<CameraConfig> loadConfig(const std::string& path) {
+struct ServerConfig {
     std::vector<CameraConfig> cameras;
+    int stream_port = DBJ_VS_PORT_DEFAULT;
+};
+
+// 앞뒤 공백·탭·CR(윈도우 줄바꿈) 제거 — URL에 섞이면 RTSP 요청이 깨진다(505 등)
+std::string trim(const std::string& s) {
+    const char* ws = " \t\r\n";
+    auto begin = s.find_first_not_of(ws);
+    if (begin == std::string::npos) {
+        return "";
+    }
+    return s.substr(begin, s.find_last_not_of(ws) - begin + 1);
+}
+
+// config/cameras.conf 파싱.
+// 형식: "채널번호=RTSP URL" 또는 "stream_port=포트", '#' 주석
+ServerConfig loadConfig(const std::string& path) {
+    ServerConfig config;
     std::ifstream file(path);
     if (!file) {
         std::fprintf(stderr, "설정 파일을 열 수 없음: %s\n", path.c_str());
-        return cameras;
+        return config;
     }
 
     std::string line;
     while (std::getline(file, line)) {
+        line = trim(line);
         if (line.empty() || line[0] == '#') {
             continue;
         }
@@ -44,9 +72,26 @@ std::vector<CameraConfig> loadConfig(const std::string& path) {
         if (eq == std::string::npos) {
             continue;
         }
-        cameras.push_back({std::stoi(line.substr(0, eq)), line.substr(eq + 1)});
+        std::string key = trim(line.substr(0, eq));
+        std::string value = trim(line.substr(eq + 1));
+
+        if (key == "stream_port") {
+            config.stream_port = std::stoi(value);
+            continue;
+        }
+        if (key.empty() ||
+            !std::all_of(key.begin(), key.end(),
+                         [](unsigned char c) { return std::isdigit(c); })) {
+            std::fprintf(stderr, "경고: 알 수 없는 설정 무시: %s\n", line.c_str());
+            continue;
+        }
+        if (value.find(' ') != std::string::npos) {
+            std::fprintf(stderr, "경고: URL에 공백 포함됨 (오타?): %s\n",
+                         line.c_str());
+        }
+        config.cameras.push_back({std::stoi(key), std::move(value)});
     }
-    return cameras;
+    return config;
 }
 
 }  // namespace
@@ -55,8 +100,8 @@ int main(int argc, char* argv[]) {
     const std::string config_path =
         (argc > 1) ? argv[1] : "config/cameras.conf";
 
-    auto cameras = loadConfig(config_path);
-    if (cameras.empty()) {
+    auto config = loadConfig(config_path);
+    if (config.cameras.empty()) {
         std::fprintf(stderr, "카메라 설정 없음. config/cameras.conf.example 참고\n");
         return 1;
     }
@@ -64,23 +109,59 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
+    StreamServer stream_server(config.stream_port);
+    if (!stream_server.start()) {
+        return 1;
+    }
+
     FrameQueue queue(16);
     std::vector<std::unique_ptr<RtspClient>> clients;
-    for (const auto& cam : cameras) {
+    for (const auto& cam : config.cameras) {
         clients.push_back(
             std::make_unique<RtspClient>(cam.channel, cam.url, queue));
         clients.back()->start();
     }
     std::printf("%zu개 채널 수신 시작 (Ctrl+C로 종료)\n", clients.size());
 
-    // TODO(video): 프레임 소비 → 저조도 보정, 침상 ROI 마스킹
-    // TODO(core): WiseAI 메타데이터 + 웨어러블 신호 교차 검증
+    // B안 파이프라인: 4분할 뷰용으로 640x360 리사이즈 → JPEG 인코딩
+    // → 접속한 관제 클라이언트(Qt)에 TCP 송출 (protocol/video_stream.h)
+    // TODO(video): 리사이즈 전에 저조도 보정·침상 ROI 마스킹 삽입
+    // TODO(core): TLS 적용, WiseAI 메타데이터 + 웨어러블 신호 교차 검증
+    const cv::Size kViewSize(640, 360);
+    const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
+
+    struct ChannelStats {
+        uint64_t processed = 0;
+        uint64_t bytes = 0;
+    };
+    std::map<int, ChannelStats> stats;
+    SystemStats system_stats;
+    double encode_ms_total = 0;
+    uint64_t encode_count = 0;
+
     auto last_report = std::chrono::steady_clock::now();
     std::vector<uint64_t> last_counts(clients.size(), 0);
 
     while (!g_stop) {
         auto frame = queue.pop(std::chrono::milliseconds(200));
-        (void)frame;  // 아직 소비 로직 없음 — 큐 적체 방지용 drain
+        if (frame) {
+            auto t0 = std::chrono::steady_clock::now();
+
+            cv::Mat small;
+            cv::resize(frame->image, small, kViewSize);
+            std::vector<unsigned char> jpeg;
+            cv::imencode(".jpg", small, jpeg, kJpegParams);
+
+            auto& ch = stats[frame->channel];
+            ch.processed += 1;
+            ch.bytes += jpeg.size();
+
+            stream_server.broadcast(frame->channel, std::move(jpeg));
+            encode_ms_total += std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - t0)
+                                   .count();
+            encode_count += 1;
+        }
 
         auto now = std::chrono::steady_clock::now();
         auto elapsed =
@@ -88,14 +169,36 @@ int main(int argc, char* argv[]) {
         if (elapsed.count() >= 5) {
             std::ostringstream status;
             for (size_t i = 0; i < clients.size(); ++i) {
+                int id = clients[i]->channel();
                 uint64_t count = clients[i]->frameCount();
-                double fps =
+                double in_fps =
                     static_cast<double>(count - last_counts[i]) / elapsed.count();
-                status << "[ch" << clients[i]->channel() << "] "
-                       << (clients[i]->connected() ? "OK" : "끊김") << " "
-                       << fps << "fps  ";
+                double out_fps =
+                    static_cast<double>(stats[id].processed) / elapsed.count();
+                double avg_kb = stats[id].processed
+                                    ? stats[id].bytes / stats[id].processed / 1024.0
+                                    : 0;
+                char buf[96];
+                std::snprintf(buf, sizeof(buf), "[ch%d] %s in %.1f out %.1ffps %.0fKB  ",
+                              id, clients[i]->connected() ? "OK" : "끊김",
+                              in_fps, out_fps, avg_kb);
+                status << buf;
                 last_counts[i] = count;
+                stats[id] = ChannelStats{};
             }
+
+            double avg_encode =
+                encode_count ? encode_ms_total / encode_count : 0;
+            char sys_buf[96];
+            std::snprintf(sys_buf, sizeof(sys_buf),
+                          "| CPU %.0f%% %.1f°C 인코딩 %.1fms 클라 %zu",
+                          system_stats.cpuPercent(),
+                          SystemStats::socTemperature(), avg_encode,
+                          stream_server.clientCount());
+            status << sys_buf;
+            encode_ms_total = 0;
+            encode_count = 0;
+
             std::printf("%s\n", status.str().c_str());
             last_report = now;
         }
@@ -105,5 +208,6 @@ int main(int argc, char* argv[]) {
     for (auto& client : clients) {
         client->stop();
     }
+    stream_server.stop();
     return 0;
 }
