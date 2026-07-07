@@ -1,0 +1,16 @@
+# 카메라 RTSP 채널 설정
+# 사용법: 이 파일을 cameras.conf로 복사한 뒤 실제 IP/계정으로 수정 (cameras.conf는 gitignore됨)
+#   cp cameras.conf.example cameras.conf
+#
+# 형식: 채널번호=RTSP URL
+#
+# PNM-C16083RVQ (멀티디렉셔널 4센서) 확인된 URL 형식:
+#   rtsp://<계정>:<비밀번호>@<IP>:554/<채널 0~3>/profile<N>/media.smp
+# - profile2 = H.264 2592x1520 @30fps (기본 프로파일, 4채널 동시 디코딩엔 무거움)
+# - RPi 배포 시에는 웹 UI(설정>기본>비디오 프로파일)에서 채널별로
+#   H.264 / 1280x720 이하 / 10~15fps 서브 프로파일을 만들어 그 번호를 사용할 것
+
+0=rtsp://admin:비밀번호@192.168.0.100:554/0/profile2/media.smp
+1=rtsp://admin:비밀번호@192.168.0.100:554/1/profile2/media.smp
+2=rtsp://admin:비밀번호@192.168.0.100:554/2/profile2/media.smp
+3=rtsp://admin:비밀번호@192.168.0.100:554/3/profile2/media.smp
