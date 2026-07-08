@@ -1,16 +1,18 @@
 // 다보이조 중앙 서버 진입점.
-// 현재 단계(3주차, B안 확정): RTSP 4채널 수신 → 리사이즈 → JPEG 인코딩까지가
-// 실제 파이프라인이자 부하 벤치마크. 5초마다 채널별 수신/처리 fps와
-// CPU·온도를 출력한다. (판정 기준: CPU≤70%, 온도≤70°C, 전 채널 12fps↑)
+// 파이프라인: RTSP 4채널 수신(libav) → [영상] 리사이즈→JPEG→Qt 송출
+//                                    → [메타] WiseAI 객체감지 XML 파싱→감지 저장
+// 5초마다 채널별 fps·사람 수·CPU·온도를 출력한다.
 // 이후 저조도 보정·ROI 마스킹(video/), TLS 전송·교차 검증(core/)이 붙는다.
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <csignal>
 #include <cstdio>
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -18,9 +20,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "detection.hpp"
 #include "frame_queue.hpp"
 #include "protocol/video_stream.h"
-#include "rtsp_client.hpp"
+#include "rtsp_av_client.hpp"
 #include "stream_server.hpp"
 #include "system_stats.hpp"
 
@@ -114,12 +117,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // 채널별 최신 감지 결과 저장소 (메타데이터 콜백 스레드 ↔ 메인 스레드 공유).
+    // 교차 검증 룰엔진(core)이 이후 여기서 사람 위치를 읽어간다.
+    std::mutex det_mutex;
+    std::map<int, std::vector<Detection>> latest_detections;
+    std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
+
     FrameQueue queue(16);
-    std::vector<std::unique_ptr<RtspClient>> clients;
+    std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
-        clients.push_back(
-            std::make_unique<RtspClient>(cam.channel, cam.url, queue));
-        clients.back()->start();
+        auto client = std::make_unique<RtspAvClient>(cam.channel, cam.url, queue);
+        client->setDetectionCallback(
+            [&](int ch, std::vector<Detection> dets) {
+                std::lock_guard<std::mutex> lock(det_mutex);
+                latest_detections[ch] = std::move(dets);
+                det_updates[ch] += 1;
+            });
+        client->start();
+        clients.push_back(std::move(client));
     }
     std::printf("%zu개 채널 수신 시작 (Ctrl+C로 종료)\n", clients.size());
 
@@ -175,13 +190,20 @@ int main(int argc, char* argv[]) {
                     static_cast<double>(count - last_counts[i]) / elapsed.count();
                 double out_fps =
                     static_cast<double>(stats[id].processed) / elapsed.count();
-                double avg_kb = stats[id].processed
-                                    ? stats[id].bytes / stats[id].processed / 1024.0
-                                    : 0;
-                char buf[96];
-                std::snprintf(buf, sizeof(buf), "[ch%d] %s in %.1f out %.1ffps %.0fKB  ",
+
+                // 이 채널의 최신 감지에서 사람 수 집계
+                int humans = 0;
+                {
+                    std::lock_guard<std::mutex> lock(det_mutex);
+                    for (const auto& d : latest_detections[id]) {
+                        if (d.isHuman()) ++humans;
+                    }
+                }
+                char buf[112];
+                std::snprintf(buf, sizeof(buf),
+                              "[ch%d] %s in %.1f out %.1ffps 사람%d  ",
                               id, clients[i]->connected() ? "OK" : "끊김",
-                              in_fps, out_fps, avg_kb);
+                              in_fps, out_fps, humans);
                 status << buf;
                 last_counts[i] = count;
                 stats[id] = ChannelStats{};
