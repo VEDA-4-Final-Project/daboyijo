@@ -1,6 +1,7 @@
 /dts-v1/;
 /plugin/;
 
+
 / {
     compatible = "brcm,bcm2711";
 
@@ -15,52 +16,44 @@
                 #sound-dai-cells = <0>;
 
                 clock-names = "mclk";
-                clocks = <&clocks BCM2835_CLK_GP0>;
+                clocks = <&clocks 0>;
 
                 wlf,shared-lrclk;
 
-                AVDD-supply = <&reg_3v3>;
-                DVDD-supply = <&reg_3v3>;
-            }
-
-        }
-    }
+                AVDD-supply = <&vdd_3v3_reg>;
+                DVDD-supply = <&vdd_3v3_reg>;
+            };
+        };
+    };
 
     fragment@1{
-        target = <&sound>;
+        target-path = "/";
         __overlay__{
-             compatible = "simple-audio-card";
+            sound{
+                 compatible = "simple-audio-card";
 
-             simple-audio-card,name = "WM8960_Custom_SoundCard";
-             simple-audio-card,format = "i2s";
+                 simple-audio-card,name = "WM8960_Custom_SoundCard";
+                 simple-audio-card,format = "i2s";
 
-             simple-audio-card,bitclock-master = <&cpu_dai_link>;
-             simple-audio-card,frame-master = <&cpu_dai_link>;
-             simple-audio-card,routing = 
-                 "Headphone Jack", "LOUT1",
-                 "Headphone Jack", "ROUT1",
-                 "Speaker", "SPKLOUT",
-                 "Speaker", "SPKROUT",
-                 "LINPUT1", "AMIC",
-                 "RINPUT1", "AMIC";
+                 simple-audio-card,bitclock-master = <&cpu_dai_link>;
+                 simple-audio-card,frame-master = <&cpu_dai_link>;
+                 simple-audio-card,routing = 
+                     "Headphone Jack", "LOUT1",
+                     "Headphone Jack", "ROUT1",
+                     "Speaker", "SPKLOUT",
+                     "Speaker", "SPKROUT",
+                     "LINPUT1", "AMIC",
+                     "RINPUT1", "AMIC";
 
 
-             cpu_dai_link: simple-audio-card,cpu {
-                 sound-dai = <&i2s>;
+                 cpu_dai_link: simple-audio-card,cpu {
+                     sound-dai = <&i2s>;
+                 };
+
+                 simple-audio-card,codec {
+                     sound-dai = <&wm8960_codec>;
+                 };
              };
-
-             simple-audio-card,codec {
-                 sound-dai = <&wm8960_codec>;
-             };
-        }
-    }
-}
-
-        
-
-
-        
-
-
-
-            
+        };
+    };
+};
