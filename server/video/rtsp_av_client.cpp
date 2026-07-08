@@ -19,13 +19,12 @@ extern "C" {
 namespace {
 constexpr int kReconnectDelaySec = 3;
 
-// 연결 옵션: RTSP over TCP + 타임아웃(마이크로초). 네트워크 끊김 시 무한 대기 방지.
-// stimeout은 ffmpeg 5.0+에서 timeout으로 개명됨 — 둘 다 설정(미인식 옵션은 무시됨).
+// 연결 옵션: RTSP over TCP만 지정.
+// 주의: 이 ffmpeg 버전에선 stimeout/timeout 옵션이 RTSP를 리스닝(서버) 모드로
+// 전환시켜 "Unable to open RTSP for listening" 오류를 낸다. 성공하는 CLI
+// (ffprobe -rtsp_transport tcp)와 동일하게 transport만 준다.
 void setRtspOptions(AVDictionary** opts) {
     av_dict_set(opts, "rtsp_transport", "tcp", 0);
-    av_dict_set(opts, "stimeout", "5000000", 0);   // 5초 소켓 타임아웃 (구버전)
-    av_dict_set(opts, "timeout", "5000000", 0);    // 5초 소켓 타임아웃 (신버전)
-    av_dict_set(opts, "max_delay", "500000", 0);   // 0.5초
 }
 }  // namespace
 
@@ -40,6 +39,8 @@ void RtspAvClient::start() {
     if (running_.exchange(true)) {
         return;
     }
+    // RTSP/TCP 등 네트워크 프로토콜 사용 준비 (프로세스당 1회면 충분, 중복 호출 무해)
+    avformat_network_init();
     thread_ = std::thread(&RtspAvClient::run, this);
 }
 
@@ -65,14 +66,33 @@ void RtspAvClient::run() {
 // 1회 연결 → 패킷 수신 루프. 정상 종료(stop)든 오류든 자원 정리 후 반환.
 bool RtspAvClient::openAndStream() {
     AVFormatContext* fmt = nullptr;
+
+    // 1차: rtsp_transport=tcp 로 시도. 실패 시 옵션 없이 재시도(진단 겸 폴백).
     AVDictionary* opts = nullptr;
     setRtspOptions(&opts);
-
     int rc = avformat_open_input(&fmt, url_.c_str(), nullptr, &opts);
     av_dict_free(&opts);
+
     if (rc < 0) {
-        std::fprintf(stderr, "[ch%d] RTSP 연결 실패\n", channel_);
-        return false;
+        char err[128] = {0};
+        av_strerror(rc, err, sizeof(err));
+        std::fprintf(stderr, "[ch%d] tcp 옵션 연결 실패 (%d: %s) — 옵션 없이 재시도\n",
+                     channel_, rc, err);
+
+        if (fmt) {
+            avformat_close_input(&fmt);
+            fmt = nullptr;
+        }
+        rc = avformat_open_input(&fmt, url_.c_str(), nullptr, nullptr);
+        if (rc < 0) {
+            char err2[128] = {0};
+            av_strerror(rc, err2, sizeof(err2));
+            std::fprintf(stderr, "[ch%d] RTSP 연결 실패 (%d: %s)\n",
+                         channel_, rc, err2);
+            if (fmt) avformat_close_input(&fmt);
+            return false;
+        }
+        std::fprintf(stderr, "[ch%d] 옵션 없이 연결 성공 (기본 transport)\n", channel_);
     }
 
     if (avformat_find_stream_info(fmt, nullptr) < 0) {
