@@ -12,7 +12,8 @@
 | STM32 → 중계 노드 | UART 바이너리 프레임 (header + payload + CRC16) | `protocol.h` |
 | 중계 노드 → 중앙 서버 | Wi-Fi/TCP, 동일 프레임 캡슐화 | `protocol.h` |
 | 서버 ↔ 알림 노드 | MQTT (토픽·명령 코드) | `protocol.h` (토픽 매크로) |
-| 서버 ↔ Qt 클라이언트 | TCP + OpenSSL(TLS), JSON 메시지 | `docs/`에 명세 예정 |
+| 서버 → Qt 클라이언트 (영상) | TCP 바이너리 프레임 (헤더 + JPEG) — v1 평문, TLS 적용 예정 | `video_stream.h` (명세: `video_stream.md`) |
+| 서버 ↔ Qt 클라이언트 (제어/이벤트) | TCP + OpenSSL(TLS), JSON 메시지 | `docs/`에 명세 예정 |
 
 ## 서버 내부 모듈 간 데이터 계약 (video → core)
 

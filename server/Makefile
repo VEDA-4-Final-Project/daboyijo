@@ -5,7 +5,7 @@ SRCS := $(wildcard src/*.cpp) $(wildcard video/*.cpp) $(wildcard core/*.cpp)
 OBJS := $(SRCS:%.cpp=$(BUILDDIR)/%.o)
 
 CXX      ?= g++
-CXXFLAGS += -std=c++17 -Wall -Wextra -O2 -Isrc -Ivideo -Icore
+CXXFLAGS += -std=c++17 -Wall -Wextra -O2 -Isrc -Ivideo -Icore -I..
 CXXFLAGS += $(shell pkg-config --cflags opencv4)
 LDLIBS   := $(shell pkg-config --libs opencv4) -lpthread
 
