@@ -21,6 +21,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include "detection.hpp"
+#include "fall_detector.hpp"
 #include "frame_queue.hpp"
 #include "protocol/video_stream.h"
 #include "rtsp_av_client.hpp"
@@ -123,6 +124,15 @@ int main(int argc, char* argv[]) {
     std::map<int, std::vector<Detection>> latest_detections;
     std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
 
+    // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
+    // TODO(core): 웨어러블 바이탈과 교차 검증해 최종 판정으로 승격
+    FallDetector fall_detector;
+    fall_detector.setFallCallback([](int ch, const Detection& at) {
+        std::fprintf(stderr,
+                      "🚨 [ch%d] 낙상 의심! 위치=(%.2f,%.2f) — 잠정 임계값 기준, 캡처로 검증 필요\n",
+                      ch, at.cx, at.cy);
+    });
+
     FrameQueue queue(16);
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
@@ -130,6 +140,7 @@ int main(int argc, char* argv[]) {
         client->setDetectionCallback(
             [&](int ch, std::vector<Detection> dets) {
                 std::lock_guard<std::mutex> lock(det_mutex);
+                fall_detector.update(ch, dets);
                 latest_detections[ch] = std::move(dets);
                 det_updates[ch] += 1;
             });
