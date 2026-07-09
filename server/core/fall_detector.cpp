@@ -1,6 +1,7 @@
 #include "fall_detector.hpp"
 
 #include <cmath>
+#include <iterator>
 
 namespace {
 
@@ -10,64 +11,58 @@ constexpr double kDropWindowSec = 0.6;      // 이 시간 안의 하강만 "급�
 constexpr float kDropCyThreshold = 0.15f;   // 정규화 좌표 기준 무게중심 하강폭
 constexpr double kStillSeconds = 3.0;       // 급하강 후 이만큼 안 움직이면 낙상 확정
 constexpr float kStillMoveThreshold = 0.04f;  // 이 이하 이동은 "정지"로 간주
-constexpr double kLostGiveUpSec = kStillSeconds * 2;  // 관찰 중 추적 소실 시 포기 시한
+constexpr double kTrackExpireSec = 6.0;     // 이만큼 안 보인 추적은 폐기
 
 }  // namespace
 
 void FallDetector::update(int channel, const std::vector<Detection>& detections) {
-    auto& st = channels_[channel];
+    auto& tracks = channels_[channel];
     auto now = std::chrono::steady_clock::now();
 
-    // 이번 프레임의 대표 사람 1명만 사용 (Human 중 likelihood 최고).
-    // bbox 넓이 0인 요약 프레임(객체 소실 시 옷 색상 등을 담아 오는 프레임)은 제외.
-    const Detection* person = nullptr;
     for (const auto& d : detections) {
+        // 사람만, 그리고 bbox 넓이 0인 요약 프레임(객체 소실 시 오는 것)은 제외
         if (!d.isHuman() || d.width() <= 0 || d.height() <= 0) continue;
-        if (!person || d.likelihood > person->likelihood) person = &d;
-    }
 
-    if (!person) {
-        // 사람이 안 보임. 관찰(watching) 중이 아니면 그냥 대기.
-        // 관찰 중이었다면 — 급하강 직후 추적이 끊긴 것도 그 자체로 의심 신호일 수 있어
-        // 바로 취소하지 않고 유지하되, 너무 오래 안 보이면(다른 문제로 보고) 포기한다.
-        if (st.watching &&
-            std::chrono::duration<double>(now - st.drop_time).count() > kLostGiveUpSec) {
-            st.watching = false;
+        auto& tr = tracks[d.object_id];
+        tr.last_seen = now;
+        tr.history.push_back({now, d.cx, d.cy});
+        while (!tr.history.empty() &&
+               std::chrono::duration<double>(now - tr.history.front().t).count() >
+                   kDropWindowSec) {
+            tr.history.pop_front();
         }
-        return;
-    }
 
-    st.history.push_back({now, person->cx, person->cy});
-    while (!st.history.empty() &&
-           std::chrono::duration<double>(now - st.history.front().t).count() >
-               kDropWindowSec) {
-        st.history.pop_front();
-    }
-
-    if (!st.watching) {
-        // 최근 창 안에서 가장 낮았던(화면 위쪽=cy 작음) 값 대비 현재 하강폭 확인
-        float min_cy = st.history.front().cy;
-        for (const auto& s : st.history) min_cy = std::min(min_cy, s.cy);
-        if (person->cy - min_cy >= kDropCyThreshold) {
-            st.watching = true;
-            st.fired = false;
-            st.drop_time = now;
-            st.drop_cx = person->cx;
-            st.drop_cy = person->cy;
+        if (!tr.watching) {
+            // 최근 창에서 가장 높이 있던 위치(cy 최소) 대비 현재 하강폭 확인
+            float min_cy = tr.history.front().cy;
+            for (const auto& s : tr.history) min_cy = std::min(min_cy, s.cy);
+            if (d.cy - min_cy >= kDropCyThreshold) {
+                tr.watching = true;
+                tr.fired = false;
+                tr.drop_time = now;
+                tr.drop_cx = d.cx;
+                tr.drop_cy = d.cy;
+            }
+            continue;
         }
-        return;
+
+        // 관찰 중: 급하강 시점 위치에서 계속 안 움직이는지 확인
+        float moved = std::hypot(d.cx - tr.drop_cx, d.cy - tr.drop_cy);
+        if (moved > kStillMoveThreshold) {
+            tr.watching = false;  // 다시 움직임 = 낙상 아님(앉았다 자세 고침 등)
+            continue;
+        }
+
+        double elapsed = std::chrono::duration<double>(now - tr.drop_time).count();
+        if (elapsed >= kStillSeconds && !tr.fired) {
+            tr.fired = true;
+            if (on_fall_) on_fall_(channel, d);
+        }
     }
 
-    // 관찰 중: 급하강 시점 위치에서 계속 안 움직이는지 확인.
-    float moved = std::hypot(person->cx - st.drop_cx, person->cy - st.drop_cy);
-    if (moved > kStillMoveThreshold) {
-        st.watching = false;  // 다시 움직임 = 낙상 아님(빨리 앉았다가 자세 고침 등)
-        return;
-    }
-
-    double elapsed = std::chrono::duration<double>(now - st.drop_time).count();
-    if (elapsed >= kStillSeconds && !st.fired) {
-        st.fired = true;
-        if (on_fall_) on_fall_(channel, *person);
+    // 오래 안 보인 추적 정리 (사람이 화면을 떠났거나 새 ID로 재등장한 경우)
+    for (auto it = tracks.begin(); it != tracks.end();) {
+        double idle = std::chrono::duration<double>(now - it->second.last_seen).count();
+        it = (idle > kTrackExpireSec) ? tracks.erase(it) : std::next(it);
     }
 }
