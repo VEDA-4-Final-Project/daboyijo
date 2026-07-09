@@ -1,6 +1,7 @@
 #ifndef CAREGIVER_DETECTOR_HPP
 #define CAREGIVER_DETECTOR_HPP
 
+#include "detection.hpp"
 #include <opencv2/opencv.hpp>
 
 // 옷 색(HSV) 기반 보호사 판정기
@@ -13,6 +14,9 @@ public:
 
     // 사람 영역(personROI)이 보호사인지 판정
     bool isCaregiver(const cv::Mat& personROI) const;
+
+    // DetectionFrame(사람 검출 결과) 받아서 보호사 있는지 판정
+    bool detectInFrame(const cv::Mat& frame, const DetectionFrame& df) const;
 
     // 튜닝용 — 색 범위/임계값 조정
     void setColorRange(const cv::Scalar& lower, const cv::Scalar& upper);
