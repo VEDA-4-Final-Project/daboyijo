@@ -18,6 +18,8 @@ extern "C" {
 
 namespace {
 constexpr int kReconnectDelaySec = 3;
+// 메타데이터 재조립 버퍼 상한 — 정상 문서는 수 KB, 이걸 넘으면 스트림 이상
+constexpr size_t kMetaBufMax = 256 * 1024;
 
 // 연결 옵션: RTSP over TCP만 지정.
 // 주의: 이 ffmpeg 버전에선 stimeout/timeout 옵션이 RTSP를 리스닝(서버) 모드로
@@ -138,6 +140,7 @@ bool RtspAvClient::openAndStream() {
     int sws_w = 0, sws_h = 0;
 
     connected_.store(true);
+    meta_buf_.clear();  // 재연결 시 이전 연결의 조각 폐기
     std::fprintf(stderr, "[ch%d] 연결됨 (영상 트랙=%d, 메타 트랙=%d)\n",
                  channel_, video_idx, data_idx);
 
@@ -175,14 +178,26 @@ bool RtspAvClient::openAndStream() {
                 }
             }
         } else if (pkt->stream_index == data_idx && data_idx >= 0) {
-            // ── 메타데이터 패킷: XML 파싱 → 콜백 ──
+            // ── 메타데이터 패킷: 조각 재조립 → 완성 문서 단위 파싱 → 콜백 ──
+            // 화면에 객체가 많으면 XML 한 문서가 여러 RTP 패킷으로 쪼개져 온다.
+            // 패킷 하나를 바로 파싱하면 잘린 문서라 결과가 비어(사람0) 버리므로,
+            // 문서 종료 태그가 나올 때까지 모았다가 완성본만 파싱한다.
             metadata_count_.fetch_add(1);
             if (on_detections_) {
-                std::string xml(reinterpret_cast<const char*>(pkt->data),
-                                static_cast<size_t>(pkt->size));
-                auto dets = MetadataParser::parse(xml);
-                if (!dets.empty()) {
-                    on_detections_(channel_, std::move(dets));
+                meta_buf_.append(reinterpret_cast<const char*>(pkt->data),
+                                 static_cast<size_t>(pkt->size));
+                static const std::string kDocEnd = "</tt:MetadataStream>";
+                size_t end;
+                while ((end = meta_buf_.find(kDocEnd)) != std::string::npos) {
+                    size_t doc_len = end + kDocEnd.size();
+                    auto dets = MetadataParser::parse(meta_buf_.substr(0, doc_len));
+                    meta_buf_.erase(0, doc_len);
+                    if (!dets.empty()) {
+                        on_detections_(channel_, std::move(dets));
+                    }
+                }
+                if (meta_buf_.size() > kMetaBufMax) {
+                    meta_buf_.clear();  // 종료 태그가 영영 안 오는 비정상 스트림 방어
                 }
             }
         }

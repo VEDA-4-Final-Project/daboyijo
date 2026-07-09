@@ -47,6 +47,7 @@ private:
     const std::string url_;
     FrameQueue& queue_;
     DetectionCallback on_detections_;
+    std::string meta_buf_;  // 메타데이터 XML 조각 재조립 버퍼 (수신 스레드 전용)
 
     std::thread thread_;
     std::atomic<bool> running_{false};
