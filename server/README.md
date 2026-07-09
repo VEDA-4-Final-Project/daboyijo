@@ -11,7 +11,8 @@
 
 ```bash
 # 의존성
-sudo apt install libopencv-dev pkg-config
+sudo apt install libopencv-dev pkg-config \
+     libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
 
 # 카메라 설정 (계정/IP 입력 — cameras.conf는 커밋되지 않음)
 cp config/cameras.conf.example config/cameras.conf
@@ -41,8 +42,11 @@ server/
  │   ├─ main.cpp        # 진입점 — 수신→리사이즈→JPEG→송출 파이프라인 조립
  │   └─ system_stats.*  # CPU 사용률·SoC 온도 측정 (벤치마크용)
  ├─ video/
- │   ├─ rtsp_client.*   # 채널 1개 수신·디코딩 워커 (자동 재연결)
- │   └─ frame_queue.hpp # 수신→처리 스레드 간 프레임 큐 (가득 차면 오래된 것부터 드롭)
+ │   ├─ rtsp_av_client.*   # libav 기반 수신 — 영상+메타데이터 한 연결로 (자동 재연결)
+ │   ├─ metadata_parser.*  # ONVIF/WiseAI 메타데이터 XML → 객체 감지 파싱
+ │   ├─ detection.hpp      # 감지 객체 구조체 (bbox, 종횡비, 사람 수)
+ │   ├─ rtsp_client.*      # (구) OpenCV VideoCapture 기반 — 영상 전용, 폴백용 보존
+ │   └─ frame_queue.hpp    # 수신→처리 스레드 간 프레임 큐 (가득 차면 오래된 것부터 드롭)
  ├─ core/
  │   └─ stream_server.* # Qt 클라이언트로 JPEG 프레임 TCP 송출 (v1 평문, TLS 예정)
  └─ config/
