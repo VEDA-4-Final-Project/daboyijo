@@ -11,7 +11,7 @@
             status = "okay";
             wm8960_codec: wm8960@1a{
                 status = "okay";
-                compatible = "wolfson,wm8960";
+                compatible = "veda,wm8960_daboyjo";
                 reg = <0x1a>;
                 #sound-dai-cells = <0>;
 
