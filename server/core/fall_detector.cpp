@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <map>
 
 namespace {
 
@@ -13,11 +14,25 @@ constexpr double kStillSeconds = 3.0;       // 급하강 후 이만큼 안 움�
 constexpr float kStillMoveThreshold = 0.04f;  // 이 이하 이동은 "정지"로 간주
 constexpr double kTrackExpireSec = 6.0;     // 이만큼 안 보인 추적은 폐기
 
+// ── 머리(Head) 보조 신호 ─────────────────────────────────────
+constexpr bool kHeadInstantTrigger = true;  // true=B(즉시), false=A(대기 단축)
+constexpr float kHeadFloorCy = 0.80f;       // 머리 cy가 이보다 크면 "바닥 근처"
+constexpr double kHeadStillSeconds = 1.0;   // (A모드) 머리 바닥 시 단축된 정지 대기
+
 }  // namespace
 
 void FallDetector::update(int channel, const std::vector<Detection>& detections) {
     auto& tracks = channels_[channel];
     auto now = std::chrono::steady_clock::now();
+
+    // 이번 프레임의 머리 위치를 사람(Parent ObjectId)별로 모은다.
+    // Head 객체는 Parent 속성으로 자기가 속한 Human의 ObjectId를 가리킨다.
+    std::map<int, float> head_cy;
+    for (const auto& d : detections) {
+        if (d.type == "Head" && d.parent_id != 0 && d.height() > 0) {
+            head_cy[d.parent_id] = d.cy;  // 여럿이면 마지막 값 (드묾)
+        }
+    }
 
     for (const auto& d : detections) {
         // 사람만, 그리고 bbox 넓이 0인 요약 프레임(객체 소실 시 오는 것)은 제외
@@ -42,8 +57,10 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections)
                 tr.drop_time = now;
                 tr.drop_cx = d.cx;
                 tr.drop_cy = d.cy;
+            } else {
+                continue;  // 급하강 아님
             }
-            continue;
+            // 급하강 진입 프레임에서도 아래 판정으로 바로 흐른다 (즉시 트리거 대비)
         }
 
         // 관찰 중: 급하강 시점 위치에서 계속 안 움직이는지 확인
@@ -53,8 +70,18 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections)
             continue;
         }
 
+        // 이 사람의 머리가 바닥 근처인가? (보조 신호)
+        auto hit = head_cy.find(d.object_id);
+        bool head_near_floor = (hit != head_cy.end() && hit->second >= kHeadFloorCy);
+
+        // 필요한 정지 지속시간: 머리 신호가 있으면 즉시(B) 또는 단축(A)
+        double still_needed = kStillSeconds;
+        if (head_near_floor) {
+            still_needed = kHeadInstantTrigger ? 0.0 : kHeadStillSeconds;
+        }
+
         double elapsed = std::chrono::duration<double>(now - tr.drop_time).count();
-        if (elapsed >= kStillSeconds && !tr.fired) {
+        if (elapsed >= still_needed && !tr.fired) {
             tr.fired = true;
             if (on_fall_) on_fall_(channel, d);
         }
