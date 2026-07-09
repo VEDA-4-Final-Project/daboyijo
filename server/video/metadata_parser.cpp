@@ -26,6 +26,22 @@ float attrF(const std::string& s, size_t start, size_t end,
     return v.empty() ? def : std::strtof(v.c_str(), nullptr);
 }
 
+// s의 [start,end) 구간에서 <tag>텍스트</tag> 값을 읽는다. 없으면 def.
+std::string elemText(const std::string& s, size_t start, size_t end,
+                     const std::string& tag, const std::string& def = "") {
+    std::string open = "<" + tag + ">";
+    size_t p = s.find(open, start);
+    if (p == std::string::npos || p >= end) {
+        return def;
+    }
+    p += open.size();
+    size_t q = s.find("</" + tag + ">", p);
+    if (q == std::string::npos || q > end) {
+        return def;
+    }
+    return s.substr(p, q - p);
+}
+
 }  // namespace
 
 std::vector<Detection> MetadataParser::parse(const std::string& xml) {
@@ -43,7 +59,12 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
     // (ONVIF 좌표계는 [-1,1], 화면 좌상단이 (-1,1))
     float sx = 1, sy = 1, tx = 0, ty = 0;
     size_t trans = xml.find("<tt:Transformation>");
-    if (trans != std::string::npos) {
+    if (trans == std::string::npos) {
+        // 정규화 계수 없이 픽셀값을 해석하면 전 좌표가 1.0로 뭉개진다.
+        // (패킷 분할로 Transformation이 앞 패킷에 실려온 경우 등) — 스킵.
+        return result;
+    }
+    {
         size_t tend = xml.find("</tt:Transformation>", trans);
         if (tend == std::string::npos) tend = xml.size();
         size_t scale = xml.find("<tt:Scale", trans);
@@ -75,6 +96,8 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
 
         Detection d;
         d.object_id = std::atoi(attr(xml, pos, obj_end, "ObjectId", "0").c_str());
+        // Head 등 하위 객체는 Parent로 자기가 속한 Human을 가리킨다
+        d.parent_id = std::atoi(attr(xml, pos, obj_end, "Parent", "0").c_str());
 
         size_t bbox = xml.find("<tt:BoundingBox", pos);
         if (bbox != std::string::npos && bbox < obj_end) {
@@ -91,7 +114,14 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
             d.bottom = y1 < y2 ? y2 : y1;
         }
 
-        // <tt:Type Likelihood="0.79">Human</tt:Type>
+        // <tt:CenterOfGravity x="488.0" y="341.0"/> — 무게중심 (낙하 속도 추적용)
+        size_t cog = xml.find("<tt:CenterOfGravity", pos);
+        if (cog != std::string::npos && cog < obj_end) {
+            d.cx = toNorm(attrF(xml, cog, obj_end, "x"), sx, tx);
+            d.cy = toNorm(attrF(xml, cog, obj_end, "y"), sy, ty);
+        }
+
+        // 최종 판정 클래스: <tt:Type Likelihood="0.79">Human</tt:Type>
         size_t type = xml.find("<tt:Type ", pos);
         if (type != std::string::npos && type < obj_end) {
             d.likelihood = attrF(xml, type, obj_end, "Likelihood");
@@ -99,6 +129,23 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
             size_t lt = xml.find('<', gt);
             if (gt != std::string::npos && lt != std::string::npos) {
                 d.type = xml.substr(gt + 1, lt - gt - 1);
+            }
+        } else {
+            // 폴백: 최종 판정이 없으면 후보 목록에서 최고 확률 채택
+            // <tt:ClassCandidate><tt:Type>Human</tt:Type><tt:Likelihood>0.79</tt:Likelihood>
+            size_t cand = pos;
+            while ((cand = xml.find("<tt:ClassCandidate>", cand)) != std::string::npos &&
+                   cand < obj_end) {
+                size_t cend = xml.find("</tt:ClassCandidate>", cand);
+                if (cend == std::string::npos || cend > obj_end) break;
+                std::string t = elemText(xml, cand, cend, "tt:Type");
+                float lh = std::strtof(
+                    elemText(xml, cand, cend, "tt:Likelihood", "0").c_str(), nullptr);
+                if (!t.empty() && (d.type.empty() || lh > d.likelihood)) {
+                    d.type = std::move(t);
+                    d.likelihood = lh;
+                }
+                cand = cend + 1;
             }
         }
 
