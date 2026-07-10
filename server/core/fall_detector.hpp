@@ -4,6 +4,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <utility>
 #include <vector>
 
 #include "detection.hpp"
@@ -15,10 +16,13 @@
 // 대표가 바뀔 때 가짜 '급하강'이 생겨 오탐이 남 — 실측으로 확인된 결함)
 //
 // 판정 신호 (docs/wiseai-메타데이터-명세.md 참조):
+//   ⓪ (게이트) 침대 ROI 밖일 때만 판정한다 — 침대 안 취침·뒤척임은 전부 무시.
+//      침대에서 나오는 순간(이탈) 관찰모드에 진입하고 기준점을 리셋한다
+//      (침대에서 내려오는 동작 자체가 급하강으로 오탐되는 것을 막기 위함).
 //   ① 몸통 무게중심(cy)이 짧은 시간(kDropWindowSec) 안에 kDropCyThreshold 이상 하강
 //   ② 그 직후 kStillSeconds 동안 그 자리에서 거의 움직이지 않음
 //   ③ (보조) 그 사람의 머리(Head, Parent로 연결)가 화면 바닥 근처(cy 큼)
-// 기본: ① + ③ 이면 즉시 통보(B모드), ③이 없으면 ① + ② 로 통보.
+// 기본: ⓪ 관찰모드 안에서 ① + ③ 이면 즉시 통보(B모드), ③이 없으면 ① + ② 로 통보.
 // ①만으로는 "빨리 앉기/눕기"와 구분이 안 되므로 항상 ② 또는 ③을 함께 본다.
 //
 // 신호 모드는 fall_detector.cpp 상단 kHeadInstantTrigger로 토글:
@@ -30,9 +34,9 @@
 // 또한 이 카메라의 Head 감지는 불안정(자주 누락)하므로, 머리는 어디까지나
 // 보조 신호다 — 머리가 없어도 몸통 신호(①+②)만으로 판정된다.
 //
-// ⚠️ 침상 ROI 필터가 아직 없다(미구현). B모드는 "몸통 하강 + 머리 바닥"이
-// 침대에 눕는 정상 동작과도 맞아떨어져 오탐을 낼 수 있다 — 요양원 실배치
-// 전에 반드시 침대 ROI 예외를 붙일 것. 임계값은 전부 잠정값(캡처로 튜닝).
+// 침대 ROI는 Qt 관제 화면에서 그려 서버로 전송되며(protocol/video_stream.h),
+// update()에 채널별 정규화 다각형(0~1)으로 넘어온다. ROI가 없으면(폴백)
+// 게이트 없이 화면 전체에서 판정한다. 임계값은 전부 잠정값(캡처로 튜닝).
 class FallDetector {
 public:
     using FallCallback = std::function<void(int channel, const Detection& at)>;
@@ -41,7 +45,10 @@ public:
     void setFallCallback(FallCallback cb) { on_fall_ = std::move(cb); }
 
     // 채널의 최신 감지 결과를 매 메타데이터 콜백(주기 ~5Hz)마다 전달.
-    void update(int channel, const std::vector<Detection>& detections);
+    // bed_roi: 이 채널의 침대 ROI(정규화 0~1 다각형, 3점 이상). 비어 있으면
+    // 침대 게이트 없이 화면 전체에서 판정한다(ROI 미설정 폴백).
+    void update(int channel, const std::vector<Detection>& detections,
+                const std::vector<std::pair<float, float>>& bed_roi);
 
 private:
     struct Sample {
@@ -53,10 +60,12 @@ private:
     // 사람(ObjectId) 1명의 추적 상태
     struct Track {
         std::deque<Sample> history;  // 최근 kDropWindowSec 구간 표본
+        bool in_bed = false;         // 직전 프레임에 침대 ROI 안이었는지 (이탈 감지용)
         bool watching = false;       // 급하강 감지 후 정지 관찰 중
         bool fired = false;          // 이미 통보함 (중복 방지)
         std::chrono::steady_clock::time_point drop_time;
         float drop_cx = 0, drop_cy = 0;  // 급하강 시점 위치 — 정지 판정 기준점
+        float last_cx = 0.0f, last_cy = 0.0f; // 바로 직전 프레임의 위치 — 실시간 순간 변위(속도) 판정용
         std::chrono::steady_clock::time_point last_seen;
     };
 

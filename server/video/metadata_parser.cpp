@@ -55,8 +55,8 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
 
     // tt:Transformation 의 Scale/Translate — 픽셀 → 0~1 정규화 계수.
     // <tt:Translate x="-1.0" y="1.0"/> <tt:Scale x="0.000772" y="-0.001316"/>
-    // 정규화: norm = (pixel * scale + translate + 1) / 2   → [0,1]
-    // (ONVIF 좌표계는 [-1,1], 화면 좌상단이 (-1,1))
+    // ONVIF 좌표계는 [-1,1], 화면 좌상단이 (-1,+1) — y는 위가 양수.
+    // 화면 좌표(0=상단)로 맞추기 위해 x: (onvif+1)/2, y: (1-onvif)/2.
     float sx = 1, sy = 1, tx = 0, ty = 0;
     size_t trans = xml.find("<tt:Transformation>");
     if (trans == std::string::npos) {
@@ -79,14 +79,16 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
         }
     }
 
-    auto toNorm = [](float v, float scale, float translate) {
-        // ONVIF [-1,1] 좌표 → [0,1]
-        float onvif = v * scale + translate;
-        float n = (onvif + 1.0f) / 2.0f;
+    auto clamp01 = [](float n) {
         if (n < 0) n = 0;
         if (n > 1) n = 1;
         return n;
     };
+    // ONVIF [-1,1] → [0,1]. x는 -1이 왼쪽이므로 그대로,
+    // y는 +1이 "위"라서 뒤집어야 화면 좌표(0=상단, 1=하단)가 된다.
+    // 안 뒤집으면 cy가 낙하 시 감소해 낙상 판정(cy 증가 감시)이 전부 무산된다.
+    auto toNormX = [&](float v) { return clamp01((v * sx + tx + 1.0f) / 2.0f); };
+    auto toNormY = [&](float v) { return clamp01((1.0f - (v * sy + ty)) / 2.0f); };
 
     // tt:Object 반복 추출
     size_t pos = 0;
@@ -105,11 +107,11 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
             float pt = attrF(xml, bbox, obj_end, "top");
             float pr = attrF(xml, bbox, obj_end, "right");
             float pb = attrF(xml, bbox, obj_end, "bottom");
-            d.left = toNorm(pl, sx, tx);
-            d.right = toNorm(pr, sx, tx);
-            // y축 scale이 음수라 top/bottom이 뒤집힐 수 있어 정렬
-            float y1 = toNorm(pt, sy, ty);
-            float y2 = toNorm(pb, sy, ty);
+            d.left = toNormX(pl);
+            d.right = toNormX(pr);
+            // scale 부호에 따라 top/bottom이 뒤집힐 수 있어 정렬
+            float y1 = toNormY(pt);
+            float y2 = toNormY(pb);
             d.top = y1 < y2 ? y1 : y2;
             d.bottom = y1 < y2 ? y2 : y1;
         }
@@ -117,8 +119,8 @@ std::vector<Detection> MetadataParser::parse(const std::string& xml) {
         // <tt:CenterOfGravity x="488.0" y="341.0"/> — 무게중심 (낙하 속도 추적용)
         size_t cog = xml.find("<tt:CenterOfGravity", pos);
         if (cog != std::string::npos && cog < obj_end) {
-            d.cx = toNorm(attrF(xml, cog, obj_end, "x"), sx, tx);
-            d.cy = toNorm(attrF(xml, cog, obj_end, "y"), sy, ty);
+            d.cx = toNormX(attrF(xml, cog, obj_end, "x"));
+            d.cy = toNormY(attrF(xml, cog, obj_end, "y"));
         }
 
         // 최종 판정 클래스: <tt:Type Likelihood="0.79">Human</tt:Type>

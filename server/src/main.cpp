@@ -117,7 +117,25 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, handleSignal);
 
     StreamServer stream_server(config.stream_port);
-    if (!stream_server.start()) {
+
+    // 채널별 침대 ROI (Qt에서 그려 보낸 정규화 0~1 다각형). 수신 스레드(콜백)와
+    // 처리 스레드가 공유하므로 뮤텍스로 보호. 낙상 룰엔진의 침상 재실/이탈 판정
+    // 및 되돌려보내는 영상 오버레이에 쓰인다.
+    std::mutex roi_mutex;
+    std::map<int, std::vector<std::pair<float, float>>> channel_rois;
+    stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
+        std::lock_guard<std::mutex> lock(roi_mutex);
+        if (up.clear) {
+            channel_rois.erase(up.channel);
+            std::fprintf(stderr, "[roi] ch%d 침대 ROI 삭제됨\n", up.channel);
+        } else {
+            channel_rois[up.channel] = up.points;
+            std::fprintf(stderr, "[roi] ch%d 침대 ROI 설정됨 (%zu점)\n",
+                         up.channel, up.points.size());
+        }
+    });
+
+    if (!stream_server.start()) {  // 콜백 등록 후 수신 시작
         return 1;
     }
 
@@ -146,18 +164,22 @@ int main(int argc, char* argv[]) {
                       ch, at.cx, at.cy);
     });
 
-    // [추가] 보호사 색 감지기 + 채널별 케어시간 타이머
-    CaregiverDetector caregiver_detector;      // 기본: 파란색 유니폼
-    std::map<int, CareTimer> care_timers;
-
     FrameQueue queue(16);
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
         auto client = std::make_unique<RtspAvClient>(cam.channel, cam.url, queue);
         client->setDetectionCallback(
             [&](int ch, std::vector<Detection> dets) {
+                // 이 채널의 침대 ROI 사본을 뜬다 — 낙상 판정기의 침상 게이팅 입력.
+                // (재실/이탈 로그와 판정은 이제 fall_detector가 담당)
+                std::vector<std::pair<float, float>> roi;
+                {
+                    std::lock_guard<std::mutex> lock(roi_mutex);
+                    auto it = channel_rois.find(ch);
+                    if (it != channel_rois.end()) roi = it->second;
+                }
                 std::lock_guard<std::mutex> lock(det_mutex);
-                fall_detector.update(ch, dets);
+                fall_detector.update(ch, dets, roi);
                 latest_detections[ch] = std::move(dets);
                 det_updates[ch] += 1;
             });
@@ -199,6 +221,7 @@ int main(int argc, char* argv[]) {
 
             cv::Mat small;
             cv::resize(frame->image, small, kViewSize);
+
             std::vector<unsigned char> jpeg;
             cv::imencode(".jpg", small, jpeg, kJpegParams);
 
