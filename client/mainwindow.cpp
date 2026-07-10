@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "videoview.h"
 #include <QHostAddress>
 #include <QPixmap>
 #include <QDateTime>
@@ -10,6 +11,9 @@
 #include <QFrame>
 #include <QScrollArea>
 #include <QRandomGenerator>
+#include <QPushButton>
+#include <QInputDialog>
+#include <QMessageBox>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -151,9 +155,30 @@ QWidget* MainWindow::buildVideoWall()
     outer->setContentsMargins(16, 14, 16, 16);
     outer->setSpacing(12);
 
+    // 제목 줄: 좌측 타이틀 + 우측 ROI 도구 (지정/표시)
+    auto* titleRow = new QHBoxLayout();
+    titleRow->setSpacing(8);
     auto* title = new QLabel(QStringLiteral("실시간 영상  ·  4채널"));
     title->setObjectName("panelTitle");
-    outer->addWidget(title);
+    titleRow->addWidget(title);
+    titleRow->addStretch();
+
+    roiButton = new QPushButton(QStringLiteral("ROI 지정"));
+    roiButton->setObjectName("roiButton");
+    roiButton->setCursor(Qt::PointingHandCursor);
+    connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
+    titleRow->addWidget(roiButton);
+
+    roiToggleButton = new QPushButton(QStringLiteral("ROI 표시"));
+    roiToggleButton->setObjectName("roiToggle");
+    roiToggleButton->setCheckable(true);
+    roiToggleButton->setChecked(true);
+    roiToggleButton->setCursor(Qt::PointingHandCursor);
+    connect(roiToggleButton, &QPushButton::toggled, this,
+            &MainWindow::onRoiVisibilityToggled);
+    titleRow->addWidget(roiToggleButton);
+
+    outer->addLayout(titleRow);
 
     auto* grid = new QGridLayout();
     grid->setSpacing(12);
@@ -202,14 +227,18 @@ QWidget* MainWindow::buildVideoCard(int channel)
 
     lay->addWidget(bar);
 
-    // 영상 영역
-    auto* video = new QLabel();
+    // 영상 영역 — VideoView가 프레임 표시 + ROI 오버레이/그리기를 담당
+    auto* video = new VideoView(channel);
     video->setObjectName("video");
-    video->setAlignment(Qt::AlignCenter);
-    video->setText(QStringLiteral("신호 없음"));
-    video->setMinimumHeight(160);
-    video->setScaledContents(false);
-    channelLabels[channel] = video;
+    channelViews[channel] = video;
+    connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    connect(video, &VideoView::drawModeChanged, this,
+            [this](int, bool on) {
+                roiDrawing = on;
+                if (roiButton)
+                    roiButton->setText(on ? QStringLiteral("그리는 중… (취소하려면 다시 클릭)")
+                                          : QStringLiteral("ROI 지정"));
+            });
     lay->addWidget(video, 1);
 
     return card;
@@ -322,6 +351,11 @@ void MainWindow::applyTheme()
 
         #panel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
         #panelTitle { color: %(text); font-size: 15px; font-weight: 700; }
+
+        #roiButton, #roiToggle { background: %(card); color: %(text); border: 1px solid %(border);
+                                 border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
+        #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
+        #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
 
         #videoCard { background: #000; border: 1px solid %(border); border-radius: 10px; }
         #videoBar { background: rgba(13,17,23,0.85); border-top-left-radius: 10px; border-top-right-radius: 10px; }
@@ -476,17 +510,92 @@ void MainWindow::onReadyRead()
         // 8) 🌟 명세서 가이드: channel 값으로 4분할 위젯 분배 및 렌더링
         if (!image.isNull()) {
             if (header.channel >= 0 && header.channel < 4) {
-                QPixmap pixmap = QPixmap::fromImage(image);
-                QLabel* targetLabel = channelLabels[header.channel];
-
-                // 비율 유지하며 화면에 가득 차게 뿌리기
-                targetLabel->setPixmap(pixmap.scaled(targetLabel->size(),
-                                                     Qt::KeepAspectRatio,
-                                                     Qt::SmoothTransformation));
+                // VideoView가 내부에서 비율 유지 스케일링 + ROI 오버레이 처리
+                channelViews[header.channel]->setFrame(QPixmap::fromImage(image));
                 // 프레임 수신 채널의 LIVE 표시등 점등
                 liveDots[header.channel]->setStyleSheet(
                     QString("background:%1; border-radius:4px;").arg(kCritical));
             }
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  침대 ROI 지정 / 표시 / 서버 전송
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onRoiButtonClicked()
+{
+    // 이미 그리는 중이면 이 버튼은 "취소"로 동작
+    if (roiDrawing) {
+        for (auto* v : channelViews)
+            if (v && v->drawMode()) v->cancelDraft();
+        return;
+    }
+
+    // 4채널 중 하나 선택 (병상/환자 이름으로 표기)
+    QStringList items;
+    for (int i = 0; i < 4; ++i)
+        items << QStringLiteral("채널 %1  ·  %2 (%3)")
+                     .arg(i + 1).arg(patients[i].name, patients[i].bed);
+
+    bool ok = false;
+    const QString choice = QInputDialog::getItem(
+        this, QStringLiteral("ROI 지정"),
+        QStringLiteral("침대 ROI를 그릴 채널을 선택하세요:"), items, 0, false, &ok);
+    if (!ok) return;
+
+    const int channel = items.indexOf(choice);
+    if (channel < 0 || channel >= 4) return;
+
+    channelViews[channel]->setDrawMode(true);  // 그리기 시작 (좌클릭=점, 더블클릭=완료)
+}
+
+void MainWindow::onRoiVisibilityToggled(bool on)
+{
+    for (auto* v : channelViews)
+        if (v) v->setRoiVisible(on);
+    if (roiToggleButton)
+        roiToggleButton->setText(on ? QStringLiteral("ROI 표시")
+                                    : QStringLiteral("ROI 숨김"));
+}
+
+void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
+{
+    sendRoi(channel, normPts);
+    // 방금 그린 걸 볼 수 있도록 표시 토글이 꺼져 있으면 켠다
+    if (roiToggleButton && !roiToggleButton->isChecked())
+        roiToggleButton->setChecked(true);
+    qDebug() << "ROI 전송: ch" << channel << "," << normPts.size() << "점";
+}
+
+void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
+{
+    if (!socket || socket->state() != QAbstractSocket::ConnectedState) {
+        QMessageBox::warning(this, QStringLiteral("전송 실패"),
+                             QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    const int n = clear ? 0 : qMin(static_cast<int>(normPts.size()), 32);
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = clear ? kCtrlRoiClear : kCtrlRoiSet;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = static_cast<uint8_t>(n);
+    h.reserved = 0;
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    for (int i = 0; i < n; ++i) {
+        dbj_roi_point_t p;
+        p.x = static_cast<uint16_t>(
+            qBound(0.0, normPts[i].x() * kRoiCoordScale, double(kRoiCoordScale)));
+        p.y = static_cast<uint16_t>(
+            qBound(0.0, normPts[i].y() * kRoiCoordScale, double(kRoiCoordScale)));
+        pkt.append(reinterpret_cast<const char*>(&p), sizeof(p));
+    }
+    socket->write(pkt);
+    socket->flush();
 }

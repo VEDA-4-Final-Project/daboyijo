@@ -2,10 +2,13 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // 처리된 JPEG 프레임을 관제 클라이언트(Qt)로 송출하는 TCP 서버.
@@ -17,11 +20,23 @@
 // (대기열이 차면 그 클라이언트의 오래된 프레임부터 버림).
 class StreamServer {
 public:
+    // Qt에서 보낸 ROI 갱신 1건. points는 화면 대비 0~1 정규화 다각형.
+    // clear=true면 해당 채널 ROI 삭제(이때 points는 비어 있음).
+    struct RoiUpdate {
+        int channel = 0;
+        bool clear = false;
+        std::vector<std::pair<float, float>> points;  // (x,y) 0~1
+    };
+    using RoiCallback = std::function<void(const RoiUpdate&)>;
+
     explicit StreamServer(int port);
     ~StreamServer();
 
     StreamServer(const StreamServer&) = delete;
     StreamServer& operator=(const StreamServer&) = delete;
+
+    // ROI 수신 콜백. start() 전에 등록할 것 (접속 즉시 수신 스레드가 뜬다).
+    void setRoiCallback(RoiCallback cb) { on_roi_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -40,11 +55,14 @@ private:
         std::mutex mutex;
         std::condition_variable cv;
         std::thread sender;
+        std::thread receiver;  // 클라→서버 제어 메시지(ROI) 수신
         std::atomic<bool> alive{true};
     };
 
     void acceptLoop();
     void senderLoop(Client& client);
+    void receiverLoop(Client& client);  // 제어 메시지 파싱 → on_roi_
+    void closeClient(Client& client);   // alive=false → 소켓 셧다운 → 스레드 join → close
 
     const int port_;
     int listen_fd_ = -1;
@@ -53,4 +71,5 @@ private:
 
     std::mutex clients_mutex_;
     std::vector<std::shared_ptr<Client>> clients_;
+    RoiCallback on_roi_;
 };

@@ -5,9 +5,11 @@
 #include <QTcpSocket>
 #include <QByteArray>
 #include <QLabel>
+#include <QPolygonF>
 #include <QTimer>
 
 // 🌟 명세서 3번에 정의된 16바이트 리틀엔디언 구조체 그대로 구현
+// (서버 protocol/video_stream.h와 반드시 동일하게 유지할 것)
 #pragma pack(push, 1)
 struct dbj_vs_header_t {
     uint16_t magic;         // 2B (0xDB4B)
@@ -16,7 +18,30 @@ struct dbj_vs_header_t {
     uint64_t timestamp_ms;  // 8B (Unix epoch 밀리초)
     uint32_t payload_len;   // 4B (JPEG 이미지 크기)
 };
+
+// 역방향(클라→서버) 제어 메시지 — 침대 ROI 전송용. magic=0xDB4C.
+struct dbj_ctrl_header_t {
+    uint16_t magic;         // 2B (0xDB4C)
+    uint8_t version;        // 1B (0x01)
+    uint8_t type;           // 1B (1=ROI_SET, 2=ROI_CLEAR)
+    uint8_t channel;        // 1B (0~3)
+    uint8_t point_count;    // 1B (이어지는 점 개수)
+    uint16_t reserved;      // 2B (0)
+};
+struct dbj_roi_point_t {
+    uint16_t x;             // 정규화 x × 10000 (0~10000)
+    uint16_t y;             // 정규화 y × 10000 (0~10000)
+};
 #pragma pack(pop)
+
+// 제어 메시지 상수 (서버와 합의된 값)
+static constexpr uint16_t kCtrlMagic = 0xDB4C;
+static constexpr uint8_t kCtrlRoiSet = 0x01;
+static constexpr uint8_t kCtrlRoiClear = 0x02;
+static constexpr int kRoiCoordScale = 10000;
+
+class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
+class QPushButton;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -41,13 +66,17 @@ private slots:
     void onSocketStateChanged(QAbstractSocket::SocketState state);
     void updateClock();          // 상단 실시간 시계
     void updateVitals();         // 웨어러블 바이탈 갱신(현재는 시뮬레이션)
+    void onRoiButtonClicked();   // "ROI 지정" — 채널 선택 후 그리기 시작
+    void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
+    void onRoiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료 → 전송
 
 private:
     Ui::MainWindow *ui;
     QTcpSocket *socket;
 
     QByteArray buffer;           // 🌟 명세서 가이드: 수신 데이터를 쌓아둘 버퍼
-    QLabel* channelLabels[4];    // 4분할 화면(영상) 매핑용 배열
+    VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
+    bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
 
     // ── 대시보드 UI 구성 요소 ──────────────────────────────
     PatientInfo patients[4];     // 병상별 환자 정보
@@ -72,5 +101,11 @@ private:
     QWidget* buildVitalCard(int channel);
     void applyTheme();
     void setConnectionState(bool connected, const QString& text);
+
+    // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
+    void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
+
+    QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
+    QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
 };
 #endif // MAINWINDOW_H
