@@ -145,6 +145,11 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "경고: DB 연결 실패 — 케어로그 저장 안 됨\n");
     }
 
+    // 보호사 색(HSV) 감지기 + 채널별 케어시간 타이머.
+    // 매 프레임 보호사 존재 여부를 판정해 케어 세션(재실 시간)을 집계한다.
+    CaregiverDetector caregiver_detector;
+    std::map<int, CareTimer> care_timers;
+
     // 채널별 최신 감지 결과 저장소 (메타데이터 콜백 스레드 ↔ 메인 스레드 공유).
     // 교차 검증 룰엔진(core)이 이후 여기서 사람 위치를 읽어간다.
     std::mutex det_mutex;
