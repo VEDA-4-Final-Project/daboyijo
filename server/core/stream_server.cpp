@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 
@@ -14,6 +15,7 @@
 
 namespace {
 constexpr size_t kMaxOutbox = 8;  // 클라이언트당 대기 프레임 상한
+constexpr size_t kRecvBufCap = 64 * 1024;  // 제어 수신 버퍼 상한(동기 깨지면 리셋)
 }
 
 StreamServer::StreamServer(int port) : port_(port) {}
@@ -70,14 +72,30 @@ void StreamServer::stop() {
 
     std::lock_guard<std::mutex> lock(clients_mutex_);
     for (auto& client : clients_) {
-        client->alive.store(false);
-        client->cv.notify_all();
-        if (client->sender.joinable()) {
-            client->sender.join();
-        }
-        ::close(client->fd);
+        closeClient(*client);
     }
     clients_.clear();
+}
+
+// 송신·수신 스레드를 안전하게 내리고 소켓을 닫는다.
+// 순서 중요: alive=false → shutdown(recv/send 블로킹 해제) → join → close.
+// (join 전에 close하면 안 됨 — receiver가 recv()에서 못 깨어나 데드락)
+void StreamServer::closeClient(Client& client) {
+    client.alive.store(false);
+    if (client.fd >= 0) {
+        ::shutdown(client.fd, SHUT_RDWR);  // recv()/send() 즉시 반환시킴
+    }
+    client.cv.notify_all();
+    if (client.sender.joinable()) {
+        client.sender.join();
+    }
+    if (client.receiver.joinable()) {
+        client.receiver.join();
+    }
+    if (client.fd >= 0) {
+        ::close(client.fd);
+        client.fd = -1;
+    }
 }
 
 void StreamServer::acceptLoop() {
@@ -104,6 +122,8 @@ void StreamServer::acceptLoop() {
         client->fd = fd;
         client->sender =
             std::thread(&StreamServer::senderLoop, this, std::ref(*client));
+        client->receiver =
+            std::thread(&StreamServer::receiverLoop, this, std::ref(*client));
 
         std::lock_guard<std::mutex> lock(clients_mutex_);
         clients_.push_back(std::move(client));
@@ -139,6 +159,67 @@ void StreamServer::senderLoop(Client& client) {
     }
 }
 
+// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다. 현재는 ROI 설정/삭제.
+// TCP는 경계 없이 도착하므로 버퍼에 쌓아가며 완성된 메시지만 뽑아낸다.
+void StreamServer::receiverLoop(Client& client) {
+    std::vector<uint8_t> buf;
+    uint8_t chunk[1024];
+    while (running_.load() && client.alive.load()) {
+        ssize_t n = ::recv(client.fd, chunk, sizeof(chunk), 0);
+        if (n <= 0) {
+            client.alive.store(false);  // 끊김/오류 — broadcast()가 정리
+            break;
+        }
+        buf.insert(buf.end(), chunk, chunk + static_cast<size_t>(n));
+
+        size_t off = 0;
+        while (buf.size() - off >= sizeof(dbj_ctrl_header_t)) {
+            dbj_ctrl_header_t h;
+            std::memcpy(&h, buf.data() + off, sizeof(h));
+            if (h.magic != DBJ_CTRL_MAGIC) {
+                ++off;  // 스트림 어긋남 — 1바이트씩 버리며 재동기
+                continue;
+            }
+
+            size_t need = sizeof(dbj_ctrl_header_t);
+            if (h.type == DBJ_CTRL_ROI_SET) {
+                need += static_cast<size_t>(h.point_count) * sizeof(dbj_roi_point_t);
+            }
+            if (buf.size() - off < need) {
+                break;  // 점 배열이 아직 덜 옴 — 다음 recv 대기
+            }
+
+            const bool known =
+                (h.type == DBJ_CTRL_ROI_SET || h.type == DBJ_CTRL_ROI_CLEAR);
+            if (on_roi_ && known && h.channel < 4) {
+                RoiUpdate up;
+                up.channel = h.channel;
+                up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
+                if (h.type == DBJ_CTRL_ROI_SET) {
+                    const uint8_t* pts =
+                        buf.data() + off + sizeof(dbj_ctrl_header_t);
+                    up.points.reserve(h.point_count);
+                    for (int i = 0; i < h.point_count; ++i) {
+                        dbj_roi_point_t p;
+                        std::memcpy(&p, pts + i * sizeof(p), sizeof(p));
+                        up.points.emplace_back(
+                            static_cast<float>(p.x) / DBJ_ROI_COORD_SCALE,
+                            static_cast<float>(p.y) / DBJ_ROI_COORD_SCALE);
+                    }
+                }
+                on_roi_(up);
+            }
+            off += need;
+        }
+        if (off > 0) {
+            buf.erase(buf.begin(), buf.begin() + static_cast<long>(off));
+        }
+        if (buf.size() > kRecvBufCap) {
+            buf.clear();  // 동기 완전 상실 방어
+        }
+    }
+}
+
 void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
     dbj_vs_header_t header{};
     header.magic = DBJ_VS_MAGIC;
@@ -159,10 +240,7 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
     for (auto it = clients_.begin(); it != clients_.end();) {
         Client& client = **it;
         if (!client.alive.load()) {
-            if (client.sender.joinable()) {
-                client.sender.join();
-            }
-            ::close(client.fd);
+            closeClient(client);
             std::fprintf(stderr, "[stream] 클라이언트 연결 종료\n");
             it = clients_.erase(it);
             continue;
