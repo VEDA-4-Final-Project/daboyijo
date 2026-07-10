@@ -155,7 +155,9 @@ int main(int argc, char* argv[]) {
     // TODO(core): 웨어러블 바이탈과 교차 검증해 최종 판정으로 승격
 
 
-
+    CaregiverDetector caregiver_detector;
+    
+    std::map<int, CareTimer> care_timers;
 
     FallDetector fall_detector;
     fall_detector.setFallCallback([](int ch, const Detection& at) {
