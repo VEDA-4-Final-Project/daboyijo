@@ -1,10 +1,25 @@
 #include "fall_detector.hpp"
 
 #include <cmath>
+#include <cstdio>
 #include <iterator>
 #include <map>
 
 namespace {
+
+// 점 (px,py)가 정규화 다각형 poly 안에 있는지 (ray-casting). 침상 재실/이탈 판정.
+bool pointInPolygon(float px, float py,
+                    const std::vector<std::pair<float, float>>& poly) {
+    bool inside = false;
+    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+        const float xi = poly[i].first, yi = poly[i].second;
+        const float xj = poly[j].first, yj = poly[j].second;
+        if (((yi > py) != (yj > py)) &&
+            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+            inside = !inside;
+    }
+    return inside;
+}
 
 // ── 잠정 기본값 (실측 캡처로 60fps/5fps 대역에 맞춤) ──────────
 constexpr double kDropWindowSec = 1.2;      // 5fps 환경을 고려해 0.6초에서 1.2초로 확장 (약 6프레임 확보)
@@ -20,9 +35,11 @@ constexpr double kHeadStillSeconds = 1.0;   // (A모드) 머리 바닥 시 단�
 
 }  // namespace
 
-void FallDetector::update(int channel, const std::vector<Detection>& detections) {
+void FallDetector::update(int channel, const std::vector<Detection>& detections,
+                          const std::vector<std::pair<float, float>>& bed_roi) {
     auto& tracks = channels_[channel];
     auto now = std::chrono::steady_clock::now();
+    const bool has_bed = bed_roi.size() >= 3;  // 3점 미만이면 게이트 없음(폴백)
 
     // 이번 프레임의 머리 위치를 사람(Parent ObjectId)별로 모은다.
     std::map<int, float> head_cy;
@@ -39,7 +56,38 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections)
         auto& tr = tracks[d.object_id];
         tr.last_seen = now;
 
-        // [추가] 최초 진입 시 직전 좌표가 비어있다면 현재 좌표로 초기화
+        // ── ⓪ 침대 ROI 게이팅 ───────────────────────────────────
+        // 침대가 설정된 채널은 "침대 밖(관찰모드)"일 때만 낙상을 본다.
+        // 침대 안에서는 취침·뒤척임을 전부 무시하고 상태를 리셋한다.
+        // 침대가 없으면(has_bed=false) 폴백으로 화면 전체를 관찰모드로 본다.
+        const bool in_bed = has_bed && pointInPolygon(d.cx, d.cy, bed_roi);
+        if (in_bed) {
+            if (!tr.in_bed) {
+                std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
+                             channel, d.object_id);
+            }
+            tr.in_bed = true;
+            tr.watching = false;
+            tr.fired = false;
+            tr.history.clear();
+            tr.last_cx = 0.0f;  // 다음 이탈 시 프레임 변위가 새로 시작되게
+            tr.last_cy = 0.0f;
+            continue;
+        }
+        if (tr.in_bed) {
+            // 방금 침대에서 나옴 → 관찰모드 진입. 침대에서 내려오는 동작 자체가
+            // 급하강으로 오탐되지 않도록 이력·기준을 리셋하고 이후의 하강만 본다.
+            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
+                         channel, d.object_id);
+            tr.in_bed = false;
+            tr.watching = false;
+            tr.fired = false;
+            tr.history.clear();
+            tr.last_cx = 0.0f;
+            tr.last_cy = 0.0f;
+        }
+
+        // [추가] 최초 진입 시(또는 이탈 리셋 직후) 직전 좌표를 현재로 초기화
         if (tr.last_cx == 0.0f && tr.last_cy == 0.0f) {
             tr.last_cx = d.cx;
             tr.last_cy = d.cy;
