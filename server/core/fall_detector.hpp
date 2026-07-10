@@ -57,6 +57,7 @@ private:
         bool fired = false;          // 이미 통보함 (중복 방지)
         std::chrono::steady_clock::time_point drop_time;
         float drop_cx = 0, drop_cy = 0;  // 급하강 시점 위치 — 정지 판정 기준점
+        float last_cx = 0.0f, last_cy = 0.0f; // 바로 직전 프레임의 위치 — 실시간 순간 변위(속도) 판정용
         std::chrono::steady_clock::time_point last_seen;
     };
 
