@@ -357,6 +357,20 @@ void MainWindow::applyTheme()
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
         #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
 
+        /* 팝업 다이얼로그 (ROI 채널 선택 QInputDialog, 경고 QMessageBox) — 다크 테마 */
+        QDialog { background: %(panel); }
+        QDialog QLabel { color: %(text); background: transparent; }
+        QComboBox { background: %(card); color: %(text); border: 1px solid %(border);
+                    border-radius: 6px; padding: 4px 10px; min-height: 22px; }
+        QComboBox:hover { border-color: %(accent); }
+        QComboBox QAbstractItemView { background: %(card); color: %(text);
+                    border: 1px solid %(border); outline: none;
+                    selection-background-color: %(accent); selection-color: #fff; }
+        QDialog QPushButton { background: %(card); color: %(text); border: 1px solid %(border);
+                    border-radius: 6px; padding: 6px 16px; min-width: 68px; font-weight: 600; }
+        QDialog QPushButton:hover { border-color: %(accent); }
+        QDialog QPushButton:default { background: %(accent); color: #fff; border-color: %(accent); }
+
         #videoCard { background: #000; border: 1px solid %(border); border-radius: 10px; }
         #videoBar { background: rgba(13,17,23,0.85); border-top-left-radius: 10px; border-top-right-radius: 10px; }
         #bedBadge { background: %(accent); color: #fff; font-size: 11px; font-weight: 700;
