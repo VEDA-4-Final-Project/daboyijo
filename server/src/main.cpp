@@ -98,6 +98,45 @@ ServerConfig loadConfig(const std::string& path) {
     return config;
 }
 
+// 감지 객체의 bbox·무게중심을 프레임에 그려 넣는다 (좌표 정합성 확인용).
+// Detection 좌표는 0~1 정규화 → 프레임 픽셀로 환산. 이 박스가 화면 속 사람
+// 위에 정확히 얹히면 메타데이터↔영상 좌표계가 일치한다는 뜻 → 방법 B 성립.
+// 요약 프레임(넓이 0, 객체 소실 시 오는 것)은 그리지 않는다.
+void drawDetections(cv::Mat& frame, const std::vector<Detection>& dets) {
+    const int w = frame.cols;
+    const int h = frame.rows;
+    for (const auto& d : dets) {
+        if (d.width() <= 0 || d.height() <= 0) continue;
+
+        cv::Point p1(static_cast<int>(d.left * w), static_cast<int>(d.top * h));
+        cv::Point p2(static_cast<int>(d.right * w), static_cast<int>(d.bottom * h));
+
+        // Human=초록, Head=노랑, 그 외=회색 (BGR)
+        cv::Scalar color = d.isHuman()      ? cv::Scalar(0, 255, 0)
+                           : d.type == "Head" ? cv::Scalar(0, 255, 255)
+                                              : cv::Scalar(160, 160, 160);
+        cv::rectangle(frame, p1, p2, color, 2);
+
+        // 무게중심(cx,cy) — 낙상 판정이 실제로 쓰는 점. 박스와 함께 보면
+        // cy 좌표가 사람 몸통 중앙에 찍히는지도 같이 확인된다.
+        cv::circle(frame,
+                   cv::Point(static_cast<int>(d.cx * w),
+                             static_cast<int>(d.cy * h)),
+                   3, color, -1);
+
+        // 라벨: 타입#ID 확률 — 박스 위(공간 없으면 아래)
+        char label[48];
+        std::snprintf(label, sizeof(label), "%s#%d %.2f", d.type.c_str(),
+                      d.object_id, d.likelihood);
+        int baseline = 0;
+        cv::Size ts = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.4, 1,
+                                      &baseline);
+        int ty = (p1.y - 4 < ts.height) ? p1.y + ts.height + 4 : p1.y - 4;
+        cv::putText(frame, label, cv::Point(p1.x, ty), cv::FONT_HERSHEY_SIMPLEX,
+                    0.4, color, 1, cv::LINE_AA);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -175,6 +214,15 @@ int main(int argc, char* argv[]) {
 
             cv::Mat small;
             cv::resize(frame->image, small, kViewSize);
+
+            // 좌표 정합성 확인용: 이 채널 최신 감지 박스를 영상에 구워 넣는다.
+            // 프로토콜·Qt 변경 없이 박스가 사람 위에 맞는지 눈으로 검증한다.
+            // TODO(video): 검증 끝나면 설정 플래그로 토글 (기본 off).
+            {
+                std::lock_guard<std::mutex> lock(det_mutex);
+                drawDetections(small, latest_detections[frame->channel]);
+            }
+
             std::vector<unsigned char> jpeg;
             cv::imencode(".jpg", small, jpeg, kJpegParams);
 
