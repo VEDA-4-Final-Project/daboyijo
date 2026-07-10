@@ -20,6 +20,8 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "caregiver_detector.hpp"  // [추가] 보호사 색 감지기
+#include "care_timer.hpp"          // [추가] 케어시간 세션 추적
 #include "detection.hpp"
 #include "fall_detector.hpp"
 #include "frame_queue.hpp"
@@ -172,6 +174,12 @@ int main(int argc, char* argv[]) {
             });
         client->start();
         clients.push_back(std::move(client));
+
+        // [추가] 이 채널의 케어시간 타이머 생성 + 세션 종료 콜백 등록
+        care_timers.emplace(cam.channel, CareTimer(3.0, 5.0));
+        care_timers[cam.channel].onSessionEnd([ch = cam.channel](int dur) {
+            std::printf("[ch%d] 케어 세션 종료: %d초 (DB 연동 예정)\n", ch, dur);
+        });
     }
     std::printf("%zu개 채널 수신 시작 (Ctrl+C로 종료)\n", clients.size());
 
@@ -214,6 +222,20 @@ int main(int argc, char* argv[]) {
                                    std::chrono::steady_clock::now() - t0)
                                    .count();
             encode_count += 1;
+
+            // [추가] --- 보호사 인식 + 케어시간 측정 ---
+            // 최신 감지 결과를 락 짧게 잡고 복사만 (무거운 색분석은 락 밖에서)
+            std::vector<Detection> dets_copy;
+            {
+                std::lock_guard<std::mutex> lock(det_mutex);
+                dets_copy = latest_detections[frame->channel];
+            }
+            DetectionFrame df;
+            df.channel = frame->channel;
+            df.objects = std::move(dets_copy);
+
+            bool present = caregiver_detector.detectInFrame(frame->image, df);
+            care_timers[frame->channel].update(present);
         }
 
         auto now = std::chrono::steady_clock::now();
