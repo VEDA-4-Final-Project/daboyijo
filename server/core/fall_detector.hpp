@@ -19,9 +19,10 @@
 //   ⓪ (게이트) 침대 ROI 밖일 때만 판정한다 — 침대 안 취침·뒤척임은 전부 무시.
 //      침대에서 나오는 순간(이탈) 관찰모드에 진입하고 기준점을 리셋한다
 //      (침대에서 내려오는 동작 자체가 급하강으로 오탐되는 것을 막기 위함).
-//   ① 몸통 무게중심(cy)이 짧은 시간(kDropWindowSec) 안에 kDropCyThreshold 이상 하강
+//   ① 머리(Head) cy가 짧은 시간(kDropWindowSec) 안에 kHeadDropThreshold 이상 급강하
+//      (서 있음=화면 위, 쓰러짐=바닥. 무게중심보다 낙하가 뚜렷해 이걸 트리거로 씀)
 //   ② 그 직후 kStillSeconds 동안 그 자리에서 거의 움직이지 않음
-//   ③ (보조) 그 사람의 머리(Head, Parent로 연결)가 화면 바닥 근처(cy 큼)
+//   ③ (보조) 그 사람의 머리가 화면 바닥 근처(cy 큼)면 정지 대기 없이 즉시
 // 기본: ⓪ 관찰모드 안에서 ① + ③ 이면 즉시 통보(B모드), ③이 없으면 ① + ② 로 통보.
 // ①만으로는 "빨리 앉기/눕기"와 구분이 안 되므로 항상 ② 또는 ③을 함께 본다.
 //
@@ -59,7 +60,9 @@ private:
 
     // 사람(ObjectId) 1명의 추적 상태
     struct Track {
-        std::deque<Sample> history;  // 최근 kDropWindowSec 구간 표본
+        // 머리 cy 이력(감지된 프레임만). 서 있으면 작고 쓰러지면 커진다 →
+        // 최근 최고점(min) 대비 현재값의 급증 = 낙하. cx는 안 씀(0).
+        std::deque<Sample> head_history;
         bool in_bed = false;         // 직전 프레임에 침대 ROI 안이었는지 (이탈 감지용)
         bool watching = false;       // 급하강 감지 후 정지 관찰 중
         bool fired = false;          // 이미 통보함 (중복 방지)

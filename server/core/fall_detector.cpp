@@ -22,8 +22,8 @@ bool pointInPolygon(float px, float py,
 }
 
 // ── 잠정 기본값 (실측 캡처로 60fps/5fps 대역에 맞춤) ──────────
-constexpr double kDropWindowSec = 1.2;      // 5fps 환경을 고려해 0.6초에서 1.2초로 확장 (약 6프레임 확보)
-constexpr float kDropCyThreshold = 0.15f;   // 정규화 좌표 기준 무게중심 하강폭
+constexpr double kDropWindowSec = 1.2;      // 이 시간 안의 머리 급강하만 "낙하"로 침 (5fps 약 6프레임)
+constexpr float kHeadDropThreshold = 0.25f; // 머리 cy가 최근 최고점 대비 이만큼 급증하면 낙하
 constexpr double kStillSeconds = 3.0;       // 급하강 후 이만큼 안 움직이면 낙상 확정
 constexpr float kStillMoveThreshold = 0.04f;  // 이 이하 이동은 "정지"로 간주
 constexpr double kTrackExpireSec = 6.0;     // 이만큼 안 보인 추적은 폐기
@@ -69,7 +69,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
             tr.in_bed = true;
             tr.watching = false;
             tr.fired = false;
-            tr.history.clear();
+            tr.head_history.clear();
             tr.last_cx = 0.0f;  // 다음 이탈 시 프레임 변위가 새로 시작되게
             tr.last_cy = 0.0f;
             continue;
@@ -82,7 +82,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
             tr.in_bed = false;
             tr.watching = false;
             tr.fired = false;
-            tr.history.clear();
+            tr.head_history.clear();
             tr.last_cx = 0.0f;
             tr.last_cy = 0.0f;
         }
@@ -93,23 +93,35 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
             tr.last_cy = d.cy;
         }
 
-        tr.history.push_back({now, d.cx, d.cy});
-        while (!tr.history.empty() &&
-               std::chrono::duration<double>(now - tr.history.front().t).count() >
-                   kDropWindowSec) {
-            tr.history.pop_front();
+        // 이 사람의 이번 프레임 머리 cy (감지된 프레임만 이력에 쌓는다 —
+        // 머리는 자주 누락되므로 있을 때만 기록).
+        auto head_it = head_cy.find(d.object_id);
+        const bool has_head = (head_it != head_cy.end());
+        if (has_head) {
+            tr.head_history.push_back({now, 0.0f, head_it->second});
+            while (!tr.head_history.empty() &&
+                   std::chrono::duration<double>(now - tr.head_history.front().t)
+                           .count() > kDropWindowSec) {
+                tr.head_history.pop_front();
+            }
         }
 
         if (!tr.watching) {
-            // 최근 창에서 가장 높이 있던 위치(cy 최소) 대비 현재 하강폭 확인
-            float min_cy = tr.history.front().cy;
-            for (const auto& s : tr.history) min_cy = std::min(min_cy, s.cy);
-            if (d.cy - min_cy >= kDropCyThreshold) {
+            // 머리 cy가 최근 창의 최고점(min=화면 최상단) 대비 급강하했는가.
+            bool head_dropped = false;
+            if (has_head && tr.head_history.size() >= 2) {
+                float min_hy = tr.head_history.front().cy;
+                for (const auto& s : tr.head_history) min_hy = std::min(min_hy, s.cy);
+                head_dropped = (head_it->second - min_hy >= kHeadDropThreshold);
+            }
+            if (head_dropped) {
                 tr.watching = true;
                 tr.fired = false;
                 tr.drop_time = now;
                 tr.drop_cx = d.cx;
                 tr.drop_cy = d.cy;
+                std::fprintf(stderr, "[fall] ch%d obj%d 머리 급강하 head_cy=%.2f\n",
+                             channel, d.object_id, head_it->second);
             } else {
                 tr.last_cx = d.cx; // 다음 프레임을 위해 백업 후 통과
                 tr.last_cy = d.cy;
@@ -140,9 +152,8 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
 
         // ─────────────────────────────────────────────────────────────
 
-        // 이 사람의 머리가 바닥 근처인가? (보조 신호)
-        auto hit = head_cy.find(d.object_id);
-        bool head_near_floor = (hit != head_cy.end() && hit->second >= kHeadFloorCy);
+        // 이 사람의 머리가 바닥 근처인가? (보조 신호 — 즉시 확정용)
+        bool head_near_floor = (has_head && head_it->second >= kHeadFloorCy);
 
         // 필요한 정지 지속시간: 머리 신호가 있으면 즉시(B) 또는 단축(A)
         double still_needed = kStillSeconds;
