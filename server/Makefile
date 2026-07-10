@@ -14,6 +14,10 @@ CXXFLAGS += -std=c++17 -Wall -Wextra -O2 -MMD -MP -Isrc -Ivideo -Icore -I..
 CXXFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS   := $(shell pkg-config --libs $(PKGS)) -lpthread
 
+CXXFLAGS += $(shell mariadb_config --cflags)
+LDLIBS   += $(shell mariadb_config --libs)
+
+
 all: $(BUILDDIR)/$(TARGET)
 
 $(BUILDDIR)/$(TARGET): $(OBJS)
