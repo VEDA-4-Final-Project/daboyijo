@@ -17,6 +17,30 @@ LDLIBS   := $(shell pkg-config --libs $(PKGS)) -lpthread
 CXXFLAGS += $(shell mariadb_config --cflags)
 LDLIBS   += $(shell mariadb_config --libs)
 
+# ── MoveNet(TFLite C++) 연동 ──────────────────────────────────
+# 사전 준비 (라즈베리에서 1회, server/tools/movenet_bench.py로 속도 확인 후):
+#   git clone --branch v2.14.0 --depth 1 https://github.com/tensorflow/tensorflow.git ~/tensorflow_src
+#   mkdir -p ~/tflite_build && cd ~/tflite_build
+#   cmake -DCMAKE_BUILD_TYPE=Release -DTFLITE_ENABLE_XNNPACK=ON ../tensorflow_src/tensorflow/lite
+#   cmake --build . -j$(nproc)
+# 아래 두 변수를 실제 빌드 결과 경로에 맞춰 조정할 것 (다르면 make 시 override:
+#   make TFLITE_SRC=... TFLITE_BUILD=...):
+TFLITE_SRC   ?= $(HOME)/tensorflow_src
+TFLITE_BUILD ?= $(HOME)/tflite_build
+
+CXXFLAGS += -I$(TFLITE_SRC)
+# flatbuffers 헤더 위치는 TFLite 버전에 따라 달라질 수 있음 — 컴파일러가
+# "flatbuffers/flatbuffers.h 없음" 이라고 하면:
+#   find $(TFLITE_BUILD) -name flatbuffers.h
+# 로 찾아서 이 줄의 경로를 그 디렉터리(…/include)로 바꿀 것.
+CXXFLAGS += -I$(TFLITE_BUILD)/flatbuffers/include
+# TFLite CMake 빌드는 libtensorflow-lite.a 외에 의존 라이브러리(XNNPACK,
+# ruy, flatbuffers, pthreadpool, fft2d, farmhash, cpuinfo …)를 빌드 트리
+# 곳곳에 별도 .a로 흩어 놓는다. 전부 모아 --start-group으로 묶어야
+# 아카이브 간 상호 참조(undefined reference)가 풀린다.
+TFLITE_LIBS := $(shell find $(TFLITE_BUILD) -name '*.a')
+LDLIBS   += -Wl,--start-group $(TFLITE_LIBS) -Wl,--end-group -ldl
+
 
 all: $(BUILDDIR)/$(TARGET)
 

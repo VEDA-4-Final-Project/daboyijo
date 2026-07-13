@@ -26,6 +26,7 @@
 #include "detection.hpp"
 #include "fall_detector.hpp"
 #include "frame_queue.hpp"
+#include "pose_estimator.hpp"      // 관찰 대상 자세(MoveNet) 판정
 #include "protocol/video_stream.h"
 #include "rtsp_av_client.hpp"
 #include "stream_server.hpp"
@@ -48,6 +49,32 @@ struct ServerConfig {
     std::vector<CameraConfig> cameras;
     int stream_port = DBJ_VS_PORT_DEFAULT;
 };
+
+// MoveNet 모델 경로 (server/ 기준 상대경로). 라즈베리에 이 위치로 파일을
+// 옮겨둘 것: server/models/movenet_lightning_int8.tflite (mkdir -p models)
+const std::string kPoseModelPath = "models/movenet_lightning_int8.tflite";
+// 관찰 대상 1명당 자세 확인 최대 주기 (2fps). movenet_bench.py 실측(RPi4,
+// 평균 36ms/초당 28회) 기준 4채널×2명 정도까지 여유 있게 감당하는 값.
+constexpr double kPoseIntervalSec = 0.5;
+
+// 정규화 bbox(0~1) → 픽셀 cv::Rect. MoveNet은 사람 전신이 크롭 안에 다
+// 들어와야 관절을 잘 잡으므로 bbox 폭/높이의 kCropMargin만큼 여유를 두고,
+// 이미지 경계로 clamp한다.
+cv::Rect normBoxToRect(float left, float top, float right, float bottom,
+                       int imgW, int imgH) {
+    constexpr float kCropMargin = 0.08f;
+    const float w = right - left, h = bottom - top;
+    left -= w * kCropMargin;
+    right += w * kCropMargin;
+    top -= h * kCropMargin;
+    bottom += h * kCropMargin;
+
+    const int x0 = std::max(0, static_cast<int>(left * imgW));
+    const int y0 = std::max(0, static_cast<int>(top * imgH));
+    const int x1 = std::min(imgW, static_cast<int>(right * imgW));
+    const int y1 = std::min(imgH, static_cast<int>(bottom * imgH));
+    return cv::Rect(x0, y0, std::max(0, x1 - x0), std::max(0, y1 - y0));
+}
 
 // 앞뒤 공백·탭·CR(윈도우 줄바꿈) 제거 — URL에 섞이면 RTSP 요청이 깨진다(505 등)
 std::string trim(const std::string& s) {
@@ -165,9 +192,22 @@ int main(int argc, char* argv[]) {
     FallDetector fall_detector;
     fall_detector.setFallCallback([](int ch, const Detection& at) {
         std::fprintf(stderr,
-                      "🚨 [ch%d] 낙상 의심! 위치=(%.2f,%.2f) — 잠정 임계값 기준, 캡처로 검증 필요\n",
+                      "🚨 [ch%d] 낙상 의심! 위치=(%.2f,%.2f) — MoveNet 자세 판정 기준\n",
                       ch, at.cx, at.cy);
     });
+
+    // 관찰 대상(침대 밖 사람) 자세 확인용 MoveNet. 모델 파일이 없거나 로드에
+    // 실패해도 크래시 없이 isReady()=false로 비활성화되고, 그 경우
+    // isLyingDown()은 항상 false를 반환한다(=자세 기반 낙상 판정만 꺼짐,
+    // 나머지 파이프라인은 정상 동작).
+    PoseEstimator pose_estimator(kPoseModelPath);
+    if (!pose_estimator.isReady()) {
+        std::fprintf(stderr,
+                     "경고: MoveNet 모델 로드 실패(%s) — 자세 기반 낙상 판정 비활성\n",
+                     kPoseModelPath.c_str());
+    }
+    // 채널 → (ObjectId → 마지막 자세 확인 시각). kPoseIntervalSec 간격 제한용.
+    std::map<int, std::map<int, std::chrono::steady_clock::time_point>> last_pose_time;
 
     FrameQueue queue(16);
     std::vector<std::unique_ptr<RtspAvClient>> clients;
@@ -253,6 +293,31 @@ int main(int argc, char* argv[]) {
 
             bool present = caregiver_detector.detectInFrame(frame->image, df);
             care_timers[frame->channel].update(present);
+
+            // [추가] --- 관찰 대상 자세 확인 (MoveNet) ---
+            // 침대 밖(관찰모드)인 사람만, 채널·사람당 kPoseIntervalSec 간격으로
+            // bbox를 크롭해 자세를 확인한다. 평상시(다들 침대 안)엔 추론이
+            // 전혀 안 돌아 CPU를 영상 파이프라인에 그대로 양보한다.
+            if (pose_estimator.isReady()) {
+                auto observed = fall_detector.observedTracks(frame->channel);
+                auto pose_now = std::chrono::steady_clock::now();
+                auto& channel_last = last_pose_time[frame->channel];
+                for (const auto& t : observed) {
+                    auto& last = channel_last[t.object_id];
+                    if (std::chrono::duration<double>(pose_now - last).count() <
+                        kPoseIntervalSec) {
+                        continue;
+                    }
+                    last = pose_now;
+
+                    cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
+                                                 frame->image.cols, frame->image.rows);
+                    if (roi.width <= 0 || roi.height <= 0) continue;
+
+                    bool lying = pose_estimator.isLyingDown(frame->image(roi));
+                    fall_detector.reportPose(frame->channel, t.object_id, lying);
+                }
+            }
         }
 
         auto now = std::chrono::steady_clock::now();
