@@ -143,6 +143,9 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     const auto& rh = kp[kRightHip];
     if (ls.score < kMinJointScore || rs.score < kMinJointScore ||
         lh.score < kMinJointScore || rh.score < kMinJointScore) {
+        std::fprintf(stderr,
+                     "[pose] 신뢰도 부족 판정보류 — 어깨(%.2f,%.2f) 엉덩이(%.2f,%.2f) 기준=%.2f\n",
+                     ls.score, rs.score, lh.score, rh.score, kMinJointScore);
         return false;  // 신뢰도 부족 — 판정 보류(낙상 아님으로 보수적 처리)
     }
 
@@ -159,7 +162,10 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     const float angle_from_vertical =
         std::atan2(std::fabs(dx), std::fabs(dy)) * 180.0f / kPi;
 
-    return angle_from_vertical >= kLyingAngleDeg;
+    const bool lying = angle_from_vertical >= kLyingAngleDeg;
+    std::fprintf(stderr, "[pose] 기울기=%.1f도 (기준 %.1f) → %s\n",
+                 angle_from_vertical, kLyingAngleDeg, lying ? "누움" : "서있음");
+    return lying;
 }
 
 bool PoseEstimator::isLyingDown(const cv::Mat& personCropBgr) const {

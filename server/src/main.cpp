@@ -253,11 +253,19 @@ int main(int argc, char* argv[]) {
 
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
                                                  job.raw_frame.cols, job.raw_frame.rows);
-                    if (roi.width <= 0 || roi.height <= 0) continue;
+                    if (roi.width <= 0 || roi.height <= 0) {
+                        std::fprintf(stderr,
+                                     "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
+                                     job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
+                        continue;
+                    }
 
                     // 🚨 AI 스레드가 혼자서 무거운 연산을 처리 (메인 스트리밍은 방해받지 않음!)
                     bool lying = pose_estimator.isLyingDown(job.raw_frame(roi));
-                    
+                    std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
+                                 job.channel, t.object_id, lying ? "누움" : "서있음",
+                                 roi.width, roi.height);
+
                     {
                         std::lock_guard<std::mutex> lock(det_mutex);
                         fall_detector.reportPose(job.channel, t.object_id, lying);
