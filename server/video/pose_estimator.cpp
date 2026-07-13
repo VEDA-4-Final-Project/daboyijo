@@ -1,5 +1,6 @@
 #include "pose_estimator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -85,11 +86,26 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
                              std::array<Keypoint, kNumKeypoints>& out) const {
     if (!isReady() || personCropBgr.empty()) return false;
 
-    // BGR → RGB, 모델 입력 크기로 리사이즈(비율 무시 — MoveNet 표준 전처리)
-    cv::Mat rgb, resized;
+    // BGR → RGB, 비율 유지 리사이즈 + 레터박스(검정 여백)로 모델 입력 크기에 맞춘다.
+    // (MoveNet 표준 전처리: tf.image.resize_with_pad와 동일한 방식)
+    // 단순 stretch resize는 누운 사람처럼 bbox가 심하게 납작(예: 469x101)해지면
+    // 정사각형으로 늘리는 과정에서 몸이 왜곡돼 관절 신뢰도가 무너진다
+    // (실측: stretch 시 신뢰도 0.1대로 붕괴 → 레터박스로 해결).
+    cv::Mat rgb;
     cv::cvtColor(personCropBgr, rgb, cv::COLOR_BGR2RGB);
-    cv::resize(rgb, resized, cv::Size(impl_->input_w, impl_->input_h), 0, 0,
-              cv::INTER_LINEAR);
+
+    const float scale = std::min(static_cast<float>(impl_->input_w) / rgb.cols,
+                                 static_cast<float>(impl_->input_h) / rgb.rows);
+    const int new_w = std::max(1, static_cast<int>(std::round(rgb.cols * scale)));
+    const int new_h = std::max(1, static_cast<int>(std::round(rgb.rows * scale)));
+    cv::Mat scaled;
+    cv::resize(rgb, scaled, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+
+    cv::Mat resized(impl_->input_h, impl_->input_w, rgb.type(), cv::Scalar(0, 0, 0));
+    const int off_x = (impl_->input_w - new_w) / 2;
+    const int off_y = (impl_->input_h - new_h) / 2;
+    scaled.copyTo(resized(cv::Rect(off_x, off_y, new_w, new_h)));
+
     if (!resized.isContinuous()) resized = resized.clone();
 
     TfLiteTensor* input = impl_->interpreter->input_tensor(0);
