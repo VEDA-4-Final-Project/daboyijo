@@ -34,7 +34,12 @@ CXXFLAGS += -I$(TFLITE_SRC)
 #   find $(TFLITE_BUILD) -name flatbuffers.h
 # 로 찾아서 이 줄의 경로를 그 디렉터리(…/include)로 바꿀 것.
 CXXFLAGS += -I$(TFLITE_BUILD)/flatbuffers/include
-LDLIBS   += $(TFLITE_BUILD)/libtensorflow-lite.a -ldl
+# TFLite CMake 빌드는 libtensorflow-lite.a 외에 의존 라이브러리(XNNPACK,
+# ruy, flatbuffers, pthreadpool, fft2d, farmhash, cpuinfo …)를 빌드 트리
+# 곳곳에 별도 .a로 흩어 놓는다. 전부 모아 --start-group으로 묶어야
+# 아카이브 간 상호 참조(undefined reference)가 풀린다.
+TFLITE_LIBS := $(shell find $(TFLITE_BUILD) -name '*.a')
+LDLIBS   += -Wl,--start-group $(TFLITE_LIBS) -Wl,--end-group -ldl
 
 
 all: $(BUILDDIR)/$(TARGET)
