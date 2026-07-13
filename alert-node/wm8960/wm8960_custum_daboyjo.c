@@ -3,64 +3,8 @@
 #include <linux/i2c.h>
 #include <linux/mod_devicetable.h>
 #include <sound/soc.h>
+#include <sound/pcm_params.h>
 
-
-
-
-static const struct snd_soc_dapm_widget veda_wm8960_dapm_widgets[] = {
-    SND_SOC_DAPM_OUTPUT("LOUT1"),
-    SND_SOC_DAPM_OUTPUT("ROUT1"),
-    SND_SOC_DAPM_OUTPUT("SPKLOUT"),
-    SND_SOC_DAPM_OUTPUT("SPKROUT"),
-    SND_SOC_DAPM_INPUT("LINPUT1"),
-    SND_SOC_DAPM_INPUT("RINPUT1"),
-
-    SND_SOC_DAPM_MIXER("Left Output Mixer", SND_SOC_NOPM,0,0,NULL,0),
-    SND_SOC_DAPM_MIXER("Right Output Mixer", SND_SOC_NOPM,0,0,NULL,0),
-
-};
-
-static const struct snd_soc_dapm_route veda_wm8960_dapm_routes[] = {
-    { "LOUT1", NULL, "Left Output Mixer" },
-    { "ROUT1", NULL, "Right Output Mixer" },
-
-};
-
-
-    
-static const struct snd_kcontrol_new veda_wm8960_controls[] = {
-    SOC_DOUBLE_R("Headphone Playback Volume",0x02,0x03, 0, 127,0),
-    
-    SOC_DOUBLE_R("Speaker Playback Volume", 0x28,0x29, 0, 127, 0),
-    SOC_DOUBLE_R("Mono Ouo Mix", 0x26,0x27, 7, 1, 0),
-
-    SOC_SINGLE("Playback Switch",0x05,3,1,1),
-};
-    
-
-
-
-    
-
-struct snd_soc_component_driver veda_wm8960_component_driver = {
-    .name = "veda-wm8960",
-    .dapm_widgets = veda_wm8960_dapm_widgets,
-    .num_dapm_widgets = ARRAY_SIZE(veda_wm8960_dapm_widgets),
-    .dapm_routes = veda_wm8960_dapm_routes,
-    .num_dapm_routes = ARRAY_SIZE(veda_wm8960_dapm_routes),
-    .controls = veda_wm8960_controls,
-    .num_controls = ARRAY_SIZE(veda_wm8960_controls),
-};
-
-struct snd_soc_dai_driver veda_wm8960_dai_driver = {
-    .name = "veda-wm8960-dai",
-    .playback = {
-        .stream_name = "HiFi Playback",
-        .channels_min = 1,
-        .channels_max = 2,
-        .rates = SNDRV_PCM_RATE_8000_48000,
-        .formats = SNDRV_PCM_FMTBIT_S16_LE,},
-};
 
 static int veda_wm8960_write(struct i2c_client *client, uint8_t addr, uint8_t data_first, uint8_t data, char *messge)
 {
@@ -83,15 +27,146 @@ static int veda_wm8960_write(struct i2c_client *client, uint8_t addr, uint8_t da
     }
 }
 
+static int veda_wm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params,struct snd_soc_dai *dai)
+{
+    int ret;
+    struct snd_soc_component *component = dai->component;
+
+    // i2c_client 추출 코드 
+    struct i2c_client *client = to_i2c_client(component->dev);
+
+    int rate = params_rate(params);
+    int width = params_width(params);
+    unsigned int def = 0;
+    unsigned int width_def = 0;
+    uint8_t dacdiv = 0;
+    uint8_t sysclkdiv = 0;
+    
+
+    switch(width){
+        case 16:
+            width_def = 0x00;
+            break;
+        case 20:
+            width_def = 0x01;
+            break;
+        case 24:
+            width_def = 0x02;
+            break;
+        case 32:
+            width_def = 0x03;
+            break;
+
+        default:
+            return -EINVAL;
+    };
+
+    switch(rate) {
+        case 8000:
+            dacdiv = 0x06;
+            sysclkdiv = 0x00;
+            break;
+        case 16000:
+            dacdiv = 0x03;
+            sysclkdiv = 0x00;
+            break;
+        case 44100:
+        case 48000:
+            dacdiv = 0x00;
+            sysclkdiv = 0x00;
+            break;
+        default:
+           return -EINVAL;
+    };
+    
+    def = snd_soc_component_read(component, 0x07);
+    if(((def>>2) & 3) != width_def){
+        def = def & ~(0x3<<2);
+        def = def | (width_def <<2);
+        ret = veda_wm8960_write(client,0x07,(uint8_t)(def>>8),(uint8_t)def,"audio inerface setting");
+        if(ret<0) return ret;
+    }
+    def = snd_soc_component_read(component, 0x04);
+    if((((def>>3) & 7) != dacdiv) ||(((def >> 1) & 3) != sysclkdiv)){
+        def = def & ~(0x1F<<1);
+        def = def | (dacdiv <<3) | (sysclkdiv <<1);
+        ret = veda_wm8960_write(client,0x04,(uint8_t)(def>>8),(uint8_t)def,"clocking setting");
+        if(ret<0) return ret;
+    }
+
+
+
+    return 0;
+}
+
+static const struct snd_soc_dai_ops veda_wm8960_dai_ops = {
+    .hw_params = veda_wm_hw_params,
+};
+
+
+static const struct snd_soc_dapm_widget veda_wm8960_dapm_widgets[] = {
+    SND_SOC_DAPM_OUTPUT("LOUT1"),
+    SND_SOC_DAPM_OUTPUT("ROUT1"),
+    SND_SOC_DAPM_OUTPUT("SPKLOUT"),
+    SND_SOC_DAPM_OUTPUT("SPKROUT"),
+    SND_SOC_DAPM_INPUT("LINPUT1"),
+    SND_SOC_DAPM_INPUT("RINPUT1"),
+
+    SND_SOC_DAPM_MIXER("Left Output Mixer", SND_SOC_NOPM,0,0,NULL,0),
+    SND_SOC_DAPM_MIXER("Right Output Mixer", SND_SOC_NOPM,0,0,NULL,0),
+
+};
+
+static const struct snd_soc_dapm_route veda_wm8960_dapm_routes[] = {
+    { "LOUT1", NULL, "Left Output Mixer" },
+    { "ROUT1", NULL, "Right Output Mixer" },
+
+};
+
+    
+static const struct snd_kcontrol_new veda_wm8960_controls[] = {
+    SOC_DOUBLE_R("Headphone Playback Volume",0x02,0x03, 0, 127,0),
+    
+    SOC_DOUBLE_R("Speaker Playback Volume", 0x28,0x29, 0, 127, 0),
+    SOC_DOUBLE_R("Mono Ouo Mix", 0x26,0x27, 7, 1, 0),
+
+    SOC_SINGLE("Playback Switch",0x05,3,1,1),
+};
+
+
+struct snd_soc_component_driver veda_wm8960_component_driver = {
+    .name = "veda-wm8960",
+    .dapm_widgets = veda_wm8960_dapm_widgets,
+    .num_dapm_widgets = ARRAY_SIZE(veda_wm8960_dapm_widgets),
+    .dapm_routes = veda_wm8960_dapm_routes,
+    .num_dapm_routes = ARRAY_SIZE(veda_wm8960_dapm_routes),
+    .controls = veda_wm8960_controls,
+    .num_controls = ARRAY_SIZE(veda_wm8960_controls),
+};
+
+struct snd_soc_dai_driver veda_wm8960_dai_driver = {
+    .name = "veda-wm8960-dai",
+    .playback = {
+        .stream_name = "HiFi Playback",
+        .channels_min = 1,
+        .channels_max = 2,
+        .rates = SNDRV_PCM_RATE_8000_48000,
+        .formats = SNDRV_PCM_FMTBIT_S16_LE,},
+    .ops = &veda_wm8960_dai_ops,
+};
+
+
 
 static const struct reg_default wm8960_reg_defaults[] = {
-    {0x02, 0x000 },
-    {0x03, 0x000 },
+    {0x02, 0x179 },
+    {0x03, 0x179 },
+    {0x04, 0x000 },
     {0x05, 0x008 },
+    {0x07, 0x002 },
     {0x26, 0x000 },
     {0x27, 0x000 },
-    {0x28, 0x000 },
-    {0x29, 0x000 },
+    {0x28, 0x179 },
+    {0x29, 0x179 },
 };
     
 
