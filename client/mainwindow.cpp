@@ -14,6 +14,13 @@
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <QComboBox>
+#include <QDateEdit>
+#include <QSlider>
+#include <QStyle>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -58,7 +65,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 3. 명세서 스펙: 5500번 포트로 즉시 접속 (IP 주소는 RPi 주소 입력)
     setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
-    socket->connectToHost(QHostAddress("172.20.35.87"), 5500);
+    socket->connectToHost(QHostAddress("127.0.0.1"), 5500);
     qDebug() << "라즈베리파이 영상 서버(Port: 5500) 접속 시도 중...";
 
     // 4. 상단 시계 / 웨어러블 바이탈 타이머 가동
@@ -87,16 +94,24 @@ void MainWindow::buildUi()
 
     root->addWidget(buildHeader());
 
-    // 본문: 좌측 영상 월 + 우측 바이탈 패널
+    tabWidget = new QTabWidget();
+    tabWidget->setObjectName("mainTabs");
+
+    // ── TAB 1: 실시간 관제 및 제어 (기존 영상월 + 바이탈 패널) ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(16, 16, 16, 16);
     body->setSpacing(16);
     body->addWidget(buildVideoWall(), 7);
     body->addWidget(buildVitalsPanel(), 3);
 
-    auto* bodyWrap = new QWidget();
-    bodyWrap->setLayout(body);
-    root->addWidget(bodyWrap, 1);
+    auto* dashboardTab = new QWidget();
+    dashboardTab->setLayout(body);
+    tabWidget->addTab(dashboardTab, QStringLiteral("실시간 관제 및 제어"));
+
+    // ── TAB 2: 비상 로그 조회 및 블랙박스 ──
+    tabWidget->addTab(buildLogArchiveTab(), QStringLiteral("비상 로그 조회 및 블랙박스"));
+
+    root->addWidget(tabWidget, 1);
 
     resize(1280, 800);
     setMinimumSize(1080, 680);
@@ -177,6 +192,23 @@ QWidget* MainWindow::buildVideoWall()
     connect(roiToggleButton, &QPushButton::toggled, this,
             &MainWindow::onRoiVisibilityToggled);
     titleRow->addWidget(roiToggleButton);
+
+    // 🎤 원격 방송(인터콤) — 누르고 있는 동안 관제실 음성 → 현장 스피커
+    micButton = new QPushButton(QStringLiteral("🎤 방송"));
+    micButton->setObjectName("micButton");
+    micButton->setCursor(Qt::PointingHandCursor);
+    connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
+    connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
+    titleRow->addWidget(micButton);
+
+    // 경보 해제 — 현장 사이렌/LED 원격 끄기
+    alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
+    alarmClearButton->setObjectName("alarmButton");
+    alarmClearButton->setCursor(Qt::PointingHandCursor);
+    connect(alarmClearButton, &QPushButton::clicked, this,
+            &MainWindow::onAlarmClearClicked);
+    titleRow->addWidget(alarmClearButton);
+
 
     outer->addLayout(titleRow);
 
@@ -334,6 +366,133 @@ QWidget* MainWindow::buildVitalCard(int channel)
 }
 
 // ═══════════════════════════════════════════════════════════
+//  TAB2: 비상 로그 조회 및 블랙박스
+// ═══════════════════════════════════════════════════════════
+QWidget* MainWindow::buildLogArchiveTab()
+{
+    auto* panel = new QFrame();
+    panel->setObjectName("panel");
+
+    auto* outer = new QVBoxLayout(panel);
+    outer->setContentsMargins(16, 14, 16, 16);
+    outer->setSpacing(12);
+
+    outer->addWidget(buildSearchFilters());
+
+    auto* body = new QHBoxLayout();
+    body->setSpacing(16);
+    body->addWidget(buildLogTable(), 6);
+
+    auto* rightCol = new QVBoxLayout();
+    rightCol->setSpacing(16);
+    rightCol->addWidget(buildBlackboxPlayer());
+    rightCol->addWidget(buildCareTimeDashboard(), 1);
+    auto* rightWrap = new QWidget();
+    rightWrap->setLayout(rightCol);
+    body->addWidget(rightWrap, 4);
+
+    outer->addLayout(body, 1);
+    return panel;
+}
+
+QWidget* MainWindow::buildSearchFilters()
+{
+    auto* bar = new QFrame();
+    bar->setObjectName("filterBar");
+    auto* lay = new QHBoxLayout(bar);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(10);
+
+    filterDateFrom = new QDateEdit(QDate::currentDate().addDays(-7));
+    filterDateFrom->setCalendarPopup(true);
+    filterDateTo = new QDateEdit(QDate::currentDate());
+    filterDateTo->setCalendarPopup(true);
+
+    filterRoom = new QComboBox();
+    filterRoom->addItems({QStringLiteral("전체 병실"), QStringLiteral("201호-1"),
+                          QStringLiteral("201호-2"), QStringLiteral("201호-3"),
+                          QStringLiteral("201호-4")});
+
+    filterEventType = new QComboBox();
+    filterEventType->addItems({QStringLiteral("전체 이벤트"), QStringLiteral("낙상"),
+                               QStringLiteral("침상이탈"), QStringLiteral("보호사 진입")});
+
+    auto* searchBtn = new QPushButton(QStringLiteral("검색"));
+    searchBtn->setObjectName("roiButton");
+    searchBtn->setCursor(Qt::PointingHandCursor);
+    connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onSearchClicked);
+
+    lay->addWidget(new QLabel(QStringLiteral("날짜")));
+    lay->addWidget(filterDateFrom);
+    lay->addWidget(new QLabel(QStringLiteral("~")));
+    lay->addWidget(filterDateTo);
+    lay->addWidget(new QLabel(QStringLiteral("병실")));
+    lay->addWidget(filterRoom);
+    lay->addWidget(new QLabel(QStringLiteral("이벤트")));
+    lay->addWidget(filterEventType);
+    lay->addStretch();
+    lay->addWidget(searchBtn);
+    return bar;
+}
+
+QWidget* MainWindow::buildLogTable()
+{
+    logTable = new QTableWidget(0, 4);
+    logTable->setObjectName("logTable");
+    logTable->setHorizontalHeaderLabels(
+        {QStringLiteral("날짜/시간"), QStringLiteral("병실"),
+         QStringLiteral("이벤트"), QStringLiteral("상태")});
+    logTable->horizontalHeader()->setStretchLastSection(true);
+    logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    connect(logTable, &QTableWidget::cellDoubleClicked,
+            this, &MainWindow::onLogRowActivated);
+    return logTable;
+}
+
+QWidget* MainWindow::buildBlackboxPlayer()
+{
+    auto* card = new QFrame();
+    card->setObjectName("videoCard");
+    card->setMinimumHeight(220);
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setSpacing(8);
+
+    blackboxPlaceholder = new QLabel(
+        QStringLiteral("로그를 더블클릭하면\n10초 블랙박스 영상이 재생됩니다"));
+    blackboxPlaceholder->setAlignment(Qt::AlignCenter);
+    blackboxPlaceholder->setObjectName("video");
+    lay->addWidget(blackboxPlaceholder, 1);
+
+    blackboxSeek = new QSlider(Qt::Horizontal);
+    blackboxSeek->setEnabled(false);
+    lay->addWidget(blackboxSeek);
+    return card;
+}
+
+QWidget* MainWindow::buildCareTimeDashboard()
+{
+    auto* card = new QFrame();
+    card->setObjectName("vitalCard");
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(14, 12, 14, 12);
+    lay->setSpacing(8);
+
+    auto* title = new QLabel(QStringLiteral("케어 타임 대시보드"));
+    title->setObjectName("panelTitle");
+    lay->addWidget(title);
+
+    careTimeList = new QVBoxLayout();
+    careTimeList->setSpacing(6);
+    lay->addLayout(careTimeList);
+    lay->addStretch();
+    return card;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  스타일 (QSS)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::applyTheme()
@@ -356,20 +515,14 @@ void MainWindow::applyTheme()
                                  border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
         #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
+        #micButton { background: %(card); color: %(text); border: 1px solid %(border);
+                     border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
+        #micButton:hover { border-color: %(accent); }
+        #micButton[active="true"] { background: %(critical); color: #fff; border-color: %(critical); }
 
-        /* 팝업 다이얼로그 (ROI 채널 선택 QInputDialog, 경고 QMessageBox) — 다크 테마 */
-        QDialog { background: %(panel); }
-        QDialog QLabel { color: %(text); background: transparent; }
-        QComboBox { background: %(card); color: %(text); border: 1px solid %(border);
-                    border-radius: 6px; padding: 4px 10px; min-height: 22px; }
-        QComboBox:hover { border-color: %(accent); }
-        QComboBox QAbstractItemView { background: %(card); color: %(text);
-                    border: 1px solid %(border); outline: none;
-                    selection-background-color: %(accent); selection-color: #fff; }
-        QDialog QPushButton { background: %(card); color: %(text); border: 1px solid %(border);
-                    border-radius: 6px; padding: 6px 16px; min-width: 68px; font-weight: 600; }
-        QDialog QPushButton:hover { border-color: %(accent); }
-        QDialog QPushButton:default { background: %(accent); color: #fff; border-color: %(accent); }
+        #alarmButton { background: %(critical); color: #fff; border: 1px solid %(critical);
+               border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
+        #alarmButton:hover { background: #ff6b62; }
 
         #videoCard { background: #000; border: 1px solid %(border); border-radius: 10px; }
         #videoBar { background: rgba(13,17,23,0.85); border-top-left-radius: 10px; border-top-right-radius: 10px; }
@@ -393,14 +546,34 @@ void MainWindow::applyTheme()
         QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
         QScrollBar::handle:vertical { background: %(border); border-radius: 4px; min-height: 30px; }
         QScrollBar::add-line, QScrollBar::sub-line { height: 0; }
+
+        /* ── TAB 구조 ── */
+        QTabWidget::pane { border: none; }
+        QTabBar::tab { background: %(card); color: %(sub); padding: 10px 18px;
+                       border: 1px solid %(border); border-bottom: none;
+                       border-top-left-radius: 8px; border-top-right-radius: 8px; }
+        QTabBar::tab:selected { background: %(panel); color: %(text); }
+        QTabBar::tab:hover { color: %(text); }
+
+        /* ── TAB2: 로그 조회 및 블랙박스 ── */
+        #filterBar QLabel { color: %(sub); font-size: 12px; }
+        #filterBar QComboBox, #filterBar QDateEdit {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 6px; padding: 4px 8px; }
+        #logTable { background: %(bgDeep); color: %(text); gridline-color: %(border);
+                    border: 1px solid %(border); border-radius: 8px; }
+        #logTable QHeaderView::section { background: %(card); color: %(sub);
+                                          border: none; padding: 6px; }
+        #logTable::item:selected { background: %(accent); color: #fff; }
     )")
-        .replace("%(bgDeep)", kBgDeep)
-        .replace("%(panel)", kPanel)
-        .replace("%(card)", kCard)
-        .replace("%(border)", kBorder)
-        .replace("%(text)", kTextMain)
-        .replace("%(sub)", kTextSub)
-        .replace("%(accent)", kAccent);
+                            .replace("%(bgDeep)", kBgDeep)
+                            .replace("%(panel)", kPanel)
+                            .replace("%(card)", kCard)
+                            .replace("%(border)", kBorder)
+                            .replace("%(text)", kTextMain)
+                            .replace("%(sub)", kTextSub)
+                            .replace("%(accent)", kAccent)
+                            .replace("%(critical)", kCritical);
 
     this->setStyleSheet(qss);
 
@@ -612,4 +785,56 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
     }
     socket->write(pkt);
     socket->flush();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  원격 방송(인터콤) / 경보 해제 — 자리표시자 (MQTT·오디오 연동 전)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onMicPressed()
+{
+    // TODO(임베디드-중계): QAudioInput으로 PCM 캡처 시작 →
+    //   암호화 소켓으로 알림 노드(RPi 4)에 실시간 스트리밍 전송
+    micButton->setText(QStringLiteral("🔴 방송 중"));
+    micButton->setProperty("active", true);
+    micButton->style()->unpolish(micButton);
+    micButton->style()->polish(micButton);
+    qDebug() << "인터콤 방송 시작";
+}
+
+void MainWindow::onMicReleased()
+{
+    // TODO(임베디드-중계): PCM 캡처 종료, 소켓 스트림 정리
+    micButton->setText(QStringLiteral("🎤 방송"));
+    micButton->setProperty("active", false);
+    micButton->style()->unpolish(micButton);
+    micButton->style()->polish(micButton);
+    qDebug() << "인터콤 방송 종료";
+}
+
+void MainWindow::onAlarmClearClicked()
+{
+    // TODO(중앙서버): MQTT 제어 토픽으로 알림 노드(RPi 4)에 "경보 해제" 발행
+    //   → 현장 사이렌/LED 즉시 정지
+    qDebug() << "경보 해제 신호 발행 (MQTT 연동 전 — 자리표시자)";
+    QMessageBox::information(this, QStringLiteral("경보 해제"),
+                             QStringLiteral("현장 사이렌/LED 해제 신호를 전송했습니다."));
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  TAB2: 비상 로그 조회 / 블랙박스 재생 (자리표시자 — 서버 연동 전)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onSearchClicked()
+{
+    // TODO(core): MariaDB 쿼리 연동 지점 — 지금은 UI 스켈레톤만
+    qDebug() << "검색 조건 —"
+             << filterDateFrom->date().toString("yyyy-MM-dd") << "~"
+             << filterDateTo->date().toString("yyyy-MM-dd")
+             << filterRoom->currentText() << filterEventType->currentText();
+}
+
+void MainWindow::onLogRowActivated(int row, int /*column*/)
+{
+    // TODO(core): 선택된 로그의 블랙박스 파일 경로를 서버에 요청 → 재생
+    qDebug() << "블랙박스 재생 요청 — row" << row;
 }
