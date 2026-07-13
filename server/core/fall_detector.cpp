@@ -1,9 +1,7 @@
 #include "fall_detector.hpp"
 
-#include <cmath>
 #include <cstdio>
 #include <iterator>
-#include <map>
 
 namespace {
 
@@ -21,17 +19,8 @@ bool pointInPolygon(float px, float py,
     return inside;
 }
 
-// ── 잠정 기본값 (실측 캡처로 60fps/5fps 대역에 맞춤) ──────────
-constexpr double kDropWindowSec = 1.2;      // 이 시간 안의 머리 급강하만 "낙하"로 침 (5fps 약 6프레임)
-constexpr float kHeadDropThreshold = 0.25f; // 머리 cy가 최근 최고점 대비 이만큼 급증하면 낙하
-constexpr double kStillSeconds = 3.0;       // 급하강 후 이만큼 안 움직이면 낙상 확정
-constexpr float kStillMoveThreshold = 0.04f;  // 이 이하 이동은 "정지"로 간주
-constexpr double kTrackExpireSec = 6.0;     // 이만큼 안 보인 추적은 폐기
-
-// ── 머리(Head) 보조 신호 ─────────────────────────────────────
-constexpr bool kHeadInstantTrigger = true;  // true=B(즉시), false=A(대기 단축)
-constexpr float kHeadFloorCy = 0.80f;       // 머리 cy가 이보다 크면 "바닥 근처"
-constexpr double kHeadStillSeconds = 1.0;   // (A모드) 머리 바닥 시 단축된 정지 대기
+constexpr double kLyingConfirmSec = 1.5;  // 누운 자세가 이만큼 연속돼야 낙상 확정 (잠정값)
+constexpr double kTrackExpireSec = 6.0;   // 이만큼 안 보인 추적은 폐기
 
 }  // namespace
 
@@ -41,25 +30,18 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
     auto now = std::chrono::steady_clock::now();
     const bool has_bed = bed_roi.size() >= 3;  // 3점 미만이면 게이트 없음(폴백)
 
-    // 이번 프레임의 머리 위치를 사람(Parent ObjectId)별로 모은다.
-    std::map<int, float> head_cy;
     for (const auto& d : detections) {
-        if (d.type == "Head" && d.parent_id != 0 && d.height() > 0) {
-            head_cy[d.parent_id] = d.cy;
-        }
-    }
-
-    for (const auto& d : detections) {
-        // 사람만, 그리고 bbox 넓이 0인 요약 프레임은 제외
+        // 사람만, 그리고 bbox 넓이 0인 요약 프레임(객체 소실 시 오는 것)은 제외
         if (!d.isHuman() || d.width() <= 0 || d.height() <= 0) continue;
 
         auto& tr = tracks[d.object_id];
         tr.last_seen = now;
+        tr.left = d.left;
+        tr.top = d.top;
+        tr.right = d.right;
+        tr.bottom = d.bottom;
 
-        // ── ⓪ 침대 ROI 게이팅 ───────────────────────────────────
-        // 침대가 설정된 채널은 "침대 밖(관찰모드)"일 때만 낙상을 본다.
-        // 침대 안에서는 취침·뒤척임을 전부 무시하고 상태를 리셋한다.
-        // 침대가 없으면(has_bed=false) 폴백으로 화면 전체를 관찰모드로 본다.
+        // 침대 ROI 게이팅: 침대 안이면 관찰 대상에서 빠지고 상태 리셋.
         const bool in_bed = has_bed && pointInPolygon(d.cx, d.cy, bed_roi);
         if (in_bed) {
             if (!tr.in_bed) {
@@ -67,114 +49,64 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
                              channel, d.object_id);
             }
             tr.in_bed = true;
-            tr.watching = false;
+            tr.lying_active = false;
             tr.fired = false;
-            tr.head_history.clear();
-            tr.last_cx = 0.0f;  // 다음 이탈 시 프레임 변위가 새로 시작되게
-            tr.last_cy = 0.0f;
             continue;
         }
         if (tr.in_bed) {
-            // 방금 침대에서 나옴 → 관찰모드 진입. 침대에서 내려오는 동작 자체가
-            // 급하강으로 오탐되지 않도록 이력·기준을 리셋하고 이후의 하강만 본다.
             std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
                          channel, d.object_id);
-            tr.in_bed = false;
-            tr.watching = false;
-            tr.fired = false;
-            tr.head_history.clear();
-            tr.last_cx = 0.0f;
-            tr.last_cy = 0.0f;
         }
-
-        // [추가] 최초 진입 시(또는 이탈 리셋 직후) 직전 좌표를 현재로 초기화
-        if (tr.last_cx == 0.0f && tr.last_cy == 0.0f) {
-            tr.last_cx = d.cx;
-            tr.last_cy = d.cy;
-        }
-
-        // 이 사람의 이번 프레임 머리 cy (감지된 프레임만 이력에 쌓는다 —
-        // 머리는 자주 누락되므로 있을 때만 기록).
-        auto head_it = head_cy.find(d.object_id);
-        const bool has_head = (head_it != head_cy.end());
-        if (has_head) {
-            tr.head_history.push_back({now, 0.0f, head_it->second});
-            while (!tr.head_history.empty() &&
-                   std::chrono::duration<double>(now - tr.head_history.front().t)
-                           .count() > kDropWindowSec) {
-                tr.head_history.pop_front();
-            }
-        }
-
-        if (!tr.watching) {
-            // 머리 cy가 최근 창의 최고점(min=화면 최상단) 대비 급강하했는가.
-            bool head_dropped = false;
-            if (has_head && tr.head_history.size() >= 2) {
-                float min_hy = tr.head_history.front().cy;
-                for (const auto& s : tr.head_history) min_hy = std::min(min_hy, s.cy);
-                head_dropped = (head_it->second - min_hy >= kHeadDropThreshold);
-            }
-            if (head_dropped) {
-                tr.watching = true;
-                tr.fired = false;
-                tr.drop_time = now;
-                tr.drop_cx = d.cx;
-                tr.drop_cy = d.cy;
-                std::fprintf(stderr, "[fall] ch%d obj%d 머리 급강하 head_cy=%.2f\n",
-                             channel, d.object_id, head_it->second);
-            } else {
-                tr.last_cx = d.cx; // 다음 프레임을 위해 백업 후 통과
-                tr.last_cy = d.cy;
-                continue;
-            }
-        }
-
-        // ── ⚠️ 수정 및 고도화된 정지/회복 판정 영역 ──────────────────
-        
-        // 1. 프레임 간 변위(속도) 계산 (최초 낙하지점이 아닌 '직전 프레임'과의 거리)
-        float frame_moved = std::hypot(d.cx - tr.last_cx, d.cy - tr.last_cy);
-
-        // 2. 일어났는지(회복 상태) 확인하는 마스터 룰
-        // 종횡비가 서 있는 자세(<0.8)이고 무게중심이 바닥권(0.6) 위로 올라왔을 때
-        bool stood_up = (d.aspectRatio() < 0.8f && d.cy < 0.6f);
-
-        if (frame_moved > kStillMoveThreshold) {
-            if (stood_up) {
-                // 완전히 일어났다면 오탐으로 간주하고 관찰 종료(리셋)
-                tr.watching = false;
-                tr.last_cx = d.cx;
-                tr.last_cy = d.cy;
-                continue;
-            }
-            // 일어난 게 아니라 바닥에서 구르며 버둥거리는 상태라면, 
-            // watching을 취소하지 않고 무시합니다. (tr.drop_time을 리셋하지 않음!)
-        }
-
-        // ─────────────────────────────────────────────────────────────
-
-        // 이 사람의 머리가 바닥 근처인가? (보조 신호 — 즉시 확정용)
-        bool head_near_floor = (has_head && head_it->second >= kHeadFloorCy);
-
-        // 필요한 정지 지속시간: 머리 신호가 있으면 즉시(B) 또는 단축(A)
-        double still_needed = kStillSeconds;
-        if (head_near_floor) {
-            still_needed = kHeadInstantTrigger ? 0.0 : kHeadStillSeconds;
-        }
-
-        double elapsed = std::chrono::duration<double>(now - tr.drop_time).count();
-        if (elapsed >= still_needed && !tr.fired) {
-            tr.fired = true;
-            if (on_fall_) on_fall_(channel, d);
-        }
-
-        // [필수 추가] 다음 프레임 비교를 위해 현재 위치를 직전 위치로 저장
-        tr.last_cx = d.cx;
-        tr.last_cy = d.cy;
+        tr.in_bed = false;
     }
 
     // 오래 안 보인 추적 정리
     for (auto it = tracks.begin(); it != tracks.end();) {
         double idle = std::chrono::duration<double>(now - it->second.last_seen).count();
         it = (idle > kTrackExpireSec) ? tracks.erase(it) : std::next(it);
+    }
+}
+
+std::vector<FallDetector::ObservedTrack> FallDetector::observedTracks(int channel) const {
+    std::vector<ObservedTrack> result;
+    auto ch_it = channels_.find(channel);
+    if (ch_it == channels_.end()) return result;
+    for (const auto& [id, tr] : ch_it->second) {
+        if (tr.in_bed) continue;
+        result.push_back({id, tr.left, tr.top, tr.right, tr.bottom});
+    }
+    return result;
+}
+
+void FallDetector::reportPose(int channel, int object_id, bool lying) {
+    auto ch_it = channels_.find(channel);
+    if (ch_it == channels_.end()) return;
+    auto tr_it = ch_it->second.find(object_id);
+    if (tr_it == ch_it->second.end()) return;
+    Track& tr = tr_it->second;
+    if (tr.in_bed) return;  // 자세 확인 중 그 사이 침대로 복귀했으면 무시
+
+    auto now = std::chrono::steady_clock::now();
+    if (!lying) {
+        tr.lying_active = false;
+        return;
+    }
+    if (!tr.lying_active) {
+        tr.lying_active = true;
+        tr.lying_since = now;
+        return;  // 이번이 첫 관측 — 아직 확정 안 함(연속성 확인 필요)
+    }
+
+    double elapsed = std::chrono::duration<double>(now - tr.lying_since).count();
+    if (elapsed >= kLyingConfirmSec && !tr.fired) {
+        tr.fired = true;
+        if (on_fall_) {
+            Detection at;
+            at.object_id = object_id;
+            at.cx = (tr.left + tr.right) / 2.0f;
+            at.cy = (tr.top + tr.bottom) / 2.0f;
+            at.type = "Human";
+            on_fall_(channel, at);
+        }
     }
 }
