@@ -51,8 +51,15 @@ struct ServerConfig {
     int stream_port = DBJ_VS_PORT_DEFAULT;
 };
 
-const std::string kPoseModelPath = "models/movenet_lightning_int8.tflite";
+// Thunder(256x256)로 교체 — Lightning보다 느리지만(실측 100.8ms vs 36ms) 정확도가
+// 높음. 우리 실부하(채널당 1~2명, 2초 간격)는 초당 2~4회 추론이면 되고 Thunder
+// 예산(초당 9.9회, movenet_bench.py 실측)에 여유가 있어 시도해볼 만하다.
+const std::string kPoseModelPath = "models/movenet_thunder_int8.tflite";
 constexpr double kPoseIntervalSec = 2.0;
+// Thunder는 추론 1회당 4코어를 ~100ms 점유한다(Lightning 36ms의 ~3배) — 기본
+// 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다퉈 fps가 흔들릴
+// 수 있어, 영상 파이프라인에 코어를 남기도록 절반(2)으로 제한한다.
+constexpr int kPoseNumThreads = 2;
 
 cv::Rect normBoxToRect(float left, float top, float right, float bottom,
                        int imgW, int imgH) {
@@ -153,7 +160,7 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
     });
 
-    PoseEstimator pose_estimator(kPoseModelPath);
+    PoseEstimator pose_estimator(kPoseModelPath, kPoseNumThreads);
     if (!pose_estimator.isReady()) {
         std::fprintf(stderr, "경고: MoveNet 로드 실패, 자세 판정 꺼짐\n");
     }
