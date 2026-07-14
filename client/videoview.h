@@ -28,6 +28,9 @@ public:
     void cancelDraft();                       // 그리던 것 버리고 그리기 종료
     void setRoiVisible(bool on);              // 모니터링 오버레이 표시 토글
 
+    void setAlert(bool on);                   // 낙상 경보 강조 (빨간 테두리+배너)
+    bool alert() const { return alert_; }
+
 signals:
     void roiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료
     void drawModeChanged(int channel, bool on);
@@ -52,6 +55,7 @@ private:
     bool hasHover_ = false;
     bool drawMode_ = false;
     bool roiVisible_ = true;
+    bool alert_ = false;       // 낙상 경보 강조 중
 };
 
 #endif  // VIDEOVIEW_H

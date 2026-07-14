@@ -33,6 +33,18 @@ struct dbj_roi_point_t {
     uint16_t x;             // 정규화 x × 10000 (0~10000)
     uint16_t y;             // 정규화 y × 10000 (0~10000)
 };
+
+// 서버→클라 이벤트 메시지 — 낙상 통보 등. magic=0xDB4D. (페이로드 없음)
+struct dbj_evt_header_t {
+    uint16_t magic;         // 2B (0xDB4D)
+    uint8_t version;        // 1B (0x01)
+    uint8_t type;           // 1B (1=낙상)
+    uint8_t channel;        // 1B (0~3)
+    uint8_t reserved;       // 1B (0)
+    uint16_t x;             // 발생 위치 정규화 x × 10000
+    uint16_t y;             // 발생 위치 정규화 y × 10000
+    uint64_t timestamp_ms;  // 8B (Unix epoch 밀리초)
+};
 #pragma pack(pop)
 
 // 제어 메시지 상수 (서버와 합의된 값)
@@ -40,6 +52,10 @@ static constexpr uint16_t kCtrlMagic = 0xDB4C;
 static constexpr uint8_t kCtrlRoiSet = 0x01;
 static constexpr uint8_t kCtrlRoiClear = 0x02;
 static constexpr int kRoiCoordScale = 10000;
+
+// 이벤트 메시지 상수 (서버와 합의된 값)
+static constexpr uint16_t kEvtMagic = 0xDB4D;
+static constexpr uint8_t kEvtFall = 0x01;
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
 class QPushButton;
@@ -139,6 +155,10 @@ private:
 
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
+
+    // 서버 낙상 이벤트 처리 — 채널 강조 + 팝업 (확인 시 강조 해제)
+    void handleFallEvent(int channel, quint64 timestampMs);
+    bool fallActive[4] = {};   // 채널별 팝업 중복 방지
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글

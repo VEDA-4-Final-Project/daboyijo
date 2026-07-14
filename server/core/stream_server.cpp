@@ -236,6 +236,28 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
     std::memcpy(packet->data(), &header, sizeof(header));
     std::memcpy(packet->data() + sizeof(header), jpeg.data(), jpeg.size());
 
+    enqueueAll(std::move(packet));
+}
+
+void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y) {
+    dbj_evt_header_t evt{};
+    evt.magic = DBJ_EVT_MAGIC;
+    evt.version = DBJ_VS_VERSION;
+    evt.type = type;
+    evt.channel = static_cast<uint8_t>(channel);
+    evt.x = static_cast<uint16_t>(x * DBJ_ROI_COORD_SCALE);
+    evt.y = static_cast<uint16_t>(y * DBJ_ROI_COORD_SCALE);
+    evt.timestamp_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    auto packet = std::make_shared<std::vector<unsigned char>>(sizeof(evt));
+    std::memcpy(packet->data(), &evt, sizeof(evt));
+    enqueueAll(std::move(packet));
+}
+
+void StreamServer::enqueueAll(Packet packet) {
     std::lock_guard<std::mutex> lock(clients_mutex_);
     for (auto it = clients_.begin(); it != clients_.end();) {
         Client& client = **it;

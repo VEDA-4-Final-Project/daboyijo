@@ -167,6 +167,8 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
         // 🌟 [추가] 낙상 트리거 발생 시 마스킹 즉시 해제
         privacy_masker.reportFall(ch);
+        // Qt 관제 화면에 통보 → 채널 강조 + 팝업 (protocol/video_stream.h 이벤트)
+        stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy);
     });
 
     PoseEstimator pose_estimator(kPoseModelPath, kPoseNumThreads);

@@ -656,6 +656,26 @@ void MainWindow::onReadyRead()
 
     // 버퍼에 데이터가 남아있는 동안 무한 반복 파싱
     while (true) {
+        // 0) 매직(2바이트)으로 패킷 종류 식별 — 영상(0xDB4B) / 이벤트(0xDB4D)
+        if (buffer.size() < (int)sizeof(uint16_t))
+            return;
+        uint16_t magic;
+        memcpy(&magic, buffer.constData(), sizeof(magic));
+
+        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) ──
+        if (magic == kEvtMagic) {
+            if (buffer.size() < (int)sizeof(dbj_evt_header_t))
+                return;  // 헤더가 덜 옴 — 다음 readyRead 대기
+            dbj_evt_header_t evt;
+            memcpy(&evt, buffer.constData(), sizeof(evt));
+            buffer.remove(0, sizeof(evt));
+
+            if (evt.type == kEvtFall && evt.channel < 4)
+                handleFallEvent(evt.channel, evt.timestamp_ms);
+            continue;
+        }
+
+        // ── 영상 프레임 패킷 ──
         // 1) 헤더 크기(16바이트)만큼도 안 모였으면 데이터 더 올 때까지 대기
         if (buffer.size() < (int)sizeof(dbj_vs_header_t))
             return;
@@ -705,6 +725,44 @@ void MainWindow::onReadyRead()
             }
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  낙상 이벤트 — 채널 강조 + 팝업
+// ═══════════════════════════════════════════════════════════
+void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
+{
+    // 채널 강조 (빨간 테두리 + 배너) — 팝업 확인 전까지 유지
+    if (channelViews[channel])
+        channelViews[channel]->setAlert(true);
+
+    // 같은 채널 팝업이 이미 떠 있으면 중복 생성하지 않음 (강조만 갱신)
+    if (fallActive[channel])
+        return;
+    fallActive[channel] = true;
+
+    const QString when = QDateTime::fromMSecsSinceEpoch(
+                             static_cast<qint64>(timestampMs)).toString("hh:mm:ss");
+    auto* box = new QMessageBox(this);
+    box->setIcon(QMessageBox::Critical);
+    box->setWindowTitle(QStringLiteral("🚨 낙상 감지"));
+    box->setText(QStringLiteral("낙상이 감지되었습니다!\n\n"
+                                "채널 %1 · %2 (%3)\n감지 시각 %4")
+                     .arg(channel + 1)
+                     .arg(patients[channel].name, patients[channel].bed, when));
+    box->setStandardButtons(QMessageBox::Ok);
+    box->button(QMessageBox::Ok)->setText(QStringLiteral("확인"));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+
+    // 확인을 누르면 강조 해제. 비모달(show)이라 다른 채널 감시는 계속된다.
+    connect(box, &QMessageBox::finished, this, [this, channel](int) {
+        fallActive[channel] = false;
+        if (channelViews[channel])
+            channelViews[channel]->setAlert(false);
+    });
+    box->show();
+    box->raise();
+    box->activateWindow();
 }
 
 // ═══════════════════════════════════════════════════════════
