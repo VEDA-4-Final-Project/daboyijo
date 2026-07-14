@@ -89,6 +89,9 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(QColor(139, 148, 158));
         p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 없음"));
     } else {
+        // 이 힌트 없이는 위젯 크기로 확대/축소할 때 최근접 보간이라 계단 현상으로
+        // 뭉개진다 — 서버 송출 해상도를 올려도 화질 개선이 안 보이는 원인.
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
         p.drawPixmap(displayRect(), frame_, frame_.rect());
     }
 
