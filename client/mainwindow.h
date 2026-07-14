@@ -8,6 +8,13 @@
 #include <QPolygonF>
 #include <QTimer>
 #include <QDate>
+#include <QLineEdit>
+#include <QTextEdit>
+#include <QGroupBox>
+#include <QFormLayout>
+#include <QSplitter>
+
+
 
 // 🌟 명세서 3번에 정의된 16바이트 리틀엔디언 구조체 그대로 구현
 // (서버 protocol/video_stream.h와 반드시 동일하게 유지할 것)
@@ -85,10 +92,18 @@ private slots:
     void onSearchClicked();
     void onLogRowActivated(int row, int column);
 
+
+    // TAB3: DB 관리
+    void onResidentSelected(int row, int column);
+    void onNewResident();
+    void onSaveResident();
+    void onDischargeResident();
+
+
+
 private:
     Ui::MainWindow *ui;
     QTcpSocket *socket;
-
     QByteArray buffer;           // 🌟 명세서 가이드: 수신 데이터를 쌓아둘 버퍼
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
@@ -120,6 +135,42 @@ private:
     QSlider* blackboxSeek = nullptr;
     QVBoxLayout* careTimeList = nullptr;
 
+    // ── TAB3: DB 관리 ──────────────────────────────────────
+    // 입소자 목록
+    QTableWidget* residentTable = nullptr;
+
+    // 상세/편집 폼 — 기본정보
+    QLineEdit* editName       = nullptr;
+    QLineEdit* editRoom       = nullptr;
+    QLineEdit* editBed        = nullptr;
+    QLineEdit* editCameraId   = nullptr;
+    QLineEdit* editWearableId = nullptr;
+
+    // 상세/편집 폼 — 케어 정보
+    QComboBox* editCaregiver     = nullptr;  // caregivers 테이블에서 로드
+    QComboBox* editRiskLevel     = nullptr;  // 상/중/하
+    QDateEdit* editAdmittedAt    = nullptr;  // 입원일
+    QDateEdit* editDischargeDue  = nullptr;  // 퇴원 예정일
+    QComboBox* editStatus        = nullptr;  // 재원/퇴원
+
+    // 상세/편집 폼 — 보호자 정보
+    QLineEdit* editGuardianName     = nullptr;
+    QLineEdit* editGuardianPhone    = nullptr;
+    QLineEdit* editGuardianRelation = nullptr;
+
+    // 특이사항
+    QTextEdit* editNotes = nullptr;
+
+    // 요양사 목록
+    QTableWidget* caregiverTable = nullptr;
+
+    // 현재 선택된 resident_id (-1이면 신규 등록 모드)
+    int selectedResidentId = -1;
+
+    // DB 연결 상태 표시
+    QLabel* dbStatusDot = nullptr;
+    QLabel* dbStatusText = nullptr;
+
     // ── UI 빌드 헬퍼 ──────────────────────────────────────
     void buildUi();
     QWidget* buildHeader();
@@ -137,6 +188,16 @@ private:
     QWidget* buildBlackboxPlayer();
     QWidget* buildCareTimeDashboard();
 
+    // TAB3 빌드 헬퍼
+    QWidget* buildDbTab();
+    QWidget* buildResidentSection();
+    QWidget* buildResidentForm();
+    QWidget* buildCaregiverSection();
+
+    // TAB3 데이터 갱신
+    void refreshResidentTable();
+    void refreshCaregiverTable();
+
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
 
@@ -145,4 +206,5 @@ private:
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
 };
+
 #endif // MAINWINDOW_H
