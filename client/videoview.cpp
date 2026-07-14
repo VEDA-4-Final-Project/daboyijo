@@ -57,12 +57,6 @@ void VideoView::setRoiVisible(bool on) {
     update();
 }
 
-void VideoView::setAlert(bool on) {
-    if (alert_ == on) return;
-    alert_ = on;
-    update();
-}
-
 // ── 좌표 변환 ────────────────────────────────────────────────
 QRectF VideoView::displayRect() const {
     if (frame_.isNull()) return QRectF(rect());
@@ -95,9 +89,6 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(QColor(139, 148, 158));
         p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 없음"));
     } else {
-        // 이 힌트 없이는 위젯 크기로 확대/축소할 때 최근접 보간이라 계단 현상으로
-        // 뭉개진다 — 서버 송출 해상도를 올려도 화질 개선이 안 보이는 원인.
-        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
         p.drawPixmap(displayRect(), frame_, frame_.rect());
     }
 
@@ -136,24 +127,6 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(kDraftLine);
         p.drawText(QRectF(0, 6, width(), 20), Qt::AlignHCenter,
                    QStringLiteral("침대 영역 클릭 · 더블클릭(또는 우클릭)으로 완료"));
-    }
-
-    // 낙상 경보 강조 — 항상 최상단에 그린다
-    if (alert_) {
-        const QColor kAlertRed(248, 81, 73);
-        p.setPen(QPen(kAlertRed, 6));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(rect().adjusted(3, 3, -3, -3));
-
-        QRectF banner(0, 0, width(), 30);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(kAlertRed.red(), kAlertRed.green(), kAlertRed.blue(), 210));
-        p.drawRect(banner);
-        p.setPen(Qt::white);
-        QFont f = p.font();
-        f.setBold(true);
-        p.setFont(f);
-        p.drawText(banner, Qt::AlignCenter, QStringLiteral("🚨 낙상 감지"));
     }
 }
 
