@@ -18,6 +18,13 @@ extern "C" {
 
 namespace {
 constexpr int kReconnectDelaySec = 3;
+// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널당 ~10fps만 소비하므로
+// (main.cpp의 kMainProcessInterval) 그 이상은 변환해 봐야 버려진다.
+// 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임 필수지만, sws_scale
+// YUV→BGR 변환(720p 기준 프레임당 수 ms)과 Mat 할당은 여기서 걸러
+// 스킵한다 — 30fps 입력이면 변환 부하가 1/3 이하로 준다.
+// main 쪽 10fps 스로틀이 최종 관문이므로 여기는 살짝 여유(12fps)를 둔다.
+constexpr double kMaxConvertFps = 12.0;
 // 메타데이터 재조립 버퍼 상한 — 정상 문서는 수 KB, 이걸 넘으면 스트림 이상
 constexpr size_t kMetaBufMax = 256 * 1024;
 
@@ -138,6 +145,9 @@ bool RtspAvClient::openAndStream() {
     AVPacket* pkt = av_packet_alloc();
     SwsContext* sws = nullptr;  // YUV→BGR 변환기 (첫 프레임에서 지연 생성)
     int sws_w = 0, sws_h = 0;
+    auto last_convert = std::chrono::steady_clock::time_point{};
+    const auto convert_interval =
+        std::chrono::duration<double>(1.0 / kMaxConvertFps);
 
     connected_.store(true);
     meta_buf_.clear();  // 재연결 시 이전 연결의 조각 폐기
@@ -156,6 +166,13 @@ bool RtspAvClient::openAndStream() {
             // ── 영상 패킷: 디코딩 → cv::Mat → 큐 ──
             if (avcodec_send_packet(dctx, pkt) == 0) {
                 while (avcodec_receive_frame(dctx, frame) == 0) {
+                    frame_count_.fetch_add(1);
+
+                    // 소비 안 될 프레임은 BGR 변환 없이 버린다 (위 kMaxConvertFps 주석 참조)
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - last_convert < convert_interval) continue;
+                    last_convert = now;
+
                     if (!sws || sws_w != frame->width || sws_h != frame->height) {
                         if (sws) sws_freeContext(sws);
                         sws = sws_getContext(frame->width, frame->height,
@@ -172,7 +189,6 @@ bool RtspAvClient::openAndStream() {
                     sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
                               dst, dst_stride);
 
-                    frame_count_.fetch_add(1);
                     queue_.push(Frame{channel_, std::move(img),
                                       std::chrono::steady_clock::now()});
                 }
