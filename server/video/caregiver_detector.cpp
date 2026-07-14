@@ -52,19 +52,19 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
         cv::minMaxLoc(ch[1], &sMin, &sMax);
         cv::minMaxLoc(ch[2], &vMin, &vMax);
 
-        std::fprintf(stderr,
-            "[caregiver] HSV 평균 H=%.1f S=%.1f V=%.1f | 편차 H=%.1f S=%.1f V=%.1f\n",
-            meanHsv[0], meanHsv[1], meanHsv[2],
-            stdHsv[0], stdHsv[1], stdHsv[2]);
-        std::fprintf(stderr,
-            "[caregiver] HSV 범위  H=%.0f~%.0f S=%.0f~%.0f V=%.0f~%.0f\n",
-            hMin, hMax, sMin, sMax, vMin, vMax);
-        std::fprintf(stderr,
-            "[caregiver] 현재 설정 lower=(%.0f,%.0f,%.0f) upper=(%.0f,%.0f,%.0f)\n",
-            lower_[0], lower_[1], lower_[2], upper_[0], upper_[1], upper_[2]);
+        // std::fprintf(stderr,
+        //     "[caregiver] HSV 평균 H=%.1f S=%.1f V=%.1f | 편차 H=%.1f S=%.1f V=%.1f\n",
+        //     meanHsv[0], meanHsv[1], meanHsv[2],
+        //     stdHsv[0], stdHsv[1], stdHsv[2]);
+        // std::fprintf(stderr,
+        //     "[caregiver] HSV 범위  H=%.0f~%.0f S=%.0f~%.0f V=%.0f~%.0f\n",
+        //     hMin, hMax, sMin, sMax, vMin, vMax);
+        // std::fprintf(stderr,
+        //     "[caregiver] 현재 설정 lower=(%.0f,%.0f,%.0f) upper=(%.0f,%.0f,%.0f)\n",
+        //     lower_[0], lower_[1], lower_[2], upper_[0], upper_[1], upper_[2]);
     }
 
-    std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
+    //std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
 
     return ratio >= threshold_;
 }
