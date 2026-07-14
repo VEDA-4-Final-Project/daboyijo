@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <deque>
 #include <functional>
 #include <map>
 #include <utility>
@@ -9,63 +8,61 @@
 
 #include "detection.hpp"
 
-// WiseAI 감지 스트림만으로 낙상 후보를 판정하는 1차 룰엔진.
+// 침대 ROI 게이팅 + MoveNet 자세 추정 기반 낙상 판정기.
 //
-// 사람(Human) 객체를 ObjectId별로 따로 추적한다 — 화면에 여러 명이 있어도
-// 각자 자기 이동 이력으로만 판정한다. (채널당 대표 1명만 보면 사람 간에
-// 대표가 바뀔 때 가짜 '급하강'이 생겨 오탐이 남 — 실측으로 확인된 결함)
+// 판정 흐름:
+//   ⓪ 침대 ROI 안이면 전부 무시(취침·뒤척임). ROI 밖이면 "관찰 대상".
+//   ① main.cpp가 매 비디오 프레임마다 observedTracks()로 관찰 대상(침대 밖
+//      사람)의 bbox 목록을 받아, WiseAI bbox로 크롭한 이미지를
+//      PoseEstimator(MoveNet)에 돌려 "누운 자세"인지 얻고 reportPose()로
+//      알려준다 (사람 1명당 약 2fps로 제한 권장 — server/tools/movenet_bench.py
+//      실측 기준 RPi4에서 초당 28회 예산).
+//   ② 누운 자세가 kLyingConfirmSec 동안 연속으로 유지되면 낙상 확정.
+//      (한두 프레임의 오분류로 바로 알람이 뜨지 않도록 지속시간으로 필터링)
 //
-// 판정 신호 (docs/wiseai-메타데이터-명세.md 참조):
-//   ⓪ (게이트) 침대 ROI 밖일 때만 판정한다 — 침대 안 취침·뒤척임은 전부 무시.
-//      침대에서 나오는 순간(이탈) 관찰모드에 진입하고 기준점을 리셋한다
-//      (침대에서 내려오는 동작 자체가 급하강으로 오탐되는 것을 막기 위함).
-//   ① 몸통 무게중심(cy)이 짧은 시간(kDropWindowSec) 안에 kDropCyThreshold 이상 하강
-//   ② 그 직후 kStillSeconds 동안 그 자리에서 거의 움직이지 않음
-//   ③ (보조) 그 사람의 머리(Head, Parent로 연결)가 화면 바닥 근처(cy 큼)
-// 기본: ⓪ 관찰모드 안에서 ① + ③ 이면 즉시 통보(B모드), ③이 없으면 ① + ② 로 통보.
-// ①만으로는 "빨리 앉기/눕기"와 구분이 안 되므로 항상 ② 또는 ③을 함께 본다.
-//
-// 신호 모드는 fall_detector.cpp 상단 kHeadInstantTrigger로 토글:
-//   true(B, 기본) — 머리 바닥 근처면 정지 안 기다리고 즉시 알람 (빠름)
-//   false(A)      — 머리 바닥 근처면 정지 대기시간만 단축 (보수적)
-//
-// 참고: WiseAI는 추적이 몇 초 끊기면 같은 사람에게 새 ObjectId를 준다.
-// 새 ID는 빈 이력에서 시작하므로 사람 간 좌표 차이로 인한 오탐은 없다.
-// 또한 이 카메라의 Head 감지는 불안정(자주 누락)하므로, 머리는 어디까지나
-// 보조 신호다 — 머리가 없어도 몸통 신호(①+②)만으로 판정된다.
+// 이전 버전은 무게중심/머리 cy의 "급강하 속도"를 트리거로 썼으나, 노인 낙상은
+// 천천히 주저앉는 경우가 많아 속도 기반 트리거가 잘 안 걸리는 문제가 있었다.
+// MoveNet 몸통 각도(어깨↔엉덩이 벡터의 기울기)는 속도·방향과 무관하게
+// "지금 누워있는가" 자체를 직접 보므로 이 사각지대를 없앤다.
 //
 // 침대 ROI는 Qt 관제 화면에서 그려 서버로 전송되며(protocol/video_stream.h),
 // update()에 채널별 정규화 다각형(0~1)으로 넘어온다. ROI가 없으면(폴백)
-// 게이트 없이 화면 전체에서 판정한다. 임계값은 전부 잠정값(캡처로 튜닝).
+// 게이트 없이 화면 전체를 관찰 대상으로 본다.
 class FallDetector {
 public:
     using FallCallback = std::function<void(int channel, const Detection& at)>;
 
-    // 낙상으로 확정되는 순간 1회 호출된다 (같은 객체당 1회).
+    // 낙상으로 확정되는 순간 1회 호출된다 (같은 객체당, 침대 재실 전까지 재통보 안 함).
     void setFallCallback(FallCallback cb) { on_fall_ = std::move(cb); }
 
     // 채널의 최신 감지 결과를 매 메타데이터 콜백(주기 ~5Hz)마다 전달.
     // bed_roi: 이 채널의 침대 ROI(정규화 0~1 다각형, 3점 이상). 비어 있으면
-    // 침대 게이트 없이 화면 전체에서 판정한다(ROI 미설정 폴백).
+    // 침대 게이트 없이 화면 전체를 관찰 대상으로 본다(ROI 미설정 폴백).
+    // 여기서는 ROI 게이팅과 bbox 캐시 갱신만 한다 — 낙상 확정은 reportPose()가 담당.
     void update(int channel, const std::vector<Detection>& detections,
                 const std::vector<std::pair<float, float>>& bed_roi);
 
-private:
-    struct Sample {
-        std::chrono::steady_clock::time_point t;
-        float cx = 0;
-        float cy = 0;
+    // 현재 "관찰 대상"(침대 밖)인 사람들의 최신 bbox. main.cpp가 비디오
+    // 프레임마다 이 목록으로 크롭 → MoveNet 추론 → reportPose() 순으로 호출한다.
+    struct ObservedTrack {
+        int object_id;
+        float left, top, right, bottom;  // 정규화 0~1 (WiseAI bbox 그대로)
     };
+    std::vector<ObservedTrack> observedTracks(int channel) const;
 
+    // MoveNet 자세 판정 결과 보고. lying=true가 kLyingConfirmSec 동안
+    // 연속으로 들어오면 낙상 확정 콜백을 1회 호출한다. lying=false면 리셋.
+    // (channel, object_id)가 그 사이 만료되었거나 침대로 복귀했으면 무시.
+    void reportPose(int channel, int object_id, bool lying);
+
+private:
     // 사람(ObjectId) 1명의 추적 상태
     struct Track {
-        std::deque<Sample> history;  // 최근 kDropWindowSec 구간 표본
-        bool in_bed = false;         // 직전 프레임에 침대 ROI 안이었는지 (이탈 감지용)
-        bool watching = false;       // 급하강 감지 후 정지 관찰 중
-        bool fired = false;          // 이미 통보함 (중복 방지)
-        std::chrono::steady_clock::time_point drop_time;
-        float drop_cx = 0, drop_cy = 0;  // 급하강 시점 위치 — 정지 판정 기준점
-        float last_cx = 0.0f, last_cy = 0.0f; // 바로 직전 프레임의 위치 — 실시간 순간 변위(속도) 판정용
+        bool in_bed = false;  // 직전 프레임에 침대 ROI 안이었는지 (이탈/재실 로그용)
+        float left = 0, top = 0, right = 0, bottom = 0;  // 최신 bbox (크롭용)
+        bool lying_active = false;  // 직전 자세 보고가 "누움"이었는지
+        std::chrono::steady_clock::time_point lying_since;  // 누움이 시작된 시각
+        bool fired = false;  // 이미 통보함 (재실 전까지 중복 방지)
         std::chrono::steady_clock::time_point last_seen;
     };
 

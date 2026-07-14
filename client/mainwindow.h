@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QPolygonF>
 #include <QTimer>
+#include <QDate>
 
 // 🌟 명세서 3번에 정의된 16바이트 리틀엔디언 구조체 그대로 구현
 // (서버 protocol/video_stream.h와 반드시 동일하게 유지할 것)
@@ -42,6 +43,12 @@ static constexpr int kRoiCoordScale = 10000;
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
 class QPushButton;
+class QTabWidget;
+class QTableWidget;
+class QComboBox;
+class QDateEdit;
+class QSlider;
+class QVBoxLayout;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -69,6 +76,14 @@ private slots:
     void onRoiButtonClicked();   // "ROI 지정" — 채널 선택 후 그리기 시작
     void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
     void onRoiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료 → 전송
+    void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
+    void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
+    void onAlarmClearClicked();  // 경보 해제
+
+
+    // TAB2: 비상 로그 조회 및 블랙박스
+    void onSearchClicked();
+    void onLogRowActivated(int row, int column);
 
 private:
     Ui::MainWindow *ui;
@@ -92,6 +107,19 @@ private:
     QTimer clockTimer;
     QTimer vitalsTimer;
 
+    // ── TAB 구조 ──────────────────────────────────────────
+    QTabWidget* tabWidget = nullptr;
+
+    // TAB2: 비상 로그 조회 및 블랙박스
+    QDateEdit* filterDateFrom = nullptr;
+    QDateEdit* filterDateTo = nullptr;
+    QComboBox* filterRoom = nullptr;
+    QComboBox* filterEventType = nullptr;
+    QTableWidget* logTable = nullptr;
+    QLabel* blackboxPlaceholder = nullptr;
+    QSlider* blackboxSeek = nullptr;
+    QVBoxLayout* careTimeList = nullptr;
+
     // ── UI 빌드 헬퍼 ──────────────────────────────────────
     void buildUi();
     QWidget* buildHeader();
@@ -102,10 +130,19 @@ private:
     void applyTheme();
     void setConnectionState(bool connected, const QString& text);
 
+    // TAB2 빌드 헬퍼
+    QWidget* buildLogArchiveTab();
+    QWidget* buildSearchFilters();
+    QWidget* buildLogTable();
+    QWidget* buildBlackboxPlayer();
+    QWidget* buildCareTimeDashboard();
+
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
+    QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
+    QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
 };
 #endif // MAINWINDOW_H
