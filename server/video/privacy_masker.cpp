@@ -26,7 +26,7 @@ void PrivacyMasker::process(int channel, cv::Mat& image, const std::vector<Detec
 
     // 2. 평상시: WiseAI 메타데이터 기반 얼굴 영역 블러 처리
     for (const auto& d : detections) {
-        if (d.type == "Head" || d.type == "Face") {
+        if (d.type == "Head" || d.type == "Face" || d.type == "Human") {
             // 정규화 좌표(0.0~1.0)를 입력 이미지의 실제 픽셀 좌표로 변환
             int x0 = std::max(0, static_cast<int>(d.left * image.cols));
             int y0 = std::max(0, static_cast<int>(d.top * image.rows));
