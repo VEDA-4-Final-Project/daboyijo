@@ -21,6 +21,24 @@ constexpr float kLyingAngleDeg = 55.0f;
 constexpr float kMinJointScore = 0.25f;
 constexpr float kPi = 3.14159265358979323846f;
 
+// ── 정면(카메라 축 방향) 낙상 보강 신호 임계값 ──────────────────────
+// 카메라 쪽으로 눕는 낙상은 몸통이 원근 단축돼 화면에서 기울지 않는다 —
+// 각도 신호만으로는 못 잡는 사각지대(실측 확인). 아래 값은 실측 전 잠정값으로,
+// 표준 인체 비례(어깨너비 ≈ 신장의 1/4, 어깨~발목 ≈ 신장의 3/4)에서 유도했다.
+// 판정 로그에 측정값이 전부 남으므로 현장 캡처 후 그 수치로 튜닝할 것.
+//
+// 어깨가 엉덩이보다 화면에서 이만큼(정규화) 아래면 "상하 반전"으로 본다.
+// 서 있으면 어깨는 항상 엉덩이 위 — 반전은 머리부터 고꾸라진 자세의 강한 신호.
+constexpr float kInvertMarginNorm = 0.02f;
+// 어깨 너비가 이보다 좁으면(측면 자세 등) 비율 판정 불가 — 그 신호만 보류.
+constexpr float kMinShoulderWidthNorm = 0.03f;
+// 세로 스프레드(어깨~가장 아래 관절) ÷ 어깨 너비가 기준 미만이면 "원근 단축".
+// 서 있으면 발목까지 ~3.5, 무릎까지 ~2.5, 엉덩이까지 ~1.7 수준 — 카메라 쪽으로
+// 누우면 세로 스프레드만 뭉개져 비율이 크게 떨어진다.
+constexpr float kSpreadRatioToAnkle = 2.0f;
+constexpr float kSpreadRatioToKnee = 1.6f;
+constexpr float kSpreadRatioTorsoOnly = 1.0f;
+
 }  // namespace
 
 struct PoseEstimator::Impl {
@@ -174,13 +192,62 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     const float dy = hip_y - shoulder_y;
     if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) return false;
 
+    // ── 신호 1: 몸통 기울기 ──
     // 수직(dy) 기준 기울기 각도. 0도=수직(서 있음), 90도=수평(누움). 방향 무관.
+    // 옆으로 눕는 낙상을 잡는다. 단, fabs(dy)라 상하 반전은 여기 안 보인다 —
+    // 그건 신호 2가 담당.
     const float angle_from_vertical =
         std::atan2(std::fabs(dx), std::fabs(dy)) * 180.0f / kPi;
+    const bool by_angle = angle_from_vertical >= kLyingAngleDeg;
 
-    const bool lying = angle_from_vertical >= kLyingAngleDeg;
-    std::fprintf(stderr, "[pose] 기울기=%.1f도 (기준 %.1f) → %s\n",
-                 angle_from_vertical, kLyingAngleDeg, lying ? "누움" : "서있음");
+    // ── 신호 2: 상하 반전 ──
+    // y는 화면 아래로 증가. 서 있으면 항상 dy > 0 (엉덩이가 어깨 아래).
+    // 카메라 쪽으로 머리부터 넘어지면 어깨가 엉덩이 밑으로 내려가 dy < 0.
+    const bool inverted = dy < -kInvertMarginNorm;
+
+    // ── 신호 3: 원근 단축 (카메라 축 방향 낙상) ──
+    // 몸이 카메라를 향해 누우면 세로 방향 길이는 투영에서 뭉개지지만,
+    // 어깨 너비는 넘어진 축과 수직이라 거의 그대로다. 세로 스프레드(어깨~
+    // 가장 아래 신뢰 관절)를 어깨 너비로 나눈 비율이 서 있을 때보다 뚝
+    // 떨어지면 누운 것으로 본다. 발목→무릎→엉덩이 순으로 신뢰되는 관절까지
+    // 재고, 어디까지 쟀는지에 따라 기준을 달리 적용한다.
+    const float shoulder_w = std::hypot(ls.x - rs.x, ls.y - rs.y);
+    float min_y = std::min(shoulder_y, hip_y);
+    float max_y = std::max(shoulder_y, hip_y);
+    float ratio_limit = kSpreadRatioTorsoOnly;
+    const char* extent = "엉덩이";
+    const auto& lk = kp[kLeftKnee];
+    const auto& rk = kp[kRightKnee];
+    if (lk.score >= kMinJointScore && rk.score >= kMinJointScore) {
+        const float knee_y = (lk.y + rk.y) / 2.0f;
+        min_y = std::min(min_y, knee_y);
+        max_y = std::max(max_y, knee_y);
+        ratio_limit = kSpreadRatioToKnee;
+        extent = "무릎";
+    }
+    const auto& la = kp[kLeftAnkle];
+    const auto& ra = kp[kRightAnkle];
+    if (la.score >= kMinJointScore && ra.score >= kMinJointScore) {
+        const float ankle_y = (la.y + ra.y) / 2.0f;
+        min_y = std::min(min_y, ankle_y);
+        max_y = std::max(max_y, ankle_y);
+        ratio_limit = kSpreadRatioToAnkle;
+        extent = "발목";
+    }
+    float spread_ratio = -1.0f;  // -1 = 어깨 너비가 좁아 측정 불가(측면 자세 등)
+    bool foreshortened = false;
+    if (shoulder_w >= kMinShoulderWidthNorm) {
+        spread_ratio = (max_y - min_y) / shoulder_w;
+        foreshortened = spread_ratio < ratio_limit;
+    }
+
+    const bool lying = by_angle || inverted || foreshortened;
+    std::fprintf(stderr,
+                 "[pose] 기울기=%.1f도(기준%.0f%s) 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) → %s\n",
+                 angle_from_vertical, kLyingAngleDeg, by_angle ? "✓" : "",
+                 inverted ? "✓" : "-",
+                 spread_ratio, extent, ratio_limit, foreshortened ? "✓" : "",
+                 lying ? "누움" : "서있음");
     return lying;
 }
 
