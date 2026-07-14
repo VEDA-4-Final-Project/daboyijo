@@ -310,9 +310,10 @@ int main(int argc, char* argv[]) {
 
             auto t0 = std::chrono::steady_clock::now();
 
-            // 1. 빠른 리사이즈
+            // 1. 빠른 리사이즈 및 AI 전송용 깨끗한 복사본 생성
             cv::Mat small;
             cv::resize(frame->image, small, kViewSize);
+            cv::Mat small_copy = small.clone();
 
             // 2. 최신 메타데이터 복사
             std::vector<Detection> dets_copy;
@@ -321,19 +322,19 @@ int main(int argc, char* argv[]) {
                 dets_copy = latest_detections[frame->channel];
             }
 
-            // 3. AI 워커 스레드에게 최신 일감 1장 던져주기 (덮어쓰기 방식으로 밀림 방지)
+            // 3. 다이나믹 프라이버시 마스크 적용 (GUI 송출용 small 이미지에만 덧씌움)
+            privacy_masker.process(frame->channel, small, dets_copy);
+
+            // 4. AI 워커 스레드에게 최신 일감 1장 던져주기 (덮어쓰기 방식으로 밀림 방지)
             {
                 std::lock_guard<std::mutex> lock(ai_mutex);
                 pending_ai_jobs[frame->channel] = {
-                    frame->image.clone(),  // AI MoveNet을 위한 원본 백업
-                    small.clone(),         // AI 보호사 인식을 위한 소형본 백업
+                    std::move(frame->image),  
+                    std::move(small_copy),
                     frame->channel,
-                    std::move(dets_copy)
+                    std::move(dets_copy)   
                 };
             }
-
-            // 4. 다이나믹 프라이버시 마스크 적용 (GUI 송출용 small 이미지에만 덧씌움)
-            privacy_masker.process(frame->channel, small, dets_copy);
 
             // 5. 마스킹이 완료된 이미지를 인코딩해서 Qt로 송출
             std::vector<unsigned char> jpeg;
