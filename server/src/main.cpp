@@ -15,7 +15,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <thread> // 🌟 [추가] 스레드 사용을 위한 헤더
+#include <thread>
 #include <chrono>
 
 #include <opencv2/imgcodecs.hpp>
@@ -32,6 +32,7 @@
 #include "rtsp_av_client.hpp"
 #include "stream_server.hpp"
 #include "system_stats.hpp"
+#include "privacy_masker.hpp"
 
 namespace {
 
@@ -150,18 +151,22 @@ int main(int argc, char* argv[]) {
 
     CaregiverDetector caregiver_detector;
 
+    PrivacyMasker privacy_masker(10.0, 31);
+
     std::mutex det_mutex;
     std::map<int, std::vector<Detection>> latest_detections;
     std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
 
     // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
     // TODO(core): 웨어러블 바이탈과 교차 검증해 최종 판정으로 승격
-    
     std::map<int, CareTimer> care_timers;
 
     FallDetector fall_detector;
-    fall_detector.setFallCallback([](int ch, const Detection& at) {
+    // 🌟 [수정] 람다 캡처에 [&]를 사용하여 privacy_masker 참조 전달
+    fall_detector.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
+        // 🌟 [추가] 낙상 트리거 발생 시 마스킹 즉시 해제
+        privacy_masker.reportFall(ch);
     });
 
     PoseEstimator pose_estimator(kPoseModelPath, kPoseNumThreads);
@@ -195,7 +200,7 @@ int main(int argc, char* argv[]) {
         });
     }
 
-    const cv::Size kViewSize(640, 360);
+    const cv::Size kViewSize(960, 540);
     const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 
     struct ChannelStats { uint64_t processed = 0; uint64_t bytes = 0; };
@@ -305,19 +310,9 @@ int main(int argc, char* argv[]) {
 
             auto t0 = std::chrono::steady_clock::now();
 
-            // 1. 빠른 리사이즈 및 인코딩
+            // 1. 빠른 리사이즈
             cv::Mat small;
             cv::resize(frame->image, small, kViewSize);
-            std::vector<unsigned char> jpeg;
-            cv::imencode(".jpg", small, jpeg, kJpegParams);
-
-            auto& ch = stats[frame->channel];
-            ch.processed += 1;
-            ch.bytes += jpeg.size();
-            stream_server.broadcast(frame->channel, std::move(jpeg));
-
-            encode_ms_total += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-            encode_count += 1;
 
             // 2. 최신 메타데이터 복사
             std::vector<Detection> dets_copy;
@@ -336,6 +331,21 @@ int main(int argc, char* argv[]) {
                     std::move(dets_copy)
                 };
             }
+
+            // 4. 다이나믹 프라이버시 마스크 적용 (GUI 송출용 small 이미지에만 덧씌움)
+            privacy_masker.process(frame->channel, small, dets_copy);
+
+            // 5. 마스킹이 완료된 이미지를 인코딩해서 Qt로 송출
+            std::vector<unsigned char> jpeg;
+            cv::imencode(".jpg", small, jpeg, kJpegParams);
+
+            auto& ch = stats[frame->channel];
+            ch.processed += 1;
+            ch.bytes += jpeg.size();
+            stream_server.broadcast(frame->channel, std::move(jpeg));
+
+            encode_ms_total += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            encode_count += 1;
         }
 
         // --- 5초마다 상태 출력 로그 ---
