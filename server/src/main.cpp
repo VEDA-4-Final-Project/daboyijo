@@ -153,7 +153,15 @@ int main(int argc, char* argv[]) {
 
     std::mutex det_mutex;
     std::map<int, std::vector<Detection>> latest_detections;
-    std::map<int, uint64_t> det_updates;
+    std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
+
+    // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
+    // TODO(core): 웨어러블 바이탈과 교차 검증해 최종 판정으로 승격
+
+
+    CaregiverDetector caregiver_detector;
+    
+    std::map<int, CareTimer> care_timers;
 
     FallDetector fall_detector;
     fall_detector.setFallCallback([](int ch, const Detection& at) {
