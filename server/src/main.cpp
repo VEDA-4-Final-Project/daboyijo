@@ -149,7 +149,6 @@ int main(int argc, char* argv[]) {
     db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
 
     CaregiverDetector caregiver_detector;
-    std::map<int, CareTimer> care_timers;
 
     std::mutex det_mutex;
     std::map<int, std::vector<Detection>> latest_detections;
@@ -157,9 +156,6 @@ int main(int argc, char* argv[]) {
 
     // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
     // TODO(core): 웨어러블 바이탈과 교차 검증해 최종 판정으로 승격
-
-
-    CaregiverDetector caregiver_detector;
     
     std::map<int, CareTimer> care_timers;
 
