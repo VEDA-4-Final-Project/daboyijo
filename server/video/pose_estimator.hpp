@@ -47,9 +47,15 @@ public:
     bool estimate(const cv::Mat& personCropBgr,
                   std::array<Keypoint, kNumKeypoints>& out) const;
 
-    // estimate() 결과로 "누운 자세"인지 판정한다. 어깨중점→엉덩이중점 벡터가
-    // 수직에서 kLyingAngleDeg 이상 기울면 누움으로 본다(카메라를 향한 방향과
-    // 무관 — 가로로 눕든 정면으로 눕든 몸통 축 자체가 기운다).
+    // estimate() 결과로 "누운 자세"인지 판정한다. 세 신호의 OR — 하나라도
+    // 걸리면 누움 (임계값은 pose_estimator.cpp 상단, 실측 전 잠정값):
+    //   ① 몸통 기울기: 어깨중점→엉덩이중점 벡터가 수직에서 kLyingAngleDeg
+    //      이상 기울면 누움. 옆으로 눕는 낙상 담당.
+    //   ② 상하 반전: 어깨가 엉덩이보다 화면 아래면 누움. 머리부터 고꾸라진
+    //      자세 담당 (①은 절댓값 각도라 반전을 못 본다).
+    //   ③ 원근 단축: 세로 스프레드(어깨~발목/무릎) ÷ 어깨 너비가 기준 미만이면
+    //      누움. 카메라 축 방향으로 눕는 낙상 담당 — 몸통은 투영에서 짧아지지만
+    //      어깨 너비는 그대로라는 성질을 이용 (①의 사각지대, 실측으로 확인됨).
     // 어깨·엉덩이 중 신뢰도 낮은 관절이 있으면(가림 등) 판정 보류(false).
     bool isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) const;
 
