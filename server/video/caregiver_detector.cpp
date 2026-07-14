@@ -64,7 +64,7 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
         //     lower_[0], lower_[1], lower_[2], upper_[0], upper_[1], upper_[2]);
     }
 
-    std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
+    //std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
 
     return ratio >= threshold_;
 }
