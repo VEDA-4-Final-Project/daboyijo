@@ -39,6 +39,8 @@ public:
     // 채널의 최신 감지 결과를 매 메타데이터 콜백(주기 ~5Hz)마다 전달.
     // bed_roi: 이 채널의 침대 ROI(정규화 0~1 다각형, 3점 이상). 비어 있으면
     // 침대 게이트 없이 화면 전체를 관찰 대상으로 본다(ROI 미설정 폴백).
+    // 재실 판정 기준점은 bbox 하단 중앙("발끝") — Qt에서 ROI를 그릴 때는
+    // 침대가 바닥에 차지하는 발자국+매트리스 면을 감싸게 그려야 한다.
     // 여기서는 ROI 게이팅과 bbox 캐시 갱신만 한다 — 낙상 확정은 reportPose()가 담당.
     void update(int channel, const std::vector<Detection>& detections,
                 const std::vector<std::pair<float, float>>& bed_roi);

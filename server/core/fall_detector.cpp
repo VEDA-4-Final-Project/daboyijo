@@ -46,22 +46,31 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         tr.bottom = d.bottom;
 
         // 침대 ROI 게이팅: 침대 안이면 관찰 대상에서 빠지고 상태 리셋.
-        const bool in_bed = has_bed && pointInPolygon(d.cx, d.cy, bed_roi);
+        // 판정 기준점은 무게중심(cx,cy)이 아니라 bbox 하단 중앙("발끝").
+        // 무게중심은 몸통 높이에 떠 있어 침대 "앞"에 선 사람도 2D 화면상
+        // ROI와 겹쳐 재실로 오판된다. 발끝은 바닥 평면에 붙은 점이라 화면
+        // y좌표가 실제 3D 위치를 반영 — 침대 앞이면 ROI 아래(밖), 침대에
+        // 누우면 ROI 안으로 갈린다. (ROI는 침대 발자국 기준으로 그릴 것)
+        const float foot_x = (d.left + d.right) / 2.0f;
+        const float foot_y = d.bottom;
+        const bool in_bed = has_bed && pointInPolygon(foot_x, foot_y, bed_roi);
         if (in_bed) {
-            if (!tr.in_bed) {
-                std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
-                             channel, d.object_id);
-            }
+            // 로그 정리로 비활성화 — 디버깅 시 해제
+             if (!tr.in_bed) {
+                 std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
+                              channel, d.object_id);
+             }
             tr.in_bed = true;
             tr.lying_active = false;
             tr.standing_active = false;
             tr.fired = false;
             continue;
         }
-        if (tr.in_bed) {
-            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
-                         channel, d.object_id);
-        }
+        // 로그 정리로 비활성화 — 디버깅 시 해제
+         if (tr.in_bed) {
+             std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
+                          channel, d.object_id);
+         }
         tr.in_bed = false;
     }
 
@@ -104,9 +113,10 @@ void FallDetector::reportPose(int channel, int object_id, bool lying) {
                        kStandingRearmSec) {
                 tr.fired = false;
                 tr.standing_active = false;
-                std::fprintf(stderr,
-                             "[fall] ch%d obj%d 기립 %.0f초 유지 — 낙상 감시 재무장\n",
-                             channel, object_id, kStandingRearmSec);
+                // 로그 정리로 비활성화 — 디버깅 시 해제
+                 std::fprintf(stderr,
+                              "[fall] ch%d obj%d 기립 %.0f초 유지 — 낙상 감시 재무장\n",
+                              channel, object_id, kStandingRearmSec);
             }
         }
         return;
