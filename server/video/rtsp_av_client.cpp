@@ -134,6 +134,10 @@ bool RtspAvClient::openAndStream() {
 
     // 영상 디코더 준비
     AVCodecParameters* vpar = fmt->streams[video_idx]->codecpar;
+    if (on_stream_ready_) {
+        AVRational tb = fmt->streams[video_idx]->time_base;
+        on_stream_ready_(vpar, tb.num, tb.den);
+    }
     const AVCodec* dec = avcodec_find_decoder(vpar->codec_id);
     AVCodecContext* dctx = avcodec_alloc_context3(dec);
     avcodec_parameters_to_context(dctx, vpar);
@@ -168,6 +172,9 @@ bool RtspAvClient::openAndStream() {
         }
 
         if (pkt->stream_index == video_idx) {
+            // 압축 상태 그대로 블랙박스 소비자에게 전달 (디코딩 스로틀과 무관하게 전 패킷)
+            if (on_packet_) on_packet_(pkt);
+
             // ── 영상 패킷: 디코딩 → cv::Mat → 큐 ──
             if (avcodec_send_packet(dctx, pkt) == 0) {
                 while (avcodec_receive_frame(dctx, frame) == 0) {

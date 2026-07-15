@@ -72,6 +72,8 @@ class QComboBox;
 class QDateEdit;
 class QSlider;
 class QVBoxLayout;
+class QMediaPlayer;
+class QVideoWidget;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -149,6 +151,8 @@ private:
     QTableWidget* logTable = nullptr;
     QLabel* blackboxPlaceholder = nullptr;
     QSlider* blackboxSeek = nullptr;
+    QMediaPlayer* blackboxPlayer = nullptr;
+    QVideoWidget* blackboxVideoWidget = nullptr;
     QVBoxLayout* careTimeList = nullptr;
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
@@ -220,6 +224,9 @@ private:
     // 서버 낙상 이벤트 처리 — 채널 강조 + 팝업 (확인 시 강조 해제)
     void handleFallEvent(int channel, quint64 timestampMs);
     bool fallActive[4] = {};   // 채널별 팝업 중복 방지
+
+    // 로그 목록에 있는 클립 URL로 블랙박스 영상 재생 (TAB2)
+    void playBlackboxClip(const QString& url);
 
     // 영상 서버 접속 시도 (최초 접속·재접속 공용)
     void connectToServer();

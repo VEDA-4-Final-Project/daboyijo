@@ -58,6 +58,7 @@ Makefile*
 secrets*
 .env
 server/config/cameras.conf
+server/blackbox_clips/
 
 # ===== OS =====
 .DS_Store
