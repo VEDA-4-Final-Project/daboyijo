@@ -151,8 +151,10 @@ private:
     QTableWidget* logTable = nullptr;
     QLabel* blackboxPlaceholder = nullptr;
     QSlider* blackboxSeek = nullptr;
+    QLabel* blackboxTimeLabel = nullptr;   // "00:05 / 00:10" 재생 위치/길이 표시
     QMediaPlayer* blackboxPlayer = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
+    bool blackboxSeeking = false;          // 사용자가 재생바를 잡고 있는 중인지
     QVBoxLayout* careTimeList = nullptr;
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
@@ -227,6 +229,8 @@ private:
 
     // 로그 목록에 있는 클립 URL로 블랙박스 영상 재생 (TAB2)
     void playBlackboxClip(const QString& url);
+    QString blackboxUrl;         // 현재 재생(시도) 중인 클립 URL — 실패 시 재시도용
+    int blackboxRetries = 0;     // 재생 실패 재시도 횟수 (저장 완료 전 클릭 대비)
 
     // 영상 서버 접속 시도 (최초 접속·재접속 공용)
     void connectToServer();
