@@ -29,6 +29,8 @@ public:
     };
     using RoiCallback = std::function<void(const RoiUpdate&)>;
 
+    using ConfirmCallback = std::function<void(int channel)>;
+
     explicit StreamServer(int port);
     ~StreamServer();
 
@@ -37,6 +39,8 @@ public:
 
     // ROI 수신 콜백. start() 전에 등록할 것 (접속 즉시 수신 스레드가 뜬다).
     void setRoiCallback(RoiCallback cb) { on_roi_ = std::move(cb); }
+    // 낙상 확인 수신 콜백. start() 전 등록
+    void setConfirmCallback(ConfirmCallback cb) { on_confirm_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -78,4 +82,5 @@ private:
     std::mutex clients_mutex_;
     std::vector<std::shared_ptr<Client>> clients_;
     RoiCallback on_roi_;
+    ConfirmCallback on_confirm_;
 };
