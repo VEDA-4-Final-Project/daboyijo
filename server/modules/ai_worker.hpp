@@ -11,10 +11,12 @@
 
 #include "detection.hpp"
 
-// AI 스레드에 넘길 일감 1건.
+// AI 스레드에 넘길 일감 1건. 두 이미지 모두 마스킹 전 깨끗한 프레임이다.
 struct AiJob {
-    // 마스킹 전 깨끗한 960x540 프레임 — MoveNet 크롭과 보호사 색상 감지 공용.
-    cv::Mat frame;
+    cv::Mat raw_frame;    // MoveNet 크롭용 원본 해상도 이미지 — 다운스케일하면
+                          // 원거리 사람의 자세 감지가 불안정해짐 (rtsp_av_client.cpp
+                          // 상단 실험 기록 참조)
+    cv::Mat small_frame;  // 보호사 색상 감지용 축소(960x540) 이미지
     int channel = -1;
     std::vector<Detection> dets;  // 이 프레임과 시간 매칭된 감지 좌표
 };

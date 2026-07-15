@@ -80,12 +80,14 @@ void FallModule::processFrame(const AiJob& job) {
         }
         last = pose_now;
 
+        // 원본 해상도에서 크롭 — 축소 프레임 크롭은 원거리 사람 자세 감지가
+        // 불안정 (rtsp_av_client.cpp 실험 기록)
         cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
-                                     job.frame.cols, job.frame.rows);
+                                     job.raw_frame.cols, job.raw_frame.rows);
         if (roi.width <= 0 || roi.height <= 0) continue;
 
         // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다
-        bool lying = pose_estimator_.isLyingDown(job.frame(roi));
+        bool lying = pose_estimator_.isLyingDown(job.raw_frame(roi));
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                      job.channel, t.object_id, lying ? "누움" : "서있음",
                      roi.width, roi.height);

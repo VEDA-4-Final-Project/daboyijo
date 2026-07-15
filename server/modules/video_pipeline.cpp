@@ -32,9 +32,13 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
 
             const auto t0 = std::chrono::steady_clock::now();
 
-            // 수신단(sws 다운스케일)에서 이미 960x540 BGR로 도착
-            cv::Mat small = frame->image;
-            if (small.size() != kViewSize) cv::resize(small, small, kViewSize);
+            // 수신단은 원본 해상도 BGR로 보낸다 — MoveNet 크롭 해상도 확보용
+            // (rtsp_av_client.cpp 상단 실험 기록 참조). GUI용 축소는 여기서.
+            cv::Mat raw = std::move(frame->image);
+            cv::Mat small;
+            if (raw.size() != kViewSize) cv::resize(raw, small, kViewSize);
+            else small = raw.clone();  // 크기가 같아도 버퍼 공유 금지 — 아래
+                                       // 마스킹이 raw까지 오염시키게 된다
             // AI 전달용 깨끗한 복사본 (스테이지가 small을 제자리 수정하므로 필수)
             cv::Mat clean = small.clone();
 
@@ -47,7 +51,8 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             }
 
             // AI 워커에 최신 일감 던지기 (덮어쓰기 방식 — 밀림 방지)
-            ai_.submit({std::move(clean), frame->channel, std::move(dets)});
+            ai_.submit({std::move(raw), std::move(clean), frame->channel,
+                        std::move(dets)});
 
             // 가공 완료된 이미지를 인코딩해서 Qt로 송출
             std::vector<unsigned char> jpeg;
