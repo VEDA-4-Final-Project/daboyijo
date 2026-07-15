@@ -249,7 +249,6 @@ int main(int argc, char* argv[]) {
         });
         blackbox_recorders[cam.channel] = std::move(recorder);
 
-        client->start();
         clients.push_back(std::move(client));
 
         care_timers.emplace(cam.channel, CareTimer(3.0, 5.0));
@@ -257,6 +256,14 @@ int main(int argc, char* argv[]) {
             std::printf("[ch%d] 케어 세션 종료: %d초\n", ch, dur);
             db.insertCareLog(ch, dur);
         });
+    }
+
+    // 모든 채널의 레코더·타이머 맵 구성이 끝난 뒤에 수신을 시작한다.
+    // 루프 안에서 바로 start()하면, 먼저 시작된 채널의 수신 스레드가
+    // (낙상 콜백 등으로) blackbox_recorders를 읽는 동안 메인 스레드가
+    // 다음 채널을 같은 맵에 삽입하는 동시 접근이 생길 수 있다.
+    for (auto& client : clients) {
+        client->start();
     }
 
     const cv::Size kViewSize(960, 540);

@@ -68,11 +68,25 @@ void BlackboxRecorder::onPacket(const AVPacket* pkt) {
     // 오래된 패킷은 버린다. 정확히 preSec_ 경계에서 자르지 않고 여유를 두는
     // 이유는, flush 시점에 "가장 가까운 키프레임부터" 잘라내기 위해서다
     // (GOP 경계와 preSec_ 경계가 딱 맞아떨어지지 않을 수 있음).
+    // 수신 초기 패킷은 pts가 아직 없을 수(NOPTS) 있어 dts로 폴백하고,
+    // 둘 다 없는 패킷이 양끝에 걸리면 그 턴은 트리밍을 건너뛴다
+    // (NOPTS는 거대한 음수라 age 계산에 섞이면 버퍼를 통째로 비우거나
+    //  안 자르는 오동작이 된다).
     constexpr double kGopMarginSec = 2.0;
     const double keepSec = preSec_ + kGopMarginSec;
     const double tb = static_cast<double>(tbNum_) / tbDen_;
+    auto stampOf = [](const PacketRecord& r) {
+        return (r.pts != AV_NOPTS_VALUE) ? r.pts : r.dts;
+    };
     while (buf_.size() > 1) {
-        double age = (buf_.back().pts - buf_.front().pts) * tb;
+        const int64_t newest = stampOf(buf_.back());
+        const int64_t oldest = stampOf(buf_.front());
+        if (oldest == AV_NOPTS_VALUE) {
+            buf_.pop_front();  // 나이를 잴 수 없는 앞쪽 패킷 — 버리고 계속
+            continue;
+        }
+        if (newest == AV_NOPTS_VALUE) break;  // 최신 쪽은 다음 패킷에서 재평가
+        double age = (newest - oldest) * tb;
         if (age <= keepSec) break;
         buf_.pop_front();
     }
