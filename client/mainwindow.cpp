@@ -49,7 +49,7 @@ QString vitalColor(double temp, int hr) {
 }
 
 // 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.35.238";
+const char* kServerHost = "172.20.35.253";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -525,6 +525,13 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlaceholder->hide();
     blackboxVideoWidget->show();
     blackboxSeek->setEnabled(true);
+
+    // 같은 URL을 다시 setSource하면 QMediaPlayer가 "소스 변경 없음"으로 보고
+    // 재로딩을 건너뛴다(특히 직전 재생이 끝까지 간 뒤). 그러면 같은 클립을
+    // 연속으로 다시 틀 때 화면이 안 나온다 — 소스를 한 번 비웠다가 다시
+    // 지정해 매번 확실히 처음부터 로드/재생되게 한다.
+    blackboxPlayer->stop();
+    blackboxPlayer->setSource(QUrl());
     blackboxPlayer->setSource(QUrl(url));
     blackboxPlayer->play();
 }
