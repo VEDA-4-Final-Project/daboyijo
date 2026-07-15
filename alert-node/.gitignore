@@ -1,0 +1,33 @@
+# 최종 커널 모듈 바이너리
+*.ko
+
+
+# 컴파일 과정에서 생성되는 오브젝트 및 임시 파일들
+*.o
+*.o.cmd
+*.mod
+*.mod.c
+*.mod.o
+*.mod.cmd
+*.ko.cmd
+
+
+# 커널 빌드 시스템(kbuild)이 생성하는 체크섬 및 메타데이터
+.tmp_versions/
+modules.order
+Module.symvers
+.modules.order.cmd
+.Module.symvers.cmd
+
+
+# 빌드 디렉토리 내부의 숨김 명령 파일들
+.*.cmd
+
+# DTS 컴파일 결과물인 바이너리 파일
+*.dtb
+*.dtbo
+
+
+# Vim 백업 및 스왑 파일
+.*.swp
+*~
