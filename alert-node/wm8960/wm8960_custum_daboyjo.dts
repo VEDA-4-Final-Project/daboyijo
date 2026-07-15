@@ -1,0 +1,76 @@
+/dts-v1/;
+/plugin/;
+
+
+/ {
+    compatible = "brcm,bcm2711";
+
+    fragment@0{
+        target = <&i2c1>;
+        __overlay__{
+            status = "okay";
+            #address-cells = <1>; 
+            #size-cells = <0>; 
+            
+            wm8960_codec: wm8960@1a{
+                status = "okay";
+                compatible = "veda,wm8960_daboyjo";
+                reg = <0x1a>;
+                #sound-dai-cells = <0>;
+                
+                clock-names = "mclk";
+                clocks = <&clocks 0>;
+
+                wlf,shared-lrclk;
+
+                AVDD-supply = <&vdd_3v3_reg>;
+                DVDD-supply = <&vdd_3v3_reg>;
+            };
+        };
+    };
+
+    fragment@1{
+        target-path = "/";
+        __overlay__ {
+            sound{
+                 compatible = "simple-audio-card";
+
+                 simple-audio-card,name = "WM8960_Custom_SoundCard";
+                 simple-audio-card,format = "i2s";
+
+                 simple-audio-card,widgets = 
+                    "Headphone", "Headphone Jack",
+                    "Speaker" , "Speaker",
+                    "Microphone" , "AMIC";
+
+                 simple-audio-card,bitclock-master = <&cpu_dai_link>;
+                 simple-audio-card,frame-master = <&cpu_dai_link>;
+                 
+                 simple-audio-card,routing = 
+                     "Headphone Jack", "LOUT1",
+                     "Headphone Jack", "ROUT1",
+                     "Speaker", "SPKLOUT",
+                     "Speaker", "SPKROUT",
+                     "LINPUT1", "AMIC",
+                     "RINPUT1", "AMIC"; 
+                 
+
+
+                 cpu_dai_link: simple-audio-card,cpu {
+                     sound-dai = <&i2s>;
+                 };
+
+                 simple-audio-card,codec {
+                     sound-dai = <&wm8960_codec>;
+                 };
+             };
+        };
+    };
+
+    fragment@2{
+        target = <&i2s>;
+        __overlay__ {
+            status = "okay";
+        };
+    };
+};
