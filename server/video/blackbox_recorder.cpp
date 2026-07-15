@@ -160,16 +160,40 @@ void BlackboxRecorder::flushLocked() {
     }
     av_dict_free(&opts);
 
-    // pts/dts를 0부터 시작하도록 재기준 — 같은 기준값을 pts·dts 모두에
-    // 적용해야 둘 사이 간격(리오더링 지연)이 그대로 보존된다.
-    const int64_t base = buf_.front().dts;
+    // pts/dts를 정리한 뒤 0부터 시작하도록 재기준.
+    // RTSP 수신 초기 구간에는 pts가 아직 없는 패킷("pts has no value" 경고의
+    // 원인)이나, RTCP 시계 동기화 시점에 타임라인이 뒤로 튀는 패킷이 섞일 수
+    // 있다(음수 timestamp "out of range" 경고의 원인 — 실측). mp4는 누락·
+    // 역행 타임스탬프를 허용하지 않으므로, 누락은 이웃 값으로 채우고 역행은
+    // 직전 값 뒤로 밀어 단조 증가를 강제한다.
     const size_t packet_count = buf_.size();
+    int64_t base = AV_NOPTS_VALUE;
+    for (const auto& rec : buf_) {  // 첫 유효 타임스탬프를 기준점으로
+        if (rec.dts != AV_NOPTS_VALUE) { base = rec.dts; break; }
+        if (rec.pts != AV_NOPTS_VALUE) { base = rec.pts; break; }
+    }
+    if (base == AV_NOPTS_VALUE) base = 0;
+
+    int64_t last_dts = -1;  // 직전에 쓴 dts (재기준 후)
+    int64_t est_dur = 0;    // 최근 관측한 프레임 간격 (타임스탬프 전부 누락 대비)
     for (auto& rec : buf_) {
+        int64_t dts = (rec.dts != AV_NOPTS_VALUE) ? rec.dts : rec.pts;
+        int64_t pts = (rec.pts != AV_NOPTS_VALUE) ? rec.pts : dts;
+        if (dts == AV_NOPTS_VALUE) {  // 둘 다 없음 — 직전 프레임에서 이어붙임
+            dts = pts = base + last_dts + (est_dur > 0 ? est_dur : 1);
+        }
+        dts -= base;
+        pts -= base;
+        if (dts <= last_dts) dts = last_dts + 1;  // 역행/중복 → 단조 증가 강제
+        if (pts < dts) pts = dts;                 // mp4 규칙: pts >= dts
+        if (last_dts >= 0 && dts - last_dts > 1) est_dur = dts - last_dts;
+        last_dts = dts;
+
         AVPacket* pkt = av_packet_alloc();
         av_new_packet(pkt, static_cast<int>(rec.data.size()));
         std::memcpy(pkt->data, rec.data.data(), rec.data.size());
-        pkt->pts = rec.pts - base;
-        pkt->dts = rec.dts - base;
+        pkt->pts = pts;
+        pkt->dts = dts;
         pkt->flags = rec.flags;
         pkt->stream_index = out_stream->index;
         av_interleaved_write_frame(ofmt, pkt);
