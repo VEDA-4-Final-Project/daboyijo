@@ -24,6 +24,9 @@
 #include <QSplitter>
 #include <QGroupBox>
 #include <QFormLayout>
+#include <QMediaPlayer>
+#include <QVideoWidget>
+#include <QUrl>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -49,6 +52,9 @@ QString vitalColor(double temp, int hr) {
 const char* kServerHost = "172.20.35.238";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
+
+// 블랙박스 클립 HTTP 서버 포트 (server/src/main.cpp의 kClipHttpPort와 동일하게 유지)
+constexpr quint16 kClipHttpPort = 5501;
 
 // JPEG 페이로드 크기 상한 — 960x540 q80 실측 수십 KB 수준이라 4MB면 충분.
 // 이걸 넘는 payload_len은 스트림 오염(또는 프로토콜 불일치)으로 본다.
@@ -482,10 +488,45 @@ QWidget* MainWindow::buildBlackboxPlayer()
     blackboxPlaceholder->setObjectName("video");
     lay->addWidget(blackboxPlaceholder, 1);
 
+    blackboxVideoWidget = new QVideoWidget();
+    blackboxVideoWidget->setObjectName("video");
+    blackboxVideoWidget->hide();
+    lay->addWidget(blackboxVideoWidget, 1);
+
     blackboxSeek = new QSlider(Qt::Horizontal);
     blackboxSeek->setEnabled(false);
+    blackboxSeek->setRange(0, 1000);
     lay->addWidget(blackboxSeek);
+
+    blackboxPlayer = new QMediaPlayer(this);
+    blackboxPlayer->setVideoOutput(blackboxVideoWidget);
+    connect(blackboxPlayer, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
+        if (blackboxPlayer->duration() > 0)
+            blackboxSeek->setValue(static_cast<int>(pos * 1000 / blackboxPlayer->duration()));
+    });
+    connect(blackboxSeek, &QSlider::sliderMoved, this, [this](int v) {
+        if (blackboxPlayer->duration() > 0)
+            blackboxPlayer->setPosition(static_cast<qint64>(v) * blackboxPlayer->duration() / 1000);
+    });
+    connect(blackboxPlayer, &QMediaPlayer::errorOccurred, this,
+            [this](QMediaPlayer::Error, const QString& msg) {
+        blackboxVideoWidget->hide();
+        blackboxPlaceholder->setText(
+            QStringLiteral("재생 실패 — 아직 저장 중이거나 클립을 찾을 수 없습니다\n(%1)").arg(msg));
+        blackboxPlaceholder->show();
+    });
+
     return card;
+}
+
+void MainWindow::playBlackboxClip(const QString& url)
+{
+    if (!blackboxPlayer) return;
+    blackboxPlaceholder->hide();
+    blackboxVideoWidget->show();
+    blackboxSeek->setEnabled(true);
+    blackboxPlayer->setSource(QUrl(url));
+    blackboxPlayer->play();
 }
 
 QWidget* MainWindow::buildCareTimeDashboard()
@@ -1077,6 +1118,28 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
     if (channelViews[channel])
         channelViews[channel]->setAlert(true);
 
+    // 비상 로그 조회 탭에 이벤트 1건 추가. 서버가 같은 timestampMs로 블랙박스
+    // 클립 파일명(ch{채널}_{ms}.mp4)을 저장하므로 그대로 재구성해 둔다 —
+    // 다만 서버는 이벤트 발생 후 몇 초 뒤에야 파일을 다 쓰므로, 저장이 끝나기
+    // 전에 더블클릭하면 아직 못 찾을 수 있다(재생 실패 메시지로 안내).
+    if (logTable) {
+        const int row = logTable->rowCount();
+        logTable->insertRow(row);
+        const QString when = QDateTime::fromMSecsSinceEpoch(
+                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+        auto* dtItem = new QTableWidgetItem(when);
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
+                                     .arg(QString::fromLatin1(kServerHost))
+                                     .arg(kClipHttpPort)
+                                     .arg(channel)
+                                     .arg(timestampMs);
+        dtItem->setData(Qt::UserRole, clipUrl);
+        logTable->setItem(row, 0, dtItem);
+        logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+        logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
+        logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+    }
+
     // 같은 채널 팝업이 이미 떠 있으면 중복 생성하지 않음 (강조만 갱신)
     if (fallActive[channel])
         return;
@@ -1237,8 +1300,15 @@ void MainWindow::onSearchClicked()
 
 void MainWindow::onLogRowActivated(int row, int /*column*/)
 {
-    // TODO(core): 선택된 로그의 블랙박스 파일 경로를 서버에 요청 → 재생
-    qDebug() << "블랙박스 재생 요청 — row" << row;
+    if (!logTable) return;
+    auto* item = logTable->item(row, 0);
+    const QString url = item ? item->data(Qt::UserRole).toString() : QString();
+    if (url.isEmpty()) {
+        qDebug() << "블랙박스 재생 요청 — row" << row << "(클립 URL 없음, DB 연동 전 로그로 추정)";
+        return;
+    }
+    qDebug() << "블랙박스 재생 요청 —" << url;
+    playBlackboxClip(url);
 }
 
 // ═══════════════════════════════════════════════════════════

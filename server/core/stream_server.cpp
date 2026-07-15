@@ -248,7 +248,8 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
     enqueueAll(std::move(packet));
 }
 
-void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y) {
+void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y,
+                                  int64_t timestampMsOverride) {
     dbj_evt_header_t evt{};
     evt.magic = DBJ_EVT_MAGIC;
     evt.version = DBJ_VS_VERSION;
@@ -256,10 +257,12 @@ void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y) {
     evt.channel = static_cast<uint8_t>(channel);
     evt.x = static_cast<uint16_t>(x * DBJ_ROI_COORD_SCALE);
     evt.y = static_cast<uint16_t>(y * DBJ_ROI_COORD_SCALE);
-    evt.timestamp_ms = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
+    evt.timestamp_ms = timestampMsOverride != 0
+        ? static_cast<uint64_t>(timestampMsOverride)
+        : static_cast<uint64_t>(
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::system_clock::now().time_since_epoch())
+                  .count());
 
     auto packet = std::make_shared<std::vector<unsigned char>>(sizeof(evt));
     std::memcpy(packet->data(), &evt, sizeof(evt));

@@ -7,7 +7,9 @@
 #include <atomic>
 #include <cctype>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -21,8 +23,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "blackbox_recorder.hpp"
 #include "caregiver_detector.hpp"
 #include "care_timer.hpp"
+#include "clip_http_server.hpp"
 #include "database.hpp"
 #include "detection.hpp"
 #include "fall_detector.hpp"
@@ -61,6 +65,17 @@ constexpr double kPoseIntervalSec = 2.0;
 // 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다퉈 fps가 흔들릴
 // 수 있어, 영상 파이프라인에 코어를 남기도록 절반(2)으로 제한한다.
 constexpr int kPoseNumThreads = 2;
+
+// ── 블랙박스(낙상 전후 영상 저장) ────────────────────────────────
+// 채널별로 최근 kBlackboxPreSec초 압축 영상을 버퍼링하다가, 낙상 등 이벤트
+// 발생 시 [이벤트 전 preSec + 이벤트 후 postSec] 구간을 mp4로 저장한다.
+// 디코딩 전 압축 패킷을 그대로 버퍼링/remux하므로 채널당 버퍼는 수 MB
+// 수준(720p 수 Mbps 스트림 기준)이라 라즈베리파이에서도 부담이 거의 없다.
+const std::string kBlackboxDir = "blackbox_clips";
+constexpr double kBlackboxPreSec = 5.0;
+constexpr double kBlackboxPostSec = 5.0;
+// 저장된 클립을 Qt가 QMediaPlayer로 바로 재생할 수 있게 서빙하는 HTTP 포트.
+constexpr int kClipHttpPort = 5501;
 
 cv::Rect normBoxToRect(float left, float top, float right, float bottom,
                        int imgW, int imgH) {
@@ -148,6 +163,13 @@ int main(int argc, char* argv[]) {
 
     if (!stream_server.start()) return 1;
 
+    std::filesystem::create_directories(kBlackboxDir);
+    ClipHttpServer clip_http(kClipHttpPort, kBlackboxDir);
+    if (!clip_http.start()) {
+        std::fprintf(stderr, "경고: 블랙박스 클립 HTTP 서버 시작 실패 (포트 %d) — 블랙박스 저장은 계속되지만 Qt에서 재생은 안 됨\n",
+                     kClipHttpPort);
+    }
+
     Database db;
     db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
 
@@ -163,14 +185,27 @@ int main(int argc, char* argv[]) {
     // TODO(core): 웨어러블 바이탈과 교차 검증해 최종 판정으로 승격
     std::map<int, CareTimer> care_timers;
 
+    // 채널별 블랙박스 레코더 — 아래 카메라 루프에서 채워진다.
+    std::map<int, std::unique_ptr<BlackboxRecorder>> blackbox_recorders;
+
     FallDetector fall_detector;
     // 🌟 [수정] 람다 캡처에 [&]를 사용하여 privacy_masker 참조 전달
     fall_detector.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
         // 🌟 [추가] 낙상 트리거 발생 시 마스킹 즉시 해제
         privacy_masker.reportFall(ch);
+
+        // 블랙박스: 지금까지 버퍼(최근 kBlackboxPreSec초) + 이후 kBlackboxPostSec초
+        // 저장 예약. 반환된 시각을 그대로 이벤트 메시지에 실어 보내면, Qt가
+        // 클립 파일명(ch{채널}_{시각}.mp4)을 그대로 재구성해 재생 요청할 수 있다.
+        int64_t evt_ms = 0;
+        auto rec_it = blackbox_recorders.find(ch);
+        if (rec_it != blackbox_recorders.end()) {
+            evt_ms = rec_it->second->trigger();
+        }
+
         // Qt 관제 화면에 통보 → 채널 강조 + 팝업 (protocol/video_stream.h 이벤트)
-        stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy);
+        stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
     });
 
     PoseEstimator pose_estimator(kPoseModelPath, kPoseNumThreads);
@@ -194,6 +229,22 @@ int main(int argc, char* argv[]) {
             latest_detections[ch] = std::move(dets);
             det_updates[ch] += 1;
         });
+        auto recorder = std::make_unique<BlackboxRecorder>(
+            cam.channel, kBlackboxDir, kBlackboxPreSec, kBlackboxPostSec);
+        recorder->onClipReady([](int rch, const std::string& path, int64_t eventMs) {
+            std::printf("[ch%d] 블랙박스 저장 완료: %s (이벤트 %lld)\n", rch, path.c_str(),
+                        static_cast<long long>(eventMs));
+        });
+        BlackboxRecorder* recorder_ptr = recorder.get();
+        client->setStreamReadyCallback(
+            [recorder_ptr](const AVCodecParameters* cp, int tbn, int tbd) {
+                recorder_ptr->setStreamInfo(cp, tbn, tbd);
+            });
+        client->setPacketCallback([recorder_ptr](const AVPacket* pkt) {
+            recorder_ptr->onPacket(pkt);
+        });
+        blackbox_recorders[cam.channel] = std::move(recorder);
+
         client->start();
         clients.push_back(std::move(client));
 
@@ -402,9 +453,17 @@ int main(int argc, char* argv[]) {
         ai_worker.join();
     }
 
+    // 종료 시점에 이벤트가 걸린 채(post 구간 수집 중) 남아있던 블랙박스는
+    // 못 채운 만큼이라도 저장해서 유실을 막는다.
+    for (auto& [rch, recorder] : blackbox_recorders) {
+        (void)rch;
+        recorder->flush();
+    }
+
     for (auto& client : clients) {
         client->stop();
     }
     stream_server.stop();
+    clip_http.stop();
     return 0;
 }
