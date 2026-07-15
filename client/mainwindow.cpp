@@ -44,6 +44,15 @@ QString vitalColor(double temp, int hr) {
     if (temp >= 37.5 || hr >= 100 || hr < 55)  return kWarn;
     return kNormal;
 }
+
+// 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
+const char* kServerHost = "172.20.35.238";
+constexpr quint16 kServerPort = 5500;
+constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
+
+// JPEG 페이로드 크기 상한 — 960x540 q80 실측 수십 KB 수준이라 4MB면 충분.
+// 이걸 넘는 payload_len은 스트림 오염(또는 프로토콜 불일치)으로 본다.
+constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -67,9 +76,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(socket, &QTcpSocket::stateChanged, this, &MainWindow::onSocketStateChanged);
 
     // 3. 명세서 스펙: 5500번 포트로 즉시 접속 (IP 주소는 RPi 주소 입력)
-    setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
-    socket->connectToHost(QHostAddress("172.20.35.238"), 5500);
-    qDebug() << "라즈베리파이 영상 서버(Port: 5500) 접속 시도 중...";
+    //    끊기면 reconnectTimer가 kReconnectDelayMs 후 재접속 (24시간 무인 관제용)
+    reconnectTimer.setSingleShot(true);
+    reconnectTimer.setInterval(kReconnectDelayMs);
+    connect(&reconnectTimer, &QTimer::timeout, this, &MainWindow::connectToServer);
+    connectToServer();
 
     // 4. 상단 시계 / 웨어러블 바이탈 타이머 가동
     connect(&clockTimer, &QTimer::timeout, this, &MainWindow::updateClock);
@@ -916,6 +927,15 @@ void MainWindow::updateClock()
         clockLabel->setText(QDateTime::currentDateTime().toString("yyyy-MM-dd  HH:mm:ss"));
 }
 
+void MainWindow::connectToServer()
+{
+    if (socket->state() != QAbstractSocket::UnconnectedState) return;
+    setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
+    buffer.clear();  // 이전 연결의 파싱 잔여물 폐기
+    socket->connectToHost(QHostAddress(kServerHost), kServerPort);
+    qDebug() << "영상 서버 접속 시도:" << kServerHost << ":" << kServerPort;
+}
+
 void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState state)
 {
     switch (state) {
@@ -926,11 +946,15 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState state)
     case QAbstractSocket::HostLookupState:
         setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
         break;
+    case QAbstractSocket::UnconnectedState:
     default:
-        setConnectionState(false, QStringLiteral("영상 서버 연결 끊김"));
+        setConnectionState(false, QStringLiteral("영상 서버 연결 끊김 — 재접속 대기"));
         // 신호 끊긴 채널은 LIVE 표시등 소등
         for (int i = 0; i < 4; ++i)
             liveDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kTextSub));
+        // 자동 재접속 예약 (스트림 오염으로 끊은 경우 포함)
+        if (state == QAbstractSocket::UnconnectedState && !reconnectTimer.isActive())
+            reconnectTimer.start();
         break;
     }
 }
@@ -970,6 +994,26 @@ void MainWindow::onReadyRead()
 
     // 버퍼에 데이터가 남아있는 동안 무한 반복 파싱
     while (true) {
+        // 0) 매직(2바이트)으로 패킷 종류 식별 — 영상(0xDB4B) / 이벤트(0xDB4D)
+        if (buffer.size() < (int)sizeof(uint16_t))
+            return;
+        uint16_t magic;
+        memcpy(&magic, buffer.constData(), sizeof(magic));
+
+        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) ──
+        if (magic == kEvtMagic) {
+            if (buffer.size() < (int)sizeof(dbj_evt_header_t))
+                return;  // 헤더가 덜 옴 — 다음 readyRead 대기
+            dbj_evt_header_t evt;
+            memcpy(&evt, buffer.constData(), sizeof(evt));
+            buffer.remove(0, sizeof(evt));
+
+            if (evt.type == kEvtFall && evt.channel < 4)
+                handleFallEvent(evt.channel, evt.timestamp_ms);
+            continue;
+        }
+
+        // ── 영상 프레임 패킷 ──
         // 1) 헤더 크기(16바이트)만큼도 안 모였으면 데이터 더 올 때까지 대기
         if (buffer.size() < (int)sizeof(dbj_vs_header_t))
             return;
@@ -978,16 +1022,21 @@ void MainWindow::onReadyRead()
         dbj_vs_header_t header;
         memcpy(&header, buffer.constData(), sizeof(header));
 
-        // 3) 매직넘버(0xDB4B) 검증, 다르면 스트림 어긋난 것
-        if (header.magic != 0xDB4B) {
-            qDebug() << "⚠️ 스트림 어긋남! 연결을 끊고 재접속을 시도합니다.";
-            socket->disconnectFromHost();
+        // 3) 매직넘버(0xDB4B) 검증, 다르면 스트림 어긋난 것.
+        //    payload_len도 상한 검증 — 오염된 길이값을 믿으면 잘못된 메모리
+        //    범위로 QImage를 만들거나 버퍼가 한없이 쌓인다.
+        if (header.magic != 0xDB4B || header.payload_len > kMaxPayloadLen) {
+            qDebug() << "⚠️ 스트림 어긋남! 연결을 끊고 재접속을 시도합니다."
+                     << "(magic:" << Qt::hex << header.magic
+                     << "payload_len:" << Qt::dec << header.payload_len << ")";
             buffer.clear(); // 오염된 버퍼 초기화
+            socket->abort(); // 즉시 끊기 → UnconnectedState → 재접속 타이머 가동
             return;
         }
 
         // 4) 전체 패킷 크기 계산 = 헤더(16B) + 진짜 JPEG 크기
-        int total = sizeof(header) + header.payload_len;
+        //    (qint64 — uint32 payload_len과의 int 오버플로우 방지)
+        const qint64 total = static_cast<qint64>(sizeof(header)) + header.payload_len;
 
         // JPEG 데이터가 아직 다 안 왔으면 다음 readyRead 때까지 대기
         if (buffer.size() < total)
@@ -1006,7 +1055,7 @@ void MainWindow::onReadyRead()
         qDebug() << "Channel:" << header.channel << " | Latency:" << latency << "ms";
 
         // 7) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 도려내기
-        buffer.remove(0, total);
+        buffer.remove(0, static_cast<int>(total));
 
         // 8) channel 값으로 4분할 위젯 분배 및 렌더링
         if (!image.isNull()) {
@@ -1017,6 +1066,44 @@ void MainWindow::onReadyRead()
             }
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  낙상 이벤트 — 채널 강조 + 팝업
+// ═══════════════════════════════════════════════════════════
+void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
+{
+    // 채널 강조 (빨간 테두리 + 배너) — 팝업 확인 전까지 유지
+    if (channelViews[channel])
+        channelViews[channel]->setAlert(true);
+
+    // 같은 채널 팝업이 이미 떠 있으면 중복 생성하지 않음 (강조만 갱신)
+    if (fallActive[channel])
+        return;
+    fallActive[channel] = true;
+
+    const QString when = QDateTime::fromMSecsSinceEpoch(
+                             static_cast<qint64>(timestampMs)).toString("hh:mm:ss");
+    auto* box = new QMessageBox(this);
+    box->setIcon(QMessageBox::Critical);
+    box->setWindowTitle(QStringLiteral("🚨 낙상 감지"));
+    box->setText(QStringLiteral("낙상이 감지되었습니다!\n\n"
+                                "채널 %1 · %2 (%3)\n감지 시각 %4")
+                     .arg(channel + 1)
+                     .arg(patients[channel].name, patients[channel].bed, when));
+    box->setStandardButtons(QMessageBox::Ok);
+    box->button(QMessageBox::Ok)->setText(QStringLiteral("확인"));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+
+    // 확인을 누르면 강조 해제. 비모달(show)이라 다른 채널 감시는 계속된다.
+    connect(box, &QMessageBox::finished, this, [this, channel](int) {
+        fallActive[channel] = false;
+        if (channelViews[channel])
+            channelViews[channel]->setAlert(false);
+    });
+    box->show();
+    box->raise();
+    box->activateWindow();
 }
 
 // ═══════════════════════════════════════════════════════════

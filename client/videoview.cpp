@@ -57,6 +57,12 @@ void VideoView::setRoiVisible(bool on) {
     update();
 }
 
+void VideoView::setAlert(bool on) {
+    if (alert_ == on) return;
+    alert_ = on;
+    update();
+}
+
 // ── 좌표 변환 ────────────────────────────────────────────────
 QRectF VideoView::displayRect() const {
     if (frame_.isNull()) return QRectF(rect());
@@ -127,6 +133,24 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(kDraftLine);
         p.drawText(QRectF(0, 6, width(), 20), Qt::AlignHCenter,
                    QStringLiteral("침대 영역 클릭 · 더블클릭(또는 우클릭)으로 완료"));
+    }
+
+    // 낙상 경보 강조 — 항상 최상단에 그린다
+    if (alert_) {
+        const QColor kAlertRed(248, 81, 73);
+        p.setPen(QPen(kAlertRed, 6));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(rect().adjusted(3, 3, -3, -3));
+
+        QRectF banner(0, 0, width(), 30);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(kAlertRed.red(), kAlertRed.green(), kAlertRed.blue(), 210));
+        p.drawRect(banner);
+        p.setPen(Qt::white);
+        QFont f = p.font();
+        f.setBold(true);
+        p.setFont(f);
+        p.drawText(banner, Qt::AlignCenter, QStringLiteral("🚨 낙상 감지"));
     }
 }
 
