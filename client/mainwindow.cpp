@@ -27,6 +27,7 @@
 #include <QMediaPlayer>
 #include <QVideoWidget>
 #include <QUrl>
+#include <QProxyStyle>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -70,6 +71,20 @@ QString formatMs(qint64 ms) {
         .arg(totalSec / 60, 2, 10, QLatin1Char('0'))
         .arg(totalSec % 60, 2, 10, QLatin1Char('0'));
 }
+
+// 재생바 트랙의 아무 지점이나 좌클릭하면 그 위치로 바로 점프하게 한다.
+// (기본 QSlider는 트랙 클릭 시 pageStep만큼만 이동해 정확한 탐색이 어렵다.)
+class SeekStyle : public QProxyStyle {
+public:
+    using QProxyStyle::QProxyStyle;
+    int styleHint(StyleHint hint, const QStyleOption* opt = nullptr,
+                  const QWidget* w = nullptr,
+                  QStyleHintReturn* ret = nullptr) const override {
+        if (hint == QStyle::SH_Slider_AbsoluteSetButtons)
+            return Qt::LeftButton;
+        return QProxyStyle::styleHint(hint, opt, w, ret);
+    }
+};
 
 // JPEG 페이로드 크기 상한 — 960x540 q80 실측 수십 KB 수준이라 4MB면 충분.
 // 이걸 넘는 payload_len은 스트림 오염(또는 프로토콜 불일치)으로 본다.
@@ -508,13 +523,25 @@ QWidget* MainWindow::buildBlackboxPlayer()
     blackboxVideoWidget->hide();
     lay->addWidget(blackboxVideoWidget, 1);
 
-    // 재생바 + 시간(현재/전체) 한 줄
+    // [재생/일시정지] + 재생바 + 시간(현재/전체) 한 줄
     auto* seekRow = new QHBoxLayout();
     seekRow->setSpacing(8);
+
+    blackboxPlayPauseButton = new QPushButton();
+    blackboxPlayPauseButton->setEnabled(false);
+    blackboxPlayPauseButton->setCursor(Qt::PointingHandCursor);
+    blackboxPlayPauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    seekRow->addWidget(blackboxPlayPauseButton);
+
     blackboxSeek = new QSlider(Qt::Horizontal);
     blackboxSeek->setEnabled(false);
     blackboxSeek->setRange(0, 0);   // duration 확정 전엔 0
+    // 트랙 클릭 → 그 위치로 점프. 스타일 소유권은 슬라이더가 부모로 관리.
+    auto* seekStyle = new SeekStyle;
+    seekStyle->setParent(blackboxSeek);
+    blackboxSeek->setStyle(seekStyle);
     seekRow->addWidget(blackboxSeek, 1);
+
     blackboxTimeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
     blackboxTimeLabel->setObjectName("subtitle");
     seekRow->addWidget(blackboxTimeLabel);
@@ -522,6 +549,20 @@ QWidget* MainWindow::buildBlackboxPlayer()
 
     blackboxPlayer = new QMediaPlayer(this);
     blackboxPlayer->setVideoOutput(blackboxVideoWidget);
+
+    // 재생/일시정지 버튼 ↔ 플레이어 상태 동기화
+    connect(blackboxPlayPauseButton, &QPushButton::clicked, this, [this] {
+        if (blackboxPlayer->playbackState() == QMediaPlayer::PlayingState)
+            blackboxPlayer->pause();
+        else
+            blackboxPlayer->play();
+    });
+    connect(blackboxPlayer, &QMediaPlayer::playbackStateChanged, this,
+            [this](QMediaPlayer::PlaybackState st) {
+        blackboxPlayPauseButton->setIcon(style()->standardIcon(
+            st == QMediaPlayer::PlayingState ? QStyle::SP_MediaPause
+                                             : QStyle::SP_MediaPlay));
+    });
 
     // 클립 길이가 확정되면 슬라이더 범위를 ms 단위로 맞춘다(정확한 탐색).
     connect(blackboxPlayer, &QMediaPlayer::durationChanged, this, [this](qint64 dur) {
@@ -584,6 +625,7 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlaceholder->hide();
     blackboxVideoWidget->show();
     blackboxSeek->setEnabled(true);
+    blackboxPlayPauseButton->setEnabled(true);
 
     // 같은 URL을 다시 setSource하면 QMediaPlayer가 "소스 변경 없음"으로 보고
     // 재로딩을 건너뛴다(특히 직전 재생이 끝까지 간 뒤). 그러면 같은 클립을

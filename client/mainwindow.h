@@ -152,6 +152,7 @@ private:
     QLabel* blackboxPlaceholder = nullptr;
     QSlider* blackboxSeek = nullptr;
     QLabel* blackboxTimeLabel = nullptr;   // "00:05 / 00:10" 재생 위치/길이 표시
+    QPushButton* blackboxPlayPauseButton = nullptr;  // 재생/일시정지 토글
     QMediaPlayer* blackboxPlayer = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
     bool blackboxSeeking = false;          // 사용자가 재생바를 잡고 있는 중인지
