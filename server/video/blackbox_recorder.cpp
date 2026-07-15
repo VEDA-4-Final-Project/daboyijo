@@ -118,9 +118,14 @@ void BlackboxRecorder::flushLocked() {
     char path[256];
     std::snprintf(path, sizeof(path), "%s/ch%d_%lld.mp4", outputDir_.c_str(),
                   channel_, static_cast<long long>(eventUnixMs_));
+    // 최종 파일명으로 바로 쓰면, 아직 다 안 써진 파일을 HTTP 서버가 서빙해
+    // 클라이언트가 반쪽 파일을 재생하게 된다. 임시 파일(.part)에 다 쓴 뒤
+    // 원자적으로 rename해서, 최종 .mp4는 "완성된 순간"에만 나타나게 한다.
+    char tmp_path[288];
+    std::snprintf(tmp_path, sizeof(tmp_path), "%s.part", path);
 
     AVFormatContext* ofmt = nullptr;
-    avformat_alloc_output_context2(&ofmt, nullptr, "mp4", path);
+    avformat_alloc_output_context2(&ofmt, nullptr, "mp4", tmp_path);
     if (!ofmt) {
         std::fprintf(stderr, "[blackbox] ch%d 출력 컨텍스트 생성 실패\n", channel_);
         buf_.clear();
@@ -132,8 +137,8 @@ void BlackboxRecorder::flushLocked() {
     out_stream->time_base = AVRational{tbNum_, tbDen_};
 
     if (!(ofmt->oformat->flags & AVFMT_NOFILE)) {
-        if (avio_open(&ofmt->pb, path, AVIO_FLAG_WRITE) < 0) {
-            std::fprintf(stderr, "[blackbox] ch%d 파일 열기 실패: %s\n", channel_, path);
+        if (avio_open(&ofmt->pb, tmp_path, AVIO_FLAG_WRITE) < 0) {
+            std::fprintf(stderr, "[blackbox] ch%d 파일 열기 실패: %s\n", channel_, tmp_path);
             avformat_free_context(ofmt);
             buf_.clear();
             return;
@@ -174,6 +179,15 @@ void BlackboxRecorder::flushLocked() {
     av_write_trailer(ofmt);
     avio_closep(&ofmt->pb);
     avformat_free_context(ofmt);
+
+    // 다 썼으니 최종 이름으로 원자적 노출 — 이 시점부터 HTTP로 재생 가능.
+    if (std::rename(tmp_path, path) != 0) {
+        std::fprintf(stderr, "[blackbox] ch%d rename 실패 (%s → %s)\n", channel_,
+                     tmp_path, path);
+        std::remove(tmp_path);
+        buf_.clear();
+        return;
+    }
 
     std::fprintf(stderr, "[blackbox] ch%d 저장 완료: %s (%zu패킷)\n", channel_, path,
                  packet_count);
