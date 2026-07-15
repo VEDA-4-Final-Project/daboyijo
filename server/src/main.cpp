@@ -155,7 +155,7 @@ int main(int argc, char* argv[]) {
     std::mutex roi_mutex;
     std::map<int, std::vector<std::pair<float, float>>> channel_rois;
     PrivacyMasker privacy_masker;
-    
+
     stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
         std::lock_guard<std::mutex> lock(roi_mutex);
         if (up.clear) channel_rois.erase(up.channel);
@@ -182,7 +182,11 @@ int main(int argc, char* argv[]) {
     CaregiverDetector caregiver_detector;
 
     std::mutex det_mutex;
-    std::map<int, std::vector<Detection>> latest_detections;
+    struct TimestampedDets {
+    std::chrono::steady_clock::time_point timestamp;
+    std::vector<Detection> detections;
+};
+std::map<int, std::vector<TimestampedDets>> detection_history;
     std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
 
     // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
@@ -230,7 +234,13 @@ int main(int argc, char* argv[]) {
             }
             std::lock_guard<std::mutex> lock(det_mutex);
             fall_detector.update(ch, dets, roi);
-            latest_detections[ch] = std::move(dets);
+            auto now = std::chrono::steady_clock::now();
+            detection_history[ch].push_back({now, std::move(dets)});
+
+            // 메모리가 꽉 차는 걸 방지하기 위해 최근 30개 기록만 남기고 옛날 것은 자동 삭제
+            if (detection_history[ch].size() > 30) {
+                detection_history[ch].erase(detection_history[ch].begin());
+            }
             det_updates[ch] += 1;
         });
         auto recorder = std::make_unique<BlackboxRecorder>(
@@ -378,11 +388,26 @@ int main(int argc, char* argv[]) {
             // AI 전송용 깨끗한 복사본 (아래 마스킹이 small을 제자리 수정하므로 필수)
             cv::Mat clean = small.clone();
 
-            // 2. 최신 메타데이터 복사
+            // 2. 시간 오차가 적은 과거의 좌표를 탐색
             std::vector<Detection> dets_copy;
             {
                 std::lock_guard<std::mutex> lock(det_mutex);
-                dets_copy = latest_detections[frame->channel];
+                const auto& history = detection_history[frame->channel];
+
+                if (!history.empty()) {
+                    auto best_it = history.begin();
+                    double min_diff = std::numeric_limits<double>::max();
+
+                    for (auto it = history.begin(); it != history.end(); ++it) {
+                        // 영상의 생성 시간과 좌표의 생성 시간 차이를 계산 (초 단위)
+                        double diff = std::abs(std::chrono::duration<double>(it->timestamp - frame->timestamp).count());
+                        if (diff < min_diff) {
+                            min_diff = diff;
+                            best_it = it;
+                        }
+                    }
+                    dets_copy = best_it->detections; // 가장 궁합이 잘 맞는 시간대의 좌표 선택!
+                }
             }
 
             // 3. 다이나믹 프라이버시 마스크 적용 (GUI 송출용 small 이미지에만 덧씌움)
