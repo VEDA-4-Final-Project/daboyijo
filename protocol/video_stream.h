@@ -43,6 +43,14 @@ extern "C" {
  */
 #define DBJ_CTRL_MAGIC      0xDB4C  /* 제어 메시지 시작 식별자 (영상과 구분) */
 
+/* ── 서버 → 클라이언트 이벤트 메시지 ─────────────────────────
+ * 영상 프레임과 같은 TCP 스트림에 끼어 내려온다(순서 보장).
+ * Qt는 magic으로 영상(0xDB4B)/이벤트(0xDB4D)를 구분해 파싱한다.
+ * 현재 용도: 낙상 확정 통보 → 해당 채널 강조 + 팝업.
+ */
+#define DBJ_EVT_MAGIC       0xDB4D  /* 이벤트 메시지 시작 식별자 */
+#define DBJ_EVT_FALL        0x01    /* 낙상 확정 (x,y = 발생 위치) */
+
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
 #define DBJ_CTRL_ROI_SET    0x01    /* 채널 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
 #define DBJ_CTRL_ROI_CLEAR  0x02    /* 채널 ROI 삭제 — 점 배열 없음 */
@@ -73,6 +81,17 @@ typedef struct {
     uint16_t x;            /* 정규화 x × DBJ_ROI_COORD_SCALE (0~10000) */
     uint16_t y;            /* 정규화 y × DBJ_ROI_COORD_SCALE (0~10000) */
 } dbj_roi_point_t;         /* 4바이트 */
+
+typedef struct {
+    uint16_t magic;        /* DBJ_EVT_MAGIC */
+    uint8_t  version;      /* DBJ_VS_VERSION */
+    uint8_t  type;         /* DBJ_EVT_* */
+    uint8_t  channel;      /* 발생 채널 0~3 */
+    uint8_t  reserved;     /* 0 */
+    uint16_t x;            /* 발생 위치 정규화 x × DBJ_ROI_COORD_SCALE (없으면 0) */
+    uint16_t y;            /* 발생 위치 정규화 y × DBJ_ROI_COORD_SCALE (없으면 0) */
+    uint64_t timestamp_ms; /* 서버 Unix time (밀리초) */
+} dbj_evt_header_t;        /* 18바이트, 페이로드 없음 */
 
 #pragma pack(pop)
 

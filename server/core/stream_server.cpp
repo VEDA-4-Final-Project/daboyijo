@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +17,14 @@
 namespace {
 constexpr size_t kMaxOutbox = 8;  // 클라이언트당 대기 프레임 상한
 constexpr size_t kRecvBufCap = 64 * 1024;  // 제어 수신 버퍼 상한(동기 깨지면 리셋)
+
+// 이벤트(낙상 통보 등) 패킷인지 — outbox가 가득 차도 드롭하면 안 되는 패킷
+bool isEventPacket(const std::vector<unsigned char>& buf) {
+    if (buf.size() < sizeof(uint16_t)) return false;
+    uint16_t magic;
+    std::memcpy(&magic, buf.data(), sizeof(magic));
+    return magic == DBJ_EVT_MAGIC;
+}
 }
 
 StreamServer::StreamServer(int port) : port_(port) {}
@@ -236,6 +245,28 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
     std::memcpy(packet->data(), &header, sizeof(header));
     std::memcpy(packet->data() + sizeof(header), jpeg.data(), jpeg.size());
 
+    enqueueAll(std::move(packet));
+}
+
+void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y) {
+    dbj_evt_header_t evt{};
+    evt.magic = DBJ_EVT_MAGIC;
+    evt.version = DBJ_VS_VERSION;
+    evt.type = type;
+    evt.channel = static_cast<uint8_t>(channel);
+    evt.x = static_cast<uint16_t>(x * DBJ_ROI_COORD_SCALE);
+    evt.y = static_cast<uint16_t>(y * DBJ_ROI_COORD_SCALE);
+    evt.timestamp_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+
+    auto packet = std::make_shared<std::vector<unsigned char>>(sizeof(evt));
+    std::memcpy(packet->data(), &evt, sizeof(evt));
+    enqueueAll(std::move(packet));
+}
+
+void StreamServer::enqueueAll(Packet packet) {
     std::lock_guard<std::mutex> lock(clients_mutex_);
     for (auto it = clients_.begin(); it != clients_.end();) {
         Client& client = **it;
@@ -248,7 +279,15 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
         {
             std::lock_guard<std::mutex> client_lock(client.mutex);
             if (client.outbox.size() >= kMaxOutbox) {
-                client.outbox.pop_front();  // 느린 클라이언트: 오래된 프레임 드롭
+                // 느린 클라이언트: 오래된 "영상 프레임"부터 드롭.
+                // 이벤트(낙상 통보)는 절대 버리지 않는다 — 전부 이벤트면 상한 초과 허용
+                // (이벤트는 18바이트라 메모리 부담 없음).
+                auto victim = std::find_if(
+                    client.outbox.begin(), client.outbox.end(),
+                    [](const Packet& p) { return !isEventPacket(*p); });
+                if (victim != client.outbox.end()) {
+                    client.outbox.erase(victim);
+                }
             }
             client.outbox.push_back(packet);
         }

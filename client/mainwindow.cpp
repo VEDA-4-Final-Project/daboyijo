@@ -21,6 +21,9 @@
 #include <QDateEdit>
 #include <QSlider>
 #include <QStyle>
+#include <QSplitter>
+#include <QGroupBox>
+#include <QFormLayout>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -41,6 +44,15 @@ QString vitalColor(double temp, int hr) {
     if (temp >= 37.5 || hr >= 100 || hr < 55)  return kWarn;
     return kNormal;
 }
+
+// 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
+const char* kServerHost = "172.20.35.238";
+constexpr quint16 kServerPort = 5500;
+constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
+
+// JPEG 페이로드 크기 상한 — 960x540 q80 실측 수십 KB 수준이라 4MB면 충분.
+// 이걸 넘는 payload_len은 스트림 오염(또는 프로토콜 불일치)으로 본다.
+constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -50,10 +62,10 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     // 병상별 환자 정보 (실제 환자 DB 연동 지점)
-    patients[0] = { QStringLiteral("김순자"), QStringLiteral("201호-1") };
-    patients[1] = { QStringLiteral("박영호"), QStringLiteral("201호-2") };
-    patients[2] = { QStringLiteral("이말순"), QStringLiteral("201호-3") };
-    patients[3] = { QStringLiteral("최정길"), QStringLiteral("201호-4") };
+    patients[0] = { QStringLiteral("전승현"), QStringLiteral("201호-1") };
+    patients[1] = { QStringLiteral("박민용"), QStringLiteral("201호-2") };
+    patients[2] = { QStringLiteral("이교민"), QStringLiteral("201호-3") };
+    patients[3] = { QStringLiteral("김예훈"), QStringLiteral("201호-4") };
 
     buildUi();
     applyTheme();
@@ -64,9 +76,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(socket, &QTcpSocket::stateChanged, this, &MainWindow::onSocketStateChanged);
 
     // 3. 명세서 스펙: 5500번 포트로 즉시 접속 (IP 주소는 RPi 주소 입력)
-    setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
-    socket->connectToHost(QHostAddress("127.0.0.1"), 5500);
-    qDebug() << "라즈베리파이 영상 서버(Port: 5500) 접속 시도 중...";
+    //    끊기면 reconnectTimer가 kReconnectDelayMs 후 재접속 (24시간 무인 관제용)
+    reconnectTimer.setSingleShot(true);
+    reconnectTimer.setInterval(kReconnectDelayMs);
+    connect(&reconnectTimer, &QTimer::timeout, this, &MainWindow::connectToServer);
+    connectToServer();
 
     // 4. 상단 시계 / 웨어러블 바이탈 타이머 가동
     connect(&clockTimer, &QTimer::timeout, this, &MainWindow::updateClock);
@@ -97,7 +111,7 @@ void MainWindow::buildUi()
     tabWidget = new QTabWidget();
     tabWidget->setObjectName("mainTabs");
 
-    // ── TAB 1: 실시간 관제 및 제어 (기존 영상월 + 바이탈 패널) ──
+    // ── TAB 1: 실시간 관제 및 제어 (영상월 + 바이탈 패널) ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(16, 16, 16, 16);
     body->setSpacing(16);
@@ -110,6 +124,9 @@ void MainWindow::buildUi()
 
     // ── TAB 2: 비상 로그 조회 및 블랙박스 ──
     tabWidget->addTab(buildLogArchiveTab(), QStringLiteral("비상 로그 조회 및 블랙박스"));
+
+    // ── TAB 3: DB 관리 ──
+    tabWidget->addTab(buildDbTab(), QStringLiteral("DB 관리"));
 
     root->addWidget(tabWidget, 1);
 
@@ -170,7 +187,7 @@ QWidget* MainWindow::buildVideoWall()
     outer->setContentsMargins(16, 14, 16, 16);
     outer->setSpacing(12);
 
-    // 제목 줄: 좌측 타이틀 + 우측 ROI 도구 (지정/표시)
+    // 제목 줄: 좌측 타이틀 + 우측 도구 (ROI / 인터콤 / 경보해제)
     auto* titleRow = new QHBoxLayout();
     titleRow->setSpacing(8);
     auto* title = new QLabel(QStringLiteral("실시간 영상  ·  4채널"));
@@ -208,7 +225,6 @@ QWidget* MainWindow::buildVideoWall()
     connect(alarmClearButton, &QPushButton::clicked, this,
             &MainWindow::onAlarmClearClicked);
     titleRow->addWidget(alarmClearButton);
-
 
     outer->addLayout(titleRow);
 
@@ -493,6 +509,241 @@ QWidget* MainWindow::buildCareTimeDashboard()
 }
 
 // ═══════════════════════════════════════════════════════════
+//  TAB3: DB 관리
+// ═══════════════════════════════════════════════════════════
+QWidget* MainWindow::buildDbTab()
+{
+    auto* panel = new QFrame();
+    panel->setObjectName("panel");
+
+    auto* outer = new QVBoxLayout(panel);
+    outer->setContentsMargins(16, 14, 16, 16);
+    outer->setSpacing(16);
+
+    // DB 연결 상태 표시 (멤버 변수에 할당 — 나중에 동적 갱신 가능)
+    auto* statusBar = new QHBoxLayout();
+    dbStatusDot = new QLabel();
+    dbStatusDot->setObjectName("statusDot");
+    dbStatusDot->setFixedSize(10, 10);
+    dbStatusDot->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kNormal));
+    dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
+    dbStatusText->setObjectName("statusText");
+
+    auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
+    refreshBtn->setObjectName("roiButton");
+    refreshBtn->setCursor(Qt::PointingHandCursor);
+    connect(refreshBtn, &QPushButton::clicked, this, [this]() {
+        refreshResidentTable();
+        refreshCaregiverTable();
+    });
+
+    statusBar->addWidget(dbStatusDot);
+    statusBar->addWidget(dbStatusText);
+    statusBar->addStretch();
+    statusBar->addWidget(refreshBtn);
+    outer->addLayout(statusBar);
+
+    // 입소자 섹션 + 요양사 섹션 상하 분할
+    auto* splitter = new QSplitter(Qt::Vertical);
+    splitter->addWidget(buildResidentSection());
+    splitter->addWidget(buildCaregiverSection());
+    splitter->setStretchFactor(0, 7);
+    splitter->setStretchFactor(1, 3);
+    outer->addWidget(splitter, 1);
+
+    return panel;
+}
+
+QWidget* MainWindow::buildResidentSection()
+{
+    auto* card = new QFrame();
+    card->setObjectName("vitalCard");
+
+    auto* lay = new QHBoxLayout(card);
+    lay->setContentsMargins(12, 12, 12, 12);
+    lay->setSpacing(16);
+
+    // ── 좌측: 입소자 목록 ──
+    auto* leftCol = new QVBoxLayout();
+    auto* listTitle = new QLabel(QStringLiteral("입소자 목록"));
+    listTitle->setObjectName("panelTitle");
+    leftCol->addWidget(listTitle);
+
+    residentTable = new QTableWidget(0, 8);
+    residentTable->setObjectName("logTable");
+    residentTable->setHorizontalHeaderLabels({
+        QStringLiteral("ID"), QStringLiteral("이름"),
+        QStringLiteral("병실"), QStringLiteral("침대"),
+        QStringLiteral("채널"), QStringLiteral("웨어러블"),
+        QStringLiteral("위험도"), QStringLiteral("상태")
+    });
+    residentTable->horizontalHeader()->setStretchLastSection(true);
+    residentTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    residentTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    residentTable->setMinimumWidth(420);
+    connect(residentTable, &QTableWidget::cellClicked,
+            this, &MainWindow::onResidentSelected);
+    leftCol->addWidget(residentTable, 1);
+
+    auto* leftWrap = new QWidget();
+    leftWrap->setLayout(leftCol);
+    lay->addWidget(leftWrap, 5);
+
+    // ── 우측: 상세/편집 폼 ──
+    lay->addWidget(buildResidentForm(), 5);
+
+    return card;
+}
+
+QWidget* MainWindow::buildResidentForm()
+{
+    auto* scroll = new QScrollArea();
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+
+    auto* inner = new QWidget();
+    auto* lay = new QVBoxLayout(inner);
+    lay->setSpacing(12);
+    lay->setContentsMargins(0, 0, 6, 0);
+
+    auto makeGroup = [](const QString& title) {
+        auto* g = new QGroupBox(title);
+        g->setObjectName("formGroup");
+        return g;
+    };
+
+    auto makeField = [](const QString& placeholder, QLineEdit*& ref) {
+        ref = new QLineEdit();
+        ref->setObjectName("formEdit");
+        ref->setPlaceholderText(placeholder);
+        return ref;
+    };
+
+    // ── 기본정보 ──
+    auto* basicGroup = makeGroup(QStringLiteral("기본 정보"));
+    auto* basicForm = new QFormLayout(basicGroup);
+    basicForm->setSpacing(8);
+    basicForm->setLabelAlignment(Qt::AlignLeft);
+    basicForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    basicForm->addRow(QStringLiteral("이름"),        makeField("홍길동", editName));
+    basicForm->addRow(QStringLiteral("병실"),        makeField("201", editRoom));
+    basicForm->addRow(QStringLiteral("침대"),        makeField("A", editBed));
+    basicForm->addRow(QStringLiteral("카메라 채널"), makeField("0~3", editCameraId));
+    basicForm->addRow(QStringLiteral("웨어러블 ID"), makeField("기기 번호", editWearableId));
+    lay->addWidget(basicGroup);
+
+    // ── 케어 정보 ──
+    auto* careGroup = makeGroup(QStringLiteral("케어 정보"));
+    auto* careForm = new QFormLayout(careGroup);
+    careForm->setSpacing(8);
+    careForm->setLabelAlignment(Qt::AlignLeft);
+    careForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    editCaregiver = new QComboBox();
+    editCaregiver->setObjectName("formEdit");
+    editCaregiver->addItem(QStringLiteral("(미지정)"));
+    // TODO(core): SELECT name FROM caregivers WHERE status='재직' 으로 채우기
+    careForm->addRow(QStringLiteral("담당 요양사"), editCaregiver);
+
+    editRiskLevel = new QComboBox();
+    editRiskLevel->setObjectName("formEdit");
+    editRiskLevel->addItems({QStringLiteral("상"), QStringLiteral("중"), QStringLiteral("하")});
+    careForm->addRow(QStringLiteral("위험도"), editRiskLevel);
+
+    editAdmittedAt = new QDateEdit(QDate::currentDate());
+    editAdmittedAt->setCalendarPopup(true);
+    editAdmittedAt->setObjectName("formEdit");
+    careForm->addRow(QStringLiteral("입원일"), editAdmittedAt);
+
+    editDischargeDue = new QDateEdit(QDate::currentDate().addMonths(1));
+    editDischargeDue->setCalendarPopup(true);
+    editDischargeDue->setObjectName("formEdit");
+    careForm->addRow(QStringLiteral("퇴원 예정일"), editDischargeDue);
+
+    editStatus = new QComboBox();
+    editStatus->setObjectName("formEdit");
+    editStatus->addItems({QStringLiteral("퇴원"), QStringLiteral("재원")});
+    careForm->addRow(QStringLiteral("상태"), editStatus);
+    lay->addWidget(careGroup);
+
+    // ── 보호자 정보 ──
+    auto* guardianGroup = makeGroup(QStringLiteral("보호자 정보"));
+    auto* guardianForm = new QFormLayout(guardianGroup);
+    guardianForm->setSpacing(8);
+    guardianForm->setLabelAlignment(Qt::AlignLeft);
+    guardianForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    guardianForm->addRow(QStringLiteral("이름"),     makeField("보호자 이름", editGuardianName));
+    guardianForm->addRow(QStringLiteral("관계"),     makeField("자녀/배우자 등", editGuardianRelation));
+    guardianForm->addRow(QStringLiteral("전화번호"), makeField("010-0000-0000", editGuardianPhone));
+    lay->addWidget(guardianGroup);
+
+    // ── 특이사항 ──
+    auto* notesGroup = makeGroup(QStringLiteral("특이사항"));
+    auto* notesLay = new QVBoxLayout(notesGroup);
+    editNotes = new QTextEdit();
+    editNotes->setObjectName("formEdit");
+    editNotes->setPlaceholderText(QStringLiteral("지병, 알레르기, 거동 가능 여부 등"));
+    editNotes->setMaximumHeight(80);
+    notesLay->addWidget(editNotes);
+    lay->addWidget(notesGroup);
+
+    // ── 버튼 ──
+    auto* btnRow = new QHBoxLayout();
+    auto* newBtn = new QPushButton(QStringLiteral("신규 등록"));
+    newBtn->setObjectName("roiButton");
+    newBtn->setCursor(Qt::PointingHandCursor);
+    connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewResident);
+
+    auto* saveBtn = new QPushButton(QStringLiteral("수정 저장"));
+    saveBtn->setObjectName("roiButton");
+    saveBtn->setCursor(Qt::PointingHandCursor);
+    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveResident);
+
+    auto* dischargeBtn = new QPushButton(QStringLiteral("퇴원 처리"));
+    dischargeBtn->setObjectName("alarmButton");
+    dischargeBtn->setCursor(Qt::PointingHandCursor);
+    connect(dischargeBtn, &QPushButton::clicked, this, &MainWindow::onDischargeResident);
+
+    btnRow->addWidget(newBtn);
+    btnRow->addWidget(saveBtn);
+    btnRow->addStretch();
+    btnRow->addWidget(dischargeBtn);
+    lay->addLayout(btnRow);
+    lay->addStretch();
+
+    scroll->setWidget(inner);
+    return scroll;
+}
+
+QWidget* MainWindow::buildCaregiverSection()
+{
+    auto* card = new QFrame();
+    card->setObjectName("vitalCard");
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(12, 12, 12, 12);
+    lay->setSpacing(8);
+
+    auto* title = new QLabel(QStringLiteral("요양사 관리"));
+    title->setObjectName("panelTitle");
+    lay->addWidget(title);
+
+    caregiverTable = new QTableWidget(0, 5);
+    caregiverTable->setObjectName("logTable");
+    caregiverTable->setHorizontalHeaderLabels({
+        QStringLiteral("ID"), QStringLiteral("이름"),
+        QStringLiteral("연락처"), QStringLiteral("근무조"),
+        QStringLiteral("상태")
+    });
+    caregiverTable->horizontalHeader()->setStretchLastSection(true);
+    caregiverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    caregiverTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    lay->addWidget(caregiverTable, 1);
+
+    return card;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  스타일 (QSS)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::applyTheme()
@@ -515,13 +766,14 @@ void MainWindow::applyTheme()
                                  border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
         #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
+
         #micButton { background: %(card); color: %(text); border: 1px solid %(border);
                      border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
         #micButton:hover { border-color: %(accent); }
         #micButton[active="true"] { background: %(critical); color: #fff; border-color: %(critical); }
 
         #alarmButton { background: %(critical); color: #fff; border: 1px solid %(critical);
-               border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
+                       border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
         #alarmButton:hover { background: #ff6b62; }
 
         #videoCard { background: #000; border: 1px solid %(border); border-radius: 10px; }
@@ -563,8 +815,81 @@ void MainWindow::applyTheme()
         #logTable { background: %(bgDeep); color: %(text); gridline-color: %(border);
                     border: 1px solid %(border); border-radius: 8px; }
         #logTable QHeaderView::section { background: %(card); color: %(sub);
-                                          border: none; padding: 6px; }
+                                         border: none; padding: 6px; }
         #logTable::item:selected { background: %(accent); color: #fff; }
+
+/* ── TAB3: DB 관리 ── */
+
+QLabel {
+    color: %(text);
+}
+
+QGroupBox#formGroup {
+    color: %(text);
+    border: 1px solid %(border);
+    border-radius: 8px;
+    margin-top: 10px;
+    padding: 14px 10px 10px 10px;
+    font-weight: 700;
+}
+
+QGroupBox#formGroup::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 6px;
+    color: %(text);
+    background: %(card);
+}
+
+QGroupBox#formGroup QLabel {
+    color: %(text);
+    font-weight: 600;
+    font-size: 13px;
+    min-width: 90px;
+}
+
+QLineEdit#formEdit,
+QTextEdit#formEdit,
+QComboBox#formEdit,
+QDateEdit#formEdit {
+    background: %(bgDeep);
+    color: %(text);
+    border: 1px solid %(border);
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+
+QLineEdit#formEdit:focus,
+QTextEdit#formEdit:focus {
+    border-color: %(accent);
+}
+
+        QComboBox#formEdit QAbstractItemView {
+            background: %(bgDeep); color: %(text);
+            border: 1px solid %(border);
+            selection-background-color: %(accent); selection-color: #fff; }
+        QComboBox#formEdit::drop-down { border: none; width: 20px; }
+        QComboBox#formEdit::down-arrow { image: none; width: 0; height: 0;
+            border-left: 4px solid transparent; border-right: 4px solid transparent;
+            border-top: 5px solid %(sub); margin-right: 8px; }
+
+        QSplitter::handle { background: %(border); }
+
+        /* ── 캘린더 팝업 (QDateEdit) ── */
+        QCalendarWidget QWidget { background: %(panel); color: %(text); }
+        QCalendarWidget QAbstractItemView {
+            background: %(bgDeep); color: %(text);
+            selection-background-color: %(accent); selection-color: #fff;
+            outline: none; }
+        QCalendarWidget QWidget#qt_calendar_navigationbar {
+            background: %(card); border-bottom: 1px solid %(border); }
+        QCalendarWidget QToolButton {
+            background: transparent; color: %(text); border: none; padding: 4px 8px; }
+        QCalendarWidget QToolButton:hover { background: %(border); border-radius: 4px; }
+        QCalendarWidget QSpinBox {
+            background: %(bgDeep); color: %(text); border: 1px solid %(border); }
+        QCalendarWidget QAbstractItemView:disabled { color: %(sub); }
     )")
                             .replace("%(bgDeep)", kBgDeep)
                             .replace("%(panel)", kPanel)
@@ -602,6 +927,15 @@ void MainWindow::updateClock()
         clockLabel->setText(QDateTime::currentDateTime().toString("yyyy-MM-dd  HH:mm:ss"));
 }
 
+void MainWindow::connectToServer()
+{
+    if (socket->state() != QAbstractSocket::UnconnectedState) return;
+    setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
+    buffer.clear();  // 이전 연결의 파싱 잔여물 폐기
+    socket->connectToHost(QHostAddress(kServerHost), kServerPort);
+    qDebug() << "영상 서버 접속 시도:" << kServerHost << ":" << kServerPort;
+}
+
 void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState state)
 {
     switch (state) {
@@ -612,11 +946,15 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState state)
     case QAbstractSocket::HostLookupState:
         setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
         break;
+    case QAbstractSocket::UnconnectedState:
     default:
-        setConnectionState(false, QStringLiteral("영상 서버 연결 끊김"));
+        setConnectionState(false, QStringLiteral("영상 서버 연결 끊김 — 재접속 대기"));
         // 신호 끊긴 채널은 LIVE 표시등 소등
         for (int i = 0; i < 4; ++i)
             liveDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kTextSub));
+        // 자동 재접속 예약 (스트림 오염으로 끊은 경우 포함)
+        if (state == QAbstractSocket::UnconnectedState && !reconnectTimer.isActive())
+            reconnectTimer.start();
         break;
     }
 }
@@ -647,7 +985,7 @@ void MainWindow::updateVitals()
 }
 
 // ═══════════════════════════════════════════════════════════
-//  영상 수신 (명세서 프로토콜 파싱) — 로직 유지
+//  영상 수신 (명세서 프로토콜 파싱)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onReadyRead()
 {
@@ -656,6 +994,26 @@ void MainWindow::onReadyRead()
 
     // 버퍼에 데이터가 남아있는 동안 무한 반복 파싱
     while (true) {
+        // 0) 매직(2바이트)으로 패킷 종류 식별 — 영상(0xDB4B) / 이벤트(0xDB4D)
+        if (buffer.size() < (int)sizeof(uint16_t))
+            return;
+        uint16_t magic;
+        memcpy(&magic, buffer.constData(), sizeof(magic));
+
+        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) ──
+        if (magic == kEvtMagic) {
+            if (buffer.size() < (int)sizeof(dbj_evt_header_t))
+                return;  // 헤더가 덜 옴 — 다음 readyRead 대기
+            dbj_evt_header_t evt;
+            memcpy(&evt, buffer.constData(), sizeof(evt));
+            buffer.remove(0, sizeof(evt));
+
+            if (evt.type == kEvtFall && evt.channel < 4)
+                handleFallEvent(evt.channel, evt.timestamp_ms);
+            continue;
+        }
+
+        // ── 영상 프레임 패킷 ──
         // 1) 헤더 크기(16바이트)만큼도 안 모였으면 데이터 더 올 때까지 대기
         if (buffer.size() < (int)sizeof(dbj_vs_header_t))
             return;
@@ -664,47 +1022,88 @@ void MainWindow::onReadyRead()
         dbj_vs_header_t header;
         memcpy(&header, buffer.constData(), sizeof(header));
 
-        // 3) 명세서 가이드: 매직넘버(0xDB4B) 검증, 다르면 스트림 어긋난 것
-        if (header.magic != 0xDB4B) {
-            qDebug() << "⚠️ 스트림 어긋남! 연결을 끊고 재접속을 시도합니다.";
-            socket->disconnectFromHost();
+        // 3) 매직넘버(0xDB4B) 검증, 다르면 스트림 어긋난 것.
+        //    payload_len도 상한 검증 — 오염된 길이값을 믿으면 잘못된 메모리
+        //    범위로 QImage를 만들거나 버퍼가 한없이 쌓인다.
+        if (header.magic != 0xDB4B || header.payload_len > kMaxPayloadLen) {
+            qDebug() << "⚠️ 스트림 어긋남! 연결을 끊고 재접속을 시도합니다."
+                     << "(magic:" << Qt::hex << header.magic
+                     << "payload_len:" << Qt::dec << header.payload_len << ")";
             buffer.clear(); // 오염된 버퍼 초기화
+            socket->abort(); // 즉시 끊기 → UnconnectedState → 재접속 타이머 가동
             return;
         }
 
         // 4) 전체 패킷 크기 계산 = 헤더(16B) + 진짜 JPEG 크기
-        int total = sizeof(header) + header.payload_len;
+        //    (qint64 — uint32 payload_len과의 int 오버플로우 방지)
+        const qint64 total = static_cast<qint64>(sizeof(header)) + header.payload_len;
 
         // JPEG 데이터가 아직 다 안 왔으면 다음 readyRead 때까지 대기
         if (buffer.size() < total)
             return;
 
-        // 5) 🌟 명세서 가이드: 정확한 페이로드 위치와 크기만큼 지정하여 QImage 생성
+        // 5) 정확한 페이로드 위치와 크기만큼 지정하여 QImage 생성
         QImage image = QImage::fromData(
             reinterpret_cast<const uchar*>(buffer.constData()) + sizeof(header),
             header.payload_len,
             "JPEG"
             );
 
-        // 6) 🌟 [시연 어필 포인트] 명세서 제안: 지연 시간(Latency) 모니터링
+        // 6) 지연 시간(Latency) 모니터링
         qint64 current_time = QDateTime::currentMSecsSinceEpoch();
         qint64 latency = current_time - header.timestamp_ms;
         qDebug() << "Channel:" << header.channel << " | Latency:" << latency << "ms";
 
-        // 7) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 깔끔하게 도려내기
-        buffer.remove(0, total);
+        // 7) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 도려내기
+        buffer.remove(0, static_cast<int>(total));
 
-        // 8) 🌟 명세서 가이드: channel 값으로 4분할 위젯 분배 및 렌더링
+        // 8) channel 값으로 4분할 위젯 분배 및 렌더링
         if (!image.isNull()) {
             if (header.channel >= 0 && header.channel < 4) {
-                // VideoView가 내부에서 비율 유지 스케일링 + ROI 오버레이 처리
                 channelViews[header.channel]->setFrame(QPixmap::fromImage(image));
-                // 프레임 수신 채널의 LIVE 표시등 점등
                 liveDots[header.channel]->setStyleSheet(
                     QString("background:%1; border-radius:4px;").arg(kCritical));
             }
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  낙상 이벤트 — 채널 강조 + 팝업
+// ═══════════════════════════════════════════════════════════
+void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
+{
+    // 채널 강조 (빨간 테두리 + 배너) — 팝업 확인 전까지 유지
+    if (channelViews[channel])
+        channelViews[channel]->setAlert(true);
+
+    // 같은 채널 팝업이 이미 떠 있으면 중복 생성하지 않음 (강조만 갱신)
+    if (fallActive[channel])
+        return;
+    fallActive[channel] = true;
+
+    const QString when = QDateTime::fromMSecsSinceEpoch(
+                             static_cast<qint64>(timestampMs)).toString("hh:mm:ss");
+    auto* box = new QMessageBox(this);
+    box->setIcon(QMessageBox::Critical);
+    box->setWindowTitle(QStringLiteral("🚨 낙상 감지"));
+    box->setText(QStringLiteral("낙상이 감지되었습니다!\n\n"
+                                "채널 %1 · %2 (%3)\n감지 시각 %4")
+                     .arg(channel + 1)
+                     .arg(patients[channel].name, patients[channel].bed, when));
+    box->setStandardButtons(QMessageBox::Ok);
+    box->button(QMessageBox::Ok)->setText(QStringLiteral("확인"));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+
+    // 확인을 누르면 강조 해제. 비모달(show)이라 다른 채널 감시는 계속된다.
+    connect(box, &QMessageBox::finished, this, [this, channel](int) {
+        fallActive[channel] = false;
+        if (channelViews[channel])
+            channelViews[channel]->setAlert(false);
+    });
+    box->show();
+    box->raise();
+    box->activateWindow();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -813,16 +1212,19 @@ void MainWindow::onMicReleased()
 
 void MainWindow::onAlarmClearClicked()
 {
+    const auto reply = QMessageBox::question(
+        this, QStringLiteral("경보 해제"),
+        QStringLiteral("현장 사이렌/LED를 원격으로 끄시겠습니까?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) return;
+
     // TODO(중앙서버): MQTT 제어 토픽으로 알림 노드(RPi 4)에 "경보 해제" 발행
     //   → 현장 사이렌/LED 즉시 정지
     qDebug() << "경보 해제 신호 발행 (MQTT 연동 전 — 자리표시자)";
-    QMessageBox::information(this, QStringLiteral("경보 해제"),
-                             QStringLiteral("현장 사이렌/LED 해제 신호를 전송했습니다."));
 }
 
-
 // ═══════════════════════════════════════════════════════════
-//  TAB2: 비상 로그 조회 / 블랙박스 재생 (자리표시자 — 서버 연동 전)
+//  TAB2 슬롯 — 자리표시자 (서버 연동 전)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onSearchClicked()
 {
@@ -837,4 +1239,83 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
 {
     // TODO(core): 선택된 로그의 블랙박스 파일 경로를 서버에 요청 → 재생
     qDebug() << "블랙박스 재생 요청 — row" << row;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TAB3 슬롯 — 자리표시자 (DB 쿼리 연동 전)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::refreshResidentTable()
+{
+    // TODO(core): SELECT * FROM residents WHERE status='재원'
+    residentTable->setRowCount(0);
+    qDebug() << "입소자 목록 새로고침 (DB 연동 전)";
+}
+
+void MainWindow::refreshCaregiverTable()
+{
+    // TODO(core): SELECT * FROM caregivers WHERE status='재직'
+    caregiverTable->setRowCount(0);
+    qDebug() << "요양사 목록 새로고침 (DB 연동 전)";
+}
+
+void MainWindow::onResidentSelected(int row, int /*column*/)
+{
+    if (!residentTable || row < 0) return;
+    // TODO(core): 선택된 행의 resident_id로 전체 정보 조회 후 폼에 로드
+    auto* idItem = residentTable->item(row, 0);
+    if (idItem) selectedResidentId = idItem->text().toInt();
+    qDebug() << "입소자 선택 — ID:" << selectedResidentId;
+}
+
+void MainWindow::onNewResident()
+{
+    selectedResidentId = -1;
+    editName->clear();
+    editRoom->clear();
+    editBed->clear();
+    editCameraId->clear();
+    editWearableId->clear();
+    editGuardianName->clear();
+    editGuardianPhone->clear();
+    editGuardianRelation->clear();
+    editNotes->clear();
+    editRiskLevel->setCurrentIndex(1);   // 기본 '중'
+    editStatus->setCurrentIndex(1);      // 기본 '퇴원'
+    editAdmittedAt->setDate(QDate::currentDate());
+    editDischargeDue->setDate(QDate::currentDate().addMonths(1));
+    editName->setFocus();
+}
+
+void MainWindow::onSaveResident()
+{
+    if (editName->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("입력 오류"),
+                             QStringLiteral("이름을 입력해주세요."));
+        return;
+    }
+    // TODO(core): selectedResidentId == -1이면 INSERT, 아니면 UPDATE
+    qDebug() << "입소자 저장 —"
+             << "이름:" << editName->text()
+             << "병실:" << editRoom->text()
+             << "침대:" << editBed->text()
+             << "위험도:" << editRiskLevel->currentText();
+    QMessageBox::information(this, QStringLiteral("저장"),
+                             QStringLiteral("저장되었습니다. (DB 연동 전 — 자리표시자)"));
+}
+
+void MainWindow::onDischargeResident()
+{
+    if (selectedResidentId < 0) {
+        QMessageBox::warning(this, QStringLiteral("선택 없음"),
+                             QStringLiteral("퇴원 처리할 입소자를 먼저 선택해주세요."));
+        return;
+    }
+    const auto reply = QMessageBox::question(
+        this, QStringLiteral("퇴원 처리"),
+        QStringLiteral("선택한 입소자를 퇴원 처리하시겠습니까?\n(기록은 보존됩니다)"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) return;
+
+    // TODO(core): UPDATE residents SET status='퇴원' WHERE resident_id=?
+    qDebug() << "퇴원 처리 — ID:" << selectedResidentId;
 }

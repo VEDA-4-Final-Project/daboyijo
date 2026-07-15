@@ -44,6 +44,11 @@ public:
     // 접속한 모든 클라이언트에 채널 프레임 1장 전송
     void broadcast(int channel, std::vector<unsigned char> jpeg);
 
+    // 접속한 모든 클라이언트에 이벤트(dbj_evt_header_t) 전송.
+    // type은 DBJ_EVT_*, (x,y)는 발생 위치 정규화 0~1 (없으면 0,0).
+    // 아무 스레드에서나 호출 가능 (낙상 콜백은 AI 워커 스레드에서 온다).
+    void broadcastEvent(int channel, uint8_t type, float x, float y);
+
     size_t clientCount();
 
 private:
@@ -60,6 +65,7 @@ private:
     };
 
     void acceptLoop();
+    void enqueueAll(Packet packet);  // 모든 클라이언트 outbox에 적재 (죽은 클라 정리 겸)
     void senderLoop(Client& client);
     void receiverLoop(Client& client);  // 제어 메시지 파싱 → on_roi_
     void closeClient(Client& client);   // alive=false → 소켓 셧다운 → 스레드 join → close

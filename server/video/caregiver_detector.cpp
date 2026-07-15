@@ -39,7 +39,10 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     double ratio = static_cast<double>(cv::countNonZero(mask))
                  / (mask.rows * mask.cols);
 
-    // [디버그] 상반신 영역의 실제 HSV 통계 — 색 범위 튜닝용
+    // [디버그] 상반신 영역의 실제 HSV 통계 — 색 범위 튜닝용.
+    // 출력뿐 아니라 통계 계산 자체가 사람당 매번 돌던 낭비라 통째로 비활성화.
+    // 색 범위 다시 튜닝할 때 #if 1로 켜서 쓸 것.
+#if 0
     {
         cv::Scalar meanHsv, stdHsv;
         cv::meanStdDev(hsv, meanHsv, stdHsv);   // 채널별 평균/표준편차
@@ -63,6 +66,7 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
         //     "[caregiver] 현재 설정 lower=(%.0f,%.0f,%.0f) upper=(%.0f,%.0f,%.0f)\n",
         //     lower_[0], lower_[1], lower_[2], upper_[0], upper_[1], upper_[2]);
     }
+#endif
 
     std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
 
