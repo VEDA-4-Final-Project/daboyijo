@@ -177,9 +177,10 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     const auto& rh = kp[kRightHip];
     if (ls.score < kMinJointScore || rs.score < kMinJointScore ||
         lh.score < kMinJointScore || rh.score < kMinJointScore) {
-        std::fprintf(stderr,
-                     "[pose] 신뢰도 부족 판정보류 — 어깨(%.2f,%.2f) 엉덩이(%.2f,%.2f) 기준=%.2f\n",
-                     ls.score, rs.score, lh.score, rh.score, kMinJointScore);
+        // 로그 정리로 비활성화 — 디버깅 시 해제
+        // std::fprintf(stderr,
+        //              "[pose] 신뢰도 부족 판정보류 — 어깨(%.2f,%.2f) 엉덩이(%.2f,%.2f) 기준=%.2f\n",
+        //              ls.score, rs.score, lh.score, rh.score, kMinJointScore);
         return false;  // 신뢰도 부족 — 판정 보류(낙상 아님으로 보수적 처리)
     }
 
@@ -242,12 +243,14 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     }
 
     const bool lying = by_angle || inverted || foreshortened;
-    std::fprintf(stderr,
-                 "[pose] 기울기=%.1f도(기준%.0f%s) 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) → %s\n",
-                 angle_from_vertical, kLyingAngleDeg, by_angle ? "✓" : "",
-                 inverted ? "✓" : "-",
-                 spread_ratio, extent, ratio_limit, foreshortened ? "✓" : "",
-                 lying ? "누움" : "서있음");
+    (void)extent;  // 아래 로그 비활성화 중 미사용 경고 방지 (임계값 튜닝 시 로그와 함께 복원)
+    // 로그 정리로 비활성화 — 디버깅 시 해제
+    // std::fprintf(stderr,
+    //              "[pose] 기울기=%.1f도(기준%.0f%s) 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) → %s\n",
+    //              angle_from_vertical, kLyingAngleDeg, by_angle ? "✓" : "",
+    //              inverted ? "✓" : "-",
+    //              spread_ratio, extent, ratio_limit, foreshortened ? "✓" : "",
+    //              lying ? "누움" : "서있음");
     return lying;
 }
 

@@ -274,9 +274,10 @@ int main(int argc, char* argv[]) {
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
                                                  job.frame.cols, job.frame.rows);
                     if (roi.width <= 0 || roi.height <= 0) {
-                        std::fprintf(stderr,
-                                     "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
-                                     job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
+                        // 로그 정리로 비활성화 — 디버깅 시 해제
+                        // std::fprintf(stderr,
+                        //              "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
+                        //              job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
                         continue;
                     }
 
