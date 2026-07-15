@@ -10,3 +10,23 @@
 
 wm8960 
 
+현재까지 사용법 작성해 두겠습니다. 
+
+cd wm8960
+
+make 
+
+sudo dtoverlay  wm8960_custum_daboyjo.dtbo 
+
+sudo modeprobe regmap-i2c 
+
+sudo insmod  wm8960_custum_daboyjo.ko 
+
+cd ..
+
+cd AudioPlayer
+
+./veda_player <음원파일경로> 
+
+
+
