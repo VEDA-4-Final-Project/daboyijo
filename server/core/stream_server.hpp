@@ -29,6 +29,8 @@ public:
     };
     using RoiCallback = std::function<void(const RoiUpdate&)>;
 
+    using ConfirmCallback = std::function<void(int channel)>;
+
     explicit StreamServer(int port);
     ~StreamServer();
 
@@ -37,6 +39,8 @@ public:
 
     // ROI 수신 콜백. start() 전에 등록할 것 (접속 즉시 수신 스레드가 뜬다).
     void setRoiCallback(RoiCallback cb) { on_roi_ = std::move(cb); }
+    // 낙상 확인 수신 콜백. start() 전 등록
+    void setConfirmCallback(ConfirmCallback cb) { on_confirm_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -46,8 +50,13 @@ public:
 
     // 접속한 모든 클라이언트에 이벤트(dbj_evt_header_t) 전송.
     // type은 DBJ_EVT_*, (x,y)는 발생 위치 정규화 0~1 (없으면 0,0).
+    // timestampMsOverride를 0이 아닌 값으로 주면 그 값을 그대로 timestamp_ms에
+    // 싣는다(기본 0이면 지금까지처럼 서버 현재 시각을 사용). 블랙박스 클립
+    // 파일명과 같은 시각을 써야 하는 등, 호출자가 이벤트 시각을 다른 값과
+    // 맞춰야 할 때 쓴다.
     // 아무 스레드에서나 호출 가능 (낙상 콜백은 AI 워커 스레드에서 온다).
-    void broadcastEvent(int channel, uint8_t type, float x, float y);
+    void broadcastEvent(int channel, uint8_t type, float x, float y,
+                        int64_t timestampMsOverride = 0);
 
     size_t clientCount();
 
@@ -78,4 +87,5 @@ private:
     std::mutex clients_mutex_;
     std::vector<std::shared_ptr<Client>> clients_;
     RoiCallback on_roi_;
+    ConfirmCallback on_confirm_;
 };
