@@ -117,11 +117,11 @@ ServerConfig loadConfig(const std::string& path) {
 }
 
 // 🌟 [추가] 메인 스레드와 AI 스레드 간 일감을 전달할 데이터 바구니 구조체
+// MoveNet 크롭은 원본 해상도에서 해야 원거리 사람 감지가 안정적 (960x540
+// 크롭 실험은 신뢰도 저하로 원복 — rtsp_av_client.cpp 상단 기록 참조).
 struct AiJob {
-    // 마스킹 전 깨끗한 960x540 프레임 — MoveNet 크롭과 보호사 색상 감지 공용.
-    // (수신단 sws 다운스케일로 원본 해상도 프레임은 더 이상 파이프라인에 없음.
-    //  Thunder 입력이 256x256이라 960x540 크롭으로도 충분 — [pose] 로그로 검증)
-    cv::Mat frame;
+    cv::Mat raw_frame;           // MoveNet용 원본 해상도 이미지
+    cv::Mat small_frame;         // 보호사 색상 감지용 축소(960x540) 이미지
     int channel = -1;
     std::vector<Detection> dets; // 객체 좌표 메타데이터
 };
@@ -245,14 +245,14 @@ int main(int argc, char* argv[]) {
                 continue;
             }
 
-            // 2. 보호사 인식 수행 (깨끗한 프레임 사용)
+            // 2. 가벼워진 small 이미지로 보호사 인식 수행
             DetectionFrame df;
             df.channel = job.channel;
             df.objects = job.dets;
-            bool present = caregiver_detector.detectInFrame(job.frame, df);
+            bool present = caregiver_detector.detectInFrame(job.small_frame, df);
             care_timers[job.channel].update(present);
 
-            // 3. MoveNet 자세 판정 수행 (같은 프레임에서 사람 bbox 크롭)
+            // 3. 원본 해상도 이미지로 MoveNet 자세 판정 수행
             if (pose_estimator.isReady()) {
                 std::vector<FallDetector::ObservedTrack> observed;
                 {
@@ -272,7 +272,7 @@ int main(int argc, char* argv[]) {
                     last = pose_now;
 
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
-                                                 job.frame.cols, job.frame.rows);
+                                                 job.raw_frame.cols, job.raw_frame.rows);
                     if (roi.width <= 0 || roi.height <= 0) {
                         // 로그 정리로 비활성화 — 디버깅 시 해제
                         // std::fprintf(stderr,
@@ -282,7 +282,7 @@ int main(int argc, char* argv[]) {
                     }
 
                     // 🚨 AI 스레드가 혼자서 무거운 연산을 처리 (메인 스트리밍은 방해받지 않음!)
-                    bool lying = pose_estimator.isLyingDown(job.frame(roi));
+                    bool lying = pose_estimator.isLyingDown(job.raw_frame(roi));
                     std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                                  job.channel, t.object_id, lying ? "누움" : "서있음",
                                  roi.width, roi.height);
@@ -316,12 +316,11 @@ int main(int argc, char* argv[]) {
 
             auto t0 = std::chrono::steady_clock::now();
 
-            // 1. 수신단(sws 다운스케일)에서 이미 960x540 BGR로 도착.
-            //    다른 크기가 오면(설정 변경 등 방어) 여기서 맞춘다.
-            cv::Mat small = frame->image;
-            if (small.size() != kViewSize) cv::resize(small, small, kViewSize);
-            // AI 전송용 깨끗한 복사본 (아래 마스킹이 small을 제자리 수정하므로 필수)
-            cv::Mat clean = small.clone();
+            // 1. 빠른 리사이즈 및 AI 전송용 깨끗한 복사본 생성
+            //    (마스킹이 small을 제자리 수정하므로 AI용은 복사본 필수)
+            cv::Mat small;
+            cv::resize(frame->image, small, kViewSize);
+            cv::Mat small_copy = small.clone();
 
             // 2. 최신 메타데이터 복사
             std::vector<Detection> dets_copy;
@@ -337,7 +336,8 @@ int main(int argc, char* argv[]) {
             {
                 std::lock_guard<std::mutex> lock(ai_mutex);
                 pending_ai_jobs[frame->channel] = {
-                    std::move(clean),
+                    std::move(frame->image),
+                    std::move(small_copy),
                     frame->channel,
                     std::move(dets_copy)
                 };
