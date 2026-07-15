@@ -50,7 +50,7 @@ QString vitalColor(double temp, int hr) {
 }
 
 // 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.35.253";
+const char* kServerHost = "172.20.32.38";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
