@@ -400,7 +400,7 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
 
                     for (auto it = history.begin(); it != history.end(); ++it) {
                         // 영상의 생성 시간과 좌표의 생성 시간 차이를 계산 (초 단위)
-                        double diff = std::abs(std::chrono::duration<double>(it->timestamp - frame->timestamp).count());
+                        double diff = std::abs(std::chrono::duration<double>(it->timestamp - frame->received_at).count());
                         if (diff < min_diff) {
                             min_diff = diff;
                             best_it = it;
@@ -450,8 +450,13 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
                 int humans = 0;
                 {
                     std::lock_guard<std::mutex> lock(det_mutex);
-                    for (const auto& d : latest_detections[id]) {
-                        if (d.isHuman()) ++humans;
+                    const auto& history = detection_history[id];
+                    
+                    // 기록실에 데이터가 있다면, 가장 최근 기록(back())을 꺼내서 사람 수를 센다
+                    if (!history.empty()) {
+                        for (const auto& d : history.back().detections) {
+                            if (d.isHuman()) ++humans;
+                        }
                     }
                 }
                 char buf[112];
