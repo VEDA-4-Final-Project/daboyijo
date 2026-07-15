@@ -89,6 +89,9 @@ public:
 // JPEG 페이로드 크기 상한 — 960x540 q80 실측 수십 KB 수준이라 4MB면 충분.
 // 이걸 넘는 payload_len은 스트림 오염(또는 프로토콜 불일치)으로 본다.
 constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
+
+// 🌟 낙상 경보 해제 통신 프로토콜 상수 (0x03)
+constexpr uint8_t kCtrlFallConfirm = 0x03; 
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -246,7 +249,7 @@ QWidget* MainWindow::buildVideoWall()
             &MainWindow::onRoiVisibilityToggled);
     titleRow->addWidget(roiToggleButton);
 
-    // 🎤 원격 방송(인터콤) — 누르고 있는 동안 관제실 음성 → 현장 스피커
+    // 🎤 원격 방송(인터콤)
     micButton = new QPushButton(QStringLiteral("🎤 방송"));
     micButton->setObjectName("micButton");
     micButton->setCursor(Qt::PointingHandCursor);
@@ -254,14 +257,14 @@ QWidget* MainWindow::buildVideoWall()
     connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
     titleRow->addWidget(micButton);
 
-    // 경보 해제 — 현장 사이렌/LED 원격 끄기
+    // 🚨 경보 해제 
     alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
     alarmClearButton->setObjectName("alarmButton");
     alarmClearButton->setCursor(Qt::PointingHandCursor);
     connect(alarmClearButton, &QPushButton::clicked, this,
             &MainWindow::onAlarmClearClicked);
     titleRow->addWidget(alarmClearButton);
-
+ 
     outer->addLayout(titleRow);
 
     auto* grid = new QGridLayout();
@@ -282,7 +285,7 @@ QWidget* MainWindow::buildVideoCard(int channel)
     card->setMinimumSize(320, 220);
 
     auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(0, 0, 0, 0);
+    card->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
     // 상단 오버레이 바: 병상/환자 + LIVE
@@ -1218,23 +1221,25 @@ void MainWindow::onReadyRead()
 }
 
 // ═══════════════════════════════════════════════════════════
-//  낙상 이벤트 — 채널 강조 + 팝업
+//  낙상 이벤트 — 오직 빨간 테두리만 활성화 및 로그 추가 (팝업 완전 박멸)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
 {
-    // 채널 강조 (빨간 테두리 + 배너) — 팝업 확인 전까지 유지
-    if (channelViews[channel])
-        channelViews[channel]->setAlert(true);
+    // 1. 팝업 없이 빨간 테두리만 즉각 활성화!
+    if (channel >= 0 && channel < 4) {
+        fallActive[channel] = true;
+        if (channelViews[channel]) {
+            channelViews[channel]->setAlert(true);
+        }
+        qDebug() << "🚨 [낙상 감지] 채널" << channel << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
+    }
 
-    // 비상 로그 조회 탭에 이벤트 1건 추가. 서버가 같은 timestampMs로 블랙박스
-    // 클립 파일명(ch{채널}_{ms}.mp4)을 저장하므로 그대로 재구성해 둔다 —
-    // 다만 서버는 이벤트 발생 후 몇 초 뒤에야 파일을 다 쓰므로, 저장이 끝나기
-    // 전에 더블클릭하면 아직 못 찾을 수 있다(재생 실패 메시지로 안내).
+    // 2. 비상 로그 조회 탭에 URL 및 정보 등록
     if (logTable) {
         const int row = logTable->rowCount();
         logTable->insertRow(row);
         const QString when = QDateTime::fromMSecsSinceEpoch(
-                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
                                      .arg(QString::fromLatin1(kServerHost))
@@ -1247,34 +1252,6 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
     }
-
-    // 같은 채널 팝업이 이미 떠 있으면 중복 생성하지 않음 (강조만 갱신)
-    if (fallActive[channel])
-        return;
-    fallActive[channel] = true;
-
-    const QString when = QDateTime::fromMSecsSinceEpoch(
-                             static_cast<qint64>(timestampMs)).toString("hh:mm:ss");
-    auto* box = new QMessageBox(this);
-    box->setIcon(QMessageBox::Critical);
-    box->setWindowTitle(QStringLiteral("🚨 낙상 감지"));
-    box->setText(QStringLiteral("낙상이 감지되었습니다!\n\n"
-                                "채널 %1 · %2 (%3)\n감지 시각 %4")
-                     .arg(channel + 1)
-                     .arg(patients[channel].name, patients[channel].bed, when));
-    box->setStandardButtons(QMessageBox::Ok);
-    box->button(QMessageBox::Ok)->setText(QStringLiteral("확인"));
-    box->setAttribute(Qt::WA_DeleteOnClose);
-
-    // 확인을 누르면 강조 해제. 비모달(show)이라 다른 채널 감시는 계속된다.
-    connect(box, &QMessageBox::finished, this, [this, channel](int) {
-        fallActive[channel] = false;
-        if (channelViews[channel])
-            channelViews[channel]->setAlert(false);
-    });
-    box->show();
-    box->raise();
-    box->activateWindow();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1358,12 +1335,10 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
 }
 
 // ═══════════════════════════════════════════════════════════
-//  원격 방송(인터콤) / 경보 해제 — 자리표시자 (MQTT·오디오 연동 전)
+//  원격 방송(인터콤)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onMicPressed()
 {
-    // TODO(임베디드-중계): QAudioInput으로 PCM 캡처 시작 →
-    //   암호화 소켓으로 알림 노드(RPi 4)에 실시간 스트리밍 전송
     micButton->setText(QStringLiteral("🔴 방송 중"));
     micButton->setProperty("active", true);
     micButton->style()->unpolish(micButton);
@@ -1373,7 +1348,6 @@ void MainWindow::onMicPressed()
 
 void MainWindow::onMicReleased()
 {
-    // TODO(임베디드-중계): PCM 캡처 종료, 소켓 스트림 정리
     micButton->setText(QStringLiteral("🎤 방송"));
     micButton->setProperty("active", false);
     micButton->style()->unpolish(micButton);
@@ -1381,17 +1355,46 @@ void MainWindow::onMicReleased()
     qDebug() << "인터콤 방송 종료";
 }
 
+// ═══════════════════════════════════════════════════════════
+//  [경보 해제] 버튼 클릭 시 동작 (즉각적인 테두리 OFF + 마스크 ON 패킷 송신)
+// ═══════════════════════════════════════════════════════════
 void MainWindow::onAlarmClearClicked()
 {
-    const auto reply = QMessageBox::question(
-        this, QStringLiteral("경보 해제"),
-        QStringLiteral("현장 사이렌/LED를 원격으로 끄시겠습니까?"),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (reply != QMessageBox::Yes) return;
+    bool packetSent = false;
 
-    // TODO(중앙서버): MQTT 제어 토픽으로 알림 노드(RPi 4)에 "경보 해제" 발행
-    //   → 현장 사이렌/LED 즉시 정지
-    qDebug() << "경보 해제 신호 발행 (MQTT 연동 전 — 자리표시자)";
+    // 되묻는 팝업 없이 버튼 클릭 즉시 원스톱으로 리셋 처리!
+    for (int channel = 0; channel < 4; ++channel) {
+        if (fallActive[channel]) {
+            // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어
+            fallActive[channel] = false;
+            if (channelViews[channel]) {
+                channelViews[channel]->setAlert(false);
+            }
+
+            // 2. 서버의 PrivacyMasker를 깨워서 다시 모자이크 씌우라고 0x03 바이너리 쏘기
+            if (socket && socket->state() == QAbstractSocket::ConnectedState) {
+                dbj_ctrl_header_t h;
+                h.magic = kCtrlMagic;                  // 0xDB4C
+                h.version = 0x01;
+                h.type = kCtrlFallConfirm;             // 0x03 (경보 확인 -> 마스크 복구)
+                h.channel = static_cast<uint8_t>(channel);
+                h.point_count = 0;
+                h.reserved = 0;
+
+                socket->write(reinterpret_cast<const char*>(&h), sizeof(h));
+                packetSent = true;
+                qDebug() << "🔓 [Qt -> 서버] 채널" << channel << "경보 확인 및 모자이크 복구 패킷 전송!";
+            }
+        }
+    }
+
+    if (packetSent) {
+        socket->flush(); // 버퍼 비우고 네트워크 선으로 즉시 방출
+    } else {
+        // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
+        QMessageBox::information(this, QStringLiteral("경보 해제"),
+                                 QStringLiteral("현재 활성화된 낙상 경보가 없습니다."));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1399,7 +1402,6 @@ void MainWindow::onAlarmClearClicked()
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onSearchClicked()
 {
-    // TODO(core): MariaDB 쿼리 연동 지점 — 지금은 UI 스켈레톤만
     qDebug() << "검색 조건 —"
              << filterDateFrom->date().toString("yyyy-MM-dd") << "~"
              << filterDateTo->date().toString("yyyy-MM-dd")
@@ -1424,14 +1426,12 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::refreshResidentTable()
 {
-    // TODO(core): SELECT * FROM residents WHERE status='재원'
     residentTable->setRowCount(0);
     qDebug() << "입소자 목록 새로고침 (DB 연동 전)";
 }
 
 void MainWindow::refreshCaregiverTable()
 {
-    // TODO(core): SELECT * FROM caregivers WHERE status='재직'
     caregiverTable->setRowCount(0);
     qDebug() << "요양사 목록 새로고침 (DB 연동 전)";
 }
@@ -1439,7 +1439,6 @@ void MainWindow::refreshCaregiverTable()
 void MainWindow::onResidentSelected(int row, int /*column*/)
 {
     if (!residentTable || row < 0) return;
-    // TODO(core): 선택된 행의 resident_id로 전체 정보 조회 후 폼에 로드
     auto* idItem = residentTable->item(row, 0);
     if (idItem) selectedResidentId = idItem->text().toInt();
     qDebug() << "입소자 선택 — ID:" << selectedResidentId;
@@ -1457,8 +1456,8 @@ void MainWindow::onNewResident()
     editGuardianPhone->clear();
     editGuardianRelation->clear();
     editNotes->clear();
-    editRiskLevel->setCurrentIndex(1);   // 기본 '중'
-    editStatus->setCurrentIndex(1);      // 기본 '퇴원'
+    editRiskLevel->setCurrentIndex(1);
+    editStatus->setCurrentIndex(1);
     editAdmittedAt->setDate(QDate::currentDate());
     editDischargeDue->setDate(QDate::currentDate().addMonths(1));
     editName->setFocus();
@@ -1471,7 +1470,6 @@ void MainWindow::onSaveResident()
                              QStringLiteral("이름을 입력해주세요."));
         return;
     }
-    // TODO(core): selectedResidentId == -1이면 INSERT, 아니면 UPDATE
     qDebug() << "입소자 저장 —"
              << "이름:" << editName->text()
              << "병실:" << editRoom->text()
@@ -1494,6 +1492,5 @@ void MainWindow::onDischargeResident()
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (reply != QMessageBox::Yes) return;
 
-    // TODO(core): UPDATE residents SET status='퇴원' WHERE resident_id=?
     qDebug() << "퇴원 처리 — ID:" << selectedResidentId;
 }

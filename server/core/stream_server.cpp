@@ -168,7 +168,7 @@ void StreamServer::senderLoop(Client& client) {
     }
 }
 
-// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다. 현재는 ROI 설정/삭제.
+// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다. 현재는 ROI 설정/삭제 및 낙상 해제 확인.
 // TCP는 경계 없이 도착하므로 버퍼에 쌓아가며 완성된 메시지만 뽑아낸다.
 void StreamServer::receiverLoop(Client& client) {
     std::vector<uint8_t> buf;
@@ -195,28 +195,38 @@ void StreamServer::receiverLoop(Client& client) {
                 need += static_cast<size_t>(h.point_count) * sizeof(dbj_roi_point_t);
             }
             if (buf.size() - off < need) {
-                break;  // 점 배열이 아직 덜 옴 — 다음 recv 대기
+                break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
             }
 
-            const bool known =
-                (h.type == DBJ_CTRL_ROI_SET || h.type == DBJ_CTRL_ROI_CLEAR);
-            if (on_roi_ && known && h.channel < 4) {
-                RoiUpdate up;
-                up.channel = h.channel;
-                up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
-                if (h.type == DBJ_CTRL_ROI_SET) {
-                    const uint8_t* pts =
-                        buf.data() + off + sizeof(dbj_ctrl_header_t);
-                    up.points.reserve(h.point_count);
-                    for (int i = 0; i < h.point_count; ++i) {
-                        dbj_roi_point_t p;
-                        std::memcpy(&p, pts + i * sizeof(p), sizeof(p));
-                        up.points.emplace_back(
-                            static_cast<float>(p.x) / DBJ_ROI_COORD_SCALE,
-                            static_cast<float>(p.y) / DBJ_ROI_COORD_SCALE);
-                    }
+            // 낙상 감지 확인 신호
+            if (h.type == DBJ_CTRL_FALL_CONFIRM) {
+                // 낙상 확인 패킷 처리 (바이트 패딩 없이 헤더 8바이트만 소모)
+                if (on_confirm_ && h.channel < 4) {
+                    on_confirm_(h.channel);
                 }
-                on_roi_(up);
+            }
+            // ROI 지정/삭제 신호
+            else {
+                const bool known = (h.type == DBJ_CTRL_ROI_SET || h.type == DBJ_CTRL_ROI_CLEAR);
+                if (on_roi_ && known && h.channel < 4) {
+                    RoiUpdate up;
+                    up.channel = h.channel;
+                    up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
+                    // ROI 지정
+                    if (h.type == DBJ_CTRL_ROI_SET) {
+                        const uint8_t* pts =
+                            buf.data() + off + sizeof(dbj_ctrl_header_t);
+                        up.points.reserve(h.point_count);
+                        for (int i = 0; i < h.point_count; ++i) {
+                            dbj_roi_point_t p;
+                            std::memcpy(&p, pts + i * sizeof(p), sizeof(p));
+                            up.points.emplace_back(
+                                static_cast<float>(p.x) / DBJ_ROI_COORD_SCALE,
+                                static_cast<float>(p.y) / DBJ_ROI_COORD_SCALE);
+                        }
+                    }
+                    on_roi_(up);
+                }
             }
             off += need;
         }

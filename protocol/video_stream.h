@@ -54,6 +54,7 @@ extern "C" {
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
 #define DBJ_CTRL_ROI_SET    0x01    /* 채널 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
 #define DBJ_CTRL_ROI_CLEAR  0x02    /* 채널 ROI 삭제 — 점 배열 없음 */
+#define DBJ_CTRL_FALL_CONFIRM 0x03  /* 낙상 경보 해제 — 점 배열 없음 */
 
 #define DBJ_ROI_MAX_POINTS  32      /* 다각형 꼭짓점 상한 */
 #define DBJ_ROI_COORD_SCALE 10000   /* 정규화 좌표 고정소수 배율 (0.0~1.0 → 0~10000) */

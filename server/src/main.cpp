@@ -154,11 +154,17 @@ int main(int argc, char* argv[]) {
     StreamServer stream_server(config.stream_port);
     std::mutex roi_mutex;
     std::map<int, std::vector<std::pair<float, float>>> channel_rois;
+    PrivacyMasker privacy_masker;
     
     stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
         std::lock_guard<std::mutex> lock(roi_mutex);
         if (up.clear) channel_rois.erase(up.channel);
         else channel_rois[up.channel] = up.points;
+    });
+    
+    stream_server.setConfirmCallback([&](int ch) {
+        privacy_masker.clearFall(ch);
+        std::printf("ch%d 낙상 경보 확인.\n", ch);
     });
 
     if (!stream_server.start()) return 1;
@@ -175,8 +181,6 @@ int main(int argc, char* argv[]) {
 
     CaregiverDetector caregiver_detector;
 
-    PrivacyMasker privacy_masker(10.0, 31);
-
     std::mutex det_mutex;
     std::map<int, std::vector<Detection>> latest_detections;
     std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
@@ -192,7 +196,7 @@ int main(int argc, char* argv[]) {
     // 🌟 [수정] 람다 캡처에 [&]를 사용하여 privacy_masker 참조 전달
     fall_detector.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
-        // 🌟 [추가] 낙상 트리거 발생 시 마스킹 즉시 해제
+        // 낙상 트리거 발생 시 마스킹 즉시 해제
         privacy_masker.reportFall(ch);
 
         // 블랙박스: 지금까지 버퍼(최근 kBlackboxPreSec초) + 이후 kBlackboxPostSec초
@@ -325,9 +329,10 @@ int main(int argc, char* argv[]) {
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
                                                  job.frame.cols, job.frame.rows);
                     if (roi.width <= 0 || roi.height <= 0) {
-                        std::fprintf(stderr,
-                                     "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
-                                     job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
+                        // 로그 정리로 비활성화 — 디버깅 시 해제
+                        // std::fprintf(stderr,
+                        //              "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
+                        //              job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
                         continue;
                     }
 
