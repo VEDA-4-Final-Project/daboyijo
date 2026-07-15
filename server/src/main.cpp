@@ -154,6 +154,7 @@ int main(int argc, char* argv[]) {
     StreamServer stream_server(config.stream_port);
     std::mutex roi_mutex;
     std::map<int, std::vector<std::pair<float, float>>> channel_rois;
+    PrivacyMasker privacy_masker;
     
     stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
         std::lock_guard<std::mutex> lock(roi_mutex);
@@ -179,8 +180,6 @@ int main(int argc, char* argv[]) {
     db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
 
     CaregiverDetector caregiver_detector;
-
-    PrivacyMasker privacy_masker;
 
     std::mutex det_mutex;
     std::map<int, std::vector<Detection>> latest_detections;
