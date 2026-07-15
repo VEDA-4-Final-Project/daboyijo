@@ -27,7 +27,8 @@
 #include <QMediaPlayer>
 #include <QVideoWidget>
 #include <QUrl>
-#include <QProxyStyle>
+#include <QMouseEvent>
+#include <QStackedWidget>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -72,17 +73,49 @@ QString formatMs(qint64 ms) {
         .arg(totalSec % 60, 2, 10, QLatin1Char('0'));
 }
 
-// 재생바 트랙의 아무 지점이나 좌클릭하면 그 위치로 바로 점프하게 한다.
-// (기본 QSlider는 트랙 클릭 시 pageStep만큼만 이동해 정확한 탐색이 어렵다.)
-class SeekStyle : public QProxyStyle {
+// 재생바 트랙의 아무 지점이나 좌클릭하면 그 위치로 바로 점프하는 슬라이더.
+// (기본 QSlider는 트랙 클릭 시 pageStep만큼만 이동해 정확한 탐색이 어렵다.
+//  QProxyStyle의 SH_Slider_AbsoluteSetButtons 방식은 이 앱처럼 스타일시트를
+//  쓰면 무시되는 Qt 제약이 있어, 마우스 이벤트를 직접 처리한다.)
+class ClickSeekSlider : public QSlider {
 public:
-    using QProxyStyle::QProxyStyle;
-    int styleHint(StyleHint hint, const QStyleOption* opt = nullptr,
-                  const QWidget* w = nullptr,
-                  QStyleHintReturn* ret = nullptr) const override {
-        if (hint == QStyle::SH_Slider_AbsoluteSetButtons)
-            return Qt::LeftButton;
-        return QProxyStyle::styleHint(hint, opt, w, ret);
+    using QSlider::QSlider;
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && maximum() > minimum()) {
+            // 클릭 지점으로 즉시 이동한 뒤 드래그 추적 시작.
+            // (setSliderPosition을 먼저 해야 sliderPressed 수신 측에서
+            //  value()가 이미 클릭 지점을 가리킨다 — 즉시 탐색용)
+            setSliderPosition(valueFromX(e->position().toPoint().x()));
+            setSliderDown(true);   // sliderPressed 발생
+            e->accept();
+            return;
+        }
+        QSlider::mousePressEvent(e);
+    }
+    void mouseMoveEvent(QMouseEvent* e) override {
+        if (isSliderDown()) {
+            setSliderPosition(valueFromX(e->position().toPoint().x()));
+            e->accept();
+            return;
+        }
+        QSlider::mouseMoveEvent(e);
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (e->button() == Qt::LeftButton && isSliderDown()) {
+            setSliderPosition(valueFromX(e->position().toPoint().x()));
+            setSliderDown(false);  // sliderReleased 발생
+            e->accept();
+            return;
+        }
+        QSlider::mouseReleaseEvent(e);
+    }
+
+private:
+    int valueFromX(int x) const {
+        return QStyle::sliderValueFromPosition(minimum(), maximum(), x, width(),
+                                               invertedAppearance());
     }
 };
 
@@ -519,12 +552,21 @@ QWidget* MainWindow::buildBlackboxPlayer()
         QStringLiteral("로그를 더블클릭하면\n10초 블랙박스 영상이 재생됩니다"));
     blackboxPlaceholder->setAlignment(Qt::AlignCenter);
     blackboxPlaceholder->setObjectName("video");
-    lay->addWidget(blackboxPlaceholder, 1);
 
     blackboxVideoWidget = new QVideoWidget();
     blackboxVideoWidget->setObjectName("video");
-    blackboxVideoWidget->hide();
-    lay->addWidget(blackboxVideoWidget, 1);
+
+    // placeholder ↔ 영상은 hide/show 대신 스택으로 전환한다.
+    // hide/show 방식은 두 위젯의 선호 크기가 다를 때(특히 QVideoWidget은
+    // 영상 원본 해상도를 선호 크기로 보고) 전환·로드 때마다 카드가
+    // 커졌다 작아졌다 하는 원인이 된다. 스택 + Ignored 정책으로 내용물이
+    // 레이아웃 크기에 영향을 못 주게 고정한다.
+    blackboxStack = new QStackedWidget();
+    blackboxStack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    blackboxStack->addWidget(blackboxPlaceholder);
+    blackboxStack->addWidget(blackboxVideoWidget);
+    blackboxStack->setCurrentWidget(blackboxPlaceholder);
+    lay->addWidget(blackboxStack, 1);
 
     // [재생/일시정지] + 재생바 + 시간(현재/전체) 한 줄
     auto* seekRow = new QHBoxLayout();
@@ -536,17 +578,17 @@ QWidget* MainWindow::buildBlackboxPlayer()
     blackboxPlayPauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
     seekRow->addWidget(blackboxPlayPauseButton);
 
-    blackboxSeek = new QSlider(Qt::Horizontal);
+    blackboxSeek = new ClickSeekSlider(Qt::Horizontal);
     blackboxSeek->setEnabled(false);
     blackboxSeek->setRange(0, 0);   // duration 확정 전엔 0
-    // 트랙 클릭 → 그 위치로 점프. 스타일 소유권은 슬라이더가 부모로 관리.
-    auto* seekStyle = new SeekStyle;
-    seekStyle->setParent(blackboxSeek);
-    blackboxSeek->setStyle(seekStyle);
     seekRow->addWidget(blackboxSeek, 1);
 
     blackboxTimeLabel = new QLabel(QStringLiteral("00:00 / 00:00"));
     blackboxTimeLabel->setObjectName("subtitle");
+    // 시간 표시 폭을 고정해 재생 중 숫자 폭 변화로 재생바가 흔들리지 않게.
+    blackboxTimeLabel->setMinimumWidth(
+        blackboxTimeLabel->fontMetrics().horizontalAdvance(
+            QStringLiteral("00:00 / 00:00")) + 8);
     seekRow->addWidget(blackboxTimeLabel);
     lay->addLayout(seekRow);
 
@@ -582,7 +624,12 @@ QWidget* MainWindow::buildBlackboxPlayer()
                                    formatMs(blackboxPlayer->duration()));
     });
     // 슬라이더 조작 → 탐색. 잡는 동안 positionChanged를 무시하기 위해 플래그 사용.
-    connect(blackboxSeek, &QSlider::sliderPressed, this, [this] { blackboxSeeking = true; });
+    // ClickSeekSlider가 press 시점에 value를 클릭 지점으로 먼저 옮겨두므로,
+    // 누르는 순간 그 위치로 즉시 탐색된다(유튜브식 클릭 점프).
+    connect(blackboxSeek, &QSlider::sliderPressed, this, [this] {
+        blackboxSeeking = true;
+        blackboxPlayer->setPosition(blackboxSeek->value());
+    });
     connect(blackboxSeek, &QSlider::sliderReleased, this, [this] {
         blackboxPlayer->setPosition(blackboxSeek->value());
         blackboxSeeking = false;
@@ -597,21 +644,19 @@ QWidget* MainWindow::buildBlackboxPlayer()
         // 저장 완료 전에 눌렀으면 파일이 아직 없어 실패한다 — 몇 번 재시도.
         if (blackboxRetries < kClipMaxRetries && !blackboxUrl.isEmpty()) {
             ++blackboxRetries;
-            blackboxVideoWidget->hide();
             blackboxPlaceholder->setText(
                 QStringLiteral("블랙박스 저장 중… 잠시 후 재생됩니다 (%1)")
                     .arg(blackboxRetries));
-            blackboxPlaceholder->show();
+            blackboxStack->setCurrentWidget(blackboxPlaceholder);
             const QString url = blackboxUrl;
             QTimer::singleShot(kClipRetryDelayMs, this, [this, url] {
                 if (blackboxUrl == url) playBlackboxClip(url);
             });
             return;
         }
-        blackboxVideoWidget->hide();
         blackboxPlaceholder->setText(
             QStringLiteral("재생 실패 — 클립을 찾을 수 없습니다\n(%1)").arg(msg));
-        blackboxPlaceholder->show();
+        blackboxStack->setCurrentWidget(blackboxPlaceholder);
     });
 
     return card;
@@ -625,8 +670,7 @@ void MainWindow::playBlackboxClip(const QString& url)
         blackboxUrl = url;
         blackboxRetries = 0;
     }
-    blackboxPlaceholder->hide();
-    blackboxVideoWidget->show();
+    blackboxStack->setCurrentWidget(blackboxVideoWidget);
     blackboxSeek->setEnabled(true);
     blackboxPlayPauseButton->setEnabled(true);
 
