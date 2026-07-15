@@ -1,5 +1,5 @@
 // 다보이조 중앙 서버 진입점.
-// 파이프라인: RTSP 4채널 수신(libav) → [영상] 리사이즈→JPEG→Qt 송출
+// 파이프라인: RTSP 4채널 수신(libav, 960x540 BGR로 다운스케일 완료) → [영상] JPEG→Qt 송출
 //                                    → [메타] WiseAI 객체감지 XML 파싱→감지 저장
 // 5초마다 채널별 fps·사람 수·CPU·온도를 출력한다.
 
@@ -118,8 +118,10 @@ ServerConfig loadConfig(const std::string& path) {
 
 // 🌟 [추가] 메인 스레드와 AI 스레드 간 일감을 전달할 데이터 바구니 구조체
 struct AiJob {
-    cv::Mat raw_frame;           // MoveNet용 원본 이미지
-    cv::Mat small_frame;         // 보호사 색상 감지용 축소 이미지
+    // 마스킹 전 깨끗한 960x540 프레임 — MoveNet 크롭과 보호사 색상 감지 공용.
+    // (수신단 sws 다운스케일로 원본 해상도 프레임은 더 이상 파이프라인에 없음.
+    //  Thunder 입력이 256x256이라 960x540 크롭으로도 충분 — [pose] 로그로 검증)
+    cv::Mat frame;
     int channel = -1;
     std::vector<Detection> dets; // 객체 좌표 메타데이터
 };
@@ -243,14 +245,14 @@ int main(int argc, char* argv[]) {
                 continue;
             }
 
-            // 2. 가벼워진 small 이미지로 보호사 인식 수행
+            // 2. 보호사 인식 수행 (깨끗한 프레임 사용)
             DetectionFrame df;
             df.channel = job.channel;
             df.objects = job.dets;
-            bool present = caregiver_detector.detectInFrame(job.small_frame, df);
+            bool present = caregiver_detector.detectInFrame(job.frame, df);
             care_timers[job.channel].update(present);
 
-            // 3. 무거운 원본 이미지로 MoveNet 자세 판정 수행
+            // 3. MoveNet 자세 판정 수행 (같은 프레임에서 사람 bbox 크롭)
             if (pose_estimator.isReady()) {
                 std::vector<FallDetector::ObservedTrack> observed;
                 {
@@ -270,7 +272,7 @@ int main(int argc, char* argv[]) {
                     last = pose_now;
 
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
-                                                 job.raw_frame.cols, job.raw_frame.rows);
+                                                 job.frame.cols, job.frame.rows);
                     if (roi.width <= 0 || roi.height <= 0) {
                         std::fprintf(stderr,
                                      "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
@@ -279,7 +281,7 @@ int main(int argc, char* argv[]) {
                     }
 
                     // 🚨 AI 스레드가 혼자서 무거운 연산을 처리 (메인 스트리밍은 방해받지 않음!)
-                    bool lying = pose_estimator.isLyingDown(job.raw_frame(roi));
+                    bool lying = pose_estimator.isLyingDown(job.frame(roi));
                     std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                                  job.channel, t.object_id, lying ? "누움" : "서있음",
                                  roi.width, roi.height);
@@ -296,7 +298,8 @@ int main(int argc, char* argv[]) {
 
     // 프레임 레이트 방어선 (메인 루프 폭주 방지)
     std::map<int, std::chrono::steady_clock::time_point> last_main_proc_time;
-    const double kMainProcessInterval = 0.1; // 최대 10fps 제한 (0.1초)
+    const double kMainProcessInterval = 1.0 / 15.0; // 최대 15fps 제한
+    // (rtsp_av_client.cpp의 kMaxConvertFps가 이보다 커야 여기까지 프레임이 온다)
 
     // 👨‍🍳 [1번 요리사] 영상 스트리밍 전담 메인 스레드 (초고속 동작)
     while (!g_stop) {
@@ -312,10 +315,12 @@ int main(int argc, char* argv[]) {
 
             auto t0 = std::chrono::steady_clock::now();
 
-            // 1. 빠른 리사이즈 및 AI 전송용 깨끗한 복사본 생성
-            cv::Mat small;
-            cv::resize(frame->image, small, kViewSize);
-            cv::Mat small_copy = small.clone();
+            // 1. 수신단(sws 다운스케일)에서 이미 960x540 BGR로 도착.
+            //    다른 크기가 오면(설정 변경 등 방어) 여기서 맞춘다.
+            cv::Mat small = frame->image;
+            if (small.size() != kViewSize) cv::resize(small, small, kViewSize);
+            // AI 전송용 깨끗한 복사본 (아래 마스킹이 small을 제자리 수정하므로 필수)
+            cv::Mat clean = small.clone();
 
             // 2. 최신 메타데이터 복사
             std::vector<Detection> dets_copy;
@@ -331,10 +336,9 @@ int main(int argc, char* argv[]) {
             {
                 std::lock_guard<std::mutex> lock(ai_mutex);
                 pending_ai_jobs[frame->channel] = {
-                    std::move(frame->image),  
-                    std::move(small_copy),
+                    std::move(clean),
                     frame->channel,
-                    std::move(dets_copy)   
+                    std::move(dets_copy)
                 };
             }
 

@@ -18,13 +18,18 @@ extern "C" {
 
 namespace {
 constexpr int kReconnectDelaySec = 3;
-// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널당 ~10fps만 소비하므로
+// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널당 ~15fps만 소비하므로
 // (main.cpp의 kMainProcessInterval) 그 이상은 변환해 봐야 버려진다.
 // 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임 필수지만, sws_scale
-// YUV→BGR 변환(720p 기준 프레임당 수 ms)과 Mat 할당은 여기서 걸러
-// 스킵한다 — 30fps 입력이면 변환 부하가 1/3 이하로 준다.
-// main 쪽 10fps 스로틀이 최종 관문이므로 여기는 살짝 여유(12fps)를 둔다.
-constexpr double kMaxConvertFps = 12.0;
+// 변환과 Mat 할당은 여기서 걸러 스킵한다 (고fps 입력 카메라 대비 안전판 —
+// 카메라 프로파일이 15fps면 사실상 전부 통과).
+// main 쪽 15fps 스로틀이 최종 관문이므로 여기는 살짝 여유(18fps)를 둔다.
+constexpr double kMaxConvertFps = 18.0;
+// 파이프라인이 소비하는 프레임 크기 (main.cpp kViewSize와 동일하게 유지).
+// sws_scale이 YUV→BGR 변환과 동시에 이 크기로 다운스케일한다 — 원본 해상도
+// BGR 변환 후 cv::resize를 따로 하는 것보다 훨씬 싸다 (변환·리사이즈 일원화).
+constexpr int kOutW = 960;
+constexpr int kOutH = 540;
 // 메타데이터 재조립 버퍼 상한 — 정상 문서는 수 KB, 이걸 넘으면 스트림 이상
 constexpr size_t kMetaBufMax = 256 * 1024;
 
@@ -177,13 +182,13 @@ bool RtspAvClient::openAndStream() {
                         if (sws) sws_freeContext(sws);
                         sws = sws_getContext(frame->width, frame->height,
                                              static_cast<AVPixelFormat>(frame->format),
-                                             frame->width, frame->height,
+                                             kOutW, kOutH,
                                              AV_PIX_FMT_BGR24, SWS_BILINEAR,
                                              nullptr, nullptr, nullptr);
                         sws_w = frame->width;
                         sws_h = frame->height;
                     }
-                    cv::Mat img(frame->height, frame->width, CV_8UC3);
+                    cv::Mat img(kOutH, kOutW, CV_8UC3);
                     uint8_t* dst[1] = {img.data};
                     int dst_stride[1] = {static_cast<int>(img.step)};
                     sws_scale(sws, frame->data, frame->linesize, 0, frame->height,

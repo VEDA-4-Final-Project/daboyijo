@@ -32,7 +32,8 @@ class FallDetector {
 public:
     using FallCallback = std::function<void(int channel, const Detection& at)>;
 
-    // 낙상으로 확정되는 순간 1회 호출된다 (같은 객체당, 침대 재실 전까지 재통보 안 함).
+    // 낙상으로 확정되는 순간 1회 호출된다. 같은 객체는 침대 재실 또는
+    // 기립(서있음) 일정 시간 유지로 재무장되기 전까지 재통보하지 않는다.
     void setFallCallback(FallCallback cb) { on_fall_ = std::move(cb); }
 
     // 채널의 최신 감지 결과를 매 메타데이터 콜백(주기 ~5Hz)마다 전달.
@@ -62,7 +63,9 @@ private:
         float left = 0, top = 0, right = 0, bottom = 0;  // 최신 bbox (크롭용)
         bool lying_active = false;  // 직전 자세 보고가 "누움"이었는지
         std::chrono::steady_clock::time_point lying_since;  // 누움이 시작된 시각
-        bool fired = false;  // 이미 통보함 (재실 전까지 중복 방지)
+        bool fired = false;  // 이미 통보함 (침대 재실 또는 기립 유지 재무장 전까지 중복 방지)
+        bool standing_active = false;  // 통보 후 "서있음"이 연속 관측 중인지 (재무장용)
+        std::chrono::steady_clock::time_point standing_since;  // 그 기립이 시작된 시각
         std::chrono::steady_clock::time_point last_seen;
     };
 
