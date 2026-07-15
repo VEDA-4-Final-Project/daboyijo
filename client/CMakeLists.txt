@@ -11,6 +11,8 @@ qt_add_executable(daboyijo
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
+    videoview.cpp
+    videoview.h
 )
 
 qt_add_translations(
