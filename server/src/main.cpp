@@ -19,6 +19,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <cmath>
+#include <limits>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -62,7 +64,7 @@ struct ServerConfig {
 const std::string kPoseModelPath = "models/movenet_thunder_int8.tflite";
 constexpr double kPoseIntervalSec = 2.0;
 // Thunder는 추론 1회당 4코어를 ~100ms 점유한다(Lightning 36ms의 ~3배) — 기본
-// 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다퉈 fps가 흔들릴
+// 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다툈 fps가 흔들릴
 // 수 있어, 영상 파이프라인에 코어를 남기도록 절반(2)으로 제한한다.
 constexpr int kPoseNumThreads = 2;
 
@@ -131,9 +133,7 @@ ServerConfig loadConfig(const std::string& path) {
     return config;
 }
 
-// 🌟 [추가] 메인 스레드와 AI 스레드 간 일감을 전달할 데이터 바구니 구조체
-// MoveNet 크롭은 원본 해상도에서 해야 원거리 사람 감지가 안정적 (960x540
-// 크롭 실험은 신뢰도 저하로 원복 — rtsp_av_client.cpp 상단 기록 참조).
+// 메인 스레드와 AI 스레드 간 일감을 전달할 데이터 바구니 구조체
 struct AiJob {
     cv::Mat raw_frame;           // MoveNet용 원본 해상도 이미지
     cv::Mat small_frame;         // 보호사 색상 감지용 축소(960x540) 이미지
@@ -155,7 +155,7 @@ int main(int argc, char* argv[]) {
     std::mutex roi_mutex;
     std::map<int, std::vector<std::pair<float, float>>> channel_rois;
     PrivacyMasker privacy_masker;
-    
+
     stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
         std::lock_guard<std::mutex> lock(roi_mutex);
         if (up.clear) channel_rois.erase(up.channel);
@@ -182,7 +182,11 @@ int main(int argc, char* argv[]) {
     CaregiverDetector caregiver_detector;
 
     std::mutex det_mutex;
-    std::map<int, std::vector<Detection>> latest_detections;
+    struct TimestampedDets {
+        std::chrono::steady_clock::time_point timestamp;
+        std::vector<Detection> detections;
+    };
+    std::map<int, std::vector<TimestampedDets>> detection_history;
     std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
 
     // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
@@ -193,7 +197,6 @@ int main(int argc, char* argv[]) {
     std::map<int, std::unique_ptr<BlackboxRecorder>> blackbox_recorders;
 
     FallDetector fall_detector;
-    // 🌟 [수정] 람다 캡처에 [&]를 사용하여 privacy_masker 참조 전달
     fall_detector.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
         // 낙상 트리거 발생 시 마스킹 즉시 해제
@@ -230,7 +233,18 @@ int main(int argc, char* argv[]) {
             }
             std::lock_guard<std::mutex> lock(det_mutex);
             fall_detector.update(ch, dets, roi);
-            latest_detections[ch] = std::move(dets);
+            
+            auto now = std::chrono::steady_clock::now();
+            detection_history[ch].push_back({now, std::move(dets)});
+
+            // 🌟"최근 5초 분량" 시간 기준 삭제로 전환
+            // 영상이 밀리더라도 과거 좌표를 확실히 매칭하도록 보장하여 모자이크가 앞서나가는 버그 해결
+            auto boundary = now - std::chrono::seconds(5);
+            auto& history = detection_history[ch];
+            while (!history.empty() && history.front().timestamp < boundary) {
+                history.erase(history.begin());
+            }
+            
             det_updates[ch] += 1;
         });
         auto recorder = std::make_unique<BlackboxRecorder>(
@@ -329,10 +343,6 @@ int main(int argc, char* argv[]) {
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
                                                  job.raw_frame.cols, job.raw_frame.rows);
                     if (roi.width <= 0 || roi.height <= 0) {
-                        // 로그 정리로 비활성화 — 디버깅 시 해제
-                        // std::fprintf(stderr,
-                        //              "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
-                        //              job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
                         continue;
                     }
 
@@ -355,7 +365,6 @@ int main(int argc, char* argv[]) {
     // 프레임 레이트 방어선 (메인 루프 폭주 방지)
     std::map<int, std::chrono::steady_clock::time_point> last_main_proc_time;
     const double kMainProcessInterval = 1.0 / 15.0; // 최대 15fps 제한
-    // (rtsp_av_client.cpp의 kMaxConvertFps가 이보다 커야 여기까지 프레임이 온다)
 
     // 👨‍🍳 [1번 요리사] 영상 스트리밍 전담 메인 스레드 (초고속 동작)
     while (!g_stop) {
@@ -371,17 +380,32 @@ int main(int argc, char* argv[]) {
 
             auto t0 = std::chrono::steady_clock::now();
 
-            // 1. 빠른 리사이즈 및 AI 전송용 깨끗한 복사본 생성
-            //    (마스킹이 small을 제자리 수정하므로 AI용은 복사본 필수)
-            cv::Mat small;
-            cv::resize(frame->image, small, kViewSize);
-            cv::Mat small_copy = small.clone();
+            // 1. 수신단(sws 다운스케일)에서 이미 960x540 BGR로 도착.
+            cv::Mat small = frame->image;
+            if (small.size() != kViewSize) cv::resize(small, small, kViewSize);
+            // AI 전송용 깨끗한 복사본 (아래 마스킹이 small을 제자리 수정하므로 필수)
+            cv::Mat clean = small.clone();
 
-            // 2. 최신 메타데이터 복사
+            // 2. 시간 오차가 적은 과거의 좌표를 탐색
             std::vector<Detection> dets_copy;
             {
                 std::lock_guard<std::mutex> lock(det_mutex);
-                dets_copy = latest_detections[frame->channel];
+                const auto& history = detection_history[frame->channel];
+
+                if (!history.empty()) {
+                    auto best_it = history.begin();
+                    double min_diff = std::numeric_limits<double>::max();
+
+                    for (auto it = history.begin(); it != history.end(); ++it) {
+                        // 영상의 생성 시간(received_at)과 좌표의 생성 시간 차이를 계산 (초 단위)
+                        double diff = std::abs(std::chrono::duration<double>(it->timestamp - frame->received_at).count());
+                        if (diff < min_diff) {
+                            min_diff = diff;
+                            best_it = it;
+                        }
+                    }
+                    dets_copy = best_it->detections; // 가장 궁합이 잘 맞는 시간대의 좌표 선택!
+                }
             }
 
             // 3. 다이나믹 프라이버시 마스크 적용 (GUI 송출용 small 이미지에만 덧씌움)
@@ -425,8 +449,13 @@ int main(int argc, char* argv[]) {
                 int humans = 0;
                 {
                     std::lock_guard<std::mutex> lock(det_mutex);
-                    for (const auto& d : latest_detections[id]) {
-                        if (d.isHuman()) ++humans;
+                    const auto& history = detection_history[id];
+                    
+                    // 기록실에 데이터가 있다면, 가장 최근 기록(back())을 꺼내서 사람 수를 센다
+                    if (!history.empty()) {
+                        for (const auto& d : history.back().detections) {
+                            if (d.isHuman()) ++humans;
+                        }
                     }
                 }
                 char buf[112];
@@ -453,7 +482,7 @@ int main(int argc, char* argv[]) {
     std::printf("종료 중...\n");
     g_stop = 1;
 
-    // 🌟 [추가] 메인 함수가 죽기 전에 AI 스레드가 퇴근할 때까지 기다려줌
+    // 메인 함수가 죽기 전에 AI 스레드가 퇴근할 때까지 기다려줌
     if (ai_worker.joinable()) {
         ai_worker.join();
     }
