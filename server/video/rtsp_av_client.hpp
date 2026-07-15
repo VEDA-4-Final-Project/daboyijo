@@ -9,6 +9,11 @@
 #include "detection.hpp"
 #include "frame_queue.hpp"
 
+extern "C" {
+struct AVPacket;
+struct AVCodecParameters;
+}
+
 // libav(FFmpeg) 직접 기반 RTSP 수신 워커.
 // OpenCV VideoCapture와 달리 영상 트랙 + ONVIF 메타데이터(data) 트랙을
 // 같은 연결에서 함께 받는다.
@@ -22,6 +27,14 @@ public:
     using DetectionCallback =
         std::function<void(int channel, std::vector<Detection>)>;
 
+    // 압축 비디오 패킷 콜백(디코딩 전) — 블랙박스 녹화 등 원본 스트림이
+    // 필요한 소비자용. 매 비디오 패킷마다 호출된다.
+    using PacketCallback = std::function<void(const AVPacket* pkt)>;
+    // 스트림 연결(재연결 포함) 성공 시 1회 호출 — 코덱 파라미터/타임베이스 전달.
+    using StreamReadyCallback =
+        std::function<void(const AVCodecParameters* codecpar, int timeBaseNum,
+                           int timeBaseDen)>;
+
     RtspAvClient(int channel, std::string url, FrameQueue& queue);
     ~RtspAvClient();
 
@@ -30,6 +43,8 @@ public:
 
     // 메타데이터 감지 결과를 받을 콜백 등록 (start 전에 설정)
     void setDetectionCallback(DetectionCallback cb) { on_detections_ = std::move(cb); }
+    void setPacketCallback(PacketCallback cb) { on_packet_ = std::move(cb); }
+    void setStreamReadyCallback(StreamReadyCallback cb) { on_stream_ready_ = std::move(cb); }
 
     void start();
     void stop();
@@ -47,6 +62,8 @@ private:
     const std::string url_;
     FrameQueue& queue_;
     DetectionCallback on_detections_;
+    PacketCallback on_packet_;
+    StreamReadyCallback on_stream_ready_;
     std::string meta_buf_;  // 메타데이터 XML 조각 재조립 버퍼 (수신 스레드 전용)
 
     std::thread thread_;
