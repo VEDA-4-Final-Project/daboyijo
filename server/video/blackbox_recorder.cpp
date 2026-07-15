@@ -85,8 +85,12 @@ int64_t BlackboxRecorder::trigger() {
         eventUnixMs_ = nowUnixMs();
     }
     // 재트리거(짧은 시간 안에 이벤트가 다시 발생)면 post 구간을 그만큼 연장.
+    // steady_clock::duration(정수 나노초)으로 먼저 캐스팅해야 time_point끼리
+    // 대입이 된다 (duration<double>을 바로 더하면 double 기반 time_point가
+    // 나와서 대입 불가 — 실제 빌드에서 걸린 에러).
     postDeadline_ = std::chrono::steady_clock::now() +
-                     std::chrono::duration<double>(postSec_);
+                     std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                         std::chrono::duration<double>(postSec_));
     return eventUnixMs_;
 }
 
