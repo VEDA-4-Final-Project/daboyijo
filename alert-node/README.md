@@ -12,6 +12,7 @@ wm8960
 
 현재까지 사용법 작성해 두겠습니다. 
 
+```
 cd wm8960
 
 make 
@@ -27,6 +28,6 @@ cd ..
 cd AudioPlayer
 
 ./veda_player <음원파일경로> 
-
+```
 
 
