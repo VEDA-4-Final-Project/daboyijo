@@ -19,6 +19,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <cmath>
+#include <limits>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -62,7 +64,7 @@ struct ServerConfig {
 const std::string kPoseModelPath = "models/movenet_thunder_int8.tflite";
 constexpr double kPoseIntervalSec = 2.0;
 // Thunder는 추론 1회당 4코어를 ~100ms 점유한다(Lightning 36ms의 ~3배) — 기본
-// 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다퉈 fps가 흔들릴
+// 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다툈 fps가 흔들릴
 // 수 있어, 영상 파이프라인에 코어를 남기도록 절반(2)으로 제한한다.
 constexpr int kPoseNumThreads = 2;
 
@@ -131,7 +133,7 @@ ServerConfig loadConfig(const std::string& path) {
     return config;
 }
 
-// 🌟 [추가] 메인 스레드와 AI 스레드 간 일감을 전달할 데이터 바구니 구조체
+// 메인 스레드와 AI 스레드 간 일감을 전달할 데이터 바구니 구조체
 struct AiJob {
     // 마스킹 전 깨끗한 960x540 프레임 — MoveNet 크롭과 보호사 색상 감지 공용.
     // (수신단 sws 다운스케일로 원본 해상도 프레임은 더 이상 파이프라인에 없음.
@@ -183,10 +185,10 @@ int main(int argc, char* argv[]) {
 
     std::mutex det_mutex;
     struct TimestampedDets {
-    std::chrono::steady_clock::time_point timestamp;
-    std::vector<Detection> detections;
-};
-std::map<int, std::vector<TimestampedDets>> detection_history;
+        std::chrono::steady_clock::time_point timestamp;
+        std::vector<Detection> detections;
+    };
+    std::map<int, std::vector<TimestampedDets>> detection_history;
     std::map<int, uint64_t> det_updates;  // 채널별 갱신 횟수 (리포트용)
 
     // 1차 낙상 판정기 (임계값은 잠정값 — fall_detector.cpp 상단 주석 참조)
@@ -197,7 +199,6 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
     std::map<int, std::unique_ptr<BlackboxRecorder>> blackbox_recorders;
 
     FallDetector fall_detector;
-    // 🌟 [수정] 람다 캡처에 [&]를 사용하여 privacy_masker 참조 전달
     fall_detector.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
         // 낙상 트리거 발생 시 마스킹 즉시 해제
@@ -234,13 +235,18 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
             }
             std::lock_guard<std::mutex> lock(det_mutex);
             fall_detector.update(ch, dets, roi);
+            
             auto now = std::chrono::steady_clock::now();
             detection_history[ch].push_back({now, std::move(dets)});
 
-            // 메모리가 꽉 차는 걸 방지하기 위해 최근 30개 기록만 남기고 옛날 것은 자동 삭제
-            if (detection_history[ch].size() > 30) {
-                detection_history[ch].erase(detection_history[ch].begin());
+            // 🌟"최근 5초 분량" 시간 기준 삭제로 전환
+            // 영상이 밀리더라도 과거 좌표를 확실히 매칭하도록 보장하여 모자이크가 앞서나가는 버그 해결
+            auto boundary = now - std::chrono::seconds(5);
+            auto& history = detection_history[ch];
+            while (!history.empty() && history.front().timestamp < boundary) {
+                history.erase(history.begin());
             }
+            
             det_updates[ch] += 1;
         });
         auto recorder = std::make_unique<BlackboxRecorder>(
@@ -339,10 +345,6 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
                     cv::Rect roi = normBoxToRect(t.left, t.top, t.right, t.bottom,
                                                  job.frame.cols, job.frame.rows);
                     if (roi.width <= 0 || roi.height <= 0) {
-                        // 로그 정리로 비활성화 — 디버깅 시 해제
-                        // std::fprintf(stderr,
-                        //              "[pose] ch%d obj%d 크롭 실패 (bbox=%.2f,%.2f,%.2f,%.2f)\n",
-                        //              job.channel, t.object_id, t.left, t.top, t.right, t.bottom);
                         continue;
                     }
 
@@ -365,7 +367,6 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
     // 프레임 레이트 방어선 (메인 루프 폭주 방지)
     std::map<int, std::chrono::steady_clock::time_point> last_main_proc_time;
     const double kMainProcessInterval = 1.0 / 15.0; // 최대 15fps 제한
-    // (rtsp_av_client.cpp의 kMaxConvertFps가 이보다 커야 여기까지 프레임이 온다)
 
     // 👨‍🍳 [1번 요리사] 영상 스트리밍 전담 메인 스레드 (초고속 동작)
     while (!g_stop) {
@@ -382,7 +383,6 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
             auto t0 = std::chrono::steady_clock::now();
 
             // 1. 수신단(sws 다운스케일)에서 이미 960x540 BGR로 도착.
-            //    다른 크기가 오면(설정 변경 등 방어) 여기서 맞춘다.
             cv::Mat small = frame->image;
             if (small.size() != kViewSize) cv::resize(small, small, kViewSize);
             // AI 전송용 깨끗한 복사본 (아래 마스킹이 small을 제자리 수정하므로 필수)
@@ -399,7 +399,7 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
                     double min_diff = std::numeric_limits<double>::max();
 
                     for (auto it = history.begin(); it != history.end(); ++it) {
-                        // 영상의 생성 시간과 좌표의 생성 시간 차이를 계산 (초 단위)
+                        // 영상의 생성 시간(received_at)과 좌표의 생성 시간 차이를 계산 (초 단위)
                         double diff = std::abs(std::chrono::duration<double>(it->timestamp - frame->received_at).count());
                         if (diff < min_diff) {
                             min_diff = diff;
@@ -483,7 +483,7 @@ std::map<int, std::vector<TimestampedDets>> detection_history;
     std::printf("종료 중...\n");
     g_stop = 1;
 
-    // 🌟 [추가] 메인 함수가 죽기 전에 AI 스레드가 퇴근할 때까지 기다려줌
+    // 메인 함수가 죽기 전에 AI 스레드가 퇴근할 때까지 기다려줌
     if (ai_worker.joinable()) {
         ai_worker.join();
     }
