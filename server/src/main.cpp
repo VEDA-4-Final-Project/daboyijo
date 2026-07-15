@@ -145,6 +145,11 @@ int main(int argc, char* argv[]) {
         if (up.clear) channel_rois.erase(up.channel);
         else channel_rois[up.channel] = up.points;
     });
+    
+    stream_server.setConfirmCallback([&](int ch) {
+        privacy_masker.clearFall(ch);
+        std::printf("ch%d 낙상 경보 확인.\n", ch);
+    });
 
     if (!stream_server.start()) return 1;
 
@@ -153,7 +158,7 @@ int main(int argc, char* argv[]) {
 
     CaregiverDetector caregiver_detector;
 
-    PrivacyMasker privacy_masker(10.0, 31);
+    PrivacyMasker privacy_masker;
 
     std::mutex det_mutex;
     std::map<int, std::vector<Detection>> latest_detections;
@@ -167,7 +172,7 @@ int main(int argc, char* argv[]) {
     // 🌟 [수정] 람다 캡처에 [&]를 사용하여 privacy_masker 참조 전달
     fall_detector.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n", ch, at.cx, at.cy);
-        // 🌟 [추가] 낙상 트리거 발생 시 마스킹 즉시 해제
+        // 낙상 트리거 발생 시 마스킹 즉시 해제
         privacy_masker.reportFall(ch);
         // Qt 관제 화면에 통보 → 채널 강조 + 팝업 (protocol/video_stream.h 이벤트)
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy);
