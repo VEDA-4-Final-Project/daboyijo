@@ -39,6 +39,10 @@ void PrivacyMasker::process(int channel, cv::Mat& image, const std::vector<Detec
             if (face_roi.width > 0 && face_roi.height > 0) {
                 // 1. 얼굴 영역만 싹둑 잘라내서 복사본을 만들고 블러 처리하기
                 cv::Mat roi_blur = image(face_roi).clone();
+
+                int ksize = blur_kernel_size_;
+                if (ksize % 2 == 0) ksize += 1; // 짝수 방지 안전장치
+                
                 cv::GaussianBlur(roi_blur, roi_blur, 
                                  cv::Size(blur_kernel_size_, blur_kernel_size_), 20);
 
