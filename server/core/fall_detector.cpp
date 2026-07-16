@@ -21,10 +21,6 @@ bool pointInPolygon(float px, float py,
 
 constexpr double kLyingConfirmSec = 2.0;  // 누운 자세가 이만큼 연속돼야 낙상 확정 (잠정값)
 constexpr double kTrackExpireSec = 6.0;   // 이만큼 안 보인 추적은 폐기
-// 알림 후 "서있음"이 이만큼 연속 유지되면 재무장(fired 리셋) — 부축받아 일어난
-// 사람이 침대에 안 들르고 다시 낙상해도 재알림되도록. 짧으면 누운 사람의 자세
-// 오분류 한 번에 재무장→중복 알림이 나므로 여유 있게 잡는다 (잠정값).
-constexpr double kStandingRearmSec = 5.0;
 
 }  // namespace
 
@@ -55,22 +51,19 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         const float foot_y = d.bottom;
         const bool in_bed = has_bed && pointInPolygon(foot_x, foot_y, bed_roi);
         if (in_bed) {
-            // 로그 정리로 비활성화 — 디버깅 시 해제
-             if (!tr.in_bed) {
-                 std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
-                              channel, d.object_id);
-             }
+            if (!tr.in_bed) {
+                std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
+                             channel, d.object_id);
+            }
             tr.in_bed = true;
             tr.lying_active = false;
-            tr.standing_active = false;
             tr.fired = false;
             continue;
         }
-        // 로그 정리로 비활성화 — 디버깅 시 해제
-         if (tr.in_bed) {
-             std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
-                          channel, d.object_id);
-         }
+        if (tr.in_bed) {
+            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
+                         channel, d.object_id);
+        }
         tr.in_bed = false;
     }
 
@@ -103,25 +96,8 @@ void FallDetector::reportPose(int channel, int object_id, bool lying) {
     auto now = std::chrono::steady_clock::now();
     if (!lying) {
         tr.lying_active = false;
-        // 알림 후 기립이 연속 유지되면 재무장 — 침대 재실 없이 두 번째 낙상이
-        // 발생해도 다시 알릴 수 있어야 한다 (누움 관측이 끼면 연속성 리셋).
-        if (tr.fired) {
-            if (!tr.standing_active) {
-                tr.standing_active = true;
-                tr.standing_since = now;
-            } else if (std::chrono::duration<double>(now - tr.standing_since).count() >=
-                       kStandingRearmSec) {
-                tr.fired = false;
-                tr.standing_active = false;
-                // 로그 정리로 비활성화 — 디버깅 시 해제
-                 std::fprintf(stderr,
-                              "[fall] ch%d obj%d 기립 %.0f초 유지 — 낙상 감시 재무장\n",
-                              channel, object_id, kStandingRearmSec);
-            }
-        }
         return;
     }
-    tr.standing_active = false;  // 누움 관측 — 기립 연속성 끊김
     if (!tr.lying_active) {
         tr.lying_active = true;
         tr.lying_since = now;
