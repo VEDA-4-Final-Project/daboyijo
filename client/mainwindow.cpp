@@ -31,16 +31,17 @@
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
-const char* kBgDeep      = "#0D1117"; // 최하단 배경
-const char* kPanel       = "#161B22"; // 패널 배경
-const char* kCard        = "#1C2530"; // 카드 배경
-const char* kBorder      = "#2A3341"; // 테두리
-const char* kTextMain    = "#E6EDF3"; // 기본 글자
-const char* kTextSub     = "#8B949E"; // 보조 글자
-const char* kAccent      = "#2F81F7"; // 브랜드 강조(파랑)
-const char* kNormal      = "#3FB950"; // 정상(초록)
-const char* kWarn        = "#D29922"; // 주의(주황)
-const char* kCritical    = "#F85149"; // 위험(빨강)
+// ── 밝은 의료 톤 팔레트 (요양원 주간 관제 환경) ──────────────
+const char* kBgDeep      = "#F4F7FA"; // 최하단 배경(연회색)
+const char* kPanel       = "#FFFFFF"; // 패널 배경(흰색)
+const char* kCard        = "#F0F4F8"; // 카드 배경(연회색, 패널과 대비)
+const char* kBorder      = "#DCE4EC"; // 테두리(연한 회색)
+const char* kTextMain    = "#1E2A32"; // 기본 글자(진회색)
+const char* kTextSub     = "#5C6B78"; // 보조 글자(중간 회색)
+const char* kAccent      = "#12B5A6"; // 브랜드 강조(청록)
+const char* kNormal      = "#2E9E5B"; // 정상(그린)
+const char* kWarn        = "#C77A11"; // 주의(주황, 흰 배경 가독성 확보)
+const char* kCritical    = "#E5484D"; // 위험(빨강)
 
 // 상태 색상: 정상/주의/위험 판정
 QString vitalColor(double temp, int hr) {
@@ -50,7 +51,7 @@ QString vitalColor(double temp, int hr) {
 }
 
 // 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.35.253";
+const char* kServerHost = "172.20.35.48";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -239,6 +240,12 @@ QWidget* MainWindow::buildVideoWall()
     roiButton->setCursor(Qt::PointingHandCursor);
     connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
     titleRow->addWidget(roiButton);
+
+    roiClearButton = new QPushButton(QStringLiteral("ROI 제거"));
+    roiClearButton->setObjectName("roiClear");
+    roiClearButton->setCursor(Qt::PointingHandCursor);
+    connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
+    titleRow->addWidget(roiClearButton);
 
     roiToggleButton = new QPushButton(QStringLiteral("ROI 표시"));
     roiToggleButton->setObjectName("roiToggle");
@@ -914,10 +921,11 @@ void MainWindow::applyTheme()
         #panel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
         #panelTitle { color: %(text); font-size: 15px; font-weight: 700; }
 
-        #roiButton, #roiToggle { background: %(card); color: %(text); border: 1px solid %(border);
+        #roiButton, #roiToggle, #roiClear { background: %(card); color: %(text); border: 1px solid %(border);
                                  border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
         #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
+        #roiClear:hover { border-color: %(critical); color: %(critical); }
 
         #micButton { background: %(card); color: %(text); border: 1px solid %(border);
                      border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
@@ -928,13 +936,14 @@ void MainWindow::applyTheme()
                        border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
         #alarmButton:hover { background: #ff6b62; }
 
-        #videoCard { background: #000; border: 1px solid %(border); border-radius: 10px; }
-        #videoBar { background: rgba(13,17,23,0.85); border-top-left-radius: 10px; border-top-right-radius: 10px; }
+        #videoCard { background: #0B0F14; border: 1px solid %(border); border-radius: 10px; }
+        #videoBar { background: %(panel); border-bottom: 1px solid %(border);
+                    border-top-left-radius: 10px; border-top-right-radius: 10px; }
         #bedBadge { background: %(accent); color: #fff; font-size: 11px; font-weight: 700;
                     padding: 2px 8px; border-radius: 6px; }
         #bedName { color: %(text); font-size: 13px; font-weight: 600; }
         #liveText { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 1px; }
-        #video { color: %(sub); font-size: 13px; background: #000;
+        #video { color: #9AA7B2; font-size: 13px; background: #0B0F14;
                  border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
 
         #vitalScroll { background: transparent; }
@@ -942,7 +951,7 @@ void MainWindow::applyTheme()
         #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 10px; }
         #vitalName { color: %(text); font-size: 15px; font-weight: 700; }
         #vitalBed { color: %(sub); font-size: 12px; }
-        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 8px; }
+        #statBox { background: %(panel); border: 1px solid %(border); border-radius: 8px; }
         #statCaption { color: %(sub); font-size: 11px; }
         #statValue { font-size: 22px; font-weight: 800; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
@@ -1005,7 +1014,7 @@ QLineEdit#formEdit,
 QTextEdit#formEdit,
 QComboBox#formEdit,
 QDateEdit#formEdit {
-    background: %(bgDeep);
+    background: %(panel);
     color: %(text);
     border: 1px solid %(border);
     border-radius: 6px;
@@ -1282,6 +1291,52 @@ void MainWindow::onRoiButtonClicked()
     if (channel < 0 || channel >= 4) return;
 
     channelViews[channel]->setDrawMode(true);  // 그리기 시작 (좌클릭=점, 더블클릭=완료)
+}
+
+void MainWindow::onRoiClearClicked()
+{
+    // 그리는 중이면 먼저 그 작업을 취소해야 헷갈리지 않는다
+    if (roiDrawing) {
+        for (auto* v : channelViews)
+            if (v && v->drawMode()) v->cancelDraft();
+    }
+
+    // ROI가 실제로 설정된 채널만 후보로 제시
+    QStringList items;
+    QList<int> channels;
+    for (int i = 0; i < 4; ++i) {
+        if (channelViews[i] && !channelViews[i]->roi().isEmpty()) {
+            items << QStringLiteral("채널 %1  ·  %2 (%3)")
+                         .arg(i + 1).arg(patients[i].name, patients[i].bed);
+            channels << i;
+        }
+    }
+
+    if (items.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("ROI 제거"),
+                                QStringLiteral("제거할 ROI가 설정된 채널이 없습니다."));
+        return;
+    }
+
+    bool ok = false;
+    const QString choice = QInputDialog::getItem(
+        this, QStringLiteral("ROI 제거"),
+        QStringLiteral("ROI를 제거할 채널을 선택하세요:"), items, 0, false, &ok);
+    if (!ok) return;
+
+    const int idx = items.indexOf(choice);
+    if (idx < 0) return;
+    const int channel = channels[idx];
+
+    if (QMessageBox::question(
+            this, QStringLiteral("ROI 제거"),
+            QStringLiteral("채널 %1의 침대 ROI를 제거할까요?").arg(channel + 1))
+        != QMessageBox::Yes)
+        return;
+
+    sendRoi(channel, QPolygonF(), true);   // 서버에 삭제 통보
+    channelViews[channel]->clearRoi();      // 로컬 오버레이 제거
+    qDebug() << "ROI 제거: ch" << channel;
 }
 
 void MainWindow::onRoiVisibilityToggled(bool on)
