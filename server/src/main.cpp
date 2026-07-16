@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
     StreamServer stream_server(config.stream_port);
     FrameQueue queue(16);
     DetectionStore detections;  // 감지 이력 저장 + 프레임-좌표 시간 매칭
-    AiWorker ai_worker;         // 무거운 AI 연산 전담 스레드
+    AiWorker ai_worker;         // 무거운 AI 연산 전담 — 채널별 워커 스레드
     Database db;
 
     // ── 기능 모듈 생성 ───────────────────────────────────────────
@@ -101,6 +101,8 @@ int main(int argc, char* argv[]) {
         });
         blackbox.attachChannel(*client);    // 블랙박스: 압축 패킷 버퍼링 배선
         caregiver.addChannel(cam.channel);  // 요양사: 케어 타이머 준비
+        fall.addChannel(cam.channel);       // 낙상: 채널 전용 MoveNet 로드
+        ai_worker.addChannel(cam.channel);  // AI: 채널 전담 워커 스레드 예약
         client->start();
         clients.push_back(std::move(client));
     }
