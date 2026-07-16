@@ -12,10 +12,11 @@ namespace {
 // 예산(초당 9.9회, movenet_bench.py 실측)에 여유가 있어 시도해볼 만하다.
 const std::string kPoseModelPath = "models/movenet_thunder_int8.tflite";
 constexpr double kPoseIntervalSec = 2.0;
-// Thunder는 추론 1회당 4코어를 ~100ms 점유한다(Lightning 36ms의 ~3배) — 기본
-// 스레드 수(4) 그대로면 그 순간 RTSP 디코딩·인코딩과 코어를 다퉈 fps가 흔들릴
-// 수 있어, 영상 파이프라인에 코어를 남기도록 절반(2)으로 제한한다.
-constexpr int kPoseNumThreads = 2;
+// 채널별 워커 구조에선 최악의 경우 4채널이 동시에 추론할 수 있다. 인스턴스당
+// 2스레드면 동시 8스레드가 4코어를 다퉈(RTSP 디코딩·인코딩까지 포함) 오히려
+// 전체가 느려지므로 1로 제한한다. 추론 1회가 느려지는 대신(실측 필요, 예상
+// 2~3배) 객체당 2초 주기 예산 안에는 여전히 들어온다.
+constexpr int kPoseNumThreads = 1;
 
 cv::Rect normBoxToRect(float left, float top, float right, float bottom,
                        int imgW, int imgH) {
@@ -35,14 +36,18 @@ cv::Rect normBoxToRect(float left, float top, float right, float bottom,
 
 }  // namespace
 
-FallModule::FallModule() : pose_estimator_(kPoseModelPath, kPoseNumThreads) {
-    if (!pose_estimator_.isReady()) {
-        std::fprintf(stderr, "경고: MoveNet 로드 실패, 자세 판정 꺼짐\n");
-    }
-}
-
 void FallModule::setFallCallback(FallCallback cb) {
     fall_detector_.setFallCallback(std::move(cb));
+}
+
+void FallModule::addChannel(int channel) {
+    if (channels_.count(channel)) return;  // 이미 등록됨
+    auto state = std::make_unique<ChannelPose>(kPoseModelPath, kPoseNumThreads);
+    if (!state->estimator.isReady()) {
+        std::fprintf(stderr, "경고: [ch%d] MoveNet 로드 실패, 자세 판정 꺼짐\n",
+                     channel);
+    }
+    channels_[channel] = std::move(state);
 }
 
 void FallModule::updateBedRoi(int channel, bool clear,
@@ -61,7 +66,10 @@ void FallModule::onMetadata(int channel, const std::vector<Detection>& dets) {
 }
 
 void FallModule::processFrame(const AiJob& job) {
-    if (!pose_estimator_.isReady()) return;
+    auto ch_it = channels_.find(job.channel);
+    if (ch_it == channels_.end()) return;  // 미등록 채널
+    ChannelPose& ch = *ch_it->second;
+    if (!ch.estimator.isReady()) return;
 
     std::vector<FallDetector::ObservedTrack> observed;
     {
@@ -70,10 +78,9 @@ void FallModule::processFrame(const AiJob& job) {
     }
 
     const auto pose_now = std::chrono::steady_clock::now();
-    auto& channel_last = last_pose_time_[job.channel];
 
     for (const auto& t : observed) {
-        auto& last = channel_last[t.object_id];
+        auto& last = ch.last_pose_time[t.object_id];
         if (std::chrono::duration<double>(pose_now - last).count() <
             kPoseIntervalSec) {
             continue;  // 객체당 kPoseIntervalSec 주기로 추론 제한
@@ -87,7 +94,7 @@ void FallModule::processFrame(const AiJob& job) {
         if (roi.width <= 0 || roi.height <= 0) continue;
 
         // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다
-        bool lying = pose_estimator_.isLyingDown(job.raw_frame(roi));
+        bool lying = ch.estimator.isLyingDown(job.raw_frame(roi));
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                      job.channel, t.object_id, lying ? "누움" : "서있음",
                      roi.width, roi.height);

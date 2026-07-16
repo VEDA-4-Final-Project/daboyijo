@@ -15,7 +15,7 @@ server/
 │   └── system_stats.*      ← CPU/온도 (공용)
 ├── modules/                ← ★ 기능별 모듈 (새로 생김)
 │   ├── video_pipeline.*    ← [공용] 영상 메인 루프: 큐→스테이지→인코딩→송출
-│   ├── ai_worker.*         ← [공용] AI 전담 스레드 (프로세서 등록형)
+│   ├── ai_worker.*         ← [공용] AI 전담 스레드 — 채널당 1개 (프로세서 등록형)
 │   ├── detection_store.*   ← [공용] 감지 이력 저장 + 프레임-좌표 시간 매칭
 │   ├── stats_reporter.*    ← [공용] 5초 주기 상태 리포트
 │   ├── fall_module.*       ← [낙상감지] FallDetector+MoveNet 배선, 튜닝값
@@ -58,7 +58,7 @@ server/
 
 - **RTSP 수신 스레드** (채널당 1개): 프레임→`FrameQueue`, 메타→`DetectionStore`/`FallModule`, 압축패킷→블랙박스
 - **메인 스레드** (`VideoPipeline::run`): 15fps 제한 → 좌표 매칭 → 블러 → JPEG → 송출
-- **AI 워커 스레드** (`AiWorker`): 요양사 색 판정 → MoveNet 자세 판정 (채널별 최신 1장씩만 처리)
+- **AI 워커 스레드** (`AiWorker`, **채널당 1개**): 요양사 색 판정 → MoveNet 자세 판정 (채널별 최신 1장씩만 처리). 한 채널의 추론이 느려도 다른 채널 분석이 안 밀린다. 같은 채널은 항상 같은 스레드가 처리하므로 프로세서의 "채널별 상태"는 락 불필요 — 채널 간 공유 상태(FallDetector 등)만 각 모듈이 뮤텍스로 보호.
 - **StreamServer 스레드들**: 클라이언트별 송신/수신(ROI·확인 신호)
 
 스레드 간 공유 자원은 각 모듈이 내부 뮤텍스로 스스로 보호한다 — 모듈 밖에서 락을 잡을 필요 없음.
