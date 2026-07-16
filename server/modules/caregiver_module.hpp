@@ -27,9 +27,11 @@ public:
     void flush();
 
 private:
+    // 색 판정기 — 내부 상태가 없어(읽기 전용 파라미터뿐) 채널별 워커
+    // 스레드들이 동시에 호출해도 안전.
     CaregiverDetector detector_;
     // 채널별 케어 타이머. addChannel은 메인 스레드에서 AI 워커 시작 전에만
-    // 호출되고, 이후 접근은 AI 워커 스레드 전용이라 락 불필요.
+    // 호출되고, 이후 각 항목은 그 채널의 워커 스레드 전용이라 락 불필요.
     std::map<int, CareTimer> timers_;
-    Database& db_;
+    Database& db_;  // insertCareLog는 내부 뮤텍스로 보호됨 (database.hpp)
 };

@@ -27,6 +27,7 @@ bool Database::connect(const std::string& host, const std::string& user,
 }
 
 bool Database::insertCareLog(int cameraId, int durationSec) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_) return false;
 
     // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
@@ -48,5 +49,6 @@ bool Database::insertCareLog(int cameraId, int durationSec) {
 }
 
 void Database::close() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (conn_) { mysql_close(conn_); conn_ = nullptr; }
 }
