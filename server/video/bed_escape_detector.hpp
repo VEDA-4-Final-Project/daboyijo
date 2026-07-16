@@ -33,7 +33,8 @@ public:
     void update(int channel,
                 const std::vector<Detection>& detections,
                 const std::vector<std::pair<float, float>>& bed_roi,
-                const std::unordered_map<int, PatientRisk>& patient_risks);
+                PatientRisk channel_risk, //채널(침대)의 위험 등급을 주입
+                bool caregiver_present); //요양보호사가 해당 병실에 재실 중인지 확인
 
 private:
     struct EscapeTrack {

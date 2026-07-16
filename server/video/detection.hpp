@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <utility>
 
 // WiseAI(ONVIF) 메타데이터에서 파싱한 객체 1개.
 // 좌표는 0.0~1.0 정규화 (BoundingBox 픽셀값에 tt:Transformation 적용 후).
@@ -45,3 +46,26 @@ struct DetectionFrame {
         return n;
     }
 };
+
+namespace RoiUtils {
+    // 점 (px, py)가 정규화 다각형 poly 안에 있는지 판정 (Ray-casting)
+    inline bool pointInPolygon(float px, float py, const std::vector<std::pair<float, float>>& poly) {
+        bool inside = false;
+        for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+            const float xi = poly[i].first, yi = poly[i].second;
+            const float xj = poly[j].first, yj = poly[j].second;
+            if (((yi > py) != (yj > py)) &&
+                (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+                inside = !inside;
+        }
+        return inside;
+    }
+
+    // 객체의 발끝 좌표가 침상 ROI 내부에 있는지 판정하는 도우미 함수
+    inline bool isFootInBed(const Detection& d, const std::vector<std::pair<float, float>>& bed_roi) {
+        if (bed_roi.size() < 3) return false; // 3점 미만이면 다각형 아님 (폴백)
+        const float foot_x = (d.left + d.right) / 2.0f;
+        const float foot_y = d.bottom;
+        return pointInPolygon(foot_x, foot_y, bed_roi);
+    }
+}

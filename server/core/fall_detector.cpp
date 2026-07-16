@@ -1,23 +1,10 @@
 #include "fall_detector.hpp"
+#include "core/roi_utils.hpp"
 
 #include <cstdio>
 #include <iterator>
 
 namespace {
-
-// 점 (px,py)가 정규화 다각형 poly 안에 있는지 (ray-casting). 침상 재실/이탈 판정.
-bool pointInPolygon(float px, float py,
-                    const std::vector<std::pair<float, float>>& poly) {
-    bool inside = false;
-    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
-        const float xi = poly[i].first, yi = poly[i].second;
-        const float xj = poly[j].first, yj = poly[j].second;
-        if (((yi > py) != (yj > py)) &&
-            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
-            inside = !inside;
-    }
-    return inside;
-}
 
 constexpr double kLyingConfirmSec = 2.0;  // 누운 자세가 이만큼 연속돼야 낙상 확정 (잠정값)
 constexpr double kTrackExpireSec = 6.0;   // 이만큼 안 보인 추적은 폐기
@@ -28,7 +15,6 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
                           const std::vector<std::pair<float, float>>& bed_roi) {
     auto& tracks = channels_[channel];
     auto now = std::chrono::steady_clock::now();
-    const bool has_bed = bed_roi.size() >= 3;  // 3점 미만이면 게이트 없음(폴백)
 
     for (const auto& d : detections) {
         // 사람만, 그리고 bbox 넓이 0인 요약 프레임(객체 소실 시 오는 것)은 제외
@@ -41,15 +27,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         tr.right = d.right;
         tr.bottom = d.bottom;
 
-        // 침대 ROI 게이팅: 침대 안이면 관찰 대상에서 빠지고 상태 리셋.
-        // 판정 기준점은 무게중심(cx,cy)이 아니라 bbox 하단 중앙("발끝").
-        // 무게중심은 몸통 높이에 떠 있어 침대 "앞"에 선 사람도 2D 화면상
-        // ROI와 겹쳐 재실로 오판된다. 발끝은 바닥 평면에 붙은 점이라 화면
-        // y좌표가 실제 3D 위치를 반영 — 침대 앞이면 ROI 아래(밖), 침대에
-        // 누우면 ROI 안으로 갈린다. (ROI는 침대 발자국 기준으로 그릴 것)
-        const float foot_x = (d.left + d.right) / 2.0f;
-        const float foot_y = d.bottom;
-        const bool in_bed = has_bed && pointInPolygon(foot_x, foot_y, bed_roi);
+        const bool in_bed = RoiUtils::isFootInBed(d, bed_roi);
         if (in_bed) {
             if (!tr.in_bed) {
                 std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
