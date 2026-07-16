@@ -6,7 +6,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -93,16 +96,22 @@ void ClipHttpServer::acceptLoop() {
 }
 
 void ClipHttpServer::handleClient(int fd) {
-    char buf[2048] = {0};
-    ssize_t n = ::recv(fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) {
-        ::close(fd);
-        return;
+    // 요청 헤더 전체(빈 줄까지) 수신 — Range 헤더가 첫 recv 뒤 세그먼트로
+    // 나뉘어 도착할 수 있어 \r\n\r\n이 나올 때까지 모은다.
+    std::string req;
+    {
+        char buf[2048];
+        while (req.find("\r\n\r\n") == std::string::npos && req.size() < 16 * 1024) {
+            ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+            if (n <= 0) {
+                ::close(fd);
+                return;
+            }
+            req.append(buf, static_cast<size_t>(n));
+        }
     }
-    buf[n] = '\0';
 
-    // 요청 라인만 파싱: "GET /파일명 HTTP/1.1"
-    std::string req(buf);
+    // 요청 라인 파싱: "GET /파일명 HTTP/1.1"
     auto sp1 = req.find(' ');
     auto sp2 = (sp1 == std::string::npos) ? std::string::npos : req.find(' ', sp1 + 1);
     std::string method = (sp1 != std::string::npos) ? req.substr(0, sp1) : "";
@@ -110,10 +119,14 @@ void ClipHttpServer::handleClient(int fd) {
                             ? req.substr(sp1 + 1, sp2 - sp1 - 1)
                             : "";
 
+    // 모든 send는 MSG_NOSIGNAL — 클라이언트(FFmpeg)는 재생바 탐색 때마다
+    // 연결을 끊고 다시 여는데, 끊긴 소켓에 쓰면 SIGPIPE로 프로세스가
+    // 통째로 죽는다(기본 동작). stream_server.cpp와 동일한 방어.
     auto sendStatus = [fd](const char* status) {
         std::string resp = std::string("HTTP/1.1 ") + status +
+                            "\r\nAccept-Ranges: bytes"
                             "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-        ::send(fd, resp.data(), resp.size(), 0);
+        ::send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
     };
 
     if (method != "GET" || path.empty() || path[0] != '/') {
@@ -135,6 +148,42 @@ void ClipHttpServer::handleClient(int fd) {
         ::close(fd);
         return;
     }
+    const long long file_size = static_cast<long long>(st.st_size);
+
+    // Range 헤더 파싱: "Range: bytes=START-" 또는 "bytes=START-END".
+    // 재생바 탐색 시 FFmpeg가 이 부분 요청으로 파일 중간부터 다시 받는다 —
+    // 미지원이면 스트림이 '탐색 불가'로 취급돼 seek가 ENOSYS로 실패한다.
+    long long range_start = -1, range_end = -1;
+    {
+        std::string lower(req.size(), '\0');
+        std::transform(req.begin(), req.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        static const char kRangeKey[] = "\r\nrange: bytes=";
+        auto pos = lower.find(kRangeKey);
+        if (pos != std::string::npos) {
+            const char* p = req.c_str() + pos + sizeof(kRangeKey) - 1;
+            char* endp = nullptr;
+            long long v = std::strtoll(p, &endp, 10);
+            if (endp != p && v >= 0 && *endp == '-') {
+                range_start = v;
+                const char* q = endp + 1;
+                if (*q >= '0' && *q <= '9') range_end = std::strtoll(q, nullptr, 10);
+            }
+        }
+    }
+
+    long long start = 0, end = file_size - 1;
+    bool partial = false;
+    if (range_start >= 0) {
+        if (range_start >= file_size) {
+            sendStatus("416 Range Not Satisfiable");
+            ::close(fd);
+            return;
+        }
+        start = range_start;
+        if (range_end >= start && range_end < file_size) end = range_end;
+        partial = true;
+    }
 
     std::ifstream file(fullPath, std::ios::binary);
     if (!file) {
@@ -142,26 +191,43 @@ void ClipHttpServer::handleClient(int fd) {
         ::close(fd);
         return;
     }
+    if (start > 0) file.seekg(start);
 
+    long long remaining = end - start + 1;
     std::ostringstream header;
-    header << "HTTP/1.1 200 OK\r\n"
-           << "Content-Type: video/mp4\r\n"
-           << "Content-Length: " << st.st_size << "\r\n"
+    if (partial) {
+        header << "HTTP/1.1 206 Partial Content\r\n"
+               << "Content-Range: bytes " << start << '-' << end << '/' << file_size
+               << "\r\n";
+    } else {
+        header << "HTTP/1.1 200 OK\r\n";
+    }
+    header << "Content-Type: video/mp4\r\n"
+           << "Accept-Ranges: bytes\r\n"
+           << "Content-Length: " << remaining << "\r\n"
            << "Connection: close\r\n\r\n";
     std::string h = header.str();
-    ::send(fd, h.data(), h.size(), 0);
+    if (::send(fd, h.data(), h.size(), MSG_NOSIGNAL) <= 0) {
+        ::close(fd);
+        return;
+    }
 
     char chunk[64 * 1024];
-    while (true) {
-        file.read(chunk, sizeof(chunk));
+    bool client_gone = false;
+    while (remaining > 0 && !client_gone) {
+        const std::streamsize want = static_cast<std::streamsize>(
+            std::min<long long>(remaining, sizeof(chunk)));
+        file.read(chunk, want);
         std::streamsize got = file.gcount();
         if (got <= 0) break;
         std::streamsize sent = 0;
         while (sent < got) {
-            ssize_t s = ::send(fd, chunk + sent, static_cast<size_t>(got - sent), 0);
-            if (s <= 0) { sent = got; break; }  // 클라이언트가 끊음 — 전송 중단
+            ssize_t s = ::send(fd, chunk + sent, static_cast<size_t>(got - sent),
+                               MSG_NOSIGNAL);
+            if (s <= 0) { client_gone = true; break; }  // 클라이언트가 끊음
             sent += s;
         }
+        remaining -= got;
     }
     ::close(fd);
 }

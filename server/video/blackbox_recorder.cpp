@@ -68,11 +68,25 @@ void BlackboxRecorder::onPacket(const AVPacket* pkt) {
     // 오래된 패킷은 버린다. 정확히 preSec_ 경계에서 자르지 않고 여유를 두는
     // 이유는, flush 시점에 "가장 가까운 키프레임부터" 잘라내기 위해서다
     // (GOP 경계와 preSec_ 경계가 딱 맞아떨어지지 않을 수 있음).
+    // 수신 초기 패킷은 pts가 아직 없을 수(NOPTS) 있어 dts로 폴백하고,
+    // 둘 다 없는 패킷이 양끝에 걸리면 그 턴은 트리밍을 건너뛴다
+    // (NOPTS는 거대한 음수라 age 계산에 섞이면 버퍼를 통째로 비우거나
+    //  안 자르는 오동작이 된다).
     constexpr double kGopMarginSec = 2.0;
     const double keepSec = preSec_ + kGopMarginSec;
     const double tb = static_cast<double>(tbNum_) / tbDen_;
+    auto stampOf = [](const PacketRecord& r) {
+        return (r.pts != AV_NOPTS_VALUE) ? r.pts : r.dts;
+    };
     while (buf_.size() > 1) {
-        double age = (buf_.back().pts - buf_.front().pts) * tb;
+        const int64_t newest = stampOf(buf_.back());
+        const int64_t oldest = stampOf(buf_.front());
+        if (oldest == AV_NOPTS_VALUE) {
+            buf_.pop_front();  // 나이를 잴 수 없는 앞쪽 패킷 — 버리고 계속
+            continue;
+        }
+        if (newest == AV_NOPTS_VALUE) break;  // 최신 쪽은 다음 패킷에서 재평가
+        double age = (newest - oldest) * tb;
         if (age <= keepSec) break;
         buf_.pop_front();
     }
@@ -160,16 +174,40 @@ void BlackboxRecorder::flushLocked() {
     }
     av_dict_free(&opts);
 
-    // pts/dts를 0부터 시작하도록 재기준 — 같은 기준값을 pts·dts 모두에
-    // 적용해야 둘 사이 간격(리오더링 지연)이 그대로 보존된다.
-    const int64_t base = buf_.front().dts;
+    // pts/dts를 정리한 뒤 0부터 시작하도록 재기준.
+    // RTSP 수신 초기 구간에는 pts가 아직 없는 패킷("pts has no value" 경고의
+    // 원인)이나, RTCP 시계 동기화 시점에 타임라인이 뒤로 튀는 패킷이 섞일 수
+    // 있다(음수 timestamp "out of range" 경고의 원인 — 실측). mp4는 누락·
+    // 역행 타임스탬프를 허용하지 않으므로, 누락은 이웃 값으로 채우고 역행은
+    // 직전 값 뒤로 밀어 단조 증가를 강제한다.
     const size_t packet_count = buf_.size();
+    int64_t base = AV_NOPTS_VALUE;
+    for (const auto& rec : buf_) {  // 첫 유효 타임스탬프를 기준점으로
+        if (rec.dts != AV_NOPTS_VALUE) { base = rec.dts; break; }
+        if (rec.pts != AV_NOPTS_VALUE) { base = rec.pts; break; }
+    }
+    if (base == AV_NOPTS_VALUE) base = 0;
+
+    int64_t last_dts = -1;  // 직전에 쓴 dts (재기준 후)
+    int64_t est_dur = 0;    // 최근 관측한 프레임 간격 (타임스탬프 전부 누락 대비)
     for (auto& rec : buf_) {
+        int64_t dts = (rec.dts != AV_NOPTS_VALUE) ? rec.dts : rec.pts;
+        int64_t pts = (rec.pts != AV_NOPTS_VALUE) ? rec.pts : dts;
+        if (dts == AV_NOPTS_VALUE) {  // 둘 다 없음 — 직전 프레임에서 이어붙임
+            dts = pts = base + last_dts + (est_dur > 0 ? est_dur : 1);
+        }
+        dts -= base;
+        pts -= base;
+        if (dts <= last_dts) dts = last_dts + 1;  // 역행/중복 → 단조 증가 강제
+        if (pts < dts) pts = dts;                 // mp4 규칙: pts >= dts
+        if (last_dts >= 0 && dts - last_dts > 1) est_dur = dts - last_dts;
+        last_dts = dts;
+
         AVPacket* pkt = av_packet_alloc();
         av_new_packet(pkt, static_cast<int>(rec.data.size()));
         std::memcpy(pkt->data, rec.data.data(), rec.data.size());
-        pkt->pts = rec.pts - base;
-        pkt->dts = rec.dts - base;
+        pkt->pts = pts;
+        pkt->dts = dts;
         pkt->flags = rec.flags;
         pkt->stream_index = out_stream->index;
         av_interleaved_write_frame(ofmt, pkt);

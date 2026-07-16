@@ -74,6 +74,7 @@ class QSlider;
 class QVBoxLayout;
 class QMediaPlayer;
 class QVideoWidget;
+class QStackedWidget;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -155,6 +156,7 @@ private:
     QPushButton* blackboxPlayPauseButton = nullptr;  // 재생/일시정지 토글
     QMediaPlayer* blackboxPlayer = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
+    QStackedWidget* blackboxStack = nullptr;  // placeholder ↔ 영상 전환(크기 고정)
     bool blackboxSeeking = false;          // 사용자가 재생바를 잡고 있는 중인지
     QVBoxLayout* careTimeList = nullptr;
 
