@@ -26,6 +26,7 @@
 #include "database.hpp"
 #include "detection_store.hpp"
 #include "fall_module.hpp"
+#include "bed_escape_module.hpp"
 #include "frame_queue.hpp"
 #include "privacy_masker.hpp"
 #include "protocol/video_stream.h"
@@ -61,6 +62,7 @@ int main(int argc, char* argv[]) {
 
     // ── 기능 모듈 생성 ───────────────────────────────────────────
     FallModule fall;                // [낙상감지]
+    BedEscapeModule escape;         // [침상탈출]
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
@@ -69,6 +71,7 @@ int main(int argc, char* argv[]) {
     // Qt가 그린 침대 ROI → 낙상 판정기
     stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
         fall.updateBedRoi(up.channel, up.clear, up.points);
+        escape.updateBedRoi(up.channel, up.clear, up.points);
     });
     // Qt의 낙상 확인 신호 → 블러 원상복구
     stream_server.setConfirmCallback([&](int ch) {
@@ -82,6 +85,12 @@ int main(int argc, char* argv[]) {
         privacy_masker.reportFall(ch);
         int64_t evt_ms = blackbox.trigger(ch);
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
+    });
+    // 침상 탈출 확정 -> 블랙박스 클립 저장 + Qt 경보
+    escape.setEscapeCallback([&](int ch, const Detection& at) {
+        std::fprintf(stderr, "🚨 [ch%d] obj%d 침상이탈 발생!\n", ch, at.object_id);
+        int64_t evt_ms = blackbox.trigger(ch); // 탈출 순간 전후 블랙박스 확보
+        stream_server.broadcastEvent(ch, DBJ_EVT_ESCAPE, at.cx, at.cy, evt_ms); 
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
     ai_worker.addProcessor([&](const AiJob& job) { caregiver.processFrame(job); });
@@ -97,6 +106,8 @@ int main(int argc, char* argv[]) {
         auto client = std::make_unique<RtspAvClient>(cam.channel, cam.url, queue);
         client->setDetectionCallback([&](int ch, std::vector<Detection> dets) {
             fall.onMetadata(ch, dets);             // 낙상: ROI 게이팅 + bbox 캐시
+            bool caregiver_present = caregiver.isCaregiverActive(ch);   // 요양사 케어 상태 조회
+            escape.onMetadata(ch, dets, caregiver_present);     //감지 객체 + 요양사 제실 여부
             detections.push(ch, std::move(dets));  // 공용: 시간 매칭용 이력 저장
         });
         blackbox.attachChannel(*client);    // 블랙박스: 압축 패킷 버퍼링 배선

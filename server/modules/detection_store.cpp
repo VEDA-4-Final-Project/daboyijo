@@ -37,6 +37,11 @@ std::vector<Detection> DetectionStore::closestTo(
             best_it = h;
         }
     }
+
+    if (min_diff > 1.0) {
+        return {}; 
+    }
+
     return best_it->detections;
 }
 

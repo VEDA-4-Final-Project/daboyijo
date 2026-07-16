@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <mutex>
 
 #include "ai_worker.hpp"
 #include "care_timer.hpp"
@@ -26,6 +27,9 @@ public:
     // 종료 시 열린 케어 세션 마감 (기록 유실 방지)
     void flush();
 
+    // main.cpp에서 요양보호사 유무 확인
+    bool isCaregiverActive(int channel);
+
 private:
     // 색 판정기 — 내부 상태가 없어(읽기 전용 파라미터뿐) 채널별 워커
     // 스레드들이 동시에 호출해도 안전.
@@ -34,4 +38,5 @@ private:
     // 호출되고, 이후 각 항목은 그 채널의 워커 스레드 전용이라 락 불필요.
     std::map<int, CareTimer> timers_;
     Database& db_;  // insertCareLog는 내부 뮤텍스로 보호됨 (database.hpp)
+    std::mutex mutex_;
 };

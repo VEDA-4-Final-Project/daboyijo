@@ -9,7 +9,7 @@ void PrivacyMasker::reportFall(int channel) {
     std::lock_guard<std::mutex> lock(mutex_);
     fall_unmasked_[channel] = true;
 }
-// Qt에서 확인 신호를 받으면 해당 채널의 낙상 상태를 해제
+
 void PrivacyMasker::clearFall(int channel) {
     std::lock_guard<std::mutex> lock(mutex_);
     fall_unmasked_[channel] = false;
@@ -21,7 +21,7 @@ void PrivacyMasker::process(int channel, cv::Mat& image, const std::vector<Detec
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = fall_unmasked_.find(channel);
         if (it != fall_unmasked_.end() && it->second == true) {
-            return; // 수동으로 확인 버튼을 누르기 전까지 마스킹 작업을 건너뛰고 원본 송출
+            return; // 낙상 상태라면 블러 연산을 하지않고 탈출
         }
     }
 
@@ -55,7 +55,7 @@ void PrivacyMasker::process(int channel, cv::Mat& image, const std::vector<Detec
                 cv::Size axes(face_roi.width / 2, face_roi.height / 2);
                 cv::ellipse(mask, center, axes, 0, 0, 360, cv::Scalar(255), cv::FILLED);
 
-                // 4. [핵심] 흰색 타원 영역만 원본 이미지 위에 싹 덮어씌우기 (마스킹 카피)
+                // 4. 흰색 타원 영역만 원본 이미지 위에 싹 덮어씌우기 (마스킹 카피)
                 roi_blur.copyTo(image(face_roi), mask);
             }
         }
