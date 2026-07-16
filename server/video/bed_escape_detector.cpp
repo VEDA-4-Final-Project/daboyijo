@@ -1,5 +1,5 @@
 #include "bed_escape_detector.hpp"
-#include "core/roi_utils.hpp"
+#include "roi_utils.hpp"
 #include <cstdio>
 #include <ctime>
 #include <iterator>

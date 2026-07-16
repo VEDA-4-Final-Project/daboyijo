@@ -7,7 +7,7 @@
 #include <functional>
 
 #include "detection.hpp"
-#include "video/bed_escape_detector.hpp"
+#include "bed_escape_detector.hpp"
 
 class BedEscapeModule {
 public:
