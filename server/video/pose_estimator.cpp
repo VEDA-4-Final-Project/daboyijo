@@ -38,6 +38,12 @@ constexpr float kMinShoulderWidthNorm = 0.03f;
 constexpr float kSpreadRatioToAnkle = 2.0f;
 constexpr float kSpreadRatioToKnee = 1.6f;
 constexpr float kSpreadRatioTorsoOnly = 1.0f;
+// 원근 단축 신호의 주저앉기 오탐 방지 게이트 — 제자리에 쪼그려 앉으면 다리가
+// 접혀 세로 스프레드는 누운 것처럼 뭉개지지만(실측: 주저앉기가 낙상으로 오탐),
+// 몸통은 세워져 있어 몸통 길이 ÷ 어깨 너비가 서 있을 때(~1.2~1.7) 그대로다.
+// 카메라 쪽으로 실제로 누우면 몸통 자체가 단축돼 이 비율도 함께 떨어진다.
+// → 몸통 비율이 이 값 미만일 때만 원근 단축 신호를 인정한다.
+constexpr float kMaxTorsoRatioForeshort = 1.0f;
 
 }  // namespace
 
@@ -236,21 +242,25 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
         extent = "발목";
     }
     float spread_ratio = -1.0f;  // -1 = 어깨 너비가 좁아 측정 불가(측면 자세 등)
+    float torso_ratio = -1.0f;
     bool foreshortened = false;
     if (shoulder_w >= kMinShoulderWidthNorm) {
         spread_ratio = (max_y - min_y) / shoulder_w;
-        foreshortened = spread_ratio < ratio_limit;
+        // 주저앉기 게이트: 몸통까지 단축됐을 때만 인정 (상수 주석 참조)
+        torso_ratio = std::hypot(dx, dy) / shoulder_w;
+        foreshortened = spread_ratio < ratio_limit &&
+                        torso_ratio < kMaxTorsoRatioForeshort;
     }
 
     const bool lying = by_angle || inverted || foreshortened;
     (void)extent;  // 아래 로그 비활성화 중 미사용 경고 방지 (임계값 튜닝 시 로그와 함께 복원)
     // 로그 정리로 비활성화 — 디버깅 시 해제
     // std::fprintf(stderr,
-    //              "[pose] 기울기=%.1f도(기준%.0f%s) 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) → %s\n",
+    //              "[pose] 기울기=%.1f도(기준%.0f%s) 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) 몸통=%.2f → %s\n",
     //              angle_from_vertical, kLyingAngleDeg, by_angle ? "✓" : "",
     //              inverted ? "✓" : "-",
     //              spread_ratio, extent, ratio_limit, foreshortened ? "✓" : "",
-    //              lying ? "누움" : "서있음");
+    //              torso_ratio, lying ? "누움" : "서있음");
     return lying;
 }
 
