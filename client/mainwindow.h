@@ -100,6 +100,7 @@ private slots:
     void updateClock();          // 상단 실시간 시계
     void updateVitals();         // 웨어러블 바이탈 갱신(현재는 시뮬레이션)
     void onRoiButtonClicked();   // "ROI 지정" — 채널 선택 후 그리기 시작
+    void onRoiClearClicked();    // "ROI 제거" — 채널 선택 후 ROI 삭제
     void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
     void onRoiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료 → 전송
     void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
@@ -240,6 +241,7 @@ private:
     QTimer reconnectTimer;     // 연결 끊김 시 자동 재접속 타이머
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
+    QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
