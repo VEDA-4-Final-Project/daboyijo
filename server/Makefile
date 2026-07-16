@@ -16,6 +16,8 @@ LDLIBS   := $(shell pkg-config --libs $(PKGS)) -lpthread
 
 CXXFLAGS += $(shell mariadb_config --cflags)
 LDLIBS   += $(shell mariadb_config --libs)
+LDLIBS += -Wl,--allow-multiple-definition
+
 
 # ── MoveNet(TFLite C++) 연동 ──────────────────────────────────
 # 사전 준비 (라즈베리에서 1회, server/tools/movenet_bench.py로 속도 확인 후):
