@@ -25,11 +25,9 @@ constexpr int kReconnectDelaySec = 3;
 // 카메라 프로파일이 15fps면 사실상 전부 통과).
 // main 쪽 15fps 스로틀이 최종 관문이므로 여기는 살짝 여유(18fps)를 둔다.
 constexpr double kMaxConvertFps = 18.0;
-// 파이프라인이 소비하는 프레임 크기 (main.cpp kViewSize와 동일하게 유지).
-// sws_scale이 YUV→BGR 변환과 동시에 이 크기로 다운스케일한다 — 원본 해상도
-// BGR 변환 후 cv::resize를 따로 하는 것보다 훨씬 싸다 (변환·리사이즈 일원화).
-constexpr int kOutW = 960;
-constexpr int kOutH = 540;
+// (실험 기록) sws_scale에서 바로 960x540으로 다운스케일해 봤으나, MoveNet
+// 크롭 해상도가 같이 떨어져 원거리 사람의 자세 감지가 불안정해짐 → 원복.
+// 원본 해상도로 변환하고 GUI용 축소는 main.cpp의 cv::resize가 담당한다.
 // 메타데이터 재조립 버퍼 상한 — 정상 문서는 수 KB, 이걸 넘으면 스트림 이상
 constexpr size_t kMetaBufMax = 256 * 1024;
 
@@ -189,13 +187,13 @@ bool RtspAvClient::openAndStream() {
                         if (sws) sws_freeContext(sws);
                         sws = sws_getContext(frame->width, frame->height,
                                              static_cast<AVPixelFormat>(frame->format),
-                                             kOutW, kOutH,
+                                             frame->width, frame->height,
                                              AV_PIX_FMT_BGR24, SWS_BILINEAR,
                                              nullptr, nullptr, nullptr);
                         sws_w = frame->width;
                         sws_h = frame->height;
                     }
-                    cv::Mat img(kOutH, kOutW, CV_8UC3);
+                    cv::Mat img(frame->height, frame->width, CV_8UC3);
                     uint8_t* dst[1] = {img.data};
                     int dst_stride[1] = {static_cast<int>(img.step)};
                     sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
