@@ -14,6 +14,9 @@ const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지
 constexpr double kMainProcessInterval = 1.0 / 15.0;  // 최대 15fps
 
+// (테스트 후 싱크가 미세하게 안 맞으면 이 값을 늘리거나 줄여서 칼싱크 튜닝 가능!)
+constexpr auto kDelayOffset = std::chrono::milliseconds(600);
+
 }  // namespace
 
 void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
@@ -36,14 +39,15 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             // (rtsp_av_client.cpp 상단 실험 기록 참조). GUI용 축소는 여기서.
             cv::Mat raw = std::move(frame->image);
             cv::Mat small;
+
             if (raw.size() != kViewSize) cv::resize(raw, small, kViewSize);
-            else small = raw.clone();  // 크기가 같아도 버퍼 공유 금지 — 아래
-                                       // 마스킹이 raw까지 오염시키게 된다
-            // AI 전달용 깨끗한 복사본 (스테이지가 small을 제자리 수정하므로 필수)
+            else small = raw.clone();
+
+            // AI 전달용 깨끗한 복사본
             cv::Mat clean = small.clone();
 
             // 이 프레임의 생성 시각과 가장 궁합이 맞는 감지 좌표 선택
-            auto dets = store_.closestTo(frame->channel, frame->received_at);
+            auto dets = store_.closestTo(frame->channel, frame->received_at - kDelayOffset);
 
             // 송출 영상 가공 단계 실행 (블러 마스킹 등)
             for (auto& stage : stages_) {
