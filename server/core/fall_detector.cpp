@@ -47,7 +47,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
             continue;
         }
         if (tr.in_bed) {
-            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
+            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰 시작\n",
                          channel, d.object_id);
         }
         tr.in_bed = false;

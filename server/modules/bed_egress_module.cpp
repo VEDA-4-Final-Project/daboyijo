@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <cstdio>
 
 void BedEgressModule::setRiskLevel(int channel, PatientRisk risk) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -74,8 +75,16 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
 
         // 이전 프레임에는 침상 안에 있었는데, 이번 프레임에서 밖으로 나갔다면!
         if (was_in_bed && !is_currently_in_bed) {
+            
+            // 1. 삼항 연산자 스타일을 응용한 위험도 문자열 매핑
+            const char* risk_str = (risk == PatientRisk::HIGH) ? "🔴 상(즉시 경보)" : "🟠 중(야간 관찰)";
+
+            std::fprintf(stderr, "⚠️ [ch%d] [%s] 환자 침상 탈출 발생! (obj: %d)\n", 
+                         channel, risk_str, det.object_id);
+
+            // 2. 클라이언트(Qt UI) 알림 발송 콜백
             if (alarm_cb_) {
-                alarm_cb_(channel, det.object_id); // 알림 발송
+                alarm_cb_(channel, det.object_id); 
             }
         }
         
