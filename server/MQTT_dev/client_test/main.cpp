@@ -27,10 +27,18 @@ int main() {
 
     int count = 0;
     while (true) {
-        std::string message = "Hello veda daboyjo! Count: " + std::to_string(count++);
+        WearableData mock_sensor_data;
+        mock_sensor_data.device_id = "wearable_rpi_01";
+        mock_sensor_data.temperature = 36.6 + (count%3) *0.2;
+        mock_sensor_data.heart_rate = 75 + (count % 5);
+        mock_sensor_data.is_fall_detected = ((count % 10)==0);
+        mock_sensor_data.timestamp = 1830000+ count;
 
-        client.publishMessage("veda/test/topic",message);
-        std::cout << "[publish] " << message << std::endl;
+        nlohmann::json j = mock_sensor_data;
+        std::string serialized_payload = j.dump();
+
+        client.publishMessage("veda/test/topic",serialized_payload);
+        std::cout << "[publish] sent json paload (Count : " << count++ <<")" << std::endl;
 
         sleep(2);
     }

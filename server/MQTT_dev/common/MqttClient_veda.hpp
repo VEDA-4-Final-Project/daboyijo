@@ -4,6 +4,43 @@
 #include <string>
 #include <mosquitto.h>
 #include <functional>
+#include <ThreadSafeQueue.hpp>
+#include <nlohmann/json.hpp>
+
+
+struct MqttMessage {
+    std::string topic;
+    std::string payload;
+};
+
+struct WearableData {
+    std::string device_id;
+    bool is_fall_detected;
+    double temperature;
+    int heart_rate;
+    long long timestamp;
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WearableData, device_id, is_fall_detected, temperature,heart_rate, timestamp)
+
+struct AlarmCommand {
+    std::string target_device;
+    std::string status;
+    std::string message;
+     
+    std::string audio_action;
+    std::string audio_file;
+    int volume;
+    bool loop;
+
+    long long timestamp;
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlarmCommand, target_device, status, message, audio_action, audio_file, volume, loop, timestamp)
+
+
+
+
 
 class MqttClient_veda {
 public:
@@ -29,8 +66,12 @@ public:
     //콜백 함수 등록 메소드
     void setCallback(MessageCallback callbacks);
 private:
+    bool m_isConnected;
+    ThreadSafeQueue<MqttMessage> m_offlineQueue;
+
     static void on_connect(struct mosquitto *mosq, void *obj, int rc);
     static void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message);
+    static void on_disconnect(struct mosquitto *mosq, void *obj, int rc);
 
     struct mosquitto *m_mosq;
     std::string m_id;
