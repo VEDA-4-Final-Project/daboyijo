@@ -1213,8 +1213,16 @@ void MainWindow::onReadyRead()
             memcpy(&evt, buffer.constData(), sizeof(evt));
             buffer.remove(0, sizeof(evt));
 
-            if (evt.type == kEvtFall && evt.channel < 4)
-                handleFallEvent(evt.channel, evt.timestamp_ms);
+            if (evt.channel < 4) {
+                // 1. 낙상 이벤트 처리
+                if (evt.type == kEvtFall) {
+                    handleFallEvent(evt.channel, evt.timestamp_ms);
+                } 
+                // 2. 침상 탈출 이벤트 처리
+                else if (evt.type == kEvtEgress) {
+                    handleEgressEvent(evt.channel, evt.timestamp_ms);
+                }
+            }
             continue;
         }
 
@@ -1274,7 +1282,7 @@ void MainWindow::onReadyRead()
 }
 
 // ═══════════════════════════════════════════════════════════
-//  낙상 이벤트 — 오직 빨간 테두리만 활성화 및 로그 추가 (팝업 완전 박멸)
+//  낙상 이벤트 — 빨간 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
 void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
 {
@@ -1303,6 +1311,33 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
+        logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  침상탈출 이벤트 — 빨간 테두리 활성화 및 로그 추가
+// ═══════════════════════════════════════════════════════════
+void MainWindow::handleEgressEvent(int channel, quint64 timestampMs)
+{
+    if (channel >= 0 && channel < 4) {
+        egressActive[channel] = true; // 이탈 알림 켜짐
+        if (channelViews[channel]) {
+            channelViews[channel]->setAlert(true);
+        }
+        qDebug() << "⚠️ [침상 이탈 감지] 채널" << channel << "테두리 알림 ON";
+    }
+
+    if (logTable) {
+        const int row = logTable->rowCount();
+        logTable->insertRow(row);
+        const QString when = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+        auto* dtItem = new QTableWidgetItem(when);
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4").arg(QString::fromLatin1(kServerHost)).arg(kClipHttpPort).arg(channel).arg(timestampMs);
+        dtItem->setData(Qt::UserRole, clipUrl);
+        logTable->setItem(row, 0, dtItem);
+        logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+        logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상이탈")));
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
     }
 }
@@ -1463,9 +1498,10 @@ void MainWindow::onAlarmClearClicked()
 
     // 되묻는 팝업 없이 버튼 클릭 즉시 원스톱으로 리셋 처리!
     for (int channel = 0; channel < 4; ++channel) {
-        if (fallActive[channel]) {
+        if (fallActive[channel] || egressActive[channel]) {
             // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어
             fallActive[channel] = false;
+            egressActive[channel] = false;
             if (channelViews[channel]) {
                 channelViews[channel]->setAlert(false);
             }
@@ -1492,7 +1528,7 @@ void MainWindow::onAlarmClearClicked()
     } else {
         // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
         QMessageBox::information(this, QStringLiteral("경보 해제"),
-                                 QStringLiteral("현재 활성화된 낙상 경보가 없습니다."));
+                                 QStringLiteral("현재 활성화된 경보가 없습니다."));
     }
 }
 

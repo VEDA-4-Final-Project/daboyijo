@@ -63,6 +63,7 @@ static constexpr int kRoiCoordScale = 10000;
 // 이벤트 메시지 상수 (서버와 합의된 값)
 static constexpr uint16_t kEvtMagic = 0xDB4D;
 static constexpr uint8_t kEvtFall = 0x01;
+static constexpr uint8_t kEvtEgress = 0x02;
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
 class QPushButton;
@@ -229,7 +230,9 @@ private:
 
     // 서버 낙상 이벤트 처리 — 채널 강조 + 팝업 (확인 시 강조 해제)
     void handleFallEvent(int channel, quint64 timestampMs);
+    void handleEgressEvent(int channel, quint64 timestampMs);
     bool fallActive[4] = {};   // 채널별 팝업 중복 방지
+    bool egressActive[4] = {};
 
     // 로그 목록에 있는 클립 URL로 블랙박스 영상 재생 (TAB2)
     void playBlackboxClip(const QString& url);
