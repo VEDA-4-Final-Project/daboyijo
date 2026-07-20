@@ -12,6 +12,7 @@
 //   ① 새 모듈 추가 ② 모듈 간 연결 변경 두 가지뿐이며, 그때도 자기 기능의
 //   배선 블록(주석으로 구분)만 건드린다.
 
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -104,7 +105,8 @@ int main(int argc, char* argv[]) {
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
         auto client = std::make_unique<RtspAvClient>(cam.channel, cam.url, queue);
-        client->setDetectionCallback([&](int ch, std::vector<Detection> dets) {
+        client->setDetectionCallback([&](int ch, std::vector<Detection> dets,
+                                         std::chrono::steady_clock::time_point cap) {
             fall.onMetadata(ch, dets);             // 낙상: ROI 게이팅 + bbox 캐시
             bed_egress.processDetections(ch, dets);// 침상
             detections.push(ch, std::move(dets));  // 공용: 시간 매칭용 이력 저장

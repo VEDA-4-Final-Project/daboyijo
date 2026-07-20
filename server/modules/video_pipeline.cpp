@@ -9,7 +9,8 @@
 
 namespace {
 
-const cv::Size kViewSize(960, 540);
+// 캡처·송출 모두 1280x720로 통일 → raw.size()==kViewSize면 리사이즈 없이 clone.
+const cv::Size kViewSize(1280, 720);
 const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지
 constexpr double kMainProcessInterval = 1.0 / 15.0;  // 최대 15fps
