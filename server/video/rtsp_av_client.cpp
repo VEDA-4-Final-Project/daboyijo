@@ -1,6 +1,7 @@
 #include "rtsp_av_client.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -136,7 +137,24 @@ bool RtspAvClient::openAndStream() {
         AVRational tb = fmt->streams[video_idx]->time_base;
         on_stream_ready_(vpar, tb.num, tb.den);
     }
-    const AVCodec* dec = avcodec_find_decoder(vpar->codec_id);
+    // H.264는 VideoCore 하드웨어 디코더(v4l2m2m)를 우선 시도 — 4채널 CPU 절약.
+    // ffmpeg 빌드나 /dev/video1x 장치에 없으면 nullptr → SW 디코더로 자동 폴백.
+    const AVCodec* dec = nullptr;
+    if (vpar->codec_id == AV_CODEC_ID_H264) {
+        dec = avcodec_find_decoder_by_name("h264_v4l2m2m");
+    }
+    if (dec) {
+        std::fprintf(stderr, "[ch%d] HW 디코더 사용: %s\n", channel_, dec->name);
+    } else {
+        dec = avcodec_find_decoder(vpar->codec_id);
+        std::fprintf(stderr, "[ch%d] SW 디코더 사용: %s\n", channel_,
+                     dec ? dec->name : "(없음)");
+    }
+    if (!dec) {
+        std::fprintf(stderr, "[ch%d] 디코더 없음\n", channel_);
+        avformat_close_input(&fmt);
+        return false;
+    }
     AVCodecContext* dctx = avcodec_alloc_context3(dec);
     avcodec_parameters_to_context(dctx, vpar);
     // RPi 멀티코어 활용: 디코딩 스레드
@@ -152,6 +170,28 @@ bool RtspAvClient::openAndStream() {
     AVPacket* pkt = av_packet_alloc();
     SwsContext* sws = nullptr;  // YUV→BGR 변환기 (첫 프레임에서 지연 생성)
     int sws_w = 0, sws_h = 0;
+
+    // ── PTS(촬영 시각) 동기화 ──────────────────────────────────────
+    // 영상은 디코딩·GOV 버퍼링 지연으로 늦게 도착하지만 메타는 즉시 온다.
+    // 수신 시각(now())으로 매칭하면 블러가 사람보다 밀린다. 그래서 두 트랙 모두
+    // 카메라가 붙인 PTS를 공통 앵커로 steady_clock에 매핑해, 도착 지연과 무관하게
+    // 같은 촬영 시각으로 정렬한다. PTS가 없으면 now()로 폴백.
+    const double vtb_sec = av_q2d(fmt->streams[video_idx]->time_base);
+    const double dtb_sec =
+        (data_idx >= 0) ? av_q2d(fmt->streams[data_idx]->time_base) : 0.0;
+    bool pts_anchored = false;
+    double pts0_sec = 0.0;
+    std::chrono::steady_clock::time_point pts_epoch;
+    auto ptsToCapture = [&](double pts_sec) {
+        if (!pts_anchored) {
+            pts0_sec = pts_sec;
+            pts_epoch = std::chrono::steady_clock::now();
+            pts_anchored = true;
+        }
+        return pts_epoch +
+               std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                   std::chrono::duration<double>(pts_sec - pts0_sec));
+    };
     auto last_convert = std::chrono::steady_clock::time_point{};
     const auto convert_interval =
         std::chrono::duration<double>(1.0 / kMaxConvertFps);
@@ -199,8 +239,13 @@ bool RtspAvClient::openAndStream() {
                     sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
                               dst, dst_stride);
 
-                    queue_.push(Frame{channel_, std::move(img),
-                                      std::chrono::steady_clock::now()});
+                    // 프레임 PTS → 촬영 시각 (없으면 수신 시각 폴백)
+                    int64_t vts = frame->best_effort_timestamp;
+                    if (vts == AV_NOPTS_VALUE) vts = frame->pts;
+                    auto captured = (vts != AV_NOPTS_VALUE)
+                                        ? ptsToCapture(vts * vtb_sec)
+                                        : std::chrono::steady_clock::now();
+                    queue_.push(Frame{channel_, std::move(img), captured});
                 }
             }
         } else if (pkt->stream_index == data_idx && data_idx >= 0) {
@@ -210,6 +255,10 @@ bool RtspAvClient::openAndStream() {
             // 문서 종료 태그가 나올 때까지 모았다가 완성본만 파싱한다.
             metadata_count_.fetch_add(1);
             if (on_detections_) {
+                // 메타 패킷 PTS → 촬영 시각 (영상 프레임과 같은 타임라인).
+                auto data_captured = (pkt->pts != AV_NOPTS_VALUE)
+                                         ? ptsToCapture(pkt->pts * dtb_sec)
+                                         : std::chrono::steady_clock::now();
                 meta_buf_.append(reinterpret_cast<const char*>(pkt->data),
                                  static_cast<size_t>(pkt->size));
                 static const std::string kDocEnd = "</tt:MetadataStream>";
@@ -219,7 +268,7 @@ bool RtspAvClient::openAndStream() {
                     auto dets = MetadataParser::parse(meta_buf_.substr(0, doc_len));
                     meta_buf_.erase(0, doc_len);
                     if (!dets.empty()) {
-                        on_detections_(channel_, std::move(dets));
+                        on_detections_(channel_, std::move(dets), data_captured);
                     }
                 }
                 if (meta_buf_.size() > kMetaBufMax) {

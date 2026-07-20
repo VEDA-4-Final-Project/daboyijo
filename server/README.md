@@ -18,7 +18,7 @@ sudo apt install libopencv-dev pkg-config \
 cp config/cameras.conf.example config/cameras.conf
 
 make        # build/daboyijo-server 생성
-make run    # 4채널 수신 → 640x360 리사이즈 → JPEG 인코딩 파이프라인 실행
+make run    # 4채널 수신 → 1280x720(캡처=송출 동일, 리사이즈 생략) → JPEG 인코딩
 ```
 
 5초마다 채널별 수신/처리 fps, JPEG 크기, CPU 사용률, SoC 온도를 출력한다.

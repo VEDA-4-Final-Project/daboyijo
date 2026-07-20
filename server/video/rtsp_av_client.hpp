@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -24,8 +25,12 @@ struct AVCodecParameters;
 class RtspAvClient {
 public:
     // 감지 결과 콜백. 메타데이터 프레임마다 호출된다(사람 없으면 빈 벡터).
+    // captured_at: 메타 패킷 PTS로 환산한 촬영 시각(steady_clock 기준). 영상
+    // 프레임의 PTS 촬영 시각과 같은 타임라인이라, 디코딩 지연과 무관하게 좌표를
+    // 프레임에 매칭할 수 있다(PTS 없으면 수신 시각으로 폴백).
     using DetectionCallback =
-        std::function<void(int channel, std::vector<Detection>)>;
+        std::function<void(int channel, std::vector<Detection>,
+                           std::chrono::steady_clock::time_point captured_at)>;
 
     // 압축 비디오 패킷 콜백(디코딩 전) — 블랙박스 녹화 등 원본 스트림이
     // 필요한 소비자용. 매 비디오 패킷마다 호출된다.
