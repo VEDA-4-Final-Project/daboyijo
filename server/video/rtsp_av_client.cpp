@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -137,10 +138,14 @@ bool RtspAvClient::openAndStream() {
         AVRational tb = fmt->streams[video_idx]->time_base;
         on_stream_ready_(vpar, tb.num, tb.den);
     }
-    // H.264는 VideoCore 하드웨어 디코더(v4l2m2m)를 우선 시도 — 4채널 CPU 절약.
+    // H.264는 VideoCore 하드웨어 디코더(v4l2m2m)를 우선 시도.
     // ffmpeg 빌드나 /dev/video1x 장치에 없으면 nullptr → SW 디코더로 자동 폴백.
+    // 단, RPi는 하드웨어 코덱 블록이 1개라 4채널 동시 디코딩이 오히려 불안정할
+    // 수 있음(한 채널 starve). SW/HW A/B용 토글: DBJ_HW_DECODE=0 → SW 강제.
     const AVCodec* dec = nullptr;
-    if (vpar->codec_id == AV_CODEC_ID_H264) {
+    const char* hw_env = std::getenv("DBJ_HW_DECODE");
+    const bool want_hw = !(hw_env && hw_env[0] == '0');
+    if (want_hw && vpar->codec_id == AV_CODEC_ID_H264) {
         dec = avcodec_find_decoder_by_name("h264_v4l2m2m");
     }
     if (dec) {
