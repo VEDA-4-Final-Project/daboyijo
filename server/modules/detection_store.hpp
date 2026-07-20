@@ -21,8 +21,10 @@ public:
     explicit DetectionStore(double historySec = 5.0)
         : history_sec_(historySec) {}
 
-    // 메타데이터 콜백마다 호출. 오래된 이력은 시간 기준으로 정리한다.
-    void push(int channel, std::vector<Detection> dets);
+    // 메타데이터 콜백마다 호출. captured_at은 메타 PTS로 환산한 촬영 시각
+    // (영상 프레임 PTS와 같은 타임라인). 오래된 이력은 시간 기준으로 정리한다.
+    void push(int channel, std::vector<Detection> dets,
+              std::chrono::steady_clock::time_point captured_at);
 
     // 주어진 시각과 생성 시각 차이가 가장 작은 감지 결과를 반환 (없으면 빈 벡터)
     std::vector<Detection> closestTo(
