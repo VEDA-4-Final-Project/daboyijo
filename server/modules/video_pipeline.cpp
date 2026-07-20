@@ -15,7 +15,7 @@ const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 constexpr double kMainProcessInterval = 1.0 / 15.0;  // 최대 15fps
 
 // (테스트 후 싱크가 미세하게 안 맞으면 이 값을 늘리거나 줄여서 칼싱크 튜닝 가능!)
-constexpr auto kDelayOffset = std::chrono::milliseconds(600);
+constexpr auto kDelayOffset = std::chrono::milliseconds(550);
 
 }  // namespace
 
