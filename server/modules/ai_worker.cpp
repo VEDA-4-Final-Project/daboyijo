@@ -3,6 +3,17 @@
 #include <chrono>
 #include <utility>
 
+namespace {
+
+// 채널당 AI 처리 주기 하한 — 파이프라인은 15fps로 일감을 던지지만 전부 처리할
+// 필요가 없다 (요양사 색 판정은 세션 타이머 해상도상 초당 몇 번이면 충분하고,
+// 자세 추정은 fall_module이 객체당 2초 주기로 따로 제한). 단일 워커 시절엔
+// 스레드 1개가 자연스럽게 총량을 눌렀지만, 채널별 워커에선 이 값이 CPU 상한
+// 조절 손잡이다. 값을 줄이면 반응이 빨라지고 CPU가 오른다.
+constexpr double kMinJobIntervalSec = 0.25;  // 채널당 최대 4회/초
+
+}  // namespace
+
 void AiWorker::addProcessor(Processor p) {
     processors_.push_back(std::move(p));
 }
@@ -39,7 +50,18 @@ void AiWorker::stop() {
 }
 
 void AiWorker::run(Slot& slot) {
+    auto last_run = std::chrono::steady_clock::now() -
+                    std::chrono::seconds(1);  // 첫 일감은 바로 처리
+
     while (running_) {
+        // 처리 주기 하한 유지 — 일감함엔 최신 1장만 남으니 밀릴 걱정 없음
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          last_run)
+                .count() < kMinJobIntervalSec) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
         AiJob job;
         bool got_job = false;
 
@@ -59,6 +81,7 @@ void AiWorker::run(Slot& slot) {
             continue;
         }
 
+        last_run = std::chrono::steady_clock::now();
         for (auto& process : processors_) {
             process(job);
         }

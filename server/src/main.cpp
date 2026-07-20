@@ -12,6 +12,7 @@
 //   ① 새 모듈 추가 ② 모듈 간 연결 변경 두 가지뿐이며, 그때도 자기 기능의
 //   배선 블록(주석으로 구분)만 건드린다.
 
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -95,9 +96,10 @@ int main(int argc, char* argv[]) {
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
         auto client = std::make_unique<RtspAvClient>(cam.channel, cam.url, queue);
-        client->setDetectionCallback([&](int ch, std::vector<Detection> dets) {
+        client->setDetectionCallback([&](int ch, std::vector<Detection> dets,
+                                         std::chrono::steady_clock::time_point cap) {
             fall.onMetadata(ch, dets);             // 낙상: ROI 게이팅 + bbox 캐시
-            detections.push(ch, std::move(dets));  // 공용: 시간 매칭용 이력 저장
+            detections.push(ch, std::move(dets), cap);  // 공용: PTS 촬영 시각으로 저장
         });
         blackbox.attachChannel(*client);    // 블랙박스: 압축 패킷 버퍼링 배선
         caregiver.addChannel(cam.channel);  // 요양사: 케어 타이머 준비
