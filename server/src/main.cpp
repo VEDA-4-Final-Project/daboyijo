@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) {
                                          std::chrono::steady_clock::time_point cap) {
             fall.onMetadata(ch, dets);             // 낙상: ROI 게이팅 + bbox 캐시
             bed_egress.processDetections(ch, dets);// 침상
-            detections.push(ch, std::move(dets));  // 공용: 시간 매칭용 이력 저장
+            detections.push(ch, std::move(dets), cap);  // 공용: 시간 매칭용 이력 저장
         });
         blackbox.attachChannel(*client);    // 블랙박스: 압축 패킷 버퍼링 배선
         caregiver.addChannel(cam.channel);  // 요양사: 케어 타이머 준비
