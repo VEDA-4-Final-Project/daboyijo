@@ -59,16 +59,20 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
         if (!det.isHuman()) continue;
         current_obj_ids.push_back(det.object_id);
 
-        // ★ detection.hpp에 정의된 공용 헬퍼 함수 활용!
+        // detection.hpp에 정의된 공용 헬퍼 함수 활용
         bool is_currently_in_bed = isFeetInRoi(det, roi);
         
-        // 이전 상태 가져오기 (처음 감지된 사람은 일단 침상 안이라고 가정 -> 오알람 방지)
-        bool was_in_bed = true; 
-        if (is_in_bed_[channel].count(det.object_id)) {
-            was_in_bed = is_in_bed_[channel][det.object_id];
+        // 🌟 [아이디어 핵심] 이 객체 ID를 시스템이 처음 본 경우
+        if (!is_in_bed_[channel].count(det.object_id)) {
+            // 경보 판정을 하지 않고, 현재 위치가 안인지 밖인지 기록만 한 채 즉시 패스합니다.
+            // 이 조치로 인해 최초에 침대 밖에서 나타난 사람들은 잠재적 탈출자 명단에서 완전히 제외됩니다.
+            is_in_bed_[channel][det.object_id] = is_currently_in_bed;
+            continue; 
         }
 
-        // [핵심] 이전 프레임에는 침상 안에 있었는데, 이번 프레임에서 밖으로 나갔다면!
+        bool was_in_bed = is_in_bed_[channel][det.object_id];
+
+        // 이전 프레임에는 침상 안에 있었는데, 이번 프레임에서 밖으로 나갔다면!
         if (was_in_bed && !is_currently_in_bed) {
             if (alarm_cb_) {
                 alarm_cb_(channel, det.object_id); // 알림 발송
