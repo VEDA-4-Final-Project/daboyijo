@@ -1,20 +1,20 @@
-#include "MqttServerModule.hpp"
+#include "MqttMasterManager.hpp"
 #include <iostream>
 #include <nlohmann/json.hpp>
 
-MqttServerModule::MqttServerModule() {
-        mqtt_client_ = std::make_unique<MqttClient_veda>("Main_Server_Module");
+MqttMasterManager::MqttMasterManager() {
+        mqtt_client_ = std::make_unique<MqttClient_veda>("Main_Master_Module");
 }
 
-MqttServerModule::~MqttServerModule() {
+MqttMasterManager::~MqttMasterManager() {
     if(mqtt_client_) {
         mqtt_client_->stopLoop();
     }
 }
 
-bool MqttServerModule::init(const std::string& broker_ip, int port) {
+bool MqttMasterManager::init(const std::string& broker_ip, int port) {
     if(!mqtt_client_->connectToBroker(broker_ip, port)) {
-        std::cerr << "[MqttServerModule] Broker connection failed!" << std::endl;
+        std::cerr << "[MqttMasterManager] Broker connection failed!" << std::endl;
         return false;
     }
 
@@ -25,13 +25,13 @@ bool MqttServerModule::init(const std::string& broker_ip, int port) {
     mqtt_client_->startLoop();
 
     mqtt_client_->subscribeTopic("veda/wearable/data");
-    std::cout << "[MqttServerModule] Subscribed to 'veda/wearable/data'" << std::endl;
+    std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
 
     return true;
 }
 
 
-bool MqttServerModule::checkFallStatus(const WearableData& data, AlarmComand& out_cmd) {
+bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmComand& out_cmd) {
     if(data.is_fall_detected) {
         out_cmd.target_device = "alarm_rpi_01";
         out_cmd.timestamp = data.timestamp;
@@ -48,20 +48,20 @@ bool MqttServerModule::checkFallStatus(const WearableData& data, AlarmComand& ou
 }
 
 
-void MqttServerModule::sendAlarmCommand(const AlarmComand& cmd) {
+void MqttMasterManager::sendAlarmCommand(const AlarmComand& cmd) {
     nlohmann::json j = cmd;
     std::string payload = j.dump();
 
     mqtt_client_->publishMessage("veda/alarm/control",payload);
-    std::cout << "[MqttServerModule] SentAlarm Command to Node: " << payload<< std::endl;
+    std::cout << "[MqttMasterManager] SentAlarm Command to Node: " << payload<< std::endl;
 }
 
-void MqttServerModule::onMessageReceived(const std::string& topic, const std::string& payload) {
+void MqttMasterManager::onMessageReceived(const std::string& topic, const std::string& payload) {
     try {
         auto j = nlohmann::json::parse(payload);
         auto data = j.get<WearableData>();
 
-        std::cout << "[MqttServerModule] Fall: " << (data.is_fall_detected ? "yes" : "no") << std::endl;
+        std::cout << "[MqttMasterManager] Fall: " << (data.is_fall_detected ? "yes" : "no") << std::endl;
         
         AlarmComand cmd;
 
@@ -69,7 +69,7 @@ void MqttServerModule::onMessageReceived(const std::string& topic, const std::st
             sendAlarmCommand(cmd);
         }
     } catch (const std::exception& e) {
-        std::cerr << "[MqttServerModule] Parsing Error: " << e.what() << std::endl;
+        std::cerr << "[MqttMasterManager] Parsing Error: " << e.what() << std::endl;
     }
 }
 

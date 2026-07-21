@@ -5,10 +5,10 @@
 #include <memory>
 #include "MqttClient_veda.hpp"
 
-class MqttServerModule {
+class MqttMasterManager {
 public:
-    MqttServerModule();
-    ~MqttServerModule();
+    MqttMasterManager();
+    ~MqttMasterManager();
 
     //Mqtt 브로커 연결 및 구독 시작
     bool init(const std::string& broker_ip, int port = 1883);
