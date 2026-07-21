@@ -39,6 +39,12 @@ std::vector<Detection> DetectionStore::closestTo(
             best_it = h;
         }
     }
+
+    // 잔상 제거
+    if (min_diff > 1.0) {
+        return {}; 
+    }
+
     return best_it->detections;
 }
 
