@@ -54,10 +54,10 @@ void BlackboxModule::attachChannel(RtspAvClient& client) {
     recorders_[ch] = std::move(recorder);
 }
 
-int64_t BlackboxModule::trigger(int channel) {
+int64_t BlackboxModule::trigger(int channel, const std::string& eventType) {
     auto it = recorders_.find(channel);
     if (it == recorders_.end()) return 0;
-    return it->second->trigger();
+    return it->second->trigger(eventType);
 }
 
 void BlackboxModule::flushAll() {
