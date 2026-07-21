@@ -6,11 +6,11 @@
 #include <QPainterPath>
 
 namespace {
-// ROI 오버레이 색 (다크 테마 강조색과 맞춤)
-const QColor kRoiLine(47, 129, 247);          // 파랑 외곽선
-const QColor kRoiFill(47, 129, 247, 60);      // 반투명 채움
-const QColor kDraftLine(210, 153, 34);        // 그리는 중(주황)
-const QColor kVertex(230, 237, 243);          // 꼭짓점 마커
+// ROI 오버레이 색 (브랜드 강조색 힐링 그린과 맞춤 · 어두운 영상 위라 밝게)
+const QColor kRoiLine(47, 158, 143);          // 힐링 그린 외곽선
+const QColor kRoiFill(47, 158, 143, 70);      // 반투명 채움
+const QColor kDraftLine(224, 148, 43);        // 그리는 중(주황)
+const QColor kVertex(245, 247, 245);          // 꼭짓점 마커
 constexpr double kDupEps = 0.006;             // 더블클릭 중복 꼭짓점 제거 임계
 constexpr int kMaxPoints = 32;                // 프로토콜 DBJ_ROI_MAX_POINTS와 동일
 }  // namespace
@@ -57,9 +57,26 @@ void VideoView::setRoiVisible(bool on) {
     update();
 }
 
-void VideoView::setAlert(bool on) {
-    if (alert_ == on) return;
-    alert_ = on;
+void VideoView::setAlert(bool on, const QPointF& normPt) {
+    alertPt_ = normPt;
+    if (alert_ != on) {
+        alert_ = on;
+        if (on) {
+            alertBlink_ = true;
+            if (!alertTimer_) {
+                alertTimer_ = new QTimer(this);
+                alertTimer_->setInterval(450);
+                connect(alertTimer_, &QTimer::timeout, this, [this]() {
+                    alertBlink_ = !alertBlink_;
+                    update();
+                });
+            }
+            alertTimer_->start();
+        } else {
+            if (alertTimer_) alertTimer_->stop();
+            alertBlink_ = false;
+        }
+    }
     update();
 }
 
@@ -135,22 +152,33 @@ void VideoView::paintEvent(QPaintEvent*) {
                    QStringLiteral("침대 영역 클릭 · 더블클릭(또는 우클릭)으로 완료"));
     }
 
-    // 낙상 경보 강조 — 항상 최상단에 그린다
+    // 낙상 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
     if (alert_) {
-        const QColor kAlertRed(248, 81, 73);
-        p.setPen(QPen(kAlertRed, 6));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(rect().adjusted(3, 3, -3, -3));
+        const QColor red(229, 83, 60);
 
-        QRectF banner(0, 0, width(), 30);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(kAlertRed.red(), kAlertRed.green(), kAlertRed.blue(), 210));
-        p.drawRect(banner);
-        p.setPen(Qt::white);
-        QFont f = p.font();
-        f.setBold(true);
-        p.setFont(f);
-        p.drawText(banner, Qt::AlignCenter, QStringLiteral("🚨 낙상 감지"));
+        // 서버가 보낸 발생 위치(x,y)에 십자 마커
+        if (alertPt_.x() >= 0 && alertPt_.y() >= 0 && !frame_.isNull()) {
+            const QPointF c = toWidget(alertPt_);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(red, 3));
+            p.drawEllipse(c, 18, 18);
+            p.drawLine(QPointF(c.x() - 26, c.y()), QPointF(c.x() + 26, c.y()));
+            p.drawLine(QPointF(c.x(), c.y() - 26), QPointF(c.x(), c.y() + 26));
+        }
+
+        // 테두리 + 상단 배지 점멸
+        if (alertBlink_) {
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(red, 5));
+            p.drawRect(rect().adjusted(3, 3, -3, -3));
+
+            p.setBrush(red);
+            p.setPen(Qt::NoPen);
+            QRectF badge((width() - 130) / 2.0, 8, 130, 24);
+            p.drawRoundedRect(badge, 6, 6);
+            p.setPen(Qt::white);
+            p.drawText(badge, Qt::AlignCenter, QStringLiteral("🚨 낙상 감지"));
+        }
     }
 }
 

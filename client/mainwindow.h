@@ -8,11 +8,9 @@
 #include <QPolygonF>
 #include <QTimer>
 #include <QDate>
+#include <QString>
 #include <QLineEdit>
 #include <QTextEdit>
-#include <QGroupBox>
-#include <QFormLayout>
-#include <QSplitter>
 
 
 
@@ -27,11 +25,11 @@ struct dbj_vs_header_t {
     uint32_t payload_len;   // 4B (JPEG 이미지 크기)
 };
 
-// 역방향(클라→서버) 제어 메시지 — 침대 ROI 전송용. magic=0xDB4C.
+// 역방향(클라→서버) 제어 메시지 — 침대 ROI / 낙상 확인 전송용. magic=0xDB4C.
 struct dbj_ctrl_header_t {
     uint16_t magic;         // 2B (0xDB4C)
     uint8_t version;        // 1B (0x01)
-    uint8_t type;           // 1B (1=ROI_SET, 2=ROI_CLEAR)
+    uint8_t type;           // 1B (1=ROI_SET, 2=ROI_CLEAR, 3=FALL_CONFIRM)
     uint8_t channel;        // 1B (0~3)
     uint8_t point_count;    // 1B (이어지는 점 개수)
     uint16_t reserved;      // 2B (0)
@@ -41,17 +39,18 @@ struct dbj_roi_point_t {
     uint16_t y;             // 정규화 y × 10000 (0~10000)
 };
 
-// 서버→클라 이벤트 메시지 — 낙상 통보 등. magic=0xDB4D. (페이로드 없음)
+// 역방향(서버→클라) 이벤트 알림 — 낙상. magic=0xDB4D. 페이로드 없이 헤더(18B)만.
+// 영상 프레임(0xDB4B)과 같은 소켓(5500)으로 섞여 들어오며, magic으로 구분한다.
 struct dbj_evt_header_t {
     uint16_t magic;         // 2B (0xDB4D)
-    uint8_t version;        // 1B (0x01)
-    uint8_t type;           // 1B (1=낙상)
-    uint8_t channel;        // 1B (0~3)
-    uint8_t reserved;       // 1B (0)
-    uint16_t x;             // 발생 위치 정규화 x × 10000
-    uint16_t y;             // 발생 위치 정규화 y × 10000
-    uint64_t timestamp_ms;  // 8B (Unix epoch 밀리초)
-};
+    uint8_t  version;       // 1B (0x01)
+    uint8_t  type;          // 1B (0x01 = 낙상 확정)
+    uint8_t  channel;       // 1B (0~3, 발생 채널)
+    uint8_t  reserved;      // 1B (0)
+    uint16_t x;             // 2B (발생 위치 정규화 x ×10000)
+    uint16_t y;             // 2B (발생 위치 정규화 y ×10000)
+    uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
+};                          // 18B
 #pragma pack(pop)
 
 // 제어 메시지 상수 (서버와 합의된 값)
@@ -60,10 +59,10 @@ static constexpr uint8_t kCtrlRoiSet = 0x01;
 static constexpr uint8_t kCtrlRoiClear = 0x02;
 static constexpr int kRoiCoordScale = 10000;
 
-// 이벤트 메시지 상수 (서버와 합의된 값)
+// 이벤트 메시지 상수 (서버 스펙)
 static constexpr uint16_t kEvtMagic = 0xDB4D;
-static constexpr uint8_t kEvtFall = 0x01;
-static constexpr uint8_t kEvtEgress = 0x02;
+static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
+static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
 class QPushButton;
@@ -73,9 +72,9 @@ class QComboBox;
 class QDateEdit;
 class QSlider;
 class QVBoxLayout;
+class QStackedWidget;
 class QMediaPlayer;
 class QVideoWidget;
-class QStackedWidget;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -98,10 +97,11 @@ public:
 private slots:
     void onReadyRead();          // 명세서 가이드라인 구현 슬롯 (영상 수신)
     void onSocketStateChanged(QAbstractSocket::SocketState state);
+    void connectToServer();      // 영상 서버 접속/재접속
     void updateClock();          // 상단 실시간 시계
     void updateVitals();         // 웨어러블 바이탈 갱신(현재는 시뮬레이션)
     void onRoiButtonClicked();   // "ROI 지정" — 채널 선택 후 그리기 시작
-    void onRoiClearClicked();    // "ROI 제거" — 채널 선택 후 ROI 삭제
+    void onRoiClearClicked();    // "ROI 제거" — 로컬 + 서버 판정 영역 삭제
     void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
     void onRoiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료 → 전송
     void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
@@ -128,6 +128,7 @@ private:
     QByteArray buffer;           // 🌟 명세서 가이드: 수신 데이터를 쌓아둘 버퍼
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
+    bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
 
     // ── 대시보드 UI 구성 요소 ──────────────────────────────
     PatientInfo patients[4];     // 병상별 환자 정보
@@ -142,6 +143,7 @@ private:
 
     QTimer clockTimer;
     QTimer vitalsTimer;
+    QTimer reconnectTimer;       // 영상 서버 자동 재접속
 
     // ── TAB 구조 ──────────────────────────────────────────
     QTabWidget* tabWidget = nullptr;
@@ -153,13 +155,15 @@ private:
     QComboBox* filterEventType = nullptr;
     QTableWidget* logTable = nullptr;
     QLabel* blackboxPlaceholder = nullptr;
-    QSlider* blackboxSeek = nullptr;
-    QLabel* blackboxTimeLabel = nullptr;   // "00:05 / 00:10" 재생 위치/길이 표시
-    QPushButton* blackboxPlayPauseButton = nullptr;  // 재생/일시정지 토글
-    QMediaPlayer* blackboxPlayer = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
-    QStackedWidget* blackboxStack = nullptr;  // placeholder ↔ 영상 전환(크기 고정)
-    bool blackboxSeeking = false;          // 사용자가 재생바를 잡고 있는 중인지
+    QStackedWidget* blackboxStack = nullptr;
+    QSlider* blackboxSeek = nullptr;
+    QPushButton* blackboxPlayPauseButton = nullptr;
+    QLabel* blackboxTimeLabel = nullptr;
+    QMediaPlayer* blackboxPlayer = nullptr;
+    bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
+    QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
+    int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
     QVBoxLayout* careTimeList = nullptr;
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
@@ -214,6 +218,7 @@ private:
     QWidget* buildLogTable();
     QWidget* buildBlackboxPlayer();
     QWidget* buildCareTimeDashboard();
+    void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
 
     // TAB3 빌드 헬퍼
     QWidget* buildDbTab();
@@ -225,23 +230,14 @@ private:
     void refreshResidentTable();
     void refreshCaregiverTable();
 
+    // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
+    void handleFallEvent(int channel, quint64 timestampMs);
+
+    // 침상 이탈 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
+    void handleBedEgressEvent(int channel, quint64 timestampMs);
+
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
-
-    // 서버 낙상 이벤트 처리 — 채널 강조 + 팝업 (확인 시 강조 해제)
-    void handleFallEvent(int channel, quint64 timestampMs);
-    void handleEgressEvent(int channel, quint64 timestampMs);
-    bool fallActive[4] = {};   // 채널별 팝업 중복 방지
-    bool egressActive[4] = {};
-
-    // 로그 목록에 있는 클립 URL로 블랙박스 영상 재생 (TAB2)
-    void playBlackboxClip(const QString& url);
-    QString blackboxUrl;         // 현재 재생(시도) 중인 클립 URL — 실패 시 재시도용
-    int blackboxRetries = 0;     // 재생 실패 재시도 횟수 (저장 완료 전 클릭 대비)
-
-    // 영상 서버 접속 시도 (최초 접속·재접속 공용)
-    void connectToServer();
-    QTimer reconnectTimer;     // 연결 끊김 시 자동 재접속 타이머
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼

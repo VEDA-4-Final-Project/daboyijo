@@ -52,7 +52,7 @@ QString vitalColor(double temp, int hr) {
 }
 
 // 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.35.48";
+const char* kServerHost = "172.20.32.59";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -75,7 +75,7 @@ QString formatMs(qint64 ms) {
 }
 
 // 재생바 트랙의 아무 지점이나 좌클릭하면 그 위치로 바로 점프하는 슬라이더.
-// (기본 QSlider는 트랙 클릭 시 pageStep만큼만 이동해 정확한 탐색이 어렵다.
+// (기본 QSlider는 트랙 클릭 시 pageStep만큼만 이동해 정확한 탐색이 어렵다
 //  QProxyStyle의 SH_Slider_AbsoluteSetButtons 방식은 이 앱처럼 스타일시트를
 //  쓰면 무시되는 Qt 제약이 있어, 마우스 이벤트를 직접 처리한다.)
 class ClickSeekSlider : public QSlider {
@@ -125,7 +125,7 @@ private:
 constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
 
 // 🌟 낙상 경보 해제 통신 프로토콜 상수 (0x03)
-constexpr uint8_t kCtrlFallConfirm = 0x03; 
+constexpr uint8_t kCtrlFallConfirm = 0x03;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -297,14 +297,14 @@ QWidget* MainWindow::buildVideoWall()
     connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
     titleRow->addWidget(micButton);
 
-    // 🚨 경보 해제 
+    // 🚨 경보 해제
     alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
     alarmClearButton->setObjectName("alarmButton");
     alarmClearButton->setCursor(Qt::PointingHandCursor);
     connect(alarmClearButton, &QPushButton::clicked, this,
             &MainWindow::onAlarmClearClicked);
     titleRow->addWidget(alarmClearButton);
- 
+
     outer->addLayout(titleRow);
 
     auto* grid = new QGridLayout();
@@ -1214,13 +1214,11 @@ void MainWindow::onReadyRead()
             buffer.remove(0, sizeof(evt));
 
             if (evt.channel < 4) {
-                // 1. 낙상 이벤트 처리
                 if (evt.type == kEvtFall) {
                     handleFallEvent(evt.channel, evt.timestamp_ms);
-                } 
-                // 2. 침상 탈출 이벤트 처리
-                else if (evt.type == kEvtEgress) {
-                    handleEgressEvent(evt.channel, evt.timestamp_ms);
+                }
+                else if (evt.type == kEvtBedEgress) {
+                    handleBedEgressEvent(evt.channel, evt.timestamp_ms);
                 }
             }
             continue;
@@ -1282,11 +1280,11 @@ void MainWindow::onReadyRead()
 }
 
 // ═══════════════════════════════════════════════════════════
-//  낙상 이벤트 — 빨간 테두리 활성화 및 로그 추가
+//  낙상 이벤트 — 빨간색 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
 void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
 {
-    // 1. 팝업 없이 빨간 테두리만 즉각 활성화!
+    // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
         fallActive[channel] = true;
         if (channelViews[channel]) {
@@ -1316,28 +1314,37 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
 }
 
 // ═══════════════════════════════════════════════════════════
-//  침상탈출 이벤트 — 빨간 테두리 활성화 및 로그 추가
+//  침상 이탈 이벤트 — 빨간색 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
-void MainWindow::handleEgressEvent(int channel, quint64 timestampMs)
+void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 {
+    // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
-        egressActive[channel] = true; // 이탈 알림 켜짐
+        fallActive[channel] = true; // 경보 해제 로직과 연동하기 위해 활성화
         if (channelViews[channel]) {
             channelViews[channel]->setAlert(true);
         }
-        qDebug() << "⚠️ [침상 이탈 감지] 채널" << channel << "테두리 알림 ON";
+        qDebug() << "⚠️ [침상 이탈 감지] 채널" << channel << "빨간 테두리 켜짐";
     }
 
+    // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
     if (logTable) {
         const int row = logTable->rowCount();
         logTable->insertRow(row);
-        const QString when = QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+        
+        const QString when = QDateTime::fromMSecsSinceEpoch(
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
-        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4").arg(QString::fromLatin1(kServerHost)).arg(kClipHttpPort).arg(channel).arg(timestampMs);
+        
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
+                                     .arg(QString::fromLatin1(kServerHost))
+                                     .arg(kClipHttpPort)
+                                     .arg(channel)
+                                     .arg(timestampMs);          
         dtItem->setData(Qt::UserRole, clipUrl);
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
-        logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상이탈")));
+        logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상 이탈"))); // 💡 이탈 분류로 등록
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
     }
 }
@@ -1498,10 +1505,9 @@ void MainWindow::onAlarmClearClicked()
 
     // 되묻는 팝업 없이 버튼 클릭 즉시 원스톱으로 리셋 처리!
     for (int channel = 0; channel < 4; ++channel) {
-        if (fallActive[channel] || egressActive[channel]) {
+        if (fallActive[channel]) {
             // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어
             fallActive[channel] = false;
-            egressActive[channel] = false;
             if (channelViews[channel]) {
                 channelViews[channel]->setAlert(false);
             }
@@ -1528,7 +1534,7 @@ void MainWindow::onAlarmClearClicked()
     } else {
         // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
         QMessageBox::information(this, QStringLiteral("경보 해제"),
-                                 QStringLiteral("현재 활성화된 경보가 없습니다."));
+                                 QStringLiteral("현재 활성화된 낙상 경보가 없습니다."));
     }
 }
 
@@ -1612,7 +1618,7 @@ void MainWindow::onSaveResident()
              << "위험도:" << editRiskLevel->currentText();
     QMessageBox::information(this, QStringLiteral("저장"),
                              QStringLiteral("저장되었습니다. (DB 연동 전 — 자리표시자)"));
-}
+} 
 
 void MainWindow::onDischargeResident()
 {
