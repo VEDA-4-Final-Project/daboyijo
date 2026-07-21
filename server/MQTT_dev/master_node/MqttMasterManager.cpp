@@ -41,7 +41,7 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
         out_cmd.status = "낙상"; // 프로토콜 정해지면 넣을께요 
         out_cmd.message = "낙상 감지";
         out_cmd.audio_action = "PLAY";
-        out_cmd.audio_file = "fever_alert.wav";
+        out_cmd.audio_file = "/home/mayoina/study_veda/daboyijo/server/MQTT_dev/build/alarm_node/fall_alert.wav";
         return true;
     }
     return false;

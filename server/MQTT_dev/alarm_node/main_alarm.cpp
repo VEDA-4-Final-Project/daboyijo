@@ -4,7 +4,7 @@
 #include <string>
 #include "VedaAudioPlayer.hpp"
 
-const std::string TEST_DEVICE_ID = "alarm_rpi_01"
+const std::string TEST_DEVICE_ID = "alarm_rpi_01";
 
 void onAlarmCommandReceived(const std::string& topic, const std::string& payload) {
     try{
@@ -34,7 +34,7 @@ int main() {
     MqttClient_veda client("Alarm_Node");
 
     std::cout << "[Alarm node] Connecting to mqtt broker... " << std::endl;
-    if(!client.cennectToBroker("localhost",1883)) {
+    if(!client.connectToBroker("localhost",1883)) {
         std::cerr << "[Alarm node] Connection failed" << std::endl;
         return 1;
     }

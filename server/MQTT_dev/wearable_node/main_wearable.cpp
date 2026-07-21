@@ -33,7 +33,7 @@ int main() {
         client.publishMessage("veda/wearable/data",payload);
 
         std:: cout << "[Wearable Node] Published JSON: " <<payload <<  std::endl;
-        sleep(5);
+        sleep(1);
     }
 
     client.stopLoop();
