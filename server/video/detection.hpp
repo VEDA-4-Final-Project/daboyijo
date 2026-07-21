@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <opencv2/opencv.hpp>
 
 // WiseAI(ONVIF) 메타데이터에서 파싱한 객체 1개.
 // 좌표는 0.0~1.0 정규화 (BoundingBox 픽셀값에 tt:Transformation 적용 후).
@@ -45,3 +46,22 @@ struct DetectionFrame {
         return n;
     }
 };
+
+// 사람의 발끝(바운딩 박스 하단의 중앙)이 침대 ROI(다각형) 밖으로 나갔는지 판정.
+inline bool isFeetInRoi(const Detection& det, const std::vector<std::pair<float, float>>& roi) {
+    if (roi.empty()) return false;
+
+    float px = (det.left + det.right) / 2.0f;
+    float py = det.bottom;
+
+    bool inside = false;
+    for (size_t i = 0, j = roi.size() - 1; i < roi.size(); j = i++) {
+        const float xi = roi[i].first, yi = roi[i].second;
+        const float xj = roi[j].first, yj = roi[j].second;
+        if (((yi > py) != (yj > py)) &&
+            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+            inside = !inside;
+    }
+    
+    return inside;
+}
