@@ -57,8 +57,9 @@ void VideoView::setRoiVisible(bool on) {
     update();
 }
 
-void VideoView::setAlert(bool on, const QPointF& normPt) {
+void VideoView::setAlert(bool on, const QString& text, const QPointF& normPt) {
     alertPt_ = normPt;
+    alertText_ = text;
     if (alert_ != on) {
         alert_ = on;
         if (on) {
@@ -75,6 +76,7 @@ void VideoView::setAlert(bool on, const QPointF& normPt) {
         } else {
             if (alertTimer_) alertTimer_->stop();
             alertBlink_ = false;
+            alertText_.clear();
         }
     }
     update();
@@ -152,7 +154,7 @@ void VideoView::paintEvent(QPaintEvent*) {
                    QStringLiteral("침대 영역 클릭 · 더블클릭(또는 우클릭)으로 완료"));
     }
 
-    // 낙상 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
+    // 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
     if (alert_) {
         const QColor red(229, 83, 60);
 
@@ -172,12 +174,20 @@ void VideoView::paintEvent(QPaintEvent*) {
             p.setPen(QPen(red, 5));
             p.drawRect(rect().adjusted(3, 3, -3, -3));
 
+            // 글자 길이에 맞춰 상단 빨간 배지의 너비를 유동적으로 계산
+            QFont font = p.font();
+            font.setBold(true);
+            p.setFont(font);
+
+            int textWidth = p.fontMetrics().horizontalAdvance(alertText_);
+            int badgeWidth = qMax(130, textWidth + 30);
+
             p.setBrush(red);
             p.setPen(Qt::NoPen);
-            QRectF badge((width() - 130) / 2.0, 8, 130, 24);
+            QRectF badge((width() - badgeWidth) / 2.0, 8, badgeWidth, 24);
             p.drawRoundedRect(badge, 6, 6);
             p.setPen(Qt::white);
-            p.drawText(badge, Qt::AlignCenter, QStringLiteral("🚨 낙상 감지"));
+            p.drawText(badge, Qt::AlignCenter, alertText_);
         }
     }
 }

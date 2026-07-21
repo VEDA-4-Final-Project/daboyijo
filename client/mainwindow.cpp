@@ -1288,7 +1288,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
     if (channel >= 0 && channel < 4) {
         fallActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true);
+            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지!"));
         }
         qDebug() << "🚨 [낙상 감지] 채널" << channel << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
@@ -1320,9 +1320,9 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 {
     // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
-        fallActive[channel] = true; // 경보 해제 로직과 연동하기 위해 활성화
+        bedEgressActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true);
+            channelViews[channel]->setAlert(true, QStringLiteral("⚠️ 침대 탈출 감지!"));
         }
         qDebug() << "⚠️ [침상 이탈 감지] 채널" << channel << "빨간 테두리 켜짐";
     }
@@ -1505,9 +1505,10 @@ void MainWindow::onAlarmClearClicked()
 
     // 되묻는 팝업 없이 버튼 클릭 즉시 원스톱으로 리셋 처리!
     for (int channel = 0; channel < 4; ++channel) {
-        if (fallActive[channel]) {
+        if (fallActive[channel] || bedEgressActive[channel]) {
             // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어
             fallActive[channel] = false;
+            bedEgressActive[channel] = false;
             if (channelViews[channel]) {
                 channelViews[channel]->setAlert(false);
             }

@@ -6,6 +6,7 @@
 #include <QPolygonF>
 #include <QTimer>
 #include <QWidget>
+#include <QString>
 
 // 영상 1채널을 표시하고, 그 위에 침대 ROI를 그리거나 보여주는 위젯.
 //
@@ -28,8 +29,8 @@ public:
     bool drawMode() const { return drawMode_; }
     void cancelDraft();                       // 그리던 것 버리고 그리기 종료
     void setRoiVisible(bool on);              // 모니터링 오버레이 표시 토글
-    // 낙상 경보 — 빨간 테두리 점멸. normPt(0~1) 주면 발생 위치에 마커 표시.
-    void setAlert(bool on, const QPointF& normPt = QPointF(-1, -1));
+    // 경보 — 빨간 테두리 점멸. normPt(0~1) 주면 발생 위치에 마커 표시.
+    void setAlert(bool on, const QString& text = QString(), const QPointF& normPt = QPointF(-1, -1));
 
 signals:
     void roiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료
@@ -56,7 +57,8 @@ private:
     bool drawMode_ = false;
     bool roiVisible_ = true;
 
-    bool alert_ = false;          // 낙상 경보 상태
+    bool alert_ = false;          // 경보 상태
+    QString alertText_;           // 화면에 표시할 문구
     bool alertBlink_ = false;     // 점멸 on/off
     QPointF alertPt_{-1, -1};     // 발생 위치(정규화 0~1), 음수면 미표시
     QTimer* alertTimer_ = nullptr;

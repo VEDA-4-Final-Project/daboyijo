@@ -129,6 +129,7 @@ private:
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
+    bool bedEgressActive[4] = {};// 채널별 침대이탈 경보 활성 상태
 
     // ── 대시보드 UI 구성 요소 ──────────────────────────────
     PatientInfo patients[4];     // 병상별 환자 정보
