@@ -18,7 +18,7 @@ bool MqttMasterManager::init(const std::string& broker_ip, int port) {
         return false;
     }
 
-    mqtt_client_->setMessageCallback([this](const::std::string& t , const std::string& p) {
+    mqtt_client_->setCallback([this](const::std::string& t , const std::string& p) {
         this->onMessageReceived(t,p);
     });
 
@@ -31,7 +31,7 @@ bool MqttMasterManager::init(const std::string& broker_ip, int port) {
 }
 
 
-bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmComand& out_cmd) {
+bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& out_cmd) {
     if(data.is_fall_detected) {
         out_cmd.target_device = "alarm_rpi_01";
         out_cmd.timestamp = data.timestamp;
@@ -48,7 +48,7 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmComand& o
 }
 
 
-void MqttMasterManager::sendAlarmCommand(const AlarmComand& cmd) {
+void MqttMasterManager::sendAlarmCommand(const AlarmCommand& cmd) {
     nlohmann::json j = cmd;
     std::string payload = j.dump();
 
@@ -63,7 +63,7 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
 
         std::cout << "[MqttMasterManager] Fall: " << (data.is_fall_detected ? "yes" : "no") << std::endl;
         
-        AlarmComand cmd;
+        AlarmCommand cmd;
 
         if (checkFallStatus(data,cmd)) {
             sendAlarmCommand(cmd);
@@ -72,8 +72,5 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         std::cerr << "[MqttMasterManager] Parsing Error: " << e.what() << std::endl;
     }
 }
-
-
-   
 
 

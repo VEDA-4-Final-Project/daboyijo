@@ -17,7 +17,7 @@ add_library(common_mqtt_lib STATIC common/MqttClient_veda.cpp )
 target_link_libraries(common_mqtt_lib PRIVATE ${MOSQUITTO_LIB} Threads::Threads nlohmann_json::nlohmann_json)
 
 add_subdirectory(wearable_node)
-#add_subdirectory(main_server)
-#add_subdirectory(alarm_node)
+add_subdirectory(master_node)
+add_subdirectory(alarm_node)
 
 
