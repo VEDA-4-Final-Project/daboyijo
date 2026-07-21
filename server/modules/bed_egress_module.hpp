@@ -41,4 +41,8 @@ private:
     std::map<int, PatientRisk> risk_levels_;
     std::map<int, std::vector<std::pair<float, float>>> rois_; // 채널별 ROI 저장소
     std::map<int, std::map<int, bool>> is_in_bed_; // 객체별 이전 상태 저장 (true: 침상 안, false: 밖)
+
+    // 경계선 흔들림 노이즈로 인한 알람 버스트(폭주) 방지용 쿨다운 타이머
+    // 구조: 채널 ID -> [ 객체 ID -> 마지막 알람 발생 시각 ]
+    std::map<int, std::map<int, std::chrono::steady_clock::time_point>> last_alarm_time_;
 };
