@@ -1,23 +1,10 @@
 #include "fall_detector.hpp"
+#include "detection.hpp"
 
 #include <cstdio>
 #include <iterator>
 
 namespace {
-
-// 점 (px,py)가 정규화 다각형 poly 안에 있는지 (ray-casting). 침상 재실/이탈 판정.
-bool pointInPolygon(float px, float py,
-                    const std::vector<std::pair<float, float>>& poly) {
-    bool inside = false;
-    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
-        const float xi = poly[i].first, yi = poly[i].second;
-        const float xj = poly[j].first, yj = poly[j].second;
-        if (((yi > py) != (yj > py)) &&
-            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
-            inside = !inside;
-    }
-    return inside;
-}
 
 constexpr double kLyingConfirmSec = 2.0;  // 누운 자세가 이만큼 연속돼야 낙상 확정 (잠정값)
 constexpr double kTrackExpireSec = 6.0;   // 이만큼 안 보인 추적은 폐기
@@ -47,9 +34,8 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         // ROI와 겹쳐 재실로 오판된다. 발끝은 바닥 평면에 붙은 점이라 화면
         // y좌표가 실제 3D 위치를 반영 — 침대 앞이면 ROI 아래(밖), 침대에
         // 누우면 ROI 안으로 갈린다. (ROI는 침대 발자국 기준으로 그릴 것)
-        const float foot_x = (d.left + d.right) / 2.0f;
-        const float foot_y = d.bottom;
-        const bool in_bed = has_bed && pointInPolygon(foot_x, foot_y, bed_roi);
+        const bool in_bed = has_bed && isFeetInRoi(d, bed_roi);
+        
         if (in_bed) {
             if (!tr.in_bed) {
                 std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
@@ -61,7 +47,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
             continue;
         }
         if (tr.in_bed) {
-            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰모드\n",
+            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰 시작\n",
                          channel, d.object_id);
         }
         tr.in_bed = false;
