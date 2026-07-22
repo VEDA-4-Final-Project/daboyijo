@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+#include <curl/curl.h>
+
 #include "ai_worker.hpp"
 #include "blackbox_module.hpp"
 #include "caregiver_module.hpp"
@@ -35,6 +37,7 @@
 #include "stream_server.hpp"
 #include "video_pipeline.hpp"
 #include "bed_egress_module.hpp"
+#include "telegram_module.hpp"
 
 namespace {
 
@@ -54,6 +57,10 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
+    // [보호자 알림] curl_easy_init()의 암묵적 초기화는 스레드 안전하지 않으므로,
+    // 알림 스레드가 생기기 전에 여기서 한 번만 명시적으로 초기화한다.
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+
     // ── 공용 인프라 ──────────────────────────────────────────────
     StreamServer stream_server(config.stream_port);
     FrameQueue queue(16);
@@ -67,6 +74,8 @@ int main(int argc, char* argv[]) {
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
+    TelegramModule telegram;        // [보호자 알림]
+    telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
     // ── 모듈 간 배선 ─────────────────────────────────────────────
     // Qt가 그린 침대 ROI → 낙상 및 침상 탈출 판정기
@@ -86,12 +95,14 @@ int main(int argc, char* argv[]) {
         privacy_masker.reportFall(ch);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
+        telegram.notifyFall(ch);
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
         std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch, obj_id);
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
-        stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms); 
+        stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
+        telegram.notifyEgress(ch);
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
     ai_worker.addProcessor([&](const AiJob& job) { caregiver.processFrame(job); });
@@ -143,5 +154,6 @@ int main(int argc, char* argv[]) {
     }
     stream_server.stop();
     blackbox.stopHttp();
+    curl_global_cleanup();
     return 0;
 }

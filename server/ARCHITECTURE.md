@@ -20,7 +20,8 @@ server/
 │   ├── stats_reporter.*    ← [공용] 5초 주기 상태 리포트
 │   ├── fall_module.*       ← [낙상감지] FallDetector+MoveNet 배선, 튜닝값
 │   ├── caregiver_module.*  ← [요양사감지] 옷색 판정+케어타이머+DB 기록
-│   └── blackbox_module.*   ← [블랙박스] 클립 저장+HTTP 서빙
+│   ├── blackbox_module.*   ← [블랙박스] 클립 저장+HTTP 서빙
+│   └── telegram_module.*   ← [보호자 알림] 낙상/침상탈출 확정 시 텔레그램 전송 (데모용)
 ├── core/                   ← 저수준 부품: fall_detector, stream_server, database, clip_http_server
 └── video/                  ← 저수준 부품: rtsp, privacy_masker, caregiver_detector, care_timer, pose_estimator, blackbox_recorder
 ```
@@ -33,6 +34,7 @@ server/
 | 블러처리 | `video/privacy_masker.*` |
 | 요양사 감지 | `modules/caregiver_module.*`, `video/caregiver_detector.*`, `video/care_timer.*` |
 | 블랙박스 | `modules/blackbox_module.*`, `video/blackbox_recorder.*`, `core/clip_http_server.*` |
+| 보호자 알림(텔레그램) | `modules/telegram_module.*` |
 | RTSP/스트리밍 인프라 | `video/rtsp_av_client.*`, `core/stream_server.*`, `modules/video_pipeline.*` |
 
 튜닝값(모델 경로, 추론 주기, 색 범위, 저장 시간 등)은 **각 모듈 .cpp 상단**에 모여 있다.
