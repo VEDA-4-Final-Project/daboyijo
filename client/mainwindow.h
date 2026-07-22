@@ -65,6 +65,7 @@ static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
+class QDialog;
 class QPushButton;
 class QTabWidget;
 class QTableWidget;
@@ -129,17 +130,21 @@ private:
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
-    bool bedEgressActive[4] = {};// 채널별 침대이탈 경보 활성 상태
+    bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
 
     // ── 대시보드 UI 구성 요소 ──────────────────────────────
     PatientInfo patients[4];     // 병상별 환자 정보
     QLabel* clockLabel = nullptr;      // 상단 실시간 시계
+    QPushButton* themeToggleButton = nullptr;  // 라이트/다크 테마 토글
+    bool darkMode = false;             // 현재 다크모드 여부
+    void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구
     QLabel* liveDots[4];               // 채널별 LIVE 표시등
     QLabel* tempValues[4];             // 채널별 체온 값
     QLabel* hrValues[4];               // 채널별 심박수 값
     QLabel* vitalStatusDots[4];        // 채널별 바이탈 상태등
+    QLabel* vitalStatusBadges[4];      // 채널별 상태 배지(정상/주의/위험)
     QLabel* vitalUpdated[4];           // 채널별 마지막 갱신 시각
 
     QTimer clockTimer;
@@ -155,6 +160,7 @@ private:
     QComboBox* filterRoom = nullptr;
     QComboBox* filterEventType = nullptr;
     QTableWidget* logTable = nullptr;
+    QDialog* blackboxDialog = nullptr;      // 블랙박스 재생 팝업(로그 더블클릭 시)
     QLabel* blackboxPlaceholder = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
     QStackedWidget* blackboxStack = nullptr;
@@ -218,6 +224,7 @@ private:
     QWidget* buildSearchFilters();
     QWidget* buildLogTable();
     QWidget* buildBlackboxPlayer();
+    void buildBlackboxDialog();   // 블랙박스 재생 팝업 생성(1회)
     QWidget* buildCareTimeDashboard();
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
 

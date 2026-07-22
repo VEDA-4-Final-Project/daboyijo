@@ -29,20 +29,50 @@
 #include <QUrl>
 #include <QMouseEvent>
 #include <QStackedWidget>
+#include <QColor>
+#include <QDialog>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonValue>
 
-// ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
+// ── 디자인 토큰 (라이트/다크 두 팔레트, 런타임 전환) ──────────
 namespace {
-// ── 밝은 의료 톤 팔레트 (요양원 주간 관제 환경) ──────────────
-const char* kBgDeep      = "#F4F7FA"; // 최하단 배경(연회색)
-const char* kPanel       = "#FFFFFF"; // 패널 배경(흰색)
-const char* kCard        = "#F0F4F8"; // 카드 배경(연회색, 패널과 대비)
-const char* kBorder      = "#DCE4EC"; // 테두리(연한 회색)
-const char* kTextMain    = "#1E2A32"; // 기본 글자(진회색)
-const char* kTextSub     = "#5C6B78"; // 보조 글자(중간 회색)
-const char* kAccent      = "#12B5A6"; // 브랜드 강조(청록)
-const char* kNormal      = "#2E9E5B"; // 정상(그린)
-const char* kWarn        = "#C77A11"; // 주의(주황, 흰 배경 가독성 확보)
-const char* kCritical    = "#E5484D"; // 위험(빨강)
+struct Palette {
+    const char *bgDeep, *panel, *card, *border,
+               *text, *sub, *accent, *normal, *warn, *critical;
+};
+
+// 밝은 의료 톤 (요양원 주간 관제 환경)
+const Palette kLight {
+    "#F4F7FA", "#FFFFFF", "#F0F4F8", "#DCE4EC",
+    "#1E2A32", "#5C6B78", "#12B5A6", "#2E9E5B", "#C77A11", "#E5484D"
+};
+// 다크 관제실 톤 (야간·통합 관제 환경, 강조색은 어두운 배경용으로 살짝 밝게)
+const Palette kDark {
+    "#0E141B", "#151D26", "#1C2733", "#2A3742",
+    "#E6EDF3", "#8B98A5", "#17C7B6", "#35B368", "#E0A030", "#FF5A5F"
+};
+
+// 현재 적용 중인 색 (전환 시 applyPalette로 재대입)
+const char* kBgDeep   = kLight.bgDeep;
+const char* kPanel    = kLight.panel;
+const char* kCard     = kLight.card;
+const char* kBorder   = kLight.border;
+const char* kTextMain = kLight.text;
+const char* kTextSub  = kLight.sub;
+const char* kAccent   = kLight.accent;
+const char* kNormal   = kLight.normal;
+const char* kWarn     = kLight.warn;
+const char* kCritical = kLight.critical;
+
+void applyPalette(const Palette& p) {
+    kBgDeep = p.bgDeep;   kPanel = p.panel;   kCard = p.card;   kBorder = p.border;
+    kTextMain = p.text;   kTextSub = p.sub;   kAccent = p.accent;
+    kNormal = p.normal;   kWarn = p.warn;     kCritical = p.critical;
+}
 
 // 상태 색상: 정상/주의/위험 판정
 QString vitalColor(double temp, int hr) {
@@ -51,8 +81,24 @@ QString vitalColor(double temp, int hr) {
     return kNormal;
 }
 
+// 상태 라벨: 정상/주의/위험 (배지 텍스트용)
+QString vitalStatusLabel(double temp, int hr) {
+    if (temp >= 38.0 || hr >= 110 || hr <= 45) return QStringLiteral("위험");
+    if (temp >= 37.5 || hr >= 100 || hr < 55)  return QStringLiteral("주의");
+    return QStringLiteral("정상");
+}
+
+// 두 색을 f:(1-f) 비율로 섞는다. 배지 배경 tint 계산용.
+// (fg를 현재 카드색 bg와 섞으면 라이트/다크 어느 테마에서도 자연스러운 옅은 배경이 된다)
+QString blendHex(const QString& fg, const QString& bg, double f) {
+    QColor a(fg), b(bg);
+    return QColor(int(a.red()   * f + b.red()   * (1 - f)),
+                  int(a.green() * f + b.green() * (1 - f)),
+                  int(a.blue()  * f + b.blue()  * (1 - f))).name();
+}
+
 // 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.32.59";
+const char* kServerHost = "172.20.35.112";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -163,6 +209,70 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // 🚀 [블랙박스 복구] 실행 시 HTTP 서버(/list)로 과거에 저장된 블랙박스 목록을
+    //    받아와 비상 로그 테이블을 복원한다. Qt를 껐다 켜도 과거 영상이 남게 하는 기능.
+    {
+        auto* manager = new QNetworkAccessManager(this);
+        QUrl url(QStringLiteral("http://%1:%2/list")
+                     .arg(QString::fromLatin1(kServerHost)).arg(kClipHttpPort));
+        QNetworkRequest request(url);
+        QNetworkReply* reply = manager->get(request);
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                qDebug() << "⚠️ 과거 영상 목록 수집 실패:" << reply->errorString();
+                return;
+            }
+
+            const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            if (!doc.isArray()) return;
+
+            const QJsonArray fileList = doc.array();
+            for (const QJsonValue& value : fileList) {
+                const QString fileName = value.toString();  // 예: "ch1_1719820000000_FALL.mp4"
+
+                // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
+                // 서버 저장 규칙: 낙상은 접미사 없음(chN_TS.mp4),
+                //                침상이탈은 _EGRESS(chN_TS_EGRESS.mp4).
+                const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                const QStringList parts = cleanName.split(QLatin1Char('_'));
+                if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
+
+                const int channel = parts[0].mid(2).toInt();   // "ch1" -> 1
+                const qint64 timestampMs = parts[1].toLongLong();
+                const QString rawType = (parts.size() >= 3) ? parts[2] : QString();
+                if (channel < 0 || channel >= 4) continue;
+
+                const QString eventType =
+                    (rawType == QLatin1String("EGRESS")) ? QStringLiteral("침상 이탈")
+                                                         : QStringLiteral("낙상");
+
+                const QString when = QDateTime::fromMSecsSinceEpoch(timestampMs)
+                                         .toString("yyyy-MM-dd hh:mm:ss");
+
+                if (logTable) {
+                    const int row = logTable->rowCount();
+                    logTable->insertRow(row);
+
+                    auto* dtItem = new QTableWidgetItem(when);
+                    // 서버 실제 파일명을 그대로 사용해 재생 URL을 정확히 매핑
+                    const QString clipUrl = QStringLiteral("http://%1:%2/%3")
+                                                 .arg(QString::fromLatin1(kServerHost))
+                                                 .arg(kClipHttpPort)
+                                                 .arg(fileName);
+                    dtItem->setData(Qt::UserRole, clipUrl);
+
+                    logTable->setItem(row, 0, dtItem);
+                    logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+                    logTable->setItem(row, 2, new QTableWidgetItem(eventType));
+                    logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+                }
+            }
+            qDebug() << "✅ 과거 블랙박스 복원 완료 (총" << fileList.size() << "개)";
+        });
+    }
 }
 
 MainWindow::~MainWindow()
@@ -188,8 +298,8 @@ void MainWindow::buildUi()
     auto* body = new QHBoxLayout();
     body->setContentsMargins(16, 16, 16, 16);
     body->setSpacing(16);
-    body->addWidget(buildVideoWall(), 7);
-    body->addWidget(buildVitalsPanel(), 3);
+    body->addWidget(buildVideoWall(), 1);
+    body->addWidget(buildVitalsPanel(), 0);
 
     auto* dashboardTab = new QWidget();
     dashboardTab->setLayout(body);
@@ -203,8 +313,8 @@ void MainWindow::buildUi()
 
     root->addWidget(tabWidget, 1);
 
-    resize(1280, 800);
-    setMinimumSize(1080, 680);
+    resize(1600, 940);
+    setMinimumSize(1340, 760);
 }
 
 QWidget* MainWindow::buildHeader()
@@ -227,14 +337,20 @@ QWidget* MainWindow::buildHeader()
     lay->addWidget(subtitle);
     lay->addStretch();
 
-    // 연결 상태
+    // 연결 상태 — pill 배지
+    auto* statusPill = new QFrame();
+    statusPill->setObjectName("statusPill");
+    auto* spLay = new QHBoxLayout(statusPill);
+    spLay->setContentsMargins(9, 2, 10, 2);
+    spLay->setSpacing(6);
     statusDot = new QLabel();
     statusDot->setObjectName("statusDot");
-    statusDot->setFixedSize(10, 10);
+    statusDot->setFixedSize(7, 7);
     statusText = new QLabel();
     statusText->setObjectName("statusText");
-    lay->addWidget(statusDot);
-    lay->addWidget(statusText);
+    spLay->addWidget(statusDot);
+    spLay->addWidget(statusText);
+    lay->addWidget(statusPill);
 
     // 구분선
     auto* sep = new QFrame();
@@ -247,6 +363,20 @@ QWidget* MainWindow::buildHeader()
     clockLabel = new QLabel();
     clockLabel->setObjectName("clock");
     lay->addWidget(clockLabel);
+
+    // 구분선 + 테마 토글
+    auto* sep2 = new QFrame();
+    sep2->setFrameShape(QFrame::VLine);
+    sep2->setObjectName("headerSep");
+    sep2->setFixedHeight(28);
+    lay->addWidget(sep2);
+
+    themeToggleButton = new QPushButton(QStringLiteral("🌙"));
+    themeToggleButton->setObjectName("themeToggle");
+    themeToggleButton->setCursor(Qt::PointingHandCursor);
+    themeToggleButton->setToolTip(QStringLiteral("라이트/다크 테마 전환"));
+    connect(themeToggleButton, &QPushButton::clicked, this, &MainWindow::toggleTheme);
+    lay->addWidget(themeToggleButton);
 
     return header;
 }
@@ -268,26 +398,46 @@ QWidget* MainWindow::buildVideoWall()
     titleRow->addWidget(title);
     titleRow->addStretch();
 
-    roiButton = new QPushButton(QStringLiteral("ROI 지정"));
-    roiButton->setObjectName("roiButton");
+    // ── ROI 도구: 성격이 같은 3형제를 하나의 세그먼트 그룹으로 묶는다 ──
+    auto* roiGroup = new QFrame();
+    roiGroup->setObjectName("segGroup");
+    auto* roiGroupLay = new QHBoxLayout(roiGroup);
+    roiGroupLay->setContentsMargins(9, 3, 3, 3);
+    roiGroupLay->setSpacing(2);
+
+    auto* roiCaption = new QLabel(QStringLiteral("ROI"));
+    roiCaption->setObjectName("segCaption");
+    roiGroupLay->addWidget(roiCaption);
+
+    roiButton = new QPushButton(QStringLiteral("지정"));
+    roiButton->setObjectName("segBtn");
     roiButton->setCursor(Qt::PointingHandCursor);
     connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
-    titleRow->addWidget(roiButton);
+    roiGroupLay->addWidget(roiButton);
 
-    roiClearButton = new QPushButton(QStringLiteral("ROI 제거"));
-    roiClearButton->setObjectName("roiClear");
+    roiClearButton = new QPushButton(QStringLiteral("제거"));
+    roiClearButton->setObjectName("segBtnDanger");
     roiClearButton->setCursor(Qt::PointingHandCursor);
     connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
-    titleRow->addWidget(roiClearButton);
+    roiGroupLay->addWidget(roiClearButton);
 
-    roiToggleButton = new QPushButton(QStringLiteral("ROI 표시"));
-    roiToggleButton->setObjectName("roiToggle");
+    roiToggleButton = new QPushButton(QStringLiteral("표시"));
+    roiToggleButton->setObjectName("segBtnToggle");
     roiToggleButton->setCheckable(true);
     roiToggleButton->setChecked(true);
     roiToggleButton->setCursor(Qt::PointingHandCursor);
     connect(roiToggleButton, &QPushButton::toggled, this,
             &MainWindow::onRoiVisibilityToggled);
-    titleRow->addWidget(roiToggleButton);
+    roiGroupLay->addWidget(roiToggleButton);
+
+    titleRow->addWidget(roiGroup);
+
+    // ROI 도구와 실시간 액션 사이 구분선
+    auto* toolSep = new QFrame();
+    toolSep->setFrameShape(QFrame::VLine);
+    toolSep->setObjectName("toolSep");
+    toolSep->setFixedHeight(22);
+    titleRow->addWidget(toolSep);
 
     // 🎤 원격 방송(인터콤)
     micButton = new QPushButton(QStringLiteral("🎤 방송"));
@@ -322,7 +472,7 @@ QWidget* MainWindow::buildVideoCard(int channel)
 {
     auto* card = new QFrame();
     card->setObjectName("videoCard");
-    card->setMinimumSize(320, 220);
+    card->setMinimumSize(420, 280);
 
     auto* lay = new QVBoxLayout(card);
     card->setContentsMargins(0, 0, 0, 0);
@@ -331,10 +481,10 @@ QWidget* MainWindow::buildVideoCard(int channel)
     // 상단 오버레이 바: 병상/환자 + LIVE
     auto* bar = new QFrame();
     bar->setObjectName("videoBar");
-    bar->setFixedHeight(34);
+    bar->setFixedHeight(27);
     auto* barLay = new QHBoxLayout(bar);
-    barLay->setContentsMargins(10, 0, 10, 0);
-    barLay->setSpacing(8);
+    barLay->setContentsMargins(8, 0, 8, 0);
+    barLay->setSpacing(6);
 
     auto* bed = new QLabel(patients[channel].bed);
     bed->setObjectName("bedBadge");
@@ -344,13 +494,19 @@ QWidget* MainWindow::buildVideoCard(int channel)
     barLay->addWidget(name);
     barLay->addStretch();
 
+    auto* livePill = new QFrame();
+    livePill->setObjectName("livePill");
+    auto* lpLay = new QHBoxLayout(livePill);
+    lpLay->setContentsMargins(7, 1, 8, 1);
+    lpLay->setSpacing(5);
     liveDots[channel] = new QLabel();
     liveDots[channel]->setObjectName("liveDotOff");
-    liveDots[channel]->setFixedSize(8, 8);
+    liveDots[channel]->setFixedSize(6, 6);
     auto* liveTxt = new QLabel(QStringLiteral("LIVE"));
     liveTxt->setObjectName("liveText");
-    barLay->addWidget(liveDots[channel]);
-    barLay->addWidget(liveTxt);
+    lpLay->addWidget(liveDots[channel]);
+    lpLay->addWidget(liveTxt);
+    barLay->addWidget(livePill);
 
     lay->addWidget(bar);
 
@@ -363,8 +519,8 @@ QWidget* MainWindow::buildVideoCard(int channel)
             [this](int, bool on) {
                 roiDrawing = on;
                 if (roiButton)
-                    roiButton->setText(on ? QStringLiteral("그리는 중… (취소하려면 다시 클릭)")
-                                          : QStringLiteral("ROI 지정"));
+                    roiButton->setText(on ? QStringLiteral("취소")
+                                          : QStringLiteral("지정"));
             });
     lay->addWidget(video, 1);
 
@@ -375,6 +531,9 @@ QWidget* MainWindow::buildVitalsPanel()
 {
     auto* panel = new QFrame();
     panel->setObjectName("panel");
+    // 바이탈 패널은 폭 고정 → 창을 키우면 남는 폭이 전부 영상 월로 간다.
+    panel->setMinimumWidth(300);
+    panel->setMaximumWidth(340);
 
     auto* outer = new QVBoxLayout(panel);
     outer->setContentsMargins(16, 14, 16, 16);
@@ -413,20 +572,24 @@ QWidget* MainWindow::buildVitalCard(int channel)
     lay->setContentsMargins(14, 12, 14, 12);
     lay->setSpacing(10);
 
-    // 헤더: 상태등 + 이름 + 병상
+    // 헤더: 상태등 + 이름 + 병상 + 상태 배지
     auto* head = new QHBoxLayout();
     head->setSpacing(8);
     vitalStatusDots[channel] = new QLabel();
     vitalStatusDots[channel]->setObjectName("vitalDot");
-    vitalStatusDots[channel]->setFixedSize(10, 10);
+    vitalStatusDots[channel]->setFixedSize(9, 9);
     auto* name = new QLabel(patients[channel].name);
     name->setObjectName("vitalName");
     auto* bed = new QLabel(patients[channel].bed);
     bed->setObjectName("vitalBed");
+    vitalStatusBadges[channel] = new QLabel(QStringLiteral("대기"));
+    vitalStatusBadges[channel]->setObjectName("vitalBadge");
+    vitalStatusBadges[channel]->setAlignment(Qt::AlignCenter);
     head->addWidget(vitalStatusDots[channel]);
     head->addWidget(name);
-    head->addStretch();
     head->addWidget(bed);
+    head->addStretch();
+    head->addWidget(vitalStatusBadges[channel]);
     lay->addLayout(head);
 
     // 바이탈 값: 체온 / 심박수
@@ -477,16 +640,13 @@ QWidget* MainWindow::buildLogArchiveTab()
     auto* body = new QHBoxLayout();
     body->setSpacing(16);
     body->addWidget(buildLogTable(), 6);
-
-    auto* rightCol = new QVBoxLayout();
-    rightCol->setSpacing(16);
-    rightCol->addWidget(buildBlackboxPlayer());
-    rightCol->addWidget(buildCareTimeDashboard(), 1);
-    auto* rightWrap = new QWidget();
-    rightWrap->setLayout(rightCol);
-    body->addWidget(rightWrap, 4);
+    body->addWidget(buildCareTimeDashboard(), 4);
 
     outer->addLayout(body, 1);
+
+    // 블랙박스 플레이어는 인라인 대신 팝업 다이얼로그로 크게 재생한다.
+    // (로그 더블클릭 → onLogRowActivated에서 다이얼로그를 띄우고 재생)
+    buildBlackboxDialog();
     return panel;
 }
 
@@ -556,7 +716,7 @@ QWidget* MainWindow::buildBlackboxPlayer()
     lay->setSpacing(8);
 
     blackboxPlaceholder = new QLabel(
-        QStringLiteral("로그를 더블클릭하면\n10초 블랙박스 영상이 재생됩니다"));
+        QStringLiteral("블랙박스 영상을 불러오는 중…"));
     blackboxPlaceholder->setAlignment(Qt::AlignCenter);
     blackboxPlaceholder->setObjectName("video");
 
@@ -689,6 +849,24 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlayer->setSource(QUrl());
     blackboxPlayer->setSource(QUrl(url));
     blackboxPlayer->play();
+}
+
+void MainWindow::buildBlackboxDialog()
+{
+    blackboxDialog = new QDialog(this);
+    blackboxDialog->setObjectName("blackboxDialog");
+    blackboxDialog->setWindowTitle(QStringLiteral("블랙박스 영상 재생"));
+    blackboxDialog->resize(960, 640);
+    blackboxDialog->setMinimumSize(560, 420);
+
+    auto* dl = new QVBoxLayout(blackboxDialog);
+    dl->setContentsMargins(14, 14, 14, 14);
+    dl->addWidget(buildBlackboxPlayer());  // 기존 플레이어 카드/컨트롤 그대로 재사용
+
+    // 팝업을 닫으면 재생을 멈춰 리소스를 정리한다.
+    connect(blackboxDialog, &QDialog::finished, this, [this](int) {
+        if (blackboxPlayer) blackboxPlayer->stop();
+    });
 }
 
 QWidget* MainWindow::buildCareTimeDashboard()
@@ -958,18 +1136,42 @@ void MainWindow::applyTheme()
         #header { background: %(panel); border-bottom: 1px solid %(border); }
         #logo { color: %(accent); font-size: 20px; font-weight: 800; letter-spacing: 1px; }
         #subtitle { color: %(sub); font-size: 13px; }
-        #statusText { color: %(sub); font-size: 12px; }
-        #clock { color: %(text); font-size: 15px; font-weight: 600; }
+        #clock { color: %(text); font-size: 15px; font-weight: 700; letter-spacing: 0.5px; }
         #headerSep { color: %(border); }
 
+        /* 라이트/다크 테마 토글 */
+        #themeToggle { background: %(card); border: 1px solid %(border); border-radius: 8px;
+                       padding: 3px 10px; font-size: 14px; }
+        #themeToggle:hover { border-color: %(accent); }
+
+        /* 연결 상태 pill 배지 */
+        #statusPill { background: %(card); border: 1px solid %(border); border-radius: 12px; }
+        #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
+
         #panel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
-        #panelTitle { color: %(text); font-size: 15px; font-weight: 700; }
+        /* 섹션 제목: 좌측 청록 악센트 바로 위계 부여 */
+        #panelTitle { color: %(text); font-size: 15px; font-weight: 800;
+                      border-left: 3px solid %(accent); padding-left: 10px; }
+
+        /* 블랙박스 재생 팝업 */
+        #blackboxDialog { background: %(bgDeep); }
 
         #roiButton, #roiToggle, #roiClear { background: %(card); color: %(text); border: 1px solid %(border);
                                  border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
         #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
         #roiClear:hover { border-color: %(critical); color: %(critical); }
+
+        /* ── 관제화면 ROI 세그먼트 그룹 ── */
+        #segGroup { background: %(bgDeep); border: 1px solid %(border); border-radius: 9px; }
+        #segCaption { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
+        #segBtn, #segBtnDanger, #segBtnToggle {
+            background: transparent; color: %(text); border: none;
+            border-radius: 6px; padding: 5px 13px; font-size: 12px; font-weight: 600; }
+        #segBtn:hover, #segBtnToggle:hover { background: %(card); }
+        #segBtnDanger:hover { background: %(card); color: %(critical); }
+        #segBtnToggle:checked { background: %(accent); color: #fff; }
+        #toolSep { color: %(border); }
 
         #micButton { background: %(card); color: %(text); border: 1px solid %(border);
                      border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; }
@@ -983,10 +1185,12 @@ void MainWindow::applyTheme()
         #videoCard { background: #0B0F14; border: 1px solid %(border); border-radius: 10px; }
         #videoBar { background: %(panel); border-bottom: 1px solid %(border);
                     border-top-left-radius: 10px; border-top-right-radius: 10px; }
-        #bedBadge { background: %(accent); color: #fff; font-size: 11px; font-weight: 700;
-                    padding: 2px 8px; border-radius: 6px; }
-        #bedName { color: %(text); font-size: 13px; font-weight: 600; }
-        #liveText { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+        #bedBadge { background: %(accent); color: #fff; font-size: 10px; font-weight: 800;
+                    padding: 1px 6px; border-radius: 5px; letter-spacing: 0.5px; }
+        #bedName { color: %(text); font-size: 12px; font-weight: 600; }
+        /* LIVE pill 배지 */
+        #livePill { background: %(card); border: 1px solid %(border); border-radius: 9px; }
+        #liveText { color: %(sub); font-size: 9px; font-weight: 800; letter-spacing: 1.5px; }
         #video { color: #9AA7B2; font-size: 13px; background: #0B0F14;
                  border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
 
@@ -1006,11 +1210,12 @@ void MainWindow::applyTheme()
 
         /* ── TAB 구조 ── */
         QTabWidget::pane { border: none; }
-        QTabBar::tab { background: %(card); color: %(sub); padding: 10px 18px;
-                       border: 1px solid %(border); border-bottom: none;
-                       border-top-left-radius: 8px; border-top-right-radius: 8px; }
-        QTabBar::tab:selected { background: %(panel); color: %(text); }
-        QTabBar::tab:hover { color: %(text); }
+        QTabBar { qproperty-drawBase: 0; }
+        QTabBar::tab { background: transparent; color: %(sub); padding: 10px 20px;
+                       border: none; border-bottom: 2px solid transparent;
+                       font-size: 13px; font-weight: 700; margin-right: 4px; }
+        QTabBar::tab:selected { color: %(accent); border-bottom: 2px solid %(accent); }
+        QTabBar::tab:hover:!selected { color: %(text); }
 
         /* ── TAB2: 로그 조회 및 블랙박스 ── */
         #filterBar QLabel { color: %(sub); font-size: 12px; }
@@ -1108,18 +1313,35 @@ QTextEdit#formEdit:focus {
     this->setStyleSheet(qss);
 
     // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
-    statusDot->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kCritical));
+    statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
     for (int i = 0; i < 4; ++i) {
-        liveDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kTextSub));
+        liveDots[i]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
         vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kTextSub));
     }
+}
+
+void MainWindow::toggleTheme()
+{
+    darkMode = !darkMode;
+    applyPalette(darkMode ? kDark : kLight);
+    applyTheme();  // 바뀐 팔레트로 QSS 재생성·재적용
+
+    if (themeToggleButton)
+        themeToggleButton->setText(darkMode ? QStringLiteral("☀")
+                                            : QStringLiteral("🌙"));
+
+    // applyTheme가 상태등을 기본값(빨강/회색)으로 리셋하므로 현재 상태를 즉시 복원한다.
+    const bool connected =
+        socket && socket->state() == QAbstractSocket::ConnectedState;
+    setConnectionState(connected, statusText->text());
+    updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
 }
 
 void MainWindow::setConnectionState(bool connected, const QString& text)
 {
     if (!statusDot) return;
     const char* color = connected ? kNormal : kCritical;
-    statusDot->setStyleSheet(QString("background:%1; border-radius:5px;").arg(color));
+    statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(color));
     statusText->setText(text);
 }
 
@@ -1156,7 +1378,7 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState state)
         setConnectionState(false, QStringLiteral("영상 서버 연결 끊김 — 재접속 대기"));
         // 신호 끊긴 채널은 LIVE 표시등 소등
         for (int i = 0; i < 4; ++i)
-            liveDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kTextSub));
+            liveDots[i]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
         // 자동 재접속 예약 (스트림 오염으로 끊은 경우 포함)
         if (state == QAbstractSocket::UnconnectedState && !reconnectTimer.isActive())
             reconnectTimer.start();
@@ -1184,7 +1406,15 @@ void MainWindow::updateVitals()
         hrValues[i]->setText(QString::number(hr) + QStringLiteral(" bpm"));
         hrValues[i]->setStyleSheet(QString("color:%1;").arg(color));
 
-        vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:5px;").arg(color));
+        vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
+
+        const QString status = vitalStatusLabel(temp, hr);
+        vitalStatusBadges[i]->setText(status);
+        vitalStatusBadges[i]->setStyleSheet(QString(
+            "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
+            " padding:1px 10px; font-size:11px; font-weight:800;")
+            .arg(color, blendHex(color, kCard, 0.18)));
+
         vitalUpdated[i]->setText(QStringLiteral("웨어러블 · 마지막 갱신 ") + now);
     }
 }
@@ -1273,7 +1503,7 @@ void MainWindow::onReadyRead()
             if (header.channel >= 0 && header.channel < 4) {
                 channelViews[header.channel]->setFrame(QPixmap::fromImage(image));
                 liveDots[header.channel]->setStyleSheet(
-                    QString("background:%1; border-radius:4px;").arg(kCritical));
+                    QString("background:%1; border-radius:3px;").arg(kCritical));
             }
         }
     }
@@ -1288,7 +1518,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
     if (channel >= 0 && channel < 4) {
         fallActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지!"));
+            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"));
         }
         qDebug() << "🚨 [낙상 감지] 채널" << channel << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
@@ -1300,6 +1530,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         const QString when = QDateTime::fromMSecsSinceEpoch(
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
+        // 서버는 낙상 클립을 접미사 없이 저장한다: chN_타임스탬프.mp4
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
                                      .arg(QString::fromLatin1(kServerHost))
                                      .arg(kClipHttpPort)
@@ -1322,7 +1553,7 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
     if (channel >= 0 && channel < 4) {
         bedEgressActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true, QStringLiteral("⚠️ 침대 탈출 감지!"));
+            channelViews[channel]->setAlert(true, QStringLiteral("⚠️ 침대 이탈"));
         }
         qDebug() << "⚠️ [침상 이탈 감지] 채널" << channel << "빨간 테두리 켜짐";
     }
@@ -1336,11 +1567,11 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         
-        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_EGRESS.mp4")
                                      .arg(QString::fromLatin1(kServerHost))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
-                                     .arg(timestampMs);          
+                                     .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
@@ -1430,8 +1661,8 @@ void MainWindow::onRoiVisibilityToggled(bool on)
     for (auto* v : channelViews)
         if (v) v->setRoiVisible(on);
     if (roiToggleButton)
-        roiToggleButton->setText(on ? QStringLiteral("ROI 표시")
-                                    : QStringLiteral("ROI 숨김"));
+        roiToggleButton->setText(on ? QStringLiteral("표시")
+                                    : QStringLiteral("숨김"));
 }
 
 void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
@@ -1506,7 +1737,7 @@ void MainWindow::onAlarmClearClicked()
     // 되묻는 팝업 없이 버튼 클릭 즉시 원스톱으로 리셋 처리!
     for (int channel = 0; channel < 4; ++channel) {
         if (fallActive[channel] || bedEgressActive[channel]) {
-            // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어
+            // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어 (낙상·침상이탈 모두)
             fallActive[channel] = false;
             bedEgressActive[channel] = false;
             if (channelViews[channel]) {
@@ -1535,7 +1766,7 @@ void MainWindow::onAlarmClearClicked()
     } else {
         // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
         QMessageBox::information(this, QStringLiteral("경보 해제"),
-                                 QStringLiteral("현재 활성화된 낙상 경보가 없습니다."));
+                                 QStringLiteral("현재 활성화된 낙상/침상이탈 경보가 없습니다."));
     }
 }
 
@@ -1560,6 +1791,11 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
         return;
     }
     qDebug() << "블랙박스 재생 요청 —" << url;
+    if (blackboxDialog) {
+        blackboxDialog->show();
+        blackboxDialog->raise();
+        blackboxDialog->activateWindow();
+    }
     playBlackboxClip(url);
 }
 
