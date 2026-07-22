@@ -12,7 +12,7 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
 
     QSqlDatabase db = QSqlDatabase::addDatabase("QMARIADB");
-    db.setHostName("172.20.35.64");
+    db.setHostName("172.20.35.112");
     db.setPort(3306);
     db.setDatabaseName("daboijo");
     db.setUserName("daboijo");
