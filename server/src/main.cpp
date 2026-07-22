@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n",
                      ch, at.cx, at.cy);
         privacy_masker.reportFall(ch);
-        int64_t evt_ms = blackbox.trigger(ch);
+        int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
         telegram.notifyFall(ch);
     });
