@@ -38,6 +38,25 @@ ServerConfig loadServerConfig(const std::string& path) {
             config.stream_port = std::stoi(value);
             continue;
         }
+        if (key == "telegram_bot_token") {
+            config.telegram_bot_token = value;
+            continue;
+        }
+        if (key == "telegram_chat_id") {
+            config.telegram_chat_id = value;
+            continue;
+        }
+        static const std::string kChatIdPrefix = "telegram_chat_id_";
+        if (key.size() > kChatIdPrefix.size() &&
+            key.compare(0, kChatIdPrefix.size(), kChatIdPrefix) == 0) {
+            std::string ch_str = key.substr(kChatIdPrefix.size());
+            if (!ch_str.empty() &&
+                std::all_of(ch_str.begin(), ch_str.end(),
+                            [](unsigned char c) { return std::isdigit(c); })) {
+                config.telegram_chat_ids[std::stoi(ch_str)] = value;
+            }
+            continue;
+        }
         if (key.empty() ||
             !std::all_of(key.begin(), key.end(),
                          [](unsigned char c) { return std::isdigit(c); })) {
