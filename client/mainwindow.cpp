@@ -230,6 +230,23 @@ MainWindow::MainWindow(QWidget *parent)
             if (!doc.isArray()) return;
 
             const QJsonArray fileList = doc.array();
+
+            // 🛠️ [수정사항 1] 순차적이지 않은 영상 정렬을 위해 QStringList로 복사 후 정렬 진행
+            QStringList sortedFiles;
+            for (const QJsonValue& value : fileList) {
+                sortedFiles.append(value.toString());
+            }
+
+            // 파일명 내부의 타임스탬프 숫자를 추출하여 최신순으로 정렬
+            std::sort(sortedFiles.begin(), sortedFiles.end(), [](const QString& a, const QString& b) {
+                auto getTimestamp = [](const QString& fileName) -> qint64 {
+                    QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                    QStringList parts = cleanName.split(QLatin1Char('_'));
+                    return (parts.size() >= 2) ? parts[1].toLongLong() : 0;
+                };
+                return getTimestamp(a) > getTimestamp(b); 
+            });
+
             for (const QJsonValue& value : fileList) {
                 const QString fileName = value.toString();  // 예: "ch1_1719820000000_FALL.mp4"
 
@@ -1531,7 +1548,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         // 서버는 낙상 클립을 접미사 없이 저장한다: chN_타임스탬프.mp4
-        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
                                      .arg(QString::fromLatin1(kServerHost))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
