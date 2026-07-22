@@ -57,9 +57,9 @@ void VideoView::setRoiVisible(bool on) {
     update();
 }
 
-void VideoView::setAlert(bool on, const QString& text, const QPointF& normPt) {
+void VideoView::setAlert(bool on, const QString& label, const QPointF& normPt) {
     alertPt_ = normPt;
-    alertText_ = text;
+    if (on) alertLabel_ = label;   // 켤 때의 문구를 점멸 내내 유지
     if (alert_ != on) {
         alert_ = on;
         if (on) {
@@ -76,7 +76,6 @@ void VideoView::setAlert(bool on, const QString& text, const QPointF& normPt) {
         } else {
             if (alertTimer_) alertTimer_->stop();
             alertBlink_ = false;
-            alertText_.clear();
         }
     }
     update();
@@ -86,7 +85,10 @@ void VideoView::setAlert(bool on, const QString& text, const QPointF& normPt) {
 QRectF VideoView::displayRect() const {
     if (frame_.isNull()) return QRectF(rect());
     QSizeF fs = frame_.size();
-    fs.scale(size(), Qt::KeepAspectRatio);  // 비율 유지로 위젯에 맞춤
+    // 비율 유지하되 칸을 꽉 채우고(cover) 넘치는 부분은 중앙 크롭 → 검은 레터박스 제거.
+    // displayRect는 여전히 "프레임 전체"의 배치 사각형이므로, 여기에 대한 0~1 정규화는
+    // 서버 Detection.cx/cy(0~1, 프레임 전체 기준)와 그대로 일치한다.
+    fs.scale(size(), Qt::KeepAspectRatioByExpanding);
     const qreal x = (width() - fs.width()) / 2.0;
     const qreal y = (height() - fs.height()) / 2.0;
     return QRectF(x, y, fs.width(), fs.height());
@@ -154,7 +156,7 @@ void VideoView::paintEvent(QPaintEvent*) {
                    QStringLiteral("침대 영역 클릭 · 더블클릭(또는 우클릭)으로 완료"));
     }
 
-    // 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
+    // 낙상 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
     if (alert_) {
         const QColor red(229, 83, 60);
 
@@ -174,20 +176,13 @@ void VideoView::paintEvent(QPaintEvent*) {
             p.setPen(QPen(red, 5));
             p.drawRect(rect().adjusted(3, 3, -3, -3));
 
-            // 글자 길이에 맞춰 상단 빨간 배지의 너비를 유동적으로 계산
-            QFont font = p.font();
-            font.setBold(true);
-            p.setFont(font);
-
-            int textWidth = p.fontMetrics().horizontalAdvance(alertText_);
-            int badgeWidth = qMax(130, textWidth + 30);
-
+            const qreal bw = p.fontMetrics().horizontalAdvance(alertLabel_) + 28;
             p.setBrush(red);
             p.setPen(Qt::NoPen);
-            QRectF badge((width() - badgeWidth) / 2.0, 8, badgeWidth, 24);
+            QRectF badge((width() - bw) / 2.0, 8, bw, 24);
             p.drawRoundedRect(badge, 6, 6);
             p.setPen(Qt::white);
-            p.drawText(badge, Qt::AlignCenter, alertText_);
+            p.drawText(badge, Qt::AlignCenter, alertLabel_);
         }
     }
 }
