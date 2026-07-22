@@ -210,16 +210,15 @@ MainWindow::MainWindow(QWidget *parent)
                                   
                 QString when = QDateTime::fromMSecsSinceEpoch(timestampMs).toString("yyyy-MM-dd hh:mm:ss");
 
-                if (logTable) {
                     const int row = logTable->rowCount();
                     logTable->insertRow(row);
 
                     auto* dtItem = new QTableWidgetItem(when);
                     // 서버에 저장된 실제 전체 파일명 구조를 사용하여 완벽한 다이렉트 매핑 URL 매칭
                     const QString clipUrl = QStringLiteral("http://%1:%2/%3")
-                                                 .arg(QString::fromLatin1(kServerHost))
-                                                 .arg(kClipHttpPort)
-                                                 .arg(fileName);
+                                                .arg(QString::fromLatin1(kServerHost))
+                                                .arg(kClipHttpPort)
+                                                .arg(fileName);
                     dtItem->setData(Qt::UserRole, clipUrl);
 
                     logTable->setItem(row, 0, dtItem);
@@ -227,6 +226,9 @@ MainWindow::MainWindow(QWidget *parent)
                     logTable->setItem(row, 2, new QTableWidgetItem(eventType));
                     logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
                 }
+                // 모든 데이터 입력 완료 후 정렬을 켜고, 최신순으로 정렬
+                logTable->setSortingEnabled(true);
+                logTable->sortItems(0, Qt::DescendingOrder); // ✨ 최신순 정렬 옵션 적용
             }
             qDebug() << "✅ 시스템 재부팅 후 과거 저장 상태 복원 성료 (총" << fileList.size() << "개 로드됨)";
         });
@@ -1363,10 +1365,12 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
 
     // 2. 비상 로그 조회 탭에 URL 및 정보 등록
     if (logTable) {
+        logTable->setSortingEnabled(false);
+
         const int row = logTable->rowCount();
         logTable->insertRow(row);
         const QString when = QDateTime::fromMSecsSinceEpoch(
-                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         // 💡 [파일명 변경에 맞춘 URL 동기화 패치] 주소 문자열 포맷 끝에 _FALL 주입
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
@@ -1379,6 +1383,9 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+
+        logTable->setSortingEnabled(true);
+        logTable->sortItems(0, Qt::DescendingOrder);
     }
 }
 
@@ -1398,11 +1405,13 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 
     // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
     if (logTable) {
+        logTable->setSortingEnabled(false);
+
         const int row = logTable->rowCount();
         logTable->insertRow(row);
         
         const QString when = QDateTime::fromMSecsSinceEpoch(
-                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         
         // 💡 [파일명 변경에 맞춘 URL 동기화 패치] 주소 문자열 포맷 끝에 _EGRESS 주입
@@ -1416,6 +1425,9 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상 이탈"))); // 💡 이탈 분류로 등록
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+
+        logTable->setSortingEnabled(true);
+        logTable->sortItems(0, Qt::DescendingOrder);
     }
 }
 
