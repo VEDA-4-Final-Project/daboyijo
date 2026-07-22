@@ -120,6 +120,7 @@ private slots:
     void onNewResident();
     void onSaveResident();
     void onDischargeResident();
+    void onResidentSearch();
 
 
 
@@ -176,6 +177,7 @@ private:
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록
     QTableWidget* residentTable = nullptr;
+    QLineEdit* residentSearchEdit = nullptr;
 
     // 상세/편집 폼 — 기본정보
     QLineEdit* editName       = nullptr;
@@ -235,7 +237,7 @@ private:
     QWidget* buildCaregiverSection();
 
     // TAB3 데이터 갱신
-    void refreshResidentTable();
+    void refreshResidentTable(const QString& nmaeFilter=QString());
     void refreshCaregiverTable();
 
     // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
