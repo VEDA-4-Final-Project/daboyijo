@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 
 namespace {
 // 파일명만 허용(경로 구분자·상위 디렉토리 이동 차단) — 정적 파일 서버의
@@ -119,6 +120,38 @@ void ClipHttpServer::handleClient(int fd) {
                             ? req.substr(sp1 + 1, sp2 - sp1 - 1)
                             : "";
 
+    if (method == "GET" && path == "/list") {
+        std::string json = "[";
+        bool first = true;
+        
+        try {
+            // rootDir_(blackbox_clips) 폴더를 돌며 .mp4 파일 목록을 수집합니다.
+            for (const auto& entry : std::filesystem::directory_iterator(rootDir_)) {
+                if (entry.is_regular_file() && entry.path().extension() == ".mp4") {
+                    if (!first) json += ",";
+                    json += "\"" + entry.path().filename().string() + "\"";
+                    first = false;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[clip-http] 디렉토리 스캔 실패: %s\n", e.what());
+        }
+        json += "]";
+
+        // HTTP JSON 응답 조립
+        std::ostringstream resp;
+        resp << "HTTP/1.1 200 OK\r\n"
+             << "Content-Type: application/json\r\n"
+             << "Content-Length: " << json.size() << "\r\n"
+             << "Connection: close\r\n\r\n"
+             << json;
+
+        std::string r = resp.str();
+        ::send(fd, r.data(), r.size(), MSG_NOSIGNAL);
+        ::close(fd);
+        return; // 🚀 파일 다운로드 로직으로 내려가지 않고 여기서 끝냅니다.
+    }
+    
     // 모든 send는 MSG_NOSIGNAL — 클라이언트(FFmpeg)는 재생바 탐색 때마다
     // 연결을 끊고 다시 여는데, 끊긴 소켓에 쓰면 SIGPIPE로 프로세스가
     // 통째로 죽는다(기본 동작). stream_server.cpp와 동일한 방어.
