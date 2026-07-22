@@ -231,54 +231,55 @@ MainWindow::MainWindow(QWidget *parent)
 
             const QJsonArray fileList = doc.array();
 
-            // 🛠️ [수정사항 1] 순차적이지 않은 영상 정렬을 위해 QStringList로 복사 후 정렬 진행
+            // 순차적이지 않은 영상 정렬을 위해 QStringList로 복사 후 정렬 진행
             QStringList sortedFiles;
             for (const QJsonValue& value : fileList) {
                 sortedFiles.append(value.toString());
             }
 
-            // 파일명 내부의 타임스탬프 숫자를 추출하여 최신순으로 정렬
+            // 파일명 내부의 타임스탬프 숫자를 추출하여 최신순 정렬
             std::sort(sortedFiles.begin(), sortedFiles.end(), [](const QString& a, const QString& b) {
                 auto getTimestamp = [](const QString& fileName) -> qint64 {
                     QString cleanName = fileName.left(fileName.lastIndexOf('.'));
                     QStringList parts = cleanName.split(QLatin1Char('_'));
                     return (parts.size() >= 2) ? parts[1].toLongLong() : 0;
                 };
-                return getTimestamp(a) > getTimestamp(b); 
+                return getTimestamp(a) > getTimestamp(b);
             });
 
-            for (const QJsonValue& value : fileList) {
-                const QString fileName = value.toString();  // 예: "ch1_1719820000000_FALL.mp4"
+            if (logTable) {
+                // 표를 채우기 전 자동정렬을 잠그고, 기존 테이블 청소
+                logTable->setSortingEnabled(false);
+                logTable->setRowCount(0);
 
-                // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
-                // 서버 저장 규칙: 낙상은 접미사 없음(chN_TS.mp4),
-                //                침상이탈은 _EGRESS(chN_TS_EGRESS.mp4).
-                const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
-                const QStringList parts = cleanName.split(QLatin1Char('_'));
-                if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
+                for (const QString& fileName : sortedFiles) {
 
-                const int channel = parts[0].mid(2).toInt();   // "ch1" -> 1
-                const qint64 timestampMs = parts[1].toLongLong();
-                const QString rawType = (parts.size() >= 3) ? parts[2] : QString();
-                if (channel < 0 || channel >= 4) continue;
+                    // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
+                    const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                    const QStringList parts = cleanName.split(QLatin1Char('_'));
+                    if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
 
-                const QString eventType =
-                    (rawType == QLatin1String("EGRESS")) ? QStringLiteral("침상 이탈")
-                                                         : QStringLiteral("낙상");
+                    const int channel = parts[0].mid(2).toInt();   // "ch1" -> 1
+                    const qint64 timestampMs = parts[1].toLongLong();
+                    const QString rawType = (parts.size() >= 3) ? parts[2] : QString();
+                    if (channel < 0 || channel >= 4) continue;
 
-                const QString when = QDateTime::fromMSecsSinceEpoch(timestampMs)
-                                         .toString("yyyy-MM-dd hh:mm:ss");
+                    const QString eventType =
+                        (rawType == QLatin1String("EGRESS")) ? QStringLiteral("침상 이탈")
+                                                             : QStringLiteral("낙상");
 
-                if (logTable) {
+                    const QString when = QDateTime::fromMSecsSinceEpoch(timestampMs)
+                                             .toString("yyyy-MM-dd HH:mm:ss");
+
                     const int row = logTable->rowCount();
                     logTable->insertRow(row);
 
                     auto* dtItem = new QTableWidgetItem(when);
                     // 서버 실제 파일명을 그대로 사용해 재생 URL을 정확히 매핑
                     const QString clipUrl = QStringLiteral("http://%1:%2/%3")
-                                                 .arg(QString::fromLatin1(kServerHost))
-                                                 .arg(kClipHttpPort)
-                                                 .arg(fileName);
+                                                .arg(QString::fromLatin1(kServerHost))
+                                                .arg(kClipHttpPort)
+                                                .arg(fileName);
                     dtItem->setData(Qt::UserRole, clipUrl);
 
                     logTable->setItem(row, 0, dtItem);
@@ -286,6 +287,9 @@ MainWindow::MainWindow(QWidget *parent)
                     logTable->setItem(row, 2, new QTableWidgetItem(eventType));
                     logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
                 }
+                // 모든 데이터 입력 완료 후 정렬을 켜고, 최신순으로 정렬
+                logTable->setSortingEnabled(true);
+                logTable->sortItems(0, Qt::DescendingOrder); // ✨ 최신순 정렬 옵션 적용
             }
             qDebug() << "✅ 과거 블랙박스 복원 완료 (총" << fileList.size() << "개)";
         });
@@ -1542,10 +1546,12 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
 
     // 2. 비상 로그 조회 탭에 URL 및 정보 등록
     if (logTable) {
+        logTable->setSortingEnabled(false);
+
         const int row = logTable->rowCount();
         logTable->insertRow(row);
         const QString when = QDateTime::fromMSecsSinceEpoch(
-                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         // 서버는 낙상 클립을 접미사 없이 저장한다: chN_타임스탬프.mp4
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
@@ -1558,6 +1564,9 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+
+        logTable->setSortingEnabled(true);
+        logTable->sortItems(0, Qt::DescendingOrder);
     }
 }
 
@@ -1577,11 +1586,13 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 
     // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
     if (logTable) {
+        logTable->setSortingEnabled(false);
+
         const int row = logTable->rowCount();
         logTable->insertRow(row);
         
         const QString when = QDateTime::fromMSecsSinceEpoch(
-                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_EGRESS.mp4")
@@ -1594,6 +1605,9 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상 이탈"))); // 💡 이탈 분류로 등록
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+
+        logTable->setSortingEnabled(true);
+        logTable->sortItems(0, Qt::DescendingOrder);
     }
 }
 
