@@ -15,11 +15,11 @@ extern "C" {
 
 #include <opencv2/core.hpp>
 
-#include "metadata_parser.hpp"
+#include "metadata_parser.hpp" 
 
 namespace {
 constexpr int kReconnectDelaySec = 3;
-// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널당 ~15fps만 소비하므로
+// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널 당 ~15fps만 소비하므로
 // (main.cpp의 kMainProcessInterval) 그 이상은 변환해 봐야 버려진다.
 // 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임 필수지만, sws_scale
 // 변환과 Mat 할당은 여기서 걸러 스킵한다 (고fps 입력 카메라 대비 안전판 —

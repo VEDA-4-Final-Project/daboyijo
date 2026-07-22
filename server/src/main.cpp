@@ -84,13 +84,13 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n",
                      ch, at.cx, at.cy);
         privacy_masker.reportFall(ch);
-        int64_t evt_ms = blackbox.trigger(ch);
+        int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
         std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch, obj_id);
-        int64_t evt_ms = blackbox.trigger(ch);
+        int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms); 
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
