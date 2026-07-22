@@ -29,7 +29,7 @@ public:
         std::function<void(int channel, const std::string& path, int64_t eventUnixMs)>;
 
     BlackboxRecorder(int channel, std::string outputDir,
-                      double preSec = 5.0, double postSec = 5.0);
+                     double preSec = 5.0, double postSec = 5.0);
     ~BlackboxRecorder();
 
     BlackboxRecorder(const BlackboxRecorder&) = delete;
@@ -47,7 +47,7 @@ public:
     // 예정 구간을 그만큼 연장한다. 파일명에 쓰인 이벤트 시각(unix ms)을
     // 반환하므로, 호출자가 이 값을 Qt 쪽 이벤트 알림과 맞춰 클립 파일명을
     // 재구성할 수 있게 한다.
-    int64_t trigger();
+    int64_t trigger(const std::string& eventType);
 
     // 이벤트가 걸린 채(armed) 서버가 종료되는 경우 등, 이후 postSec_초를
     // 못 채우더라도 지금까지 버퍼만이라도 강제로 저장하고 싶을 때 호출.
@@ -81,6 +81,7 @@ private:
 
     bool armed_ = false;  // true면 postSec_ 구간 수집 중(그동안 pre 버퍼 트리밍 정지)
     int64_t eventUnixMs_ = 0;
+    std::string eventType_;
     std::chrono::steady_clock::time_point postDeadline_{};
 
     ClipReadyCallback onClipReady_;

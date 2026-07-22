@@ -29,6 +29,12 @@
 #include <QUrl>
 #include <QMouseEvent>
 #include <QStackedWidget>
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonValue>
 
 // ── 디자인 토큰 (다크 관제 테마) ─────────────────────────────
 namespace {
@@ -52,7 +58,7 @@ QString vitalColor(double temp, int hr) {
 }
 
 // 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.32.59";
+const char* kServerHost = "172.20.35.94";
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -163,6 +169,68 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // 🚀 [복구 엔드포인트 연동] 프로그램 실행 시 HTTP 서버를 통해 과거의 모든 블랙박스 파일 복구
+    {
+        auto* manager = new QNetworkAccessManager(this);
+        QUrl url(QStringLiteral("http://%1:%2/list").arg(QString::fromLatin1(kServerHost)).arg(kClipHttpPort));
+        QNetworkRequest request(url);
+        QNetworkReply* reply = manager->get(request);
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                qDebug() << "⚠️ 과거 영상 목록 수집 실패:" << reply->errorString();
+                return;
+            }
+
+            QByteArray responseData = reply->readAll();
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+            if (!doc.isArray()) return;
+
+            QJsonArray fileList = doc.array();
+            for (const QJsonValue& value : fileList) {
+                QString fileName = value.toString(); // 예: "ch1_1719820000000_FALL.mp4"
+                
+                // 확장자(.mp4) 떼어내고 언더바 단위로 세부 조각 분리
+                QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                QStringList parts = cleanName.split(QLatin1Char('_'));
+                if (parts.size() < 3) continue;
+
+                int channel = parts[0].mid(2).toInt(); // "ch1" -> 1 추출
+                qint64 timestampMs = parts[1].toLongLong();
+                QString rawType = parts[2]; // "FALL" 혹은 "EGRESS"
+
+                if (channel < 0 || channel >= 4) continue;
+
+                // UI 테이블 출력용 문자열 한글 보정
+                QString eventType = (rawType == QLatin1String("FALL")) ? QStringLiteral("낙상") 
+                                  : (rawType == QLatin1String("EGRESS")) ? QStringLiteral("침상 이탈") 
+                                  : QStringLiteral("기타");
+                                  
+                QString when = QDateTime::fromMSecsSinceEpoch(timestampMs).toString("yyyy-MM-dd hh:mm:ss");
+
+                if (logTable) {
+                    const int row = logTable->rowCount();
+                    logTable->insertRow(row);
+
+                    auto* dtItem = new QTableWidgetItem(when);
+                    // 서버에 저장된 실제 전체 파일명 구조를 사용하여 완벽한 다이렉트 매핑 URL 매칭
+                    const QString clipUrl = QStringLiteral("http://%1:%2/%3")
+                                                 .arg(QString::fromLatin1(kServerHost))
+                                                 .arg(kClipHttpPort)
+                                                 .arg(fileName);
+                    dtItem->setData(Qt::UserRole, clipUrl);
+
+                    logTable->setItem(row, 0, dtItem);
+                    logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+                    logTable->setItem(row, 2, new QTableWidgetItem(eventType));
+                    logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+                }
+            }
+            qDebug() << "✅ 시스템 재부팅 후 과거 저장 상태 복원 성료 (총" << fileList.size() << "개 로드됨)";
+        });
+    }
 }
 
 MainWindow::~MainWindow()
@@ -1300,7 +1368,8 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         const QString when = QDateTime::fromMSecsSinceEpoch(
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
-        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
+        // 💡 [파일명 변경에 맞춘 URL 동기화 패치] 주소 문자열 포맷 끝에 _FALL 주입
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
                                      .arg(QString::fromLatin1(kServerHost))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
@@ -1336,7 +1405,8 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd hh:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
         
-        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4.mp4")
+        // 💡 [파일명 변경에 맞춘 URL 동기화 패치] 주소 문자열 포맷 끝에 _EGRESS 주입
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_EGRESS.mp4")
                                      .arg(QString::fromLatin1(kServerHost))
                                      .arg(kClipHttpPort)
                                      .arg(channel)

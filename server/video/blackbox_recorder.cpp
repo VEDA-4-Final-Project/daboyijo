@@ -92,19 +92,20 @@ void BlackboxRecorder::onPacket(const AVPacket* pkt) {
     }
 }
 
-int64_t BlackboxRecorder::trigger() {
+int64_t BlackboxRecorder::trigger(const std::string& eventType) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!armed_) {
         armed_ = true;
         eventUnixMs_ = nowUnixMs();
+        eventType_ = eventType;
     }
     // 재트리거(짧은 시간 안에 이벤트가 다시 발생)면 post 구간을 그만큼 연장.
     // steady_clock::duration(정수 나노초)으로 먼저 캐스팅해야 time_point끼리
     // 대입이 된다 (duration<double>을 바로 더하면 double 기반 time_point가
     // 나와서 대입 불가 — 실제 빌드에서 걸린 에러).
     postDeadline_ = std::chrono::steady_clock::now() +
-                     std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                         std::chrono::duration<double>(postSec_));
+                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double>(postSec_));
     return eventUnixMs_;
 }
 
@@ -130,8 +131,9 @@ void BlackboxRecorder::flushLocked() {
     }
 
     char path[256];
-    std::snprintf(path, sizeof(path), "%s/ch%d_%lld.mp4", outputDir_.c_str(),
-                  channel_, static_cast<long long>(eventUnixMs_));
+    std::snprintf(path, sizeof(path), "%s/ch%d_%lld_%s.mp4", outputDir_.c_str(),
+                  channel_, static_cast<long long>(eventUnixMs_), eventType_.c_str());
+
     // 최종 파일명으로 바로 쓰면, 아직 다 안 써진 파일을 HTTP 서버가 서빙해
     // 클라이언트가 반쪽 파일을 재생하게 된다. 임시 파일(.part)에 다 쓴 뒤
     // 원자적으로 rename해서, 최종 .mp4는 "완성된 순간"에만 나타나게 한다.

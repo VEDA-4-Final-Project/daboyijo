@@ -28,7 +28,7 @@ public:
 
     // 이벤트(낙상 등) 발생 — 클립 저장 예약, 파일명에 쓰인 이벤트 시각(unix ms)
     // 반환. Qt가 이 값으로 클립 파일명(ch{채널}_{시각}.mp4)을 재구성해 재생한다.
-    int64_t trigger(int channel);
+    int64_t trigger(int channel, const std::string& eventType);
 
     // 종료 시점에 post 구간 수집 중이던 클립을 못 채운 만큼이라도 저장 (유실 방지)
     void flushAll();
