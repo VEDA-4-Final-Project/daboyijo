@@ -13,6 +13,17 @@
 # Qt 클라이언트 영상 송출 포트 (생략 시 5500)
 stream_port=5500
 
+# 보호자 알림 (텔레그램) — 봇 토큰이 없거나 채널에 쓸 chat_id가 없으면 그 채널 알림은 비활성
+# 1. @BotFather에게 /newbot → 발급받은 토큰을 telegram_bot_token에 (봇은 서버 전체에 하나)
+# 2. 알림 받을 사람이 그 봇과 대화 시작(/start) → 아래로 chat_id 확인
+#    https://api.telegram.org/bot<토큰>/getUpdates 응답의 message.chat.id
+# 3. 채널별로 다른 보호자에게 보내려면 telegram_chat_id_<채널번호> 사용.
+#    지정 안 한 채널은 telegram_chat_id(기본값)로 감.
+telegram_bot_token=
+telegram_chat_id=
+telegram_chat_id_0=
+telegram_chat_id_1=
+
 0=rtsp://admin:비밀번호@172.20.35.140:554/0/profile2/media.smp
 1=rtsp://admin:비밀번호@172.20.35.140:554/1/profile2/media.smp
 2=rtsp://admin:비밀번호@172.20.35.140:554/2/profile2/media.smp
