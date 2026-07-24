@@ -11,6 +11,7 @@
 #include "detection.hpp"
 #include "detection_store.hpp"
 #include "frame_queue.hpp"
+#include "snapshot_buffer.hpp"
 #include "stats_reporter.hpp"
 #include "stream_server.hpp"
 
@@ -29,9 +30,10 @@ public:
         int channel, cv::Mat& image, const std::vector<Detection>& dets)>;
 
     VideoPipeline(FrameQueue& queue, StreamServer& server,
-                  DetectionStore& store, AiWorker& ai, StatsReporter& stats)
+                  DetectionStore& store, AiWorker& ai, StatsReporter& stats,
+                  SnapshotBuffer& snapshots)
         : queue_(queue), server_(server), store_(store), ai_(ai),
-          stats_(stats) {}
+          stats_(stats), snapshots_(snapshots) {}
 
     // run() 전에 등록할 것. 실행 순서 = 등록 순서.
     void addStage(FrameStage s) { stages_.push_back(std::move(s)); }
@@ -45,5 +47,6 @@ private:
     DetectionStore& store_;
     AiWorker& ai_;
     StatsReporter& stats_;
+    SnapshotBuffer& snapshots_;
     std::vector<FrameStage> stages_;
 };

@@ -46,6 +46,14 @@ ServerConfig loadServerConfig(const std::string& path) {
             config.telegram_chat_id = value;
             continue;
         }
+        if (key == "gemini_api_key") {
+            config.gemini_api_key = value;
+            continue;
+        }
+        if (key == "gemini_model") {
+            if (!value.empty()) config.gemini_model = value;
+            continue;
+        }
         static const std::string kChatIdPrefix = "telegram_chat_id_";
         if (key.size() > kChatIdPrefix.size() &&
             key.compare(0, kChatIdPrefix.size(), kChatIdPrefix) == 0) {
