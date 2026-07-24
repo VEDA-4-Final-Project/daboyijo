@@ -50,12 +50,18 @@ extern "C" {
  */
 #define DBJ_EVT_MAGIC       0xDB4D  /* 이벤트 메시지 시작 식별자 */
 #define DBJ_EVT_FALL        0x01    /* 낙상 확정 (x,y = 발생 위치) */
-#define DBJ_EVT_EGRESS      0x02
+#define DBJ_EVT_EGRESS      0x02    /* 침상 이탈 확정 (x,y = 발생 위치) */
 
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
 #define DBJ_CTRL_ROI_SET    0x01    /* 채널 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
 #define DBJ_CTRL_ROI_CLEAR  0x02    /* 채널 ROI 삭제 — 점 배열 없음 */
-#define DBJ_CTRL_FALL_CONFIRM 0x03  /* 낙상 경보 해제 — 점 배열 없음 */
+#define DBJ_CTRL_ALARM_CONFIRM 0x03  /* 통합 경보 해제 — 점 배열 없음 */
+#define DBJ_CTRL_RISK_UPDATE  0x04  /* 입소자 위험도 갱신*/
+
+/* 위험도 값 정의 (3단계 분기) */
+#define DBJ_RISK_LOW          1       /* 위험도 '하' -> 이탈해도 상관없음 (패스) */
+#define DBJ_RISK_MID          2       /* 위험도 '중' -> 특정 시간대에만 경보 */
+#define DBJ_RISK_HIGH         3       /* 위험도 '상' -> 언제든 이탈하면 즉시 경보 */
 
 #define DBJ_ROI_MAX_POINTS  32      /* 다각형 꼭짓점 상한 */
 #define DBJ_ROI_COORD_SCALE 10000   /* 정규화 좌표 고정소수 배율 (0.0~1.0 → 0~10000) */
@@ -75,7 +81,7 @@ typedef struct {
     uint8_t  version;      /* DBJ_VS_VERSION */
     uint8_t  type;         /* DBJ_CTRL_* */
     uint8_t  channel;      /* 대상 채널 0~3 */
-    uint8_t  point_count;  /* 이어지는 점 개수 (ROI_SET 전용, 0~DBJ_ROI_MAX_POINTS) */
+    uint8_t  point_count;  /* ROI_SET 시 점 개수(0~32) 또는 RISK_UPDATE 시 위험도 값(1~3) */
     uint16_t reserved;     /* 4바이트 정렬용 (0으로) */
 } dbj_ctrl_header_t;       /* 8바이트, 이어서 point_count개의 dbj_roi_point_t */
 

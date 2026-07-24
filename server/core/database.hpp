@@ -16,6 +16,12 @@ public:
                  unsigned int port = 3306);
     // 케어 세션 한 건 기록: 카메라 채널 + 케어시간(초). 아무 스레드나 호출 가능.
     bool insertCareLog(int cameraId, int durationSec);
+    int getPatientStatus(int channel);
+    bool updatePatientStatus(int channel, int status);
+    // residents.risk_level(상/중/하)에서 카메라 채널별 위험도를 읽는다(부팅 복원용).
+    // 한 채널에 재원 입소자가 여럿이면 가장 높은 위험도(가장 안전한 쪽)를 반환.
+    // 반환: 3(상)/2(중)/1(하), 재원 입소자가 없거나 실패 시 -1.
+    int getRiskLevelByCamera(int channel);
     void close();
 private:
     std::mutex mutex_;  // conn_ 보호

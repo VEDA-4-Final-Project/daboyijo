@@ -108,6 +108,11 @@ int main(int argc, char* argv[]) {
         privacy_masker.clearFall(ch);
         std::printf("ch%d 낙상 경보 확인.\n", ch);
     });
+    //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신
+    stream_server.setRiskLevelCallback([&](int ch, int patient_status) {
+        db.updatePatientStatus(ch, patient_status);
+        bed_egress.updatePatientStatus(ch, patient_status);
+    });
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n",
@@ -134,6 +139,7 @@ int main(int argc, char* argv[]) {
     blackbox.startHttp();
     telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
     db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
+    bed_egress.initializeFromDb(db);
 
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
