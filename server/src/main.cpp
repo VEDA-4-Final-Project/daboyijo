@@ -110,7 +110,8 @@ int main(int argc, char* argv[]) {
         privacy_masker.reportFall(ch);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
-        telegram.notifyFall(ch);
+        telegram.notifyFall(ch);      // 즉시 기본 알림
+        care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
