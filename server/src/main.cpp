@@ -108,9 +108,10 @@ int main(int argc, char* argv[]) {
         privacy_masker.clearFall(ch);
         std::printf("ch%d 낙상 경보 확인.\n", ch);
     });
-    //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신
+    //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신(인메모리).
+    //  DB 영속화는 Qt가 residents.risk_level에 직접 기록하므로 서버는 하지 않는다
+    //  (부팅 시 bed_egress.initializeFromDb → getRiskLevelByCamera로 복원).
     stream_server.setRiskLevelCallback([&](int ch, int patient_status) {
-        db.updatePatientStatus(ch, patient_status);
         bed_egress.updatePatientStatus(ch, patient_status);
     });
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보

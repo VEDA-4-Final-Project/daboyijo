@@ -49,43 +49,9 @@ bool Database::insertCareLog(int cameraId, int durationSec) {
     return true;
 }
 
-// ✨ [추가 구현] 환자 상태 조회 (SELECT)
-int Database::getPatientStatus(int channel) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return -1;
-
-    char sql[128];
-    std::snprintf(sql, sizeof(sql), 
-                  "SELECT status FROM patient_status WHERE camera_id = %d", channel);
-
-    if (mysql_query(conn_, sql)) {
-        std::cerr << "[DB] SELECT 실패: " << mysql_error(conn_) << "\n";
-        return -1;
-    }
-
-    // 결과 레코드셋 동적 할당 수신
-    MYSQL_RES* res = mysql_store_result(conn_);
-    if (!res) {
-        std::cerr << "[DB] 결과셋 반환 실패: " << mysql_error(conn_) << "\n";
-        return -1;
-    }
-
-    int status = -1;
-    MYSQL_ROW row = mysql_fetch_row(res);
-    
-    // 데이터가 존재한다면 정수형 변환 수행
-    if (row && row[0]) {
-        status = std::atoi(row[0]);
-    }
-
-    // ⚠️ 할당받은 결과셋 자원은 반드시 free 해주어야 메모리 누수가 없습니다.
-    mysql_free_result(res);
-    return status;
-}
-
-// ✨ [추가 구현] 부팅 시 위험도 복원 — 진짜 소스인 residents.risk_level에서 읽는다.
-// patient_status 테이블은 아무도 INSERT하지 않아 항상 비어 있으므로(→ 전부 '상'으로
-// 초기화되는 버그), Qt가 실제로 값을 쓰는 residents를 직접 조회한다.
+// 부팅 시 위험도 복원 — 진짜 소스인 residents.risk_level에서 읽는다.
+// (과거 patient_status 테이블은 아무도 INSERT하지 않아 항상 비어 있던 죽은 경로였다.)
+// Qt가 실제로 값을 쓰는 residents를 직접 조회한다.
 // 한 채널에 재원 입소자가 여럿이면 MAX로 가장 높은 위험도(가장 안전한 쪽)를 택한다.
 int Database::getRiskLevelByCamera(int channel) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -119,23 +85,6 @@ int Database::getRiskLevelByCamera(int channel) {
     }
     mysql_free_result(res);
     return level;
-}
-
-// ✨ [추가 구현] 환자 상태 실시간 동기화 (UPDATE)
-bool Database::updatePatientStatus(int channel, int status) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return false;
-
-    char sql[128];
-    std::snprintf(sql, sizeof(sql),
-                  "UPDATE patient_status SET status = %d WHERE camera_id = %d", 
-                  status, channel);
-
-    if (mysql_query(conn_, sql)) {
-        std::cerr << "[DB] UPDATE 실패: " << mysql_error(conn_) << "\n";
-        return false;
-    }
-    return true;
 }
 
 void Database::close() {
