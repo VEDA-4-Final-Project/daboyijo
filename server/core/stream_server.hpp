@@ -30,6 +30,8 @@ public:
     using RoiCallback = std::function<void(const RoiUpdate&)>;
 
     using ConfirmCallback = std::function<void(int channel)>;
+    // 위험도 변경 시 호출될 콜백 함수 타입 정의 (채널 번호, 위험도 레벨)
+    using RiskLevelCallback = std::function<void(int channel, int risk_level)>;
 
     explicit StreamServer(int port);
     ~StreamServer();
@@ -39,8 +41,10 @@ public:
 
     // ROI 수신 콜백. start() 전에 등록할 것 (접속 즉시 수신 스레드가 뜬다).
     void setRoiCallback(RoiCallback cb) { on_roi_ = std::move(cb); }
-    // 낙상 확인 수신 콜백. start() 전 등록
+    // 경보 확인 수신 콜백. start() 전 등록
     void setConfirmCallback(ConfirmCallback cb) { on_confirm_ = std::move(cb); }
+    // 위험도 수신 콜백. start() 전 등록
+    void setRiskLevelCallback(RiskLevelCallback cb) { on_risk_level_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -86,6 +90,8 @@ private:
 
     std::mutex clients_mutex_;
     std::vector<std::shared_ptr<Client>> clients_;
+    
     RoiCallback on_roi_;
     ConfirmCallback on_confirm_;
+    RiskLevelCallback on_risk_level_;
 };

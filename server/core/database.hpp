@@ -16,6 +16,8 @@ public:
                  unsigned int port = 3306);
     // 케어 세션 한 건 기록: 카메라 채널 + 케어시간(초). 아무 스레드나 호출 가능.
     bool insertCareLog(int cameraId, int durationSec);
+    int getPatientStatus(int channel);
+    bool updatePatientStatus(int channel, int status);
     void close();
 private:
     std::mutex mutex_;  // conn_ 보호

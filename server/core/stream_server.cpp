@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <iostream>
 
 #include "protocol/video_stream.h"
 
@@ -168,7 +169,7 @@ void StreamServer::senderLoop(Client& client) {
     }
 }
 
-// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다. 현재는 ROI 설정/삭제 및 낙상 해제 확인.
+// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다.
 // TCP는 경계 없이 도착하므로 버퍼에 쌓아가며 완성된 메시지만 뽑아낸다.
 void StreamServer::receiverLoop(Client& client) {
     std::vector<uint8_t> buf;
@@ -198,36 +199,54 @@ void StreamServer::receiverLoop(Client& client) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
             }
 
-            // 낙상 감지 확인 신호
-            if (h.type == DBJ_CTRL_FALL_CONFIRM) {
-                // 낙상 확인 패킷 처리 (바이트 패딩 없이 헤더 8바이트만 소모)
-                if (on_confirm_ && h.channel < 4) {
-                    on_confirm_(h.channel);
-                }
-            }
-            // ROI 지정/삭제 신호
-            else {
-                const bool known = (h.type == DBJ_CTRL_ROI_SET || h.type == DBJ_CTRL_ROI_CLEAR);
-                if (on_roi_ && known && h.channel < 4) {
-                    RoiUpdate up;
-                    up.channel = h.channel;
-                    up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
-                    // ROI 지정
-                    if (h.type == DBJ_CTRL_ROI_SET) {
-                        const uint8_t* pts =
-                            buf.data() + off + sizeof(dbj_ctrl_header_t);
-                        up.points.reserve(h.point_count);
-                        for (int i = 0; i < h.point_count; ++i) {
-                            dbj_roi_point_t p;
-                            std::memcpy(&p, pts + i * sizeof(p), sizeof(p));
-                            up.points.emplace_back(
-                                static_cast<float>(p.x) / DBJ_ROI_COORD_SCALE,
-                                static_cast<float>(p.y) / DBJ_ROI_COORD_SCALE);
+            if (h.channel < 4) { // 채널 유효성 공통 체크
+                switch (h.type) {
+                    case DBJ_CTRL_ROI_SET:
+                    case DBJ_CTRL_ROI_CLEAR: {
+                        if (on_roi_) {
+                            RoiUpdate up;
+                            up.channel = h.channel;
+                            up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
+                            
+                            // ROI 지정일 때만 뒤따라오는 꼭짓점 점 데이터 파싱
+                            if (h.type == DBJ_CTRL_ROI_SET) {
+                                const uint8_t* pts =
+                                    buf.data() + off + sizeof(dbj_ctrl_header_t);
+                                up.points.reserve(h.point_count);
+                                for (int i = 0; i < h.point_count; ++i) {
+                                    dbj_roi_point_t p;
+                                    std::memcpy(&p, pts + i * sizeof(p), sizeof(p));
+                                    up.points.emplace_back(
+                                        static_cast<float>(p.x) / DBJ_ROI_COORD_SCALE,
+                                        static_cast<float>(p.y) / DBJ_ROI_COORD_SCALE);
+                                }
+                            }
+                            on_roi_(up);
                         }
+                        break;
                     }
-                    on_roi_(up);
+
+                    case DBJ_CTRL_ALARM_CONFIRM: {
+                        if (on_confirm_) {
+                            on_confirm_(h.channel);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_RISK_UPDATE: {
+                        if (on_risk_level_) {
+                            int risk_level = h.point_count; 
+                            on_risk_level_(h.channel, risk_level);
+                        }
+                        break;
+                    }
+
+                    default:
+                        std::cerr << "[stream] 알 수 없는 제어 명령 타입: " << (int)h.type << std::endl;
+                        break;
                 }
             }
+
             off += need;
         }
         if (off > 0) {
