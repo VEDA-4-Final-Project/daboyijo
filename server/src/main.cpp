@@ -31,6 +31,7 @@
 #include "fall_module.hpp"
 #include "frame_queue.hpp"
 #include "privacy_masker.hpp"
+#include "sharpen_enhancer.hpp"
 #include "protocol/video_stream.h"
 #include "rtsp_av_client.hpp"
 #include "stats_reporter.hpp"
@@ -76,6 +77,7 @@ int main(int argc, char* argv[]) {
     FallModule fall;                // [낙상감지]
     BedEgressModule bed_egress;     // [침상탈출]
     PrivacyMasker privacy_masker;   // [블러처리]
+    SharpenEnhancer sharpen_enhancer;  // [선명도 보정] 사람 영역만 샤프닝
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
@@ -154,6 +156,14 @@ int main(int argc, char* argv[]) {
     StatsReporter stats(clients, detections, stream_server);
     VideoPipeline pipeline(queue, stream_server, detections, ai_worker, stats,
                            snapshots);
+    // [선명도 보정] 사람(Human) 영역만 샤프닝.
+    // ★ 반드시 블러 stage보다 "앞"에 둔다: 몸통을 먼저 선명하게 만든 뒤
+    //   그 위에 얼굴 블러가 덮여야 프라이버시가 깨지지 않는다.
+    pipeline.addStage([&](int ch, cv::Mat& img,
+                          const std::vector<Detection>& dets) {
+        sharpen_enhancer.process(ch, img, dets);
+    });
+
     // [블러처리] 송출 전 동적 프라이버시 마스킹 단계
     pipeline.addStage([&](int ch, cv::Mat& img,
                           const std::vector<Detection>& dets) {
