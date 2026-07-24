@@ -27,7 +27,7 @@ void CaregiverModule::processFrame(const AiJob& job) {
     DetectionFrame df;
     df.channel = job.channel;
     df.objects = job.dets;
-    // 색 비율 판정이라 축소 이미지로 충분 —  raw_frame 사용
+    // raw_frame 사용
     bool present = detector_.detectInFrame(job.raw_frame, df);
 
     auto it = timers_.find(job.channel);
