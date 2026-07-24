@@ -1,6 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <functional>
+#include <map>
+#include <mutex>
 
 #include "snapshot_buffer.hpp"
 #include "telegram_module.hpp"
@@ -28,9 +31,17 @@ public:
     void handleMessage(int channel, const std::string& chat_id,
                        const std::string& text);
 
+    // 낙상 확정 시 호출(main.cpp의 fall 콜백). 해당 채널 스냅샷 → VLM 상황 설명
+    // → 보호자에게 자동 전송. 지속 낙상 스팸/비용 방지로 채널당 쿨다운 적용.
+    void reportFall(int channel);
+
 private:
     SnapshotBuffer& snapshots_;
     VlmClient& vlm_;
     TelegramModule& telegram_;
     ConfirmCallback on_confirm_;
+
+    // 낙상 자동 리포트 쿨다운 (채널별 마지막 리포트 시각)
+    std::mutex report_mutex_;
+    std::map<int, std::chrono::steady_clock::time_point> last_report_;
 };

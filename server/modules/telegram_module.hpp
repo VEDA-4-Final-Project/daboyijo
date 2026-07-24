@@ -46,6 +46,10 @@ public:
                    const std::vector<unsigned char>& jpeg,
                    const std::string& caption) const;
 
+    // 채널 → 수신자 chat_id (채널별 지정 없으면 기본값). 없으면 빈 문자열.
+    // 낙상 자동 리포트 등 "채널을 아는 쪽"이 보낼 때 쓴다.
+    std::string chatIdForChannel(int channel) const { return resolveChatId(channel); }
+
 private:
     const std::string& resolveChatId(int channel) const;
     void sendAsync(int channel, std::string text) const;  // 알림용 비동기 전송

@@ -7,6 +7,7 @@ namespace {
 
 constexpr int kKeyframes = 3;       // VLM에 보낼 키프레임 수
 constexpr double kSpanSec = 5.0;    // 최근 몇 초 구간에서 뽑을지
+constexpr double kReportCooldownSec = 60.0;  // 낙상 자동 리포트 채널당 최소 간격
 
 // 앞의 공백 제거 + 소문자화 없이 명령 접두 판별용 간단 헬퍼
 bool startsWith(const std::string& s, const char* prefix) {
@@ -72,5 +73,41 @@ void CareQaModule::handleMessage(int channel, const std::string& chat_id,
         }
         tg->sendMessage(chat_id, answer);
         tg->sendPhoto(chat_id, frames.back(), "지금 상황 📷");
+    }).detach();
+}
+
+void CareQaModule::reportFall(int channel) {
+    if (!vlm_.available()) return;  // VLM 미설정이면 기본 알림(notifyFall)만
+    std::string chat_id = telegram_.chatIdForChannel(channel);
+    if (chat_id.empty()) return;
+
+    // 쿨다운: 지속 낙상으로 콜백이 반복돼도 채널당 kReportCooldownSec 이내엔 1회만
+    {
+        std::lock_guard<std::mutex> lock(report_mutex_);
+        const auto now = std::chrono::steady_clock::now();
+        auto it = last_report_.find(channel);
+        if (it != last_report_.end() &&
+            std::chrono::duration<double>(now - it->second).count() <
+                kReportCooldownSec) {
+            return;
+        }
+        last_report_[channel] = now;
+    }
+
+    // VLM 왕복(수 초)은 fall 콜백(AI 워커 스레드)을 막지 않도록 detached 스레드에서.
+    SnapshotBuffer* snap = &snapshots_;
+    VlmClient* vlm = &vlm_;
+    TelegramModule* tg = &telegram_;
+    std::thread([snap, vlm, tg, channel, chat_id]() {
+        auto frames = snap->recentKeyframes(channel, kKeyframes, kSpanSec);
+        if (frames.empty()) return;
+        const std::string q =
+            "방금 이 어르신에게 낙상이 감지되었습니다. 사진 속 현재 자세와 "
+            "상황을 보호자에게 알리듯 두세 문장으로 설명해 주세요. 의학적 진단이나 "
+            "부상 여부 단정은 하지 말고, 보이는 상황만 차분히 전해 주세요.";
+        std::string answer = vlm->describe(frames, q);
+        if (answer.empty()) return;
+        tg->sendMessage(chat_id, "🚨 낙상 감지 — 현재 상황\n" + answer);
+        tg->sendPhoto(chat_id, frames.back(), "낙상 감지 시점 📷");
     }).detach();
 }
