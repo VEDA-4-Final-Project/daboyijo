@@ -174,8 +174,8 @@ private:
 // 이걸 넘는 payload_len은 스트림 오염(또는 프로토콜 불일치)으로 본다.
 constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
 
-// 🌟 낙상 경보 해제 통신 프로토콜 상수 (0x03)
-constexpr uint8_t kCtrlFallConfirm = 0x03;
+// 통합 경보 해제 통신 프로토콜 상수 (0x03)
+constexpr uint8_t kCtrlAlarmConfirm = 0x03;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -1787,7 +1787,7 @@ void MainWindow::onAlarmClearClicked()
                 dbj_ctrl_header_t h;
                 h.magic = kCtrlMagic;                  // 0xDB4C
                 h.version = 0x01;
-                h.type = kCtrlFallConfirm;             // 0x03 (경보 확인 -> 마스크 복구)
+                h.type = kCtrlAlarmConfirm;             // 0x03 (경보 확인 -> 마스크 복구)
                 h.channel = static_cast<uint8_t>(channel);
                 h.point_count = 0;
                 h.reserved = 0;
@@ -1996,6 +1996,41 @@ void MainWindow::onSaveResident()
 
     if (isNew)
         selectedResidentId = q.lastInsertId().toInt();
+    int cameraId = editCameraId->text().trimmed().toInt();
+    
+    // 4채널 중 올바른 채널이고, 서버 소켓이 정상 연결된 상태일 때만 전송
+    if (editCameraId->text().trimmed().length() > 0 && cameraId >= 0 && cameraId < 4 && 
+        socket && socket->state() == QAbstractSocket::ConnectedState) 
+    {
+        // 1. 위험도 텍스트를 서버가 이해하는 숫자 코드로 매칭 (하:1, 중:2, 상:3)
+        int32_t statusVal = 1; 
+        QString risk = editRiskLevel->currentText();
+        if (risk == QStringLiteral("상")) statusVal = 3;
+        else if (risk == QStringLiteral("중")) statusVal = 2;
+        else if (risk == QStringLiteral("하")) statusVal = 1;
+
+        // 2. 프로토콜 공용 제어 헤더 조립
+        dbj_ctrl_header_t h;
+        h.magic = kCtrlMagic;                   // 0xDB4C
+        h.version = 0x01;
+        h.type = 0x04;
+        h.channel = static_cast<uint8_t>(cameraId);
+        h.point_count = statusVal;
+        h.reserved = 0;
+
+        // 3. 바이트 버퍼 생성 및 데이터 직렬화
+        QByteArray pkt;
+        pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+
+        // 4. 소켓 방출
+        socket->write(pkt);
+        socket->flush();
+        qDebug() << "➔ [Qt -> 서버] 채널" << cameraId << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
+        
+        // 5. 로컬 GUI용 환자 정보 메모리 어레이(patients)도 즉시 동기화
+        patients[cameraId].name = editName->text().trimmed();
+        patients[cameraId].bed = editRoom->text().trimmed() + QStringLiteral("-") + editBed->text().trimmed();
+    }
 
     refreshResidentTable();
     QMessageBox::information(this, QStringLiteral("저장"),

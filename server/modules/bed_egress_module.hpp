@@ -9,8 +9,14 @@
 
 #include "detection.hpp" 
 
-// 환자 낙상/이탈 위험도 등급
-enum class PatientRisk { HIGH, MEDIUM, LOW };
+class Database;
+
+// 환자 위험도 등급(1: 하, 2: 중, 3: 상)
+enum class PatientStatus {
+    LOW = 1,
+    MEDIUM = 2,
+    HIGH = 3
+};
 
 class BedEgressModule {
 public:
@@ -22,8 +28,11 @@ public:
     // 콜백 등록
     void setAlarmCallback(AlarmCallback cb) { alarm_cb_ = std::move(cb); }
     
-    // 위험도 설정 (Qt 클라이언트 DB 연동 시 호출)
-    void setRiskLevel(int channel, PatientRisk risk);
+    // 환자 상태 실시간 업데이트 (Qt 클라이언트 제어 신호 배선용)
+    void updatePatientStatus(int channel, int status);
+
+    // 서버 부팅 시 DB로부터 기존 환자 관리 정보 초기 로드
+    void initializeFromDb(Database& db);
 
     // 침대 ROI 업데이트 (main.cpp 배선용)
     void updateBedRoi(int channel, bool clear, const std::vector<std::pair<float, float>>& points);
@@ -38,7 +47,7 @@ private:
     std::mutex mutex_;
     AlarmCallback alarm_cb_;
     
-    std::map<int, PatientRisk> risk_levels_;
+    std::map<int, PatientStatus> patient_statuses_;
     std::map<int, std::vector<std::pair<float, float>>> rois_; // 채널별 ROI 저장소
     std::map<int, std::map<int, bool>> is_in_bed_; // 객체별 이전 상태 저장 (true: 침상 안, false: 밖)
 
