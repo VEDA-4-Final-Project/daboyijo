@@ -77,7 +77,10 @@ int main(int argc, char* argv[]) {
     FallModule fall;                // [낙상감지]
     BedEgressModule bed_egress;     // [침상탈출]
     PrivacyMasker privacy_masker;   // [블러처리]
-    SharpenEnhancer sharpen_enhancer;  // [선명도 보정] 사람 영역만 샤프닝
+    // [선명도 보정] 사람 영역만 샤프닝. amount=강도, sigma=윤곽 반경(작을수록 쨍함).
+    // 눈에 잘 띄도록 강하게: 세부 윤곽을 또렷하게 세운다. 과하면 노이즈·헤일로가
+    // 보일 수 있으니 화면 보며 조절할 것 (은은하게: (0.5, 3.0)).
+    SharpenEnhancer sharpen_enhancer(1.2, 1.0);
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
