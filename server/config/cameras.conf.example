@@ -19,10 +19,20 @@ stream_port=5500
 #    https://api.telegram.org/bot<토큰>/getUpdates 응답의 message.chat.id
 # 3. 채널별로 다른 보호자에게 보내려면 telegram_chat_id_<채널번호> 사용.
 #    지정 안 한 채널은 telegram_chat_id(기본값)로 감.
+#    ※ 케어봇(양방향)은 이 chat_id로 "누가 어느 방 보호자인지"를 인증·매핑한다.
+#      질문에 방별 상황을 답하려면 반드시 telegram_chat_id_<채널>로 지정해야 한다
+#      (기본 telegram_chat_id만 있으면 방을 특정 못 해 안내만 나감).
 telegram_bot_token=
 telegram_chat_id=
 telegram_chat_id_0=
 telegram_chat_id_1=
+
+# 케어봇 실시간 상황 질의응답용 VLM (Google Gemini)
+# - Google AI Studio(https://aistudio.google.com/apikey)에서 API 키 발급 → gemini_api_key
+# - gemini_model: 미지정 시 gemini-flash-latest(현재 안정 Flash 별칭). 필요 시 특정 id로 고정.
+# - 미설정이면 봇은 질문에 "설정 필요" 안내만 하고 서버는 정상 동작.
+gemini_api_key=
+gemini_model=
 
 0=rtsp://admin:비밀번호@172.20.35.140:554/0/profile2/media.smp
 1=rtsp://admin:비밀번호@172.20.35.140:554/1/profile2/media.smp

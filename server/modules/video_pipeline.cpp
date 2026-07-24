@@ -63,6 +63,8 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             std::vector<unsigned char> jpeg;
             cv::imencode(".jpg", small, jpeg, kJpegParams);
             const size_t bytes = jpeg.size();
+            // [케어봇] 봇 스냅샷용으로 최신 JPEG 1장 보관 (블러가 이미 적용된 프레임).
+            snapshots_.put(frame->channel, jpeg, now);
             server_.broadcast(frame->channel, std::move(jpeg));
 
             const double ms = std::chrono::duration<double, std::milli>(

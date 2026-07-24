@@ -38,6 +38,9 @@
 #include "video_pipeline.hpp"
 #include "bed_egress_module.hpp"
 #include "telegram_module.hpp"
+#include "snapshot_buffer.hpp"
+#include "gemini_client.hpp"
+#include "care_qa.hpp"
 
 namespace {
 
@@ -65,6 +68,7 @@ int main(int argc, char* argv[]) {
     StreamServer stream_server(config.stream_port);
     FrameQueue queue(16);
     DetectionStore detections;  // 감지 이력 저장 + 프레임-좌표 시간 매칭
+    SnapshotBuffer snapshots;   // [케어봇] 채널별 최근 송출 JPEG 링버퍼
     AiWorker ai_worker;         // 무거운 AI 연산 전담 — 채널별 워커 스레드
     Database db;
 
@@ -74,8 +78,19 @@ int main(int argc, char* argv[]) {
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
-    TelegramModule telegram;        // [보호자 알림]
+    TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
+
+    // [케어봇] 실시간 상황 질의응답: 보호자 질문 → 스냅샷 + VLM → 답변
+    GeminiClient vlm(config.gemini_api_key, config.gemini_model);
+    CareQaModule care_qa(snapshots, vlm, telegram, [&](int ch) {
+        privacy_masker.clearFall(ch);  // 봇 "/확인" → 낙상 블러 원상복구
+        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch);
+    });
+    telegram.setCommandHandler([&](int ch, const std::string& chat_id,
+                                   const std::string& text) {
+        care_qa.handleMessage(ch, chat_id, text);
+    });
 
     // ── 모듈 간 배선 ─────────────────────────────────────────────
     // Qt가 그린 침대 ROI → 낙상 및 침상 탈출 판정기
@@ -95,7 +110,8 @@ int main(int argc, char* argv[]) {
         privacy_masker.reportFall(ch);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
-        telegram.notifyFall(ch);
+        telegram.notifyFall(ch);      // 즉시 기본 알림
+        care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
@@ -111,6 +127,7 @@ int main(int argc, char* argv[]) {
     // ── 서버 기동 ────────────────────────────────────────────────
     if (!stream_server.start()) return 1;
     blackbox.startHttp();
+    telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
     db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
 
     std::vector<std::unique_ptr<RtspAvClient>> clients;
@@ -135,7 +152,8 @@ int main(int argc, char* argv[]) {
 
     // ── 영상 파이프라인 실행 ─────────────────────────────────────
     StatsReporter stats(clients, detections, stream_server);
-    VideoPipeline pipeline(queue, stream_server, detections, ai_worker, stats);
+    VideoPipeline pipeline(queue, stream_server, detections, ai_worker, stats,
+                           snapshots);
     // [블러처리] 송출 전 동적 프라이버시 마스킹 단계
     pipeline.addStage([&](int ch, cv::Mat& img,
                           const std::vector<Detection>& dets) {
@@ -146,6 +164,7 @@ int main(int argc, char* argv[]) {
 
     // ── 종료 ─────────────────────────────────────────────────────
     std::printf("종료 중...\n");
+    telegram.stopPolling();  // [케어봇] 폴링 스레드 join (curl_global_cleanup 전에)
     ai_worker.stop();     // AI 스레드 join
     caregiver.flush();    // 열린 케어 세션 마감 → DB 기록
     blackbox.flushAll();  // 저장 중이던 클립 마무리 (유실 방지)
