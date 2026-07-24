@@ -17,19 +17,23 @@ void BedEgressModule::updatePatientStatus(int channel, int status) {
 // 서버 구동 시 초기 데이터베이스 연동 및 환자 상태 동기화
 void BedEgressModule::initializeFromDb(Database& db) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    // 요양원 내 관리 중인 병상 채널(예: 1~4채널)을 순회하며 기존 설정 로드
+
+    // 위험도의 진짜 소스는 residents.risk_level(Qt가 저장 시 기록하는 곳)이다.
+    // 재시작해도 여기서 복원되므로, Qt에서 바꾼 '하'가 부팅 후에도 유지된다.
     for (int ch = 0; ch < 4; ++ch) {
-        // DB 클래스에 구현된 환자 상태 조회 메서드 호출
-        int status = db.getPatientStatus(ch); 
-        if (status >= 1 && status <= 3) {
-            patient_statuses_[ch] = static_cast<PatientStatus>(status);
+        int level = db.getRiskLevelByCamera(ch);
+        if (level >= 1 && level <= 3) {
+            patient_statuses_[ch] = static_cast<PatientStatus>(level);
         } else {
-            // DB 기록이 없거나 비정상일 경우, 환자 안전을 위해 기본값은 무조건 최상위 등급(HIGH)으로 세팅
-            patient_statuses_[ch] = PatientStatus::HIGH; 
+            // 이 채널에 재원 입소자가 없거나 조회 실패 → 환자 안전을 위해 기본값 최상위(HIGH)
+            patient_statuses_[ch] = PatientStatus::HIGH;
         }
+
+        // 버퍼링에 묻히지 않도록 stderr로 — 부팅 시 각 채널이 무슨 등급으로 떴는지 바로 보이게
+        const char* label = (patient_statuses_[ch] == PatientStatus::HIGH)   ? "상"
+                          : (patient_statuses_[ch] == PatientStatus::MEDIUM) ? "중" : "하";
+        std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d = %s\n", ch, label);
     }
-    std::printf("[BedEgress] 시스템 부팅: DB 환자 마스터 정보 로드 완료.\n");
 }
 
 // Qt 클라이언트가 전송한 ROI를 로컬 메모리에 동기화
