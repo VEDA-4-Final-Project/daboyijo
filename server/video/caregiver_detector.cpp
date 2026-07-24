@@ -27,11 +27,22 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
 
     cv::Mat mask;
     cv::inRange(hsv, lower_, upper_, mask);
-    // cv::morphologyEx(mask, mask, cv::MORPH_OPEN,
-    //                  cv::getStructuringElement(cv::MORPH_RECT, {3, 3}));
 
-    double ratio = static_cast<double>(cv::countNonZero(mask))
-                 / (mask.rows * mask.cols);
+
+    // 끊긴 조각 이어붙이기 — 주름·그림자로 갈라진 조끼를 한 덩어리로 복원
+    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_RECT, {5, 5}));
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    double maxArea = 0.0;
+    for (const auto& c : contours) {
+        maxArea = std::max(maxArea, cv::contourArea(c));
+    }
+
+    // 전체 픽셀 수가 아니라 "가장 큰 덩어리" 하나만 — 흩어진 얼굴·손은 탈락
+    double ratio = maxArea / (mask.rows * mask.cols);
 
     std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
     return ratio >= threshold_;

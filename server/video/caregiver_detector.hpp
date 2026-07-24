@@ -8,8 +8,8 @@
 class CaregiverDetector {
 public:
     // HSV 하한/상한과 판정 임계값(유니폼 색 픽셀 비율)
-    CaregiverDetector(cv::Scalar lower = cv::Scalar(8, 100, 80),
-                      cv::Scalar upper = cv::Scalar(25, 255, 255),
+    CaregiverDetector(cv::Scalar lower = cv::Scalar(5, 50, 50),
+                      cv::Scalar upper = cv::Scalar(28, 255, 255),
                       double threshold = 0.08);
 
     // 사람 영역(personROI)이 보호사인지 판정
