@@ -9,20 +9,37 @@
 #define BMI270_REG_INIT_CTRL  	 0x59  	// 초기화 제어 레지스터
 #define BMI270_REG_PWR_CTRL   	 0x7D  	// 전원 제어 레지스터
 #define BMI270_REG_INTERNAL_STAT 0x21	// 내부 상태 확인 레지스터
-#define BMI270_REG_ACC_DATA_X 	 0x0C  	// 가속도 X축 데이터 시작점 (X, Y, Z가 연속됨)
-#define BMI270_REG_ACC_CONF      0x40	// 가속도계 데이터 속도(ODR) 및 대역폭 설정 레지스터
-#define BMI270_REG_ACC_RANGE     0x41   // 가속도 범위 설정 레지스터
+
 #define BMI270_REG_INIT_ADDR_0   0x5B  	// 스트림 주소 지정 레지스터 - 하위 4비트 (LSB)
 #define BMI270_REG_INIT_ADDR_1   0x5C  	// 스트림 주소 지정 레지스터 - 상위 8비트 (MSB)
 #define BMI270_REG_INIT_DATA     0x5E  	// 설정 데이터 스트림 입력 레지스터
 
-// --- [기대하는 설정 값] ---
-#define BMI270_CHIP_ID_VAL    0x24
+#define BMI270_REG_ACC_DATA_X 	 0x0C  	// 가속도 X축 데이터 시작 주소
+#define BMI270_REG_ACC_CONF      0x40	// 가속도 데이터 속도(ODR) 및 대역폭 설정 레지스터
+#define BMI270_REG_ACC_RANGE     0x41   // 가속도 측정 범위 설정 레지스터
 
-// --- [외부에서 사용할 함수 선언] ---
-void BMI270_Init(void);
-uint8_t BMI270_ReadRegister(uint8_t reg);
-void BMI270_WriteRegister(uint8_t reg, uint8_t val);
-void BMI270_Read_Accel(int16_t *x, int16_t *y, int16_t *z);
+#define BMI270_REG_GYR_X_LSB     0x12  	// 자이로 X축 데이터 시작 주소
+#define BMI270_REG_GYR_CONF      0x42  	// 자이로 ODR 및 대역폭 설정 레지스터
+#define BMI270_REG_GYR_RANGE     0x43  	// 자이로 측정 범위 설정 레지스터
+
+// --- [기대하는 설정 값] ---
+#define BMI270_CHIP_ID_VAL    	 0x24
+
+// --- [통합 데이터 구조체] ---
+typedef struct {
+    float x;
+    float y;
+    float z;
+} BMI270_Data_t;
+
+// --- [하위 레벨 통신 함수] ---
+// 통신 성공 여부를 반환
+HAL_StatusTypeDef BMI270_WriteRegister(uint8_t reg, uint8_t val);
+HAL_StatusTypeDef BMI270_ReadRegister(uint8_t reg, uint8_t *val);
+
+// --- [상위 레벨 API 함수] ---
+HAL_StatusTypeDef BMI270_Init(void);
+HAL_StatusTypeDef BMI270_Read_Accel(BMI270_Data_t *accel);
+HAL_StatusTypeDef BMI270_Read_Gyro(BMI270_Data_t *gyro);
 
 #endif /* BMI270_H_ */

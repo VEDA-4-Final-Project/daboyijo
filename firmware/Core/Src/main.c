@@ -48,8 +48,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-int16_t accel_x, accel_y, accel_z;
-int16_t gyro_x, gyro_y, gyro_z;
+BMI270_Data_t accData;
+BMI270_Data_t gyrData;
+BMI270_Data_t gyroBias = {0};	// 자이로 영점 저장
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -98,23 +99,61 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-  HAL_Delay(3000);	// 테라텀 재연결 시간
-  BMI270_Init();
+  HAL_Delay(300);
+  if (BMI270_Init() != HAL_OK) {
+      printf("[ERROR] BMI270 Hardware Link Fault!\r\n");
+      // 하드웨어 에러 시 무한 루프에 가두거나 에러 플래그 처리
+      while(1) {
+          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13); // 에러 알림 LED 깜빡임
+          HAL_Delay(100);
+      }
+  }
+
+  // === 자이로 영점 잡기 (약 1초간 100개 샘플링) ===
+  printf("[INFO] Calibrating Gyroscope... Keep the device still.\r\n");
+  float sum_x = 0, sum_y = 0, sum_z = 0;
+  int sample_count = 100;
+  BMI270_Data_t raw_gyro;
+
+  for (int i = 0; i < sample_count; i++) {
+	  if (BMI270_Read_Gyro(&raw_gyro) == HAL_OK) {
+		  sum_x += raw_gyro.x;
+		  sum_y += raw_gyro.y;
+		  sum_z += raw_gyro.z;
+	  }
+	  HAL_Delay(10); // ODR 속도(100Hz)에 맞춰 10ms씩 대기
+  }
+
+  // 평균 오프셋 계산 후 저장
+  gyroBias.x = sum_x / (float)sample_count;
+  gyroBias.y = sum_y / (float)sample_count;
+  gyroBias.z = sum_z / (float)sample_count;
+
+  printf("[SUCCESS] Calibration Done! Bias -> X:%.1f, Y:%.1f, Z:%.1f dps\r\n",
+		  gyroBias.x, gyroBias.y, gyroBias.z);
+  // ====================================================
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	BMI270_Read_Accel(&accel_x, &accel_y, &accel_z);
+	  if (BMI270_Read_Accel(&accData) == HAL_OK && BMI270_Read_Gyro(&gyrData) == HAL_OK)
+	  {
+		  gyrData.x -= gyroBias.x;
+		  gyrData.y -= gyroBias.y;
+		  gyrData.z -= gyroBias.z;
 
-	float g_x = (float)accel_x / 16384.0f;
-	float g_y = (float)accel_y / 16384.0f;
-	float g_z = (float)accel_z / 16384.0f;
+		  printf("[ACC] X:%.3f Y:%.3f Z:%.3f g | [GYR] X:%.1f Y:%.1f Z:%.1f dps\r\n",
+				 accData.x, accData.y, accData.z, gyrData.x, gyrData.y, gyrData.z);
+	  }
+	  else
+	  {
+		  printf("[ WARNING ] Sensor Data Disconnected during runtime!\r\n");
+	  }
 
-	printf("X: %.3fg | Y: %.3fg | Z: %.3fg\r\n", g_x, g_y, g_z);
-
-	HAL_Delay(500);
+	  HAL_Delay(300);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
