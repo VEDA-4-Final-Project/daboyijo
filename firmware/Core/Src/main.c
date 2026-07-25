@@ -21,11 +21,13 @@
 #include "i2c.h"
 #include "spi.h"
 #include "usart.h"
+#include "usb_device.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include "bmi270.h"	//bmi270 드라이버
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,7 +48,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+int16_t accel_x, accel_y, accel_z;
+int16_t gyro_x, gyro_y, gyro_z;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -93,14 +96,25 @@ int main(void)
   MX_SPI2_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_Delay(3000);	// 테라텀 재연결 시간
+  BMI270_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	BMI270_Read_Accel(&accel_x, &accel_y, &accel_z);
+
+	float g_x = (float)accel_x / 16384.0f;
+	float g_y = (float)accel_y / 16384.0f;
+	float g_z = (float)accel_z / 16384.0f;
+
+	printf("X: %.3fg | Y: %.3fg | Z: %.3fg\r\n", g_x, g_y, g_z);
+
+	HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -129,8 +143,8 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 12;
-  RCC_OscInitStruct.PLL.PLLN = 96;
+  RCC_OscInitStruct.PLL.PLLM = 25;
+  RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -154,7 +168,16 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+int _write(int file, char *ptr, int len)
+{
+  // 1. 문장(ptr)을 길이(len)만큼 한 번에 USB로 쏜다.
+  CDC_Transmit_FS((uint8_t*)ptr, len);
 
+  // 2. USB가 택배를 다 보낼 때까지 아주 잠깐(1ms) 기다려준다. (데이터 씹힘 방지)
+  HAL_Delay(1);
+
+  return len;
+}
 /* USER CODE END 4 */
 
 /**

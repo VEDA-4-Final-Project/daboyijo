@@ -38,7 +38,7 @@ Makefile*
 .metadata/
 .settings/
 #.cproject
-.mxproject
+#.mxproject
 *.launch
 
 # ===== IDE / 에디터 =====
