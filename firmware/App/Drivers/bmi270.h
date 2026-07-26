@@ -1,14 +1,14 @@
-#ifndef INC_BMI270_H_
-#define INC_BMI270_H_
+#ifndef APP_DRIVERS_BMI270_H_
+#define APP_DRIVERS_BMI270_H_
 
 #include "main.h"	// HAL 라이브러리와 핀 이름들을 가져오기 위해 필수
 
 // --- [레지스터 주소 매크로] ---
 #define BMI270_REG_CHIP_ID    	 0x00	// 칩 ID 확인 레지스터
-#define BMI270_REG_PWR_CONF   	 0x7C  	// 전원 설정 레지스터
-#define BMI270_REG_INIT_CTRL  	 0x59  	// 초기화 제어 레지스터
-#define BMI270_REG_PWR_CTRL   	 0x7D  	// 전원 제어 레지스터
 #define BMI270_REG_INTERNAL_STAT 0x21	// 내부 상태 확인 레지스터
+#define BMI270_REG_INIT_CTRL  	 0x59  	// 초기화 제어 레지스터
+#define BMI270_REG_PWR_CONF   	 0x7C  	// 전원 설정 레지스터
+#define BMI270_REG_PWR_CTRL   	 0x7D  	// 전원 제어 레지스터
 
 #define BMI270_REG_INIT_ADDR_0   0x5B  	// 스트림 주소 지정 레지스터 - 하위 4비트 (LSB)
 #define BMI270_REG_INIT_ADDR_1   0x5C  	// 스트림 주소 지정 레지스터 - 상위 8비트 (MSB)
@@ -33,12 +33,13 @@ typedef struct {
 } BMI270_Data_t;
 
 // --- [하위 레벨 통신 함수] ---
-// 통신 성공 여부를 반환
-HAL_StatusTypeDef BMI270_WriteRegister(uint8_t reg, uint8_t val);
+// HAL_StatusTypeDef: 통신 성공 여부를 반환
 HAL_StatusTypeDef BMI270_ReadRegister(uint8_t reg, uint8_t *val);
+HAL_StatusTypeDef BMI270_WriteRegister(uint8_t reg, uint8_t val);
 
 // --- [상위 레벨 API 함수] ---
 HAL_StatusTypeDef BMI270_Init(void);
+HAL_StatusTypeDef BMI270_Calibrate_Gyro(BMI270_Data_t *bias);
 HAL_StatusTypeDef BMI270_Read_Accel(BMI270_Data_t *accel);
 HAL_StatusTypeDef BMI270_Read_Gyro(BMI270_Data_t *gyro);
 

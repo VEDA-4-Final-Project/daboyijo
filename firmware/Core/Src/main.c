@@ -27,7 +27,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include "bmi270.h"	//bmi270 드라이버
+#include "fall_detection.h"
+#include "bio_manager.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,6 +52,9 @@
 BMI270_Data_t accData;
 BMI270_Data_t gyrData;
 BMI270_Data_t gyroBias = {0};	// 자이로 영점 저장
+
+MAX30102_t hmax;
+MAX30102_Data_t hrData;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,61 +103,39 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-  HAL_Delay(300);
   if (BMI270_Init() != HAL_OK) {
-      printf("[ERROR] BMI270 Hardware Link Fault!\r\n");
-      // 하드웨어 에러 시 무한 루프에 가두거나 에러 플래그 처리
       while(1) {
           HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13); // 에러 알림 LED 깜빡임
           HAL_Delay(100);
       }
   }
 
-  // === 자이로 영점 잡기 (약 1초간 100개 샘플링) ===
-  printf("[INFO] Calibrating Gyroscope... Keep the device still.\r\n");
-  float sum_x = 0, sum_y = 0, sum_z = 0;
-  int sample_count = 100;
-  BMI270_Data_t raw_gyro;
-
-  for (int i = 0; i < sample_count; i++) {
-	  if (BMI270_Read_Gyro(&raw_gyro) == HAL_OK) {
-		  sum_x += raw_gyro.x;
-		  sum_y += raw_gyro.y;
-		  sum_z += raw_gyro.z;
-	  }
-	  HAL_Delay(10); // ODR 속도(100Hz)에 맞춰 10ms씩 대기
+  if (MAX30102_Init(&hmax, &hi2c1) != HAL_OK) {
+	while(1) {
+		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+		HAL_Delay(50);
+	}
   }
 
-  // 평균 오프셋 계산 후 저장
-  gyroBias.x = sum_x / (float)sample_count;
-  gyroBias.y = sum_y / (float)sample_count;
-  gyroBias.z = sum_z / (float)sample_count;
+  if (BMI270_Calibrate_Gyro(&gyroBias) != HAL_OK) {
+        printf("[WARNING] Gyro Calibration Failed! Using default zero bias.\r\n");
+  }
 
-  printf("[SUCCESS] Calibration Done! Bias -> X:%.1f, Y:%.1f, Z:%.1f dps\r\n",
-		  gyroBias.x, gyroBias.y, gyroBias.z);
-  // ====================================================
-
+  FallDetection_Init(gyroBias);
+  BioManager_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-	  if (BMI270_Read_Accel(&accData) == HAL_OK && BMI270_Read_Gyro(&gyrData) == HAL_OK)
-	  {
-		  gyrData.x -= gyroBias.x;
-		  gyrData.y -= gyroBias.y;
-		  gyrData.z -= gyroBias.z;
+  uint32_t last_tick = HAL_GetTick();
+  while (1) {
+      if (HAL_GetTick() - last_tick >= 20)
+      {
+          last_tick = HAL_GetTick();
 
-		  printf("[ACC] X:%.3f Y:%.3f Z:%.3f g | [GYR] X:%.1f Y:%.1f Z:%.1f dps\r\n",
-				 accData.x, accData.y, accData.z, gyrData.x, gyrData.y, gyrData.z);
-	  }
-	  else
-	  {
-		  printf("[ WARNING ] Sensor Data Disconnected during runtime!\r\n");
-	  }
-
-	  HAL_Delay(300);
+          FallDetection_Update();
+          BioManager_Update();
+      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -209,13 +191,13 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 int _write(int file, char *ptr, int len)
 {
-  // 1. 문장(ptr)을 길이(len)만큼 한 번에 USB로 쏜다.
-  CDC_Transmit_FS((uint8_t*)ptr, len);
-
-  // 2. USB가 택배를 다 보낼 때까지 아주 잠깐(1ms) 기다려준다. (데이터 씹힘 방지)
-  HAL_Delay(1);
-
-  return len;
+    uint32_t timeout = 50; // 최대 50ms 동안만 시도
+    while (CDC_Transmit_FS((uint8_t*)ptr, len) == 1)
+    {
+        HAL_Delay(1);
+        if (--timeout == 0) break; // PC가 안 받으면 그냥 포기하고 탈출
+    }
+    return len;
 }
 /* USER CODE END 4 */
 
