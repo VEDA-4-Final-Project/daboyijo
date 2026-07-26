@@ -28,7 +28,8 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include "fall_detection.h"
-#include "bio_manager.h"
+#include "heart_rate_calc.h"
+#include "usbd_cdc_if.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -122,7 +123,7 @@ int main(void)
   }
 
   FallDetection_Init(gyroBias);
-  BioManager_Init();
+  HeartRateCalc_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -134,7 +135,7 @@ int main(void)
           last_tick = HAL_GetTick();
 
           FallDetection_Update();
-          BioManager_Update();
+          HeartRateCalc_Update();
       }
     /* USER CODE END WHILE */
 

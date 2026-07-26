@@ -1,4 +1,4 @@
-#include "heart_rate.h"
+#include "max30102.h"
 
 // 1바이트 읽기
 HAL_StatusTypeDef MAX30102_ReadRegister(MAX30102_t *dev, uint8_t reg, uint8_t *val)

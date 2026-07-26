@@ -1,5 +1,5 @@
-#ifndef APP_DRIVERS_HEART_RATE_H_
-#define APP_DRIVERS_HEART_RATE_H_
+#ifndef APP_DRIVERS_MAX30102_H_
+#define APP_DRIVERS_MAX30102_H_
 
 #include "main.h"
 
@@ -32,4 +32,4 @@ HAL_StatusTypeDef MAX30102_WriteRegister(MAX30102_t *dev, uint8_t reg, uint8_t v
 HAL_StatusTypeDef MAX30102_Init(MAX30102_t *dev, I2C_HandleTypeDef *hi2c);
 HAL_StatusTypeDef MAX30102_Read_FIFO(MAX30102_t *dev, MAX30102_Data_t *data);
 
-#endif
+#endif /* MAX30102_H_ */
