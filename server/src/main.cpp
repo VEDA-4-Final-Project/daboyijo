@@ -69,7 +69,8 @@ int main(int argc, char* argv[]) {
     StreamServer stream_server(config.stream_port);
     FrameQueue queue(16);
     DetectionStore detections;  // 감지 이력 저장 + 프레임-좌표 시간 매칭
-    SnapshotBuffer snapshots;   // [케어봇] 채널별 최근 송출 JPEG 링버퍼
+    SnapshotBuffer snapshots;   // 버퍼 A: 전원 블러본 (Gemini/평상시 사진용)
+    SnapshotBuffer snapshots_fall;  // 버퍼 B: 낙상 선택본 (낙상자만 노출, 보호자 사진용)
     AiWorker ai_worker;         // 무거운 AI 연산 전담 — 채널별 워커 스레드
     Database db;
 
@@ -88,7 +89,7 @@ int main(int argc, char* argv[]) {
 
     // [케어봇] 실시간 상황 질의응답: 보호자 질문 → 스냅샷 + VLM → 답변
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
-    CareQaModule care_qa(snapshots, vlm, telegram, [&](int ch) {
+    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, [&](int ch) {
         privacy_masker.clearFall(ch);  // 봇 "/확인" → 낙상 블러 원상복구
         std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch + 1);
     });
@@ -116,9 +117,9 @@ int main(int argc, char* argv[]) {
     });
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
-        std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n",
-                     ch + 1, at.cx, at.cy);
-        privacy_masker.reportFall(ch);
+        std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) obj=%d cx=%.2f cy=%.2f\n",
+                     ch + 1, at.object_id, at.cx, at.cy);
+        privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
         telegram.notifyFall(ch);      // 즉시 기본 알림
@@ -165,7 +166,18 @@ int main(int argc, char* argv[]) {
     // ── 영상 파이프라인 실행 ─────────────────────────────────────
     StatsReporter stats(clients, detections, stream_server);
     VideoPipeline pipeline(queue, stream_server, detections, ai_worker, stats,
-                           snapshots);
+                           snapshots, snapshots_fall);
+    // [낙상 선택 노출] 전원 블러본 위에 낙상자 얼굴만 되살린 선택본 생성.
+    // 관제 Qt 송출·보호자 텔레그램 사진에 쓰이고, Gemini로 가는 버퍼 A는 안 건드린다.
+    pipeline.setFallVariant([&](int ch, const cv::Mat& full_blur,
+                                const cv::Mat& clean,
+                                const std::vector<Detection>& dets,
+                                cv::Mat& out) -> bool {
+        if (!privacy_masker.hasFall(ch)) return false;
+        out = full_blur.clone();
+        privacy_masker.restoreFallen(ch, out, clean, dets);
+        return true;
+    });
     // [선명도 보정] 사람(Human) 영역만 샤프닝.
     // ★ 반드시 블러 stage보다 "앞"에 둔다: 몸통을 먼저 선명하게 만든 뒤
     //   그 위에 얼굴 블러가 덮여야 프라이버시가 깨지지 않는다.

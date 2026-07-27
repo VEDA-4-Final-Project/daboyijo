@@ -44,28 +44,47 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             if (raw.size() != kViewSize) cv::resize(raw, small, kViewSize);
             else small = raw.clone();
 
-            // AI 전달용 깨끗한 복사본
+            // AI 전달용 깨끗한 복사본 (블러 전 원본 — 낙상 선택본 복원 소스로도 씀)
             cv::Mat clean = small.clone();
 
             // 이 프레임의 생성 시각과 가장 궁합이 맞는 감지 좌표 선택
             auto dets = store_.closestTo(frame->channel, frame->received_at - kDelayOffset);
 
-            // 송출 영상 가공 단계 실행 (블러 마스킹 등)
+            // 송출 영상 가공 단계 실행 (블러 마스킹 등) → small = 전원 블러본
             for (auto& stage : stages_) {
                 stage(frame->channel, small, dets);
             }
+
+            // 낙상 중이면 "낙상자만 노출한 선택본" 생성 (전원 블러본 + clean 기반).
+            // ai_.submit이 clean·dets를 move 하기 전에 만들어야 한다.
+            cv::Mat selective;
+            const bool has_selective =
+                fall_variant_ &&
+                fall_variant_(frame->channel, small, clean, dets, selective);
 
             // AI 워커에 최신 일감 던지기 (덮어쓰기 방식 — 밀림 방지)
             ai_.submit({std::move(raw), std::move(clean), frame->channel,
                         std::move(dets)});
 
-            // 가공 완료된 이미지를 인코딩해서 Qt로 송출
-            std::vector<unsigned char> jpeg;
-            cv::imencode(".jpg", small, jpeg, kJpegParams);
-            const size_t bytes = jpeg.size();
-            // [케어봇] 봇 스냅샷용으로 최신 JPEG 1장 보관 (블러가 이미 적용된 프레임).
-            snapshots_.put(frame->channel, jpeg, now);
-            server_.broadcast(frame->channel, std::move(jpeg));
+            // 전원 블러본은 항상 버퍼 A에 보관 → Gemini/외부로 나가는 스냅샷.
+            std::vector<unsigned char> jpeg_full;
+            cv::imencode(".jpg", small, jpeg_full, kJpegParams);
+            snapshots_.put(frame->channel, jpeg_full, now);
+
+            // Qt 송출·버퍼 B: 낙상 중이면 선택본, 아니면 전원 블러본.
+            size_t bytes;
+            if (has_selective) {
+                std::vector<unsigned char> jpeg_sel;
+                cv::imencode(".jpg", selective, jpeg_sel, kJpegParams);
+                // [보호자] 낙상 선택본 스냅샷 보관 (텔레그램 낙상 사진용).
+                snapshots_fall_.put(frame->channel, jpeg_sel, now);
+                bytes = jpeg_sel.size();
+                server_.broadcast(frame->channel, std::move(jpeg_sel));
+            } else {
+                // 평상시: 전원 블러본을 복사 없이 그대로 송출 (버퍼 A엔 이미 put 완료).
+                bytes = jpeg_full.size();
+                server_.broadcast(frame->channel, std::move(jpeg_full));
+            }
 
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - t0)
