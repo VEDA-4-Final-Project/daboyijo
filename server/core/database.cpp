@@ -44,7 +44,7 @@ bool Database::insertCareLog(int cameraId, int durationSec) {
         std::cerr << "[DB] INSERT 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
-    std::cout << "[DB] 케어로그 저장 (카메라 " << cameraId
+    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1)
               << ", " << durationSec << "초)\n";
     return true;
 }

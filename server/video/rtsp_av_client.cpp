@@ -67,7 +67,7 @@ void RtspAvClient::stop() {
 void RtspAvClient::run() {
     while (running_.load()) {
         if (!openAndStream() && running_.load()) {
-            std::fprintf(stderr, "[ch%d] 재연결 %d초 대기\n", channel_,
+            std::fprintf(stderr, "[ch%d] 재연결 %d초 대기\n", channel_ + 1,
                          kReconnectDelaySec);
             for (int i = 0; i < kReconnectDelaySec * 10 && running_.load(); ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -90,7 +90,7 @@ bool RtspAvClient::openAndStream() {
         char err[128] = {0};
         av_strerror(rc, err, sizeof(err));
         std::fprintf(stderr, "[ch%d] tcp 옵션 연결 실패 (%d: %s) — 옵션 없이 재시도\n",
-                     channel_, rc, err);
+                     channel_ + 1, rc, err);
 
         if (fmt) {
             avformat_close_input(&fmt);
@@ -101,15 +101,15 @@ bool RtspAvClient::openAndStream() {
             char err2[128] = {0};
             av_strerror(rc, err2, sizeof(err2));
             std::fprintf(stderr, "[ch%d] RTSP 연결 실패 (%d: %s)\n",
-                         channel_, rc, err2);
+                         channel_ + 1, rc, err2);
             if (fmt) avformat_close_input(&fmt);
             return false;
         }
-        std::fprintf(stderr, "[ch%d] 옵션 없이 연결 성공 (기본 transport)\n", channel_);
+        std::fprintf(stderr, "[ch%d] 옵션 없이 연결 성공 (기본 transport)\n", channel_ + 1);
     }
 
     if (avformat_find_stream_info(fmt, nullptr) < 0) {
-        std::fprintf(stderr, "[ch%d] 스트림 정보 조회 실패\n", channel_);
+        std::fprintf(stderr, "[ch%d] 스트림 정보 조회 실패\n", channel_ + 1);
         avformat_close_input(&fmt);
         return false;
     }
@@ -126,7 +126,7 @@ bool RtspAvClient::openAndStream() {
         }
     }
     if (video_idx < 0) {
-        std::fprintf(stderr, "[ch%d] 영상 트랙 없음\n", channel_);
+        std::fprintf(stderr, "[ch%d] 영상 트랙 없음\n", channel_ + 1);
         avformat_close_input(&fmt);
         return false;
     }
@@ -143,7 +143,7 @@ bool RtspAvClient::openAndStream() {
     // RPi 멀티코어 활용: 디코딩 스레드
     dctx->thread_count = 2;
     if (avcodec_open2(dctx, dec, nullptr) < 0) {
-        std::fprintf(stderr, "[ch%d] 디코더 열기 실패\n", channel_);
+        std::fprintf(stderr, "[ch%d] 디코더 열기 실패\n", channel_ + 1);
         avcodec_free_context(&dctx);
         avformat_close_input(&fmt);
         return false;
@@ -183,7 +183,7 @@ bool RtspAvClient::openAndStream() {
     connected_.store(true);
     meta_buf_.clear();  // 재연결 시 이전 연결의 조각 폐기
     std::fprintf(stderr, "[ch%d] 연결됨 (영상 트랙=%d, 메타 트랙=%d)\n",
-                 channel_, video_idx, data_idx);
+                 channel_ + 1, video_idx, data_idx);
 
     bool ok = true;
     while (running_.load()) {

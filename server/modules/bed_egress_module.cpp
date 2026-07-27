@@ -10,7 +10,7 @@ void BedEgressModule::updatePatientStatus(int channel, int status) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (status >= 1 && status <= 3) {
         patient_statuses_[channel] = static_cast<PatientStatus>(status);
-        std::printf("[BedEgress] 채널 %d 환자 관리 상태 실시간 갱신: %d\n", channel, status);
+        std::printf("[BedEgress] 채널 %d 환자 관리 상태 실시간 갱신: %d\n", channel + 1, status);
     }
 }
 
@@ -32,7 +32,7 @@ void BedEgressModule::initializeFromDb(Database& db) {
         // 버퍼링에 묻히지 않도록 stderr로 — 부팅 시 각 채널이 무슨 등급으로 떴는지 바로 보이게
         const char* label = (patient_statuses_[ch] == PatientStatus::HIGH)   ? "상"
                           : (patient_statuses_[ch] == PatientStatus::MEDIUM) ? "중" : "하";
-        std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d = %s\n", ch, label);
+        std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d = %s\n", ch + 1, label);
     }
 }
 
@@ -136,8 +136,8 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
     // 락이 완전히 풀린 상태이므로 여기서 소켓 전송/블랙박스 연동을 해도 절대 서버가 멈추지 않습니다.
     for (int obj_id : trigger_ids) {
         const char* status_str = (status == PatientStatus::HIGH) ? "🔴 상(즉시 경보)" : "🟠 중(야간 관찰)";
-        std::fprintf(stderr, "⚠️ [ch%d] [%s] 환자 침상 탈출 발생! (obj: %d)\n", 
-                     channel, status_str, obj_id);
+        std::fprintf(stderr, "⚠️ [ch%d] [%s] 환자 침상 탈출 발생! (obj: %d)\n",
+                     channel + 1, status_str, obj_id);
 
         if (alarm_cb_) {
             alarm_cb_(channel, obj_id); 

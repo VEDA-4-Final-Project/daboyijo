@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
     CareQaModule care_qa(snapshots, vlm, telegram, [&](int ch) {
         privacy_masker.clearFall(ch);  // 봇 "/확인" → 낙상 블러 원상복구
-        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch);
+        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch + 1);
     });
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
                                    const std::string& text) {
@@ -106,7 +106,7 @@ int main(int argc, char* argv[]) {
     // Qt의 낙상 확인 신호 → 블러 원상복구
     stream_server.setConfirmCallback([&](int ch) {
         privacy_masker.clearFall(ch);
-        std::printf("ch%d 낙상 경보 확인.\n", ch);
+        std::printf("ch%d 낙상 경보 확인.\n", ch + 1);
     });
     //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신(인메모리).
     //  DB 영속화는 Qt가 residents.risk_level에 직접 기록하므로 서버는 하지 않는다
@@ -117,7 +117,7 @@ int main(int argc, char* argv[]) {
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n",
-                     ch, at.cx, at.cy);
+                     ch + 1, at.cx, at.cy);
         privacy_masker.reportFall(ch);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
-        std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch, obj_id);
+        std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch + 1, obj_id);
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
