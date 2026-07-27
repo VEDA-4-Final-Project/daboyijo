@@ -1548,7 +1548,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         if (channelViews[channel]) {
             channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"));
         }
-        qDebug() << "🚨 [낙상 감지] 채널" << channel << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
+        qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
 
     // 2. 비상 로그 조회 탭에 URL 및 정보 등록
@@ -1588,7 +1588,7 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         if (channelViews[channel]) {
             channelViews[channel]->setAlert(true, QStringLiteral("⚠️ 침대 이탈"));
         }
-        qDebug() << "⚠️ [침상 이탈 감지] 채널" << channel << "빨간 테두리 켜짐";
+        qDebug() << "⚠️ [침상 이탈 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐";
     }
 
     // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
@@ -2025,7 +2025,7 @@ void MainWindow::onSaveResident()
         // 4. 소켓 방출
         socket->write(pkt);
         socket->flush();
-        qDebug() << "➔ [Qt -> 서버] 채널" << cameraId << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
+        qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
         
         // 5. 로컬 GUI용 환자 정보 메모리 어레이(patients)도 즉시 동기화
         patients[cameraId].name = editName->text().trimmed();

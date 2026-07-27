@@ -48,7 +48,7 @@ void StatsReporter::maybeReport() {
 
         char buf[112];
         std::snprintf(buf, sizeof(buf), "[ch%d] %s in %.1f out %.1ffps 사람%d  ",
-                      id, clients_[i]->connected() ? "OK" : "끊김", in_fps,
+                      id + 1, clients_[i]->connected() ? "OK" : "끊김", in_fps,
                       out_fps, humans);
         status << buf;
         last_counts_[i] = count;

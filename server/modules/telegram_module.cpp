@@ -56,11 +56,11 @@ bool TelegramModule::isAuthorized(const std::string& chat_id) const {
 }
 
 void TelegramModule::notifyFall(int channel) {
-    sendAsync(channel, "🚨 [ch" + std::to_string(channel) + "] 낙상이 감지되었습니다. 확인 바랍니다.");
+    sendAsync(channel, "🚨 [ch" + std::to_string(channel + 1) + "] 낙상이 감지되었습니다. 확인 바랍니다.");
 }
 
 void TelegramModule::notifyEgress(int channel) {
-    sendAsync(channel, "⚠️ [ch" + std::to_string(channel) + "] 침상 이탈이 감지되었습니다.");
+    sendAsync(channel, "⚠️ [ch" + std::to_string(channel + 1) + "] 침상 이탈이 감지되었습니다.");
 }
 
 void TelegramModule::sendAsync(int channel, std::string text) const {
