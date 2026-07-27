@@ -9,8 +9,12 @@
 
 namespace {
 
-// 캡처·송출 모두 1280x720로 통일 → raw.size()==kViewSize면 리사이즈 없이 clone.
-const cv::Size kViewSize(1280, 720);
+// 송출·가공(블러/인코딩)용 해상도. 캡처는 원본 해상도(예: 1280x720)로 들어오고
+// AI는 raw 원본을 그대로 받으므로, 여기 값을 낮춰도 낙상 감지 정확도엔 영향이 없다.
+// 감지 좌표는 정규화(0~1)라 블러도 이 해상도에 자동으로 맞춰진다.
+// 960x540으로 낮춰 JPEG 인코딩 부하를 줄임(720p 대비 픽셀 56% → 인코딩 시간 ↓,
+// 단일 파이프라인 스레드 처리량 ↑ → Qt 송출 fps 상승). raw.size()!=kViewSize면 resize.
+const cv::Size kViewSize(960, 540);
 const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지
 constexpr double kMainProcessInterval = 1.0 / 15.0;  // 최대 15fps
