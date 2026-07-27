@@ -153,6 +153,10 @@ bool RtspAvClient::openAndStream() {
     AVPacket* pkt = av_packet_alloc();
     SwsContext* sws = nullptr;  // YUV→BGR 변환기 (첫 프레임에서 지연 생성)
     int sws_w = 0, sws_h = 0;
+    // 화면 송출용 YUV→BGR + 축소(kViewWidth×kViewHeight) 변환기. 변환과 동시에
+    // 축소해 파이프라인의 cv::resize를 대체한다 (병목 스레드에서 축소 부하 제거).
+    SwsContext* sws_view = nullptr;
+    int sws_view_w = 0, sws_view_h = 0;
 
     // ── PTS(촬영 시각) 동기화 ──────────────────────────────────────
     // 영상은 디코딩·GOV 버퍼링 지연으로 늦게 도착하지만 메타는 즉시 온다.
@@ -223,13 +227,37 @@ bool RtspAvClient::openAndStream() {
                     sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
                               dst, dst_stride);
 
+                    // 화면 송출용 축소본을 같은 YUV에서 바로 뽑는다 (변환+축소 1패스).
+                    // 원본이 화면 크기보다 클 때만 — 이하면 비워 두고 파이프라인이
+                    // image로 폴백 처리(업스케일)한다.
+                    cv::Mat view;
+                    if (frame->width > kViewWidth || frame->height > kViewHeight) {
+                        if (!sws_view || sws_view_w != frame->width ||
+                            sws_view_h != frame->height) {
+                            if (sws_view) sws_freeContext(sws_view);
+                            sws_view = sws_getContext(
+                                frame->width, frame->height,
+                                static_cast<AVPixelFormat>(frame->format),
+                                kViewWidth, kViewHeight, AV_PIX_FMT_BGR24,
+                                SWS_BILINEAR, nullptr, nullptr, nullptr);
+                            sws_view_w = frame->width;
+                            sws_view_h = frame->height;
+                        }
+                        view.create(kViewHeight, kViewWidth, CV_8UC3);
+                        uint8_t* vdst[1] = {view.data};
+                        int vdst_stride[1] = {static_cast<int>(view.step)};
+                        sws_scale(sws_view, frame->data, frame->linesize, 0,
+                                  frame->height, vdst, vdst_stride);
+                    }
+
                     // 프레임 PTS → 촬영 시각 (없으면 수신 시각 폴백)
                     int64_t vts = frame->best_effort_timestamp;
                     if (vts == AV_NOPTS_VALUE) vts = frame->pts;
                     auto captured = (vts != AV_NOPTS_VALUE)
                                         ? ptsToCapture(vts * vtb_sec)
                                         : std::chrono::steady_clock::now();
-                    queue_.push(Frame{channel_, std::move(img), captured});
+                    queue_.push(Frame{channel_, std::move(img), captured,
+                                      std::move(view)});
                 }
             }
         } else if (pkt->stream_index == data_idx && data_idx >= 0) {
@@ -266,6 +294,7 @@ bool RtspAvClient::openAndStream() {
 
     connected_.store(false);
     if (sws) sws_freeContext(sws);
+    if (sws_view) sws_freeContext(sws_view);
     av_packet_free(&pkt);
     av_frame_free(&frame);
     avcodec_free_context(&dctx);

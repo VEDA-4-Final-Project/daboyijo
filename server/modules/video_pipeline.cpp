@@ -9,13 +9,11 @@
 
 namespace {
 
-// 송출·가공(블러/인코딩)용 해상도. 캡처는 원본 해상도(예: 1280x720)로 들어오고
-// AI는 raw 원본을 그대로 받으므로, 여기 값을 낮춰도 낙상 감지 정확도엔 영향이 없다.
-// 감지 좌표는 정규화(0~1)라 블러도 이 해상도에 자동으로 맞춰진다.
-// 960x540으로 낮춰 JPEG 인코딩 부하를 줄임(720p 대비 픽셀 56% → 인코딩 시간 ↓,
-// 단일 파이프라인 스레드 처리량 ↑ → Qt 송출 fps 상승). raw.size()!=kViewSize면 resize.
-const cv::Size kViewSize(960, 540);
-const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 60};
+// 송출·가공(블러/인코딩)용 해상도. frame_queue.hpp의 kViewWidth/Height와 동일.
+// 축소는 디코딩 스레드의 sws_scale이 미리 해 두므로(frame->view), 여기선 그걸
+// 그대로 쓴다. view가 비어 있을 때만 폴백으로 cv::resize.
+const cv::Size kViewSize(kViewWidth, kViewHeight);
+const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지.
 // 주의: 이 값을 입력 fps와 동률(예: 15fps 입력에 1/15)로 두면, 지터로 프레임이
 // 조금만 빨리 와도 버려져 실효 fps가 절반 가까이 주저앉는다. 입력보다 넉넉히
@@ -49,10 +47,10 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             cv::Mat raw = std::move(frame->image);
             cv::Mat small;
 
-            // INTER_NEAREST: 보간 없는 최근접 축소 — INTER_LINEAR 대비 3~4배 빠름.
-            // 감시 송출용이라 미세한 계단현상은 감내(AI는 raw 원본을 따로 받음).
-            if (raw.size() != kViewSize)
-                cv::resize(raw, small, kViewSize, 0, 0, cv::INTER_NEAREST);
+            // 축소본은 디코딩 스레드가 sws_scale로 미리 만들어 둔다 → 여기선 이동만
+            // (병목 스레드에서 resize 부하 제거). view가 없는 경우에만 폴백 resize.
+            if (!frame->view.empty()) small = std::move(frame->view);
+            else if (raw.size() != kViewSize) cv::resize(raw, small, kViewSize);
             else small = raw.clone();
 
             // AI 전달용 깨끗한 복사본 (블러 전 원본 — 낙상 선택본 복원 소스로도 씀)
