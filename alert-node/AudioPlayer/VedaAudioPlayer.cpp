@@ -90,10 +90,10 @@ int VedaAudioPlayer::setHardwareParams(unsigned int rate, unsigned int channels,
 }
 
 struct WavHeader {
-    char riff[4];               // riff??
+    char riff[4];               // riff
     int32_t overall_size;       // 파일 전체 크기
-    char wave[4];               // wave?
-    char fmt_chunk_marker[4];   // fmt ??
+    char wave[4];               // wave
+    char fmt_chunk_marker[4];   // fmt 
     int32_t length_of_fmt;      // fmt 청크의 크기 
     int16_t format_type;        // 데이터 형태 (1이면 pcm)
     int16_t channels;           // 채널수 
