@@ -55,15 +55,15 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
     const int H = frame.rows;
 
     // [디버그] 이 프레임에 객체가 몇 개 들어왔는지
-    std::fprintf(stderr, "[detectInFrame] 객체 수=%zu\n", df.objects.size());
+    // std::fprintf(stderr, "[detectInFrame] 객체 수=%zu\n", df.objects.size());
 
     for (const auto& obj : df.objects) {
         if (!obj.isHuman()) continue;         // Human 타입만
 
         // [디버그] 사람 후보의 신뢰도
-        std::fprintf(stderr, "[detectInFrame] human likelihood=%.2f\n", obj.likelihood);
+        // std::fprintf(stderr, "[detectInFrame] human likelihood=%.2f\n", obj.likelihood);
 
-        if (obj.likelihood < 0.5f) continue;  // 신뢰도 낮으면 스킵
+        //if (obj.likelihood < 0.5f) continue;  // 신뢰도 낮으면 스킵
 
         // 정규화 좌표(0~1) → 픽셀 Rect 변환
         int x = static_cast<int>(obj.left   * W);
