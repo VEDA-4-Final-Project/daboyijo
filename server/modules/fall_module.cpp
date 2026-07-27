@@ -45,7 +45,7 @@ void FallModule::addChannel(int channel) {
     auto state = std::make_unique<ChannelPose>(kPoseModelPath, kPoseNumThreads);
     if (!state->estimator.isReady()) {
         std::fprintf(stderr, "경고: [ch%d] MoveNet 로드 실패, 자세 판정 꺼짐\n",
-                     channel);
+                     channel + 1);
     }
     channels_[channel] = std::move(state);
 }
@@ -96,7 +96,7 @@ void FallModule::processFrame(const AiJob& job) {
         // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다
         bool lying = ch.estimator.isLyingDown(job.raw_frame(roi));
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
-                     job.channel, t.object_id, lying ? "누움" : "서있음",
+                     job.channel + 1, t.object_id, lying ? "누움" : "서있음",
                      roi.width, roi.height);
 
         {
