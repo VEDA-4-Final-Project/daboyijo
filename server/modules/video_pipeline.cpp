@@ -19,7 +19,7 @@ const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // 실효 fps가 주저앉는다. 입력(15fps=66.7ms)보다 넉넉히 위(30fps=33ms)로 잡아
 // 정상 프레임은 지터가 있어도 다 통과시키고, 진짜 폭주만 막는다. 발열/CPU 상한은
 // RTSP 수신단 kMaxConvertFps=18이 큐 입력 단계에서 이미 1차로 눌러 준다.
-constexpr double kMainProcessInterval = 1.0 / 30.0;  // 30fps 초과만 방어
+constexpr double kMainProcessInterval = 1.0 / 20.0;  // 20fps 초과만 방어
 
 // (테스트 후 싱크가 미세하게 안 맞으면 이 값을 늘리거나 줄여서 칼싱크 튜닝 가능!)
 constexpr auto kDelayOffset = std::chrono::milliseconds(200);
