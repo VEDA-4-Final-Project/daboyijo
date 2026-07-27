@@ -1455,18 +1455,27 @@ void MainWindow::onReadyRead()
     // 🌟 명세서 가이드: 들어온 데이터를 무조건 글로벌 버퍼 뒤에 붙임
     buffer.append(socket->readAll());
 
-    // 버퍼에 데이터가 남아있는 동안 무한 반복 파싱
+    // 🌟 지연(백로그) 제거: 이번 호출에 도착한 프레임을 채널별로 훑어
+    //    "가장 최신 1장"만 남긴다. 그 사이 오래된 프레임은 디코드·렌더를
+    //    아예 건너뛴다(화면엔 어차피 최신 것만 보이므로 헛일). 이렇게 하면
+    //    소비자(GUI 스레드)가 유입 속도를 못 따라가도 backlog가 쌓이지 않는다.
+    //    ※ 이벤트(낙상 등)는 절대 스킵하지 않고 파싱 즉시 처리한다.
+    QByteArray latestJpeg[4];               // 채널별 최신 프레임 JPEG 바이트
+    quint64    latestTs[4]  = {0, 0, 0, 0}; // 채널별 최신 프레임 서버 타임스탬프
+    bool       hasFrame[4]  = {false, false, false, false};
+
+    // 버퍼에 완성된 패킷이 남아있는 동안 반복 파싱
     while (true) {
         // 0) 매직(2바이트)으로 패킷 종류 식별 — 영상(0xDB4B) / 이벤트(0xDB4D)
         if (buffer.size() < (int)sizeof(uint16_t))
-            return;
+            break;  // 데이터 더 올 때까지 대기 → 아래에서 최신 프레임 렌더
         uint16_t magic;
         memcpy(&magic, buffer.constData(), sizeof(magic));
 
-        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) ──
+        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) — 스킵 금지, 즉시 처리 ──
         if (magic == kEvtMagic) {
             if (buffer.size() < (int)sizeof(dbj_evt_header_t))
-                return;  // 헤더가 덜 옴 — 다음 readyRead 대기
+                break;  // 헤더가 덜 옴 — 다음 readyRead 대기
             dbj_evt_header_t evt;
             memcpy(&evt, buffer.constData(), sizeof(evt));
             buffer.remove(0, sizeof(evt));
@@ -1485,7 +1494,7 @@ void MainWindow::onReadyRead()
         // ── 영상 프레임 패킷 ──
         // 1) 헤더 크기(16바이트)만큼도 안 모였으면 데이터 더 올 때까지 대기
         if (buffer.size() < (int)sizeof(dbj_vs_header_t))
-            return;
+            break;
 
         // 2) 헤더 영역 복사 (리틀엔디언 환경이므로 memcpy로 충분)
         dbj_vs_header_t header;
@@ -1509,31 +1518,45 @@ void MainWindow::onReadyRead()
 
         // JPEG 데이터가 아직 다 안 왔으면 다음 readyRead 때까지 대기
         if (buffer.size() < total)
-            return;
+            break;
 
-        // 5) 정확한 페이로드 위치와 크기만큼 지정하여 QImage 생성
-        QImage image = QImage::fromData(
-            reinterpret_cast<const uchar*>(buffer.constData()) + sizeof(header),
-            header.payload_len,
-            "JPEG"
-            );
-
-        // 6) 지연 시간(Latency) 모니터링
-        qint64 current_time = QDateTime::currentMSecsSinceEpoch();
-        qint64 latency = current_time - header.timestamp_ms;
-        qDebug() << "Channel:" << header.channel << " | Latency:" << latency << "ms";
-
-        // 7) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 도려내기
-        buffer.remove(0, static_cast<int>(total));
-
-        // 8) channel 값으로 4분할 위젯 분배 및 렌더링
-        if (!image.isNull()) {
-            if (header.channel >= 0 && header.channel < 4) {
-                channelViews[header.channel]->setFrame(QPixmap::fromImage(image));
-                liveDots[header.channel]->setStyleSheet(
-                    QString("background:%1; border-radius:3px;").arg(kCritical));
-            }
+        // 5) 디코드는 뒤로 미루고, 채널별 "최신 프레임" 바이트만 보관한다.
+        //    (여기서 QImage 디코드/렌더를 하면 backlog의 오래된 프레임까지
+        //     전부 처리하게 되어 지연이 톱니처럼 쌓인다.)
+        if (header.channel < 4) {
+            latestJpeg[header.channel] = QByteArray(
+                buffer.constData() + sizeof(header),
+                static_cast<int>(header.payload_len)); // 이전 최신 프레임 덮어씀
+            latestTs[header.channel]  = header.timestamp_ms;
+            hasFrame[header.channel]  = true;
         }
+
+        // 6) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 도려내기
+        buffer.remove(0, static_cast<int>(total));
+    }
+
+    // 7) 채널별 "가장 최신" 프레임만 디코드·렌더 (헛일 제거로 지연 최소화)
+    for (int ch = 0; ch < 4; ++ch) {
+        if (!hasFrame[ch])
+            continue;
+
+        QImage image = QImage::fromData(
+            reinterpret_cast<const uchar*>(latestJpeg[ch].constData()),
+            latestJpeg[ch].size(),
+            "JPEG");
+        if (image.isNull())
+            continue;
+
+        // 지연 시간(Latency) 모니터링 — 최신 프레임 기준으로만 출력
+        // ※ 서버·클라 PC 시계가 NTP로 동기화돼 있어야 값이 정확하다.
+        //   (동기 안 되면 두 시계 오프셋만큼 음수/양수로 치우침)
+        const qint64 latency =
+            QDateTime::currentMSecsSinceEpoch() - static_cast<qint64>(latestTs[ch]);
+        qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
+
+        channelViews[ch]->setFrame(QPixmap::fromImage(image));
+        liveDots[ch]->setStyleSheet(
+            QString("background:%1; border-radius:3px;").arg(kCritical));
     }
 }
 
