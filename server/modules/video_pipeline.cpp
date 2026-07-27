@@ -51,6 +51,11 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             // AI 전달용 깨끗한 복사본 (블러 전 원본 — 낙상 선택본 복원 소스로도 씀)
             cv::Mat clean = small.clone();
 
+            // resize+clone 소요만 따로 (전체 처리시간 중 준비 단계 비중 진단용)
+            const double prep_ms = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - t0)
+                                       .count();
+
             // 이 프레임의 생성 시각과 가장 궁합이 맞는 감지 좌표 선택
             auto dets = store_.closestTo(frame->channel, frame->received_at - kDelayOffset);
 
@@ -102,7 +107,7 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - t0)
                                   .count();
-            stats_.onFrameSent(frame->channel, bytes, ms, encode_ms);
+            stats_.onFrameSent(frame->channel, bytes, ms, prep_ms, encode_ms);
         }
 
         stats_.maybeReport();

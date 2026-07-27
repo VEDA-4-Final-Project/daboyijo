@@ -20,8 +20,10 @@ public:
 
     // 프레임 1장 송출 완료마다 호출.
     //   procMs   = 프레임 전체 처리시간(resize+clone+블러+imencode+broadcast)
-    //   encodeMs = 순수 imencode 소요 시간 (전체 중 인코딩이 차지하는 비중 진단용)
-    void onFrameSent(int channel, size_t jpegBytes, double procMs,
+    //   prepMs   = resize+clone 소요 (준비 단계)
+    //   encodeMs = 순수 imencode 소요 시간
+    // 전체 - 준비 - 인코딩 = 스테이지(블러/샤픈)+송출 오버헤드로 추정.
+    void onFrameSent(int channel, size_t jpegBytes, double procMs, double prepMs,
                      double encodeMs);
 
     // 매 루프마다 호출 — 5초 지났으면 리포트 출력
@@ -40,6 +42,7 @@ private:
 
     std::map<int, ChannelStats> stats_;
     double proc_ms_total_ = 0;    // 전체 처리시간 누적
+    double prep_ms_total_ = 0;    // resize+clone 누적
     double encode_ms_total_ = 0;  // 순수 imencode 시간 누적
     uint64_t encode_count_ = 0;
     std::chrono::steady_clock::time_point last_report_;
