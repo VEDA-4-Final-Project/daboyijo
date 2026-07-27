@@ -30,7 +30,7 @@ void CaregiverModule::addChannel(int channel) {
     if (!result.second) return;  // 이미 등록됨
 
     result.first->second.onSessionEnd([channel, this](int dur) {
-        std::printf("[ch%d] 케어 세션 종료: %d초\n", channel, dur);
+        std::printf("[ch%d] 케어 세션 종료: %d초\n", channel + 1, dur);
         db_.insertCareLog(channel, dur);
     });
 }

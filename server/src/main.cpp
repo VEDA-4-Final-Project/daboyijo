@@ -31,6 +31,7 @@
 #include "fall_module.hpp"
 #include "frame_queue.hpp"
 #include "privacy_masker.hpp"
+#include "sharpen_enhancer.hpp"
 #include "protocol/video_stream.h"
 #include "rtsp_av_client.hpp"
 #include "stats_reporter.hpp"
@@ -76,6 +77,10 @@ int main(int argc, char* argv[]) {
     FallModule fall;                // [낙상감지]
     BedEgressModule bed_egress;     // [침상탈출]
     PrivacyMasker privacy_masker;   // [블러처리]
+    // [선명도 보정] 사람 영역만 샤프닝. amount=강도, sigma=윤곽 반경(작을수록 쨍함).
+    // 눈에 잘 띄도록 강하게: 세부 윤곽을 또렷하게 세운다. 과하면 노이즈·헤일로가
+    // 보일 수 있으니 화면 보며 조절할 것 (은은하게: (0.5, 3.0)).
+    SharpenEnhancer sharpen_enhancer(1.2, 1.0);
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
@@ -85,7 +90,7 @@ int main(int argc, char* argv[]) {
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
     CareQaModule care_qa(snapshots, vlm, telegram, [&](int ch) {
         privacy_masker.clearFall(ch);  // 봇 "/확인" → 낙상 블러 원상복구
-        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch);
+        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch + 1);
     });
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
                                    const std::string& text) {
@@ -101,12 +106,18 @@ int main(int argc, char* argv[]) {
     // Qt의 낙상 확인 신호 → 블러 원상복구
     stream_server.setConfirmCallback([&](int ch) {
         privacy_masker.clearFall(ch);
-        std::printf("ch%d 낙상 경보 확인.\n", ch);
+        std::printf("ch%d 낙상 경보 확인.\n", ch + 1);
+    });
+    //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신(인메모리).
+    //  DB 영속화는 Qt가 residents.risk_level에 직접 기록하므로 서버는 하지 않는다
+    //  (부팅 시 bed_egress.initializeFromDb → getRiskLevelByCamera로 복원).
+    stream_server.setRiskLevelCallback([&](int ch, int patient_status) {
+        bed_egress.updatePatientStatus(ch, patient_status);
     });
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) cx=%.2f cy=%.2f\n",
-                     ch, at.cx, at.cy);
+                     ch + 1, at.cx, at.cy);
         privacy_masker.reportFall(ch);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
@@ -115,7 +126,7 @@ int main(int argc, char* argv[]) {
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
-        std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch, obj_id);
+        std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch + 1, obj_id);
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
@@ -129,6 +140,7 @@ int main(int argc, char* argv[]) {
     blackbox.startHttp();
     telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
     db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
+    bed_egress.initializeFromDb(db);
 
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
@@ -154,6 +166,14 @@ int main(int argc, char* argv[]) {
     StatsReporter stats(clients, detections, stream_server);
     VideoPipeline pipeline(queue, stream_server, detections, ai_worker, stats,
                            snapshots);
+    // [선명도 보정] 사람(Human) 영역만 샤프닝.
+    // ★ 반드시 블러 stage보다 "앞"에 둔다: 몸통을 먼저 선명하게 만든 뒤
+    //   그 위에 얼굴 블러가 덮여야 프라이버시가 깨지지 않는다.
+    pipeline.addStage([&](int ch, cv::Mat& img,
+                          const std::vector<Detection>& dets) {
+        sharpen_enhancer.process(ch, img, dets);
+    });
+
     // [블러처리] 송출 전 동적 프라이버시 마스킹 단계
     pipeline.addStage([&](int ch, cv::Mat& img,
                           const std::vector<Detection>& dets) {

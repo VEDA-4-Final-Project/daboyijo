@@ -39,7 +39,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         if (in_bed) {
             if (!tr.in_bed) {
                 std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
-                             channel, d.object_id);
+                             channel + 1, d.object_id);
             }
             tr.in_bed = true;
             tr.lying_active = false;
@@ -48,7 +48,7 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         }
         if (tr.in_bed) {
             std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰 시작\n",
-                         channel, d.object_id);
+                         channel + 1, d.object_id);
         }
         tr.in_bed = false;
     }
