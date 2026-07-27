@@ -11,8 +11,8 @@
 // 화면 송출용 축소 해상도 — 관제 Qt 그리드 타일 크기에 맞춘 값(FHD 2×2면 타일당
 // 딱 960×540 1:1). AI(MoveNet)는 image 원본을 따로 받으므로 이 값은 순수 '보이는
 // 영상' 크기다. video_pipeline.cpp의 kViewSize는 반드시 이 값과 일치시킬 것.
-constexpr int kViewWidth = 960;
-constexpr int kViewHeight = 540;
+constexpr int kViewWidth = 1920;
+constexpr int kViewHeight = 1080;
 
 // 디코딩된 1프레임. 채널 번호와 수신 시각을 함께 보관한다.
 struct Frame {
