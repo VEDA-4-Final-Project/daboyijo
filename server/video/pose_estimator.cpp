@@ -17,6 +17,11 @@ namespace {
 // 어깨-엉덩이 벡터가 수직에서 이만큼(도) 이상 기울면 "누움"으로 본다.
 // 서 있으면 거의 0도(수직), 완전히 누우면 90도에 가깝다. 잠정값 — 실측 캡처로 튜닝.
 constexpr float kLyingAngleDeg = 55.0f;
+// 하체(엉덩이→무릎/발목) 벡터가 수직에서 이 각도 미만이면 "다리는 서 있음".
+// 허리만 숙이면 몸통은 기울어도(신호1 발화) 하체는 수직에 가깝다 — 반면 실제로
+// 누우면 몸통·하체가 함께 수평이 된다. 이 값 미만이면 신호1을 거부(허리 숙임으로
+// 판단)해 세면·물건줍기 등 오탐을 막는다. 잠정값 — 실측 로그로 튜닝.
+constexpr float kUprightLegDeg = 40.0f;
 // 어깨/엉덩이 관절 신뢰도가 이 미만이면 그 관절은 못 믿는 것으로 보고 판정 보류.
 constexpr float kMinJointScore = 0.25f;
 constexpr float kPi = 3.14159265358979323846f;
@@ -199,13 +204,50 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     const float dy = hip_y - shoulder_y;
     if (std::fabs(dx) < 1e-6f && std::fabs(dy) < 1e-6f) return false;
 
+    // ── 하체 관절 수집 (신호1 하체 veto + 신호3 스프레드가 공유) ──
+    // 발목을 우선하되 없으면 무릎, 둘 다 없으면 하체 정보 없음. 양쪽 관절이
+    // 모두 신뢰될 때만 중점을 쓴다(한쪽만 보이면 좌표가 편향돼 각도가 흔들림).
+    bool has_knee = false, has_ankle = false;
+    float knee_x = 0, knee_y = 0, ankle_x = 0, ankle_y = 0;
+    const auto& lk = kp[kLeftKnee];
+    const auto& rk = kp[kRightKnee];
+    if (lk.score >= kMinJointScore && rk.score >= kMinJointScore) {
+        knee_x = (lk.x + rk.x) / 2.0f;
+        knee_y = (lk.y + rk.y) / 2.0f;
+        has_knee = true;
+    }
+    const auto& la = kp[kLeftAnkle];
+    const auto& ra = kp[kRightAnkle];
+    if (la.score >= kMinJointScore && ra.score >= kMinJointScore) {
+        ankle_x = (la.x + ra.x) / 2.0f;
+        ankle_y = (la.y + ra.y) / 2.0f;
+        has_ankle = true;
+    }
+
+    // ── 하체 각도 veto ──
+    // 엉덩이 → 가장 아래 신뢰관절(발목 우선, 없으면 무릎) 벡터의 수직 기울기.
+    // 이 각도가 kUprightLegDeg 미만이면 "다리는 서 있음" = 허리만 숙인 자세로
+    // 보고 신호1을 거부한다. 하체를 못 보면(둘 다 없음) veto 없이 기존대로.
+    bool legs_upright = false;
+    if (has_ankle || has_knee) {
+        const float lower_x = has_ankle ? ankle_x : knee_x;
+        const float lower_y = has_ankle ? ankle_y : knee_y;
+        const float leg_dx = lower_x - hip_x;
+        const float leg_dy = lower_y - hip_y;
+        if (std::fabs(leg_dx) > 1e-6f || std::fabs(leg_dy) > 1e-6f) {
+            const float leg_angle =
+                std::atan2(std::fabs(leg_dx), std::fabs(leg_dy)) * 180.0f / kPi;
+            legs_upright = leg_angle < kUprightLegDeg;
+        }
+    }
+
     // ── 신호 1: 몸통 기울기 ──
     // 수직(dy) 기준 기울기 각도. 0도=수직(서 있음), 90도=수평(누움). 방향 무관.
     // 옆으로 눕는 낙상을 잡는다. 단, fabs(dy)라 상하 반전은 여기 안 보인다 —
-    // 그건 신호 2가 담당.
+    // 그건 신호 2가 담당. 하체가 서 있으면(허리 숙임) 거부한다.
     const float angle_from_vertical =
         std::atan2(std::fabs(dx), std::fabs(dy)) * 180.0f / kPi;
-    const bool by_angle = angle_from_vertical >= kLyingAngleDeg;
+    const bool by_angle = angle_from_vertical >= kLyingAngleDeg && !legs_upright;
 
     // ── 신호 2: 상하 반전 ──
     // y는 화면 아래로 증가. 서 있으면 항상 dy > 0 (엉덩이가 어깨 아래).
@@ -223,19 +265,13 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     float max_y = std::max(shoulder_y, hip_y);
     float ratio_limit = kSpreadRatioTorsoOnly;
     const char* extent = "엉덩이";
-    const auto& lk = kp[kLeftKnee];
-    const auto& rk = kp[kRightKnee];
-    if (lk.score >= kMinJointScore && rk.score >= kMinJointScore) {
-        const float knee_y = (lk.y + rk.y) / 2.0f;
+    if (has_knee) {
         min_y = std::min(min_y, knee_y);
         max_y = std::max(max_y, knee_y);
         ratio_limit = kSpreadRatioToKnee;
         extent = "무릎";
     }
-    const auto& la = kp[kLeftAnkle];
-    const auto& ra = kp[kRightAnkle];
-    if (la.score >= kMinJointScore && ra.score >= kMinJointScore) {
-        const float ankle_y = (la.y + ra.y) / 2.0f;
+    if (has_ankle) {
         min_y = std::min(min_y, ankle_y);
         max_y = std::max(max_y, ankle_y);
         ratio_limit = kSpreadRatioToAnkle;
@@ -256,9 +292,10 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     (void)extent;  // 아래 로그 비활성화 중 미사용 경고 방지 (임계값 튜닝 시 로그와 함께 복원)
     // 로그 정리로 비활성화 — 디버깅 시 해제
     // std::fprintf(stderr,
-    //              "[pose] 기울기=%.1f도(기준%.0f%s) 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) 몸통=%.2f → %s\n",
-    //              angle_from_vertical, kLyingAngleDeg, by_angle ? "✓" : "",
-    //              inverted ? "✓" : "-",
+    //              "[pose] 기울기=%.1f도(기준%.0f%s) 하체veto=%s 반전=%s 스프레드=%.2f(~%s, 기준<%.1f%s) 몸통=%.2f → %s\n",
+    //              angle_from_vertical, kLyingAngleDeg,
+    //              (angle_from_vertical >= kLyingAngleDeg) ? "✓" : "",
+    //              legs_upright ? "다리섬" : "-", inverted ? "✓" : "-",
     //              spread_ratio, extent, ratio_limit, foreshortened ? "✓" : "",
     //              torso_ratio, lying ? "누움" : "서있음");
     return lying;
