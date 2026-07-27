@@ -12,11 +12,12 @@ StatsReporter::StatsReporter(
       last_report_(std::chrono::steady_clock::now()),
       last_counts_(clients.size(), 0) {}
 
-void StatsReporter::onFrameSent(int channel, size_t jpegBytes,
+void StatsReporter::onFrameSent(int channel, size_t jpegBytes, double procMs,
                                 double encodeMs) {
     auto& ch = stats_[channel];
     ch.processed += 1;
     ch.bytes += jpegBytes;
+    proc_ms_total_ += procMs;
     encode_ms_total_ += encodeMs;
     encode_count_ += 1;
 }
@@ -55,15 +56,18 @@ void StatsReporter::maybeReport() {
         stats_[id] = ChannelStats{};
     }
 
+    const double avg_proc =
+        encode_count_ ? proc_ms_total_ / encode_count_ : 0;
     const double avg_encode =
         encode_count_ ? encode_ms_total_ / encode_count_ : 0;
-    char sys_buf[96];
+    char sys_buf[112];
     std::snprintf(sys_buf, sizeof(sys_buf),
-                  "| CPU %.0f%% %.1f°C 인코딩 %.1fms 클라 %zu",
+                  "| CPU %.0f%% %.1f°C 처리 %.1fms(인코딩 %.1f) 클라 %zu",
                   system_stats_.cpuPercent(), SystemStats::socTemperature(),
-                  avg_encode, server_.clientCount());
+                  avg_proc, avg_encode, server_.clientCount());
     status << sys_buf;
 
+    proc_ms_total_ = 0;
     encode_ms_total_ = 0;
     encode_count_ = 0;
     std::printf("%s\n", status.str().c_str());

@@ -70,16 +70,25 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             ai_.submit({std::move(raw), std::move(clean), frame->channel,
                         std::move(dets)});
 
+            // imencode 순수 소요만 따로 누적 (전체 처리시간 중 인코딩 비중 진단용)
+            double encode_ms = 0;
+
             // 전원 블러본은 항상 버퍼 A에 보관 → Gemini/외부로 나가는 스냅샷.
             std::vector<unsigned char> jpeg_full;
+            const auto enc0 = std::chrono::steady_clock::now();
             cv::imencode(".jpg", small, jpeg_full, kJpegParams);
+            encode_ms += std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - enc0).count();
             snapshots_.put(frame->channel, jpeg_full, now);
 
             // Qt 송출·버퍼 B: 낙상 중이면 선택본, 아니면 전원 블러본.
             size_t bytes;
             if (has_selective) {
                 std::vector<unsigned char> jpeg_sel;
+                const auto enc1 = std::chrono::steady_clock::now();
                 cv::imencode(".jpg", selective, jpeg_sel, kJpegParams);
+                encode_ms += std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - enc1).count();
                 // [보호자] 낙상 선택본 스냅샷 보관 (텔레그램 낙상 사진용).
                 snapshots_fall_.put(frame->channel, jpeg_sel, now);
                 bytes = jpeg_sel.size();
@@ -93,7 +102,7 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - t0)
                                   .count();
-            stats_.onFrameSent(frame->channel, bytes, ms);
+            stats_.onFrameSent(frame->channel, bytes, ms, encode_ms);
         }
 
         stats_.maybeReport();
