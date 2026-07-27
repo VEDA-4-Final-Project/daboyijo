@@ -45,7 +45,10 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             cv::Mat raw = std::move(frame->image);
             cv::Mat small;
 
-            if (raw.size() != kViewSize) cv::resize(raw, small, kViewSize);
+            // INTER_NEAREST: 보간 없는 최근접 축소 — INTER_LINEAR 대비 3~4배 빠름.
+            // 감시 송출용이라 미세한 계단현상은 감내(AI는 raw 원본을 따로 받음).
+            if (raw.size() != kViewSize)
+                cv::resize(raw, small, kViewSize, 0, 0, cv::INTER_NEAREST);
             else small = raw.clone();
 
             // AI 전달용 깨끗한 복사본 (블러 전 원본 — 낙상 선택본 복원 소스로도 씀)
