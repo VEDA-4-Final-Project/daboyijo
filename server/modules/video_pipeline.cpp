@@ -15,7 +15,7 @@ namespace {
 // 960x540으로 낮춰 JPEG 인코딩 부하를 줄임(720p 대비 픽셀 56% → 인코딩 시간 ↓,
 // 단일 파이프라인 스레드 처리량 ↑ → Qt 송출 fps 상승). raw.size()!=kViewSize면 resize.
 const cv::Size kViewSize(960, 540);
-const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
+const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 60};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지.
 // 주의: 이 값을 입력 fps와 동률(예: 15fps 입력에 1/15)로 두면, 지터로 프레임이
 // 조금만 빨리 와도 버려져 실효 fps가 절반 가까이 주저앉는다. 입력보다 넉넉히
