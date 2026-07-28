@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
     // 보일 수 있으니 화면 보며 조절할 것 (은은하게: (0.5, 3.0)).
     // [테스트 2026-07-28] 부하 완화 실험으로 샤픈 stage 비활성 → 선언도 잠시 주석
     //   (미사용 경고 방지). 되살리려면 이 줄과 아래 addStage 블록을 함께 주석 해제.
-    // SharpenEnhancer sharpen_enhancer(1.2, 1.0);
+    SharpenEnhancer sharpen_enhancer(1.2, 1.0);
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
