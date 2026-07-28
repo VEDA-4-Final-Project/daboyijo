@@ -210,10 +210,17 @@ bool RtspAvClient::openAndStream() {
                 while (avcodec_receive_frame(dctx, frame) == 0) {
                     frame_count_.fetch_add(1);
 
-                    // 소비 안 될 프레임은 BGR 변환 없이 버린다 (위 kMaxConvertFps 주석 참조)
-                    auto now = std::chrono::steady_clock::now();
-                    if (now - last_convert < convert_interval) continue;
-                    last_convert = now;
+                    // 소비 안 될 프레임은 BGR 변환 없이 버린다. 판정은 벽시계가 아니라
+                    // 촬영시각(PTS) 기준 — 디코딩이 버스티하게 뭉쳐 나와도 촬영 간격이
+                    // 정상(20fps=50ms)이면 통과시키고, 진짜 고fps만 걸러낸다.
+                    int64_t gate_vts = frame->best_effort_timestamp;
+                    if (gate_vts == AV_NOPTS_VALUE) gate_vts = frame->pts;
+                    const auto gate_ts =
+                        (gate_vts != AV_NOPTS_VALUE)
+                            ? ptsToCapture(gate_vts * vtb_sec)
+                            : std::chrono::steady_clock::now();
+                    if (gate_ts - last_convert < convert_interval) continue;
+                    last_convert = gate_ts;
 
                     if (!sws || sws_w != frame->width || sws_h != frame->height) {
                         if (sws) sws_freeContext(sws);
@@ -254,13 +261,8 @@ bool RtspAvClient::openAndStream() {
                                   frame->height, vdst, vdst_stride);
                     }
 
-                    // 프레임 PTS → 촬영 시각 (없으면 수신 시각 폴백)
-                    int64_t vts = frame->best_effort_timestamp;
-                    if (vts == AV_NOPTS_VALUE) vts = frame->pts;
-                    auto captured = (vts != AV_NOPTS_VALUE)
-                                        ? ptsToCapture(vts * vtb_sec)
-                                        : std::chrono::steady_clock::now();
-                    queue_.push(Frame{channel_, std::move(img), captured,
+                    // 촬영시각은 위 게이트에서 이미 계산(gate_ts) → 그대로 재사용.
+                    queue_.push(Frame{channel_, std::move(img), gate_ts,
                                       std::move(view)});
                 }
             }
