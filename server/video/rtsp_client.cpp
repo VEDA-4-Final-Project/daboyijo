@@ -52,8 +52,10 @@ void RtspClient::run() {
         cv::Mat image;
         while (running_.load() && cap.read(image)) {
             frame_count_.fetch_add(1);
+            // view는 비워 둔다 — 이 경로(OpenCV VideoCapture)는 축소본을 미리 만들지
+            // 않으므로 파이프라인이 image로 폴백 축소(cv::resize)한다.
             queue_.push(Frame{channel_, image.clone(),
-                              std::chrono::steady_clock::now()});
+                              std::chrono::steady_clock::now(), cv::Mat{}});
         }
 
         connected_.store(false);

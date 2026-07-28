@@ -13,7 +13,7 @@ namespace {
 // 축소는 디코딩 스레드의 sws_scale이 미리 해 두므로(frame->view), 여기선 그걸
 // 그대로 쓴다. view가 비어 있을 때만 폴백으로 cv::resize.
 const cv::Size kViewSize(kViewWidth, kViewHeight);
-const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
+const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 65};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지.
 // 주의: 이 값을 입력 fps에 가깝게 두면, 지터로 프레임이 조금만 빨리 와도 버려져
 // 실효 fps가 주저앉는다. 입력(15fps=66.7ms)보다 넉넉히 위(30fps=33ms)로 잡아
