@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "detection_store.hpp"
@@ -12,14 +13,21 @@
 #include "system_stats.hpp"
 
 // [공용 인프라] 5초 주기 상태 리포트 — 채널별 fps·사람 수·CPU·온도·인코딩 시간.
-// VideoPipeline(메인 스레드)에서만 호출되므로 락 불필요.
+// 채널별 파이프라인 스레드들이 동시에 onFrameSent()/maybeReport()를 호출하므로
+// mutex_로 보호한다. maybeReport()는 5초 게이트를 락 안에서 판정 → 여러 스레드가
+// 불러도 실제 출력·리셋은 한 번만 일어난다.
 class StatsReporter {
 public:
     StatsReporter(const std::vector<std::unique_ptr<RtspAvClient>>& clients,
                   DetectionStore& store, StreamServer& server);
 
-    // 프레임 1장 송출 완료마다 호출 (인코딩+가공 소요 시간 포함)
-    void onFrameSent(int channel, size_t jpegBytes, double encodeMs);
+    // 프레임 1장 송출 완료마다 호출.
+    //   procMs   = 프레임 전체 처리시간(resize+clone+블러+imencode+broadcast)
+    //   prepMs   = resize+clone 소요 (준비 단계)
+    //   encodeMs = 순수 imencode 소요 시간
+    // 전체 - 준비 - 인코딩 = 스테이지(블러/샤픈)+송출 오버헤드로 추정.
+    void onFrameSent(int channel, size_t jpegBytes, double procMs, double prepMs,
+                     double encodeMs);
 
     // 매 루프마다 호출 — 5초 지났으면 리포트 출력
     void maybeReport();
@@ -35,8 +43,11 @@ private:
     StreamServer& server_;
     SystemStats system_stats_;
 
+    std::mutex mutex_;  // onFrameSent/maybeReport 동시 호출 보호 (채널별 스레드)
     std::map<int, ChannelStats> stats_;
-    double encode_ms_total_ = 0;
+    double proc_ms_total_ = 0;    // 전체 처리시간 누적
+    double prep_ms_total_ = 0;    // resize+clone 누적
+    double encode_ms_total_ = 0;  // 순수 imencode 시간 누적
     uint64_t encode_count_ = 0;
     std::chrono::steady_clock::time_point last_report_;
     std::vector<uint64_t> last_counts_;

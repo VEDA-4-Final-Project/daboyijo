@@ -125,8 +125,13 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
-    QTcpSocket *socket;
-    QByteArray buffer;           // 🌟 명세서 가이드: 수신 데이터를 쌓아둘 버퍼
+    // 2-Pi 분할: 채널을 두 라즈베리에 2+2로 나눠 받는다. 서버마다 소켓·수신버퍼 1쌍.
+    //   ch0·ch1 → Pi A(sockets[0]) / ch2·ch3 → Pi B(sockets[1]).
+    static constexpr int kNumServers = 2;
+    static int serverForChannel(int ch) { return ch < 2 ? 0 : 1; }
+    QTcpSocket *sockets[kNumServers] = {};
+    QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
+    QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
