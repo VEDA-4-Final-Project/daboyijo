@@ -77,7 +77,6 @@ void CareQaModule::handleMessage(int channel, const std::string& chat_id,
 }
 
 void CareQaModule::reportFall(int channel) {
-    if (!vlm_.available()) return;  // VLM 미설정이면 기본 알림(notifyFall)만
     std::string chat_id = telegram_.chatIdForChannel(channel);
     if (chat_id.empty()) return;
 
@@ -95,19 +94,39 @@ void CareQaModule::reportFall(int channel) {
     }
 
     // VLM 왕복(수 초)은 fall 콜백(AI 워커 스레드)을 막지 않도록 detached 스레드에서.
-    SnapshotBuffer* snap = &snapshots_;
+    SnapshotBuffer* snapA = &snapshots_;       // 전원 블러본 (Gemini용)
+    SnapshotBuffer* snapB = &snapshots_fall_;  // 낙상 선택본 (보호자 사진용)
     VlmClient* vlm = &vlm_;
     TelegramModule* tg = &telegram_;
-    std::thread([snap, vlm, tg, channel, chat_id]() {
-        auto frames = snap->recentKeyframes(channel, kKeyframes, kSpanSec);
-        if (frames.empty()) return;
-        const std::string q =
-            "방금 이 어르신에게 낙상이 감지되었습니다. 사진 속 현재 자세와 "
-            "상황을 보호자에게 알리듯 두세 문장으로 설명해 주세요. 의학적 진단이나 "
-            "부상 여부 단정은 하지 말고, 보이는 상황만 차분히 전해 주세요.";
-        std::string answer = vlm->describe(frames, q);
-        if (answer.empty()) return;
-        tg->sendMessage(chat_id, "🚨 낙상 감지 — 현재 상황\n" + answer);
-        tg->sendPhoto(chat_id, frames.back(), "낙상 감지 시점 📷");
+    std::thread([snapA, snapB, vlm, tg, channel, chat_id]() {
+        // ── Gemini 상황 설명(있으면) ── 반드시 전원 블러본(버퍼 A)만 외부로.
+        if (vlm->available()) {
+            auto blurred = snapA->recentKeyframes(channel, kKeyframes, kSpanSec);
+            if (!blurred.empty()) {
+                const std::string q =
+                    "방금 이 어르신에게 낙상이 감지되었습니다. 사진 속 현재 자세와 "
+                    "상황을 보호자에게 알리듯 두세 문장으로 설명해 주세요. 의학적 진단이나 "
+                    "부상 여부 단정은 하지 말고, 보이는 상황만 차분히 전해 주세요.";
+                std::string answer = vlm->describe(blurred, q);
+                if (!answer.empty()) {
+                    tg->sendMessage(chat_id, "🚨 낙상 감지 — 현재 상황\n" + answer);
+                }
+            }
+        } else {
+            // VLM 미설정이면 선택본이 버퍼 B에 쌓일 시간을 잠깐 준다
+            // (VLM 왕복이 없어서 곧바로 사진을 꺼내면 B가 아직 비어 있을 수 있음).
+            std::this_thread::sleep_for(std::chrono::milliseconds(800));
+        }
+
+        // ── 보호자 사진 ── 낙상자만 노출한 선택본(버퍼 B) 우선, 없으면 전원 블러본.
+        auto fall_shot = snapB->recentKeyframes(channel, 1, kSpanSec);
+        if (!fall_shot.empty()) {
+            tg->sendPhoto(chat_id, fall_shot.back(), "낙상 감지 시점 📷");
+        } else {
+            auto blurred = snapA->recentKeyframes(channel, 1, kSpanSec);
+            if (!blurred.empty()) {
+                tg->sendPhoto(chat_id, blurred.back(), "낙상 감지 시점 📷");
+            }
+        }
     }).detach();
 }
