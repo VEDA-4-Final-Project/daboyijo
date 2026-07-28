@@ -21,6 +21,12 @@ const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // RTSP 수신단 kMaxConvertFps=18이 큐 입력 단계에서 이미 1차로 눌러 준다.
 constexpr double kMainProcessInterval = 1.0 / 20.0;  // 20fps 초과만 방어
 
+// 스냅샷 버퍼 갱신 주기. care_qa는 최근 5초에서 3장만 뽑아 VLM에 보내므로
+// (recentKeyframes(ch, 3, 5.0)) 매 프레임 인코딩할 필요가 없다. 채널당 이 주기로만
+// 스냅샷용 JPEG를 새로 만들어 인코딩 부하를 크게 줄인다. 실시간 Qt 송출은 별도로
+// "클라가 붙어 있을 때만" 인코딩하므로, 아무도 안 보는 프레임은 인코딩하지 않는다.
+constexpr double kSnapshotInterval = 1.0 / 2.0;  // 스냅샷 버퍼 2fps 갱신
+
 // (테스트 후 싱크가 미세하게 안 맞으면 이 값을 늘리거나 줄여서 칼싱크 튜닝 가능!)
 constexpr auto kDelayOffset = std::chrono::milliseconds(200);
 
@@ -28,6 +34,7 @@ constexpr auto kDelayOffset = std::chrono::milliseconds(200);
 
 void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
     std::map<int, std::chrono::steady_clock::time_point> last_proc_time;
+    std::map<int, std::chrono::steady_clock::time_point> last_snap_time;
 
     while (!stop) {
         auto frame = queue_.pop(std::chrono::milliseconds(200));
@@ -82,32 +89,47 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
 
             // imencode 순수 소요만 따로 누적 (전체 처리시간 중 인코딩 비중 진단용)
             double encode_ms = 0;
+            auto encode = [&](const cv::Mat& img,
+                              std::vector<unsigned char>& out) {
+                const auto e0 = std::chrono::steady_clock::now();
+                cv::imencode(".jpg", img, out, kJpegParams);
+                encode_ms += std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - e0).count();
+            };
 
-            // 전원 블러본은 항상 버퍼 A에 보관 → Gemini/외부로 나가는 스냅샷.
+            // 인코딩은 Pi에서 가장 비싼 구간이라, 정말 필요한 소비자에게만 인코딩한다.
+            //  · 스냅샷 버퍼: care_qa가 5초에 3장만 뽑으므로 2fps 갱신이면 충분.
+            //  · Qt 송출: 붙은 클라가 있을 때만.
+            const bool snapshot_due =
+                std::chrono::duration<double>(now - last_snap_time[frame->channel])
+                    .count() >= kSnapshotInterval;
+            const bool has_client = server_.clientCount() > 0;
+
+            // 전원 블러본(버퍼 A): 스냅샷 주기이거나, 평상시 클라 송출용일 때만 인코딩.
             std::vector<unsigned char> jpeg_full;
-            const auto enc0 = std::chrono::steady_clock::now();
-            cv::imencode(".jpg", small, jpeg_full, kJpegParams);
-            encode_ms += std::chrono::duration<double, std::milli>(
-                             std::chrono::steady_clock::now() - enc0).count();
-            snapshots_.put(frame->channel, jpeg_full, now);
+            if (snapshot_due || (!has_selective && has_client))
+                encode(small, jpeg_full);
+            if (snapshot_due) snapshots_.put(frame->channel, jpeg_full, now);
 
             // Qt 송출·버퍼 B: 낙상 중이면 선택본, 아니면 전원 블러본.
-            size_t bytes;
+            size_t bytes = 0;
             if (has_selective) {
+                // 낙상 선택본: 스냅샷 주기이거나 클라 송출용일 때만 인코딩.
                 std::vector<unsigned char> jpeg_sel;
-                const auto enc1 = std::chrono::steady_clock::now();
-                cv::imencode(".jpg", selective, jpeg_sel, kJpegParams);
-                encode_ms += std::chrono::duration<double, std::milli>(
-                                 std::chrono::steady_clock::now() - enc1).count();
+                if (snapshot_due || has_client) encode(selective, jpeg_sel);
                 // [보호자] 낙상 선택본 스냅샷 보관 (텔레그램 낙상 사진용).
-                snapshots_fall_.put(frame->channel, jpeg_sel, now);
-                bytes = jpeg_sel.size();
-                server_.broadcast(frame->channel, std::move(jpeg_sel));
-            } else {
+                if (snapshot_due) snapshots_fall_.put(frame->channel, jpeg_sel, now);
+                if (has_client) {
+                    bytes = jpeg_sel.size();
+                    server_.broadcast(frame->channel, std::move(jpeg_sel));
+                }
+            } else if (has_client) {
                 // 평상시: 전원 블러본을 복사 없이 그대로 송출 (버퍼 A엔 이미 put 완료).
                 bytes = jpeg_full.size();
                 server_.broadcast(frame->channel, std::move(jpeg_full));
             }
+
+            if (snapshot_due) last_snap_time[frame->channel] = now;
 
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - t0)
