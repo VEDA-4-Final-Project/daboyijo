@@ -84,7 +84,9 @@ int main(int argc, char* argv[]) {
     // [선명도 보정] 사람 영역만 샤프닝. amount=강도, sigma=윤곽 반경(작을수록 쨍함).
     // 눈에 잘 띄도록 강하게: 세부 윤곽을 또렷하게 세운다. 과하면 노이즈·헤일로가
     // 보일 수 있으니 화면 보며 조절할 것 (은은하게: (0.5, 3.0)).
-    SharpenEnhancer sharpen_enhancer(1.2, 1.0);
+    // [테스트 2026-07-28] 부하 완화 실험으로 샤픈 stage 비활성 → 선언도 잠시 주석
+    //   (미사용 경고 방지). 되살리려면 이 줄과 아래 addStage 블록을 함께 주석 해제.
+    // SharpenEnhancer sharpen_enhancer(1.2, 1.0);
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
@@ -189,10 +191,12 @@ int main(int argc, char* argv[]) {
     // [선명도 보정] 사람(Human) 영역만 샤프닝.
     // ★ 반드시 블러 stage보다 "앞"에 둔다: 몸통을 먼저 선명하게 만든 뒤
     //   그 위에 얼굴 블러가 덮여야 프라이버시가 깨지지 않는다.
-    pipeline.addStage([&](int ch, cv::Mat& img,
-                          const std::vector<Detection>& dets) {
-        sharpen_enhancer.process(ch, img, dets);
-    });
+    // [테스트 2026-07-28] 부하 완화 실험 — 샤픈은 미용 기능이라 CPU 급할 때 후보.
+    //   큰 사람 박스 GaussianBlur가 비쌈. 되살리려면 아래 블록 주석 해제 + 위 선언부.
+    // pipeline.addStage([&](int ch, cv::Mat& img,
+    //                       const std::vector<Detection>& dets) {
+    //     sharpen_enhancer.process(ch, img, dets);
+    // });
 
     // [블러처리] 송출 전 동적 프라이버시 마스킹 단계
     pipeline.addStage([&](int ch, cv::Mat& img,
