@@ -2,6 +2,7 @@
 
 #include <csignal>
 #include <functional>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -42,10 +43,10 @@ public:
         int channel, const cv::Mat& full_blur, const cv::Mat& clean,
         const std::vector<Detection>& dets, cv::Mat& out)>;
 
-    VideoPipeline(FrameQueue& queue, StreamServer& server,
+    VideoPipeline(StreamServer& server,
                   DetectionStore& store, AiWorker& ai, StatsReporter& stats,
                   SnapshotBuffer& snapshots, SnapshotBuffer& snapshots_fall)
-        : queue_(queue), server_(server), store_(store), ai_(ai),
+        : server_(server), store_(store), ai_(ai),
           stats_(stats), snapshots_(snapshots), snapshots_fall_(snapshots_fall) {}
 
     // run() 전에 등록할 것. 실행 순서 = 등록 순서.
@@ -54,11 +55,22 @@ public:
     // 낙상 선택본 생성 콜백 등록 (선택 사항). 미등록이면 항상 전원 블러본 송출.
     void setFallVariant(FallVariant f) { fall_variant_ = std::move(f); }
 
-    // 메인 루프 — stop이 1이 될 때까지 블로킹 (시그널 핸들러가 세팅)
+    // 채널 등록 — 채널마다 전용 큐 + 전용 처리 스레드를 갖는다(run에서 기동).
+    // 한 채널의 무거운 프레임(다인원 블러 등)이 다른 채널을 굶기지 않도록 격리.
+    // run() 전에 호출할 것. queue는 호출자가 소유(수명 > run).
+    void addChannel(int channel, FrameQueue& queue) {
+        channel_queues_[channel] = &queue;
+    }
+
+    // 채널별 처리 스레드를 모두 띄우고 stop까지 블로킹(전체 join).
     void run(const volatile std::sig_atomic_t& stop);
 
 private:
-    FrameQueue& queue_;
+    // 채널 하나의 처리 루프 — 자기 큐에서만 pop (다른 채널과 완전 독립).
+    void runChannel(int channel, FrameQueue& queue,
+                    const volatile std::sig_atomic_t& stop);
+
+    std::map<int, FrameQueue*> channel_queues_;  // 채널 → 전용 큐(호출자 소유)
     StreamServer& server_;
     DetectionStore& store_;
     AiWorker& ai_;

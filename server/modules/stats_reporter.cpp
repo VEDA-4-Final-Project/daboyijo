@@ -14,6 +14,7 @@ StatsReporter::StatsReporter(
 
 void StatsReporter::onFrameSent(int channel, size_t jpegBytes, double procMs,
                                 double prepMs, double encodeMs) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto& ch = stats_[channel];
     ch.processed += 1;
     ch.bytes += jpegBytes;
@@ -24,6 +25,7 @@ void StatsReporter::onFrameSent(int channel, size_t jpegBytes, double procMs,
 }
 
 void StatsReporter::maybeReport() {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed =
         std::chrono::duration_cast<std::chrono::seconds>(now - last_report_);

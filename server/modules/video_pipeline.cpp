@@ -2,7 +2,9 @@
 
 #include <chrono>
 #include <map>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -33,19 +35,33 @@ constexpr auto kDelayOffset = std::chrono::milliseconds(200);
 }  // namespace
 
 void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
-    std::map<int, std::chrono::steady_clock::time_point> last_proc_time;
-    std::map<int, std::chrono::steady_clock::time_point> last_snap_time;
+    // 채널마다 전용 스레드 — 서로의 처리 지연·큐 드랍에 영향받지 않는다(격리).
+    std::vector<std::thread> threads;
+    for (const auto& entry : channel_queues_) {
+        const int channel = entry.first;
+        FrameQueue* q = entry.second;
+        threads.emplace_back(
+            [this, channel, q, &stop]() { runChannel(channel, *q, stop); });
+    }
+    for (auto& t : threads) t.join();
+}
+
+void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
+                               const volatile std::sig_atomic_t& stop) {
+    // 이 스레드는 한 채널만 담당 → 채널별 상태가 map이 아니라 스칼라로 충분.
+    // (frame->channel이 곧 이 스레드의 채널이라 본문은 그대로 frame->channel 사용)
+    std::chrono::steady_clock::time_point last_proc_time{};
+    std::chrono::steady_clock::time_point last_snap_time{};
 
     while (!stop) {
-        auto frame = queue_.pop(std::chrono::milliseconds(200));
+        auto frame = queue.pop(std::chrono::milliseconds(200));
         if (frame) {
             const auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration<double>(now -
-                                              last_proc_time[frame->channel])
+            if (std::chrono::duration<double>(now - last_proc_time)
                     .count() < kMainProcessInterval) {
                 continue;  // 15fps 초과분은 버림
             }
-            last_proc_time[frame->channel] = now;
+            last_proc_time = now;
 
             const auto t0 = std::chrono::steady_clock::now();
 
@@ -101,7 +117,7 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
             //  · 스냅샷 버퍼: care_qa가 5초에 3장만 뽑으므로 2fps 갱신이면 충분.
             //  · Qt 송출: 붙은 클라가 있을 때만.
             const bool snapshot_due =
-                std::chrono::duration<double>(now - last_snap_time[frame->channel])
+                std::chrono::duration<double>(now - last_snap_time)
                     .count() >= kSnapshotInterval;
             const bool has_client = server_.clientCount() > 0;
 
@@ -129,7 +145,7 @@ void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
                 server_.broadcast(frame->channel, std::move(jpeg_full));
             }
 
-            if (snapshot_due) last_snap_time[frame->channel] = now;
+            if (snapshot_due) last_snap_time = now;
 
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - t0)

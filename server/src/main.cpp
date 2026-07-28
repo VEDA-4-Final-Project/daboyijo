@@ -16,6 +16,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -67,7 +68,9 @@ int main(int argc, char* argv[]) {
 
     // ── 공용 인프라 ──────────────────────────────────────────────
     StreamServer stream_server(config.stream_port);
-    FrameQueue queue(16);
+    // 채널별 전용 프레임 큐 — 한 채널이 몰아쳐도 다른 채널을 굶기지 않도록 격리.
+    // 채널당 처리 스레드 1개가 자기 큐만 소비한다(VideoPipeline).
+    std::map<int, std::unique_ptr<FrameQueue>> queues;
     DetectionStore detections;  // 감지 이력 저장 + 프레임-좌표 시간 매칭
     SnapshotBuffer snapshots;   // 버퍼 A: 전원 블러본 (Gemini/평상시 사진용)
     SnapshotBuffer snapshots_fall;  // 버퍼 B: 낙상 선택본 (낙상자만 노출, 보호자 사진용)
@@ -145,7 +148,11 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
-        auto client = std::make_unique<RtspAvClient>(cam.channel, cam.url, queue);
+        // 이 채널 전용 큐 생성 (용량 4 ≈ 0.27s@15fps — 실시간성 위해 작게).
+        auto& cam_queue =
+            *(queues[cam.channel] = std::make_unique<FrameQueue>(4));
+        auto client =
+            std::make_unique<RtspAvClient>(cam.channel, cam.url, cam_queue);
         client->setDetectionCallback([&](int ch, std::vector<Detection> dets,
                                          std::chrono::steady_clock::time_point cap) {
             fall.onMetadata(ch, dets);             // 낙상: ROI 게이팅 + bbox 캐시
@@ -165,7 +172,7 @@ int main(int argc, char* argv[]) {
 
     // ── 영상 파이프라인 실행 ─────────────────────────────────────
     StatsReporter stats(clients, detections, stream_server);
-    VideoPipeline pipeline(queue, stream_server, detections, ai_worker, stats,
+    VideoPipeline pipeline(stream_server, detections, ai_worker, stats,
                            snapshots, snapshots_fall);
     // [낙상 선택 노출] 전원 블러본 위에 낙상자 얼굴만 되살린 선택본 생성.
     // 관제 Qt 송출·보호자 텔레그램 사진에 쓰이고, Gemini로 가는 버퍼 A는 안 건드린다.
@@ -192,7 +199,12 @@ int main(int argc, char* argv[]) {
         privacy_masker.process(ch, img, dets);
     });
 
-    pipeline.run(g_stop);
+    // 채널별 큐 등록 → run()이 채널마다 전용 처리 스레드를 띄운다.
+    for (auto& entry : queues) {
+        pipeline.addChannel(entry.first, *entry.second);
+    }
+
+    pipeline.run(g_stop);  // 모든 채널 스레드 기동 후 stop까지 블로킹(전체 join)
 
     // ── 종료 ─────────────────────────────────────────────────────
     std::printf("종료 중...\n");

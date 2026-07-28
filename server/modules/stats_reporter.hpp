@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "detection_store.hpp"
@@ -12,7 +13,9 @@
 #include "system_stats.hpp"
 
 // [공용 인프라] 5초 주기 상태 리포트 — 채널별 fps·사람 수·CPU·온도·인코딩 시간.
-// VideoPipeline(메인 스레드)에서만 호출되므로 락 불필요.
+// 채널별 파이프라인 스레드들이 동시에 onFrameSent()/maybeReport()를 호출하므로
+// mutex_로 보호한다. maybeReport()는 5초 게이트를 락 안에서 판정 → 여러 스레드가
+// 불러도 실제 출력·리셋은 한 번만 일어난다.
 class StatsReporter {
 public:
     StatsReporter(const std::vector<std::unique_ptr<RtspAvClient>>& clients,
@@ -40,6 +43,7 @@ private:
     StreamServer& server_;
     SystemStats system_stats_;
 
+    std::mutex mutex_;  // onFrameSent/maybeReport 동시 호출 보호 (채널별 스레드)
     std::map<int, ChannelStats> stats_;
     double proc_ms_total_ = 0;    // 전체 처리시간 누적
     double prep_ms_total_ = 0;    // resize+clone 누적
