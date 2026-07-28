@@ -51,18 +51,21 @@ void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
                                const volatile std::sig_atomic_t& stop) {
     // 이 스레드는 한 채널만 담당 → 채널별 상태가 map이 아니라 스칼라로 충분.
     // (frame->channel이 곧 이 스레드의 채널이라 본문은 그대로 frame->channel 사용)
-    std::chrono::steady_clock::time_point last_proc_time{};
+    std::chrono::steady_clock::time_point last_proc_ts{};  // 마지막 처리 프레임의 촬영시각
     std::chrono::steady_clock::time_point last_snap_time{};
 
     while (!stop) {
         auto frame = queue.pop(std::chrono::milliseconds(200));
         if (frame) {
             const auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration<double>(now - last_proc_time)
+            // 레이트 방어는 벽시계(now)가 아니라 프레임 촬영시각(received_at, PTS 기반)
+            // 으로 판정한다. 디코딩이 버스티하게 뭉쳐 나와도 촬영 간격이 정상(20fps=50ms)
+            // 이면 다 통과시키고, 진짜 고fps(촬영 간격 자체가 짧음)만 걸러낸다.
+            if (std::chrono::duration<double>(frame->received_at - last_proc_ts)
                     .count() < kMainProcessInterval) {
-                continue;  // 15fps 초과분은 버림
+                continue;  // 목표 fps 초과분만 버림
             }
-            last_proc_time = now;
+            last_proc_ts = frame->received_at;
 
             const auto t0 = std::chrono::steady_clock::now();
 

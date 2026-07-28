@@ -24,9 +24,12 @@ constexpr int kReconnectDelaySec = 3;
 // ★ 중요: 이 값은 반드시 입력 fps보다 "넉넉히" 위여야 한다. 입력 간격에 가까우면
 //   (예: 입력 20fps=50ms, 캡 18fps=55.6ms) 지터 없이도 매 두 번째 프레임이
 //   55.6>50 때문에 스킵돼 실효 fps가 절반(10fps)으로 주저앉는다.
-//   입력 20fps 운용 기준 30fps(33ms)로 여유를 둬 전 프레임 통과시킨다.
-//   (main.cpp의 kMainProcessInterval도 같은 이유로 30fps로 맞춰 둠)
-constexpr double kMaxConvertFps = 30.0;
+//   입력 20fps 운용 기준 여유롭게 둔다. 특히 H.264는 B-프레임 재정렬+네트워크
+//   배칭으로 디코딩 출력이 버스티(뭉쳐 나옴)해서, 벽시계 게이트 간격이 크면
+//   버스트 내 프레임이 드랍돼 실효 fps가 주저앉는다. 카메라가 20fps로 상한이라
+//   사실상 방어가 불필요 → 60fps(16.7ms)로 크게 열어 전 프레임을 통과시킨다.
+//   (main.cpp의 kMainProcessInterval은 최종 폭주 방어로 30fps 유지)
+constexpr double kMaxConvertFps = 60.0;
 // (실험 기록) sws_scale에서 바로 960x540으로 다운스케일해 봤으나, MoveNet
 // 크롭 해상도가 같이 떨어져 원거리 사람의 자세 감지가 불안정해짐 → 원복.
 // 원본 해상도로 변환하고 GUI용 축소는 main.cpp의 cv::resize가 담당한다.

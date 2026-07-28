@@ -148,9 +148,10 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     for (const auto& cam : config.cameras) {
-        // 이 채널 전용 큐 생성 (용량 4 ≈ 0.27s@15fps — 실시간성 위해 작게).
+        // 이 채널 전용 큐 생성 (용량 8 — 버스티 디코딩 출력을 흡수해 드랍 방지.
+        // 소비자가 빠르면 큐는 거의 비어 있어 지연은 낮게 유지된다).
         auto& cam_queue =
-            *(queues[cam.channel] = std::make_unique<FrameQueue>(4));
+            *(queues[cam.channel] = std::make_unique<FrameQueue>(8));
         auto client =
             std::make_unique<RtspAvClient>(cam.channel, cam.url, cam_queue);
         client->setDetectionCallback([&](int ch, std::vector<Detection> dets,
