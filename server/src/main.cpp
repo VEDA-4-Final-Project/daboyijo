@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
     if (!stream_server.start()) return 1;
     blackbox.startHttp();
     telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
-    db.connect("127.0.0.1", "daboijo", "1234", "daboijo");
+    db.connect(config.db_host, "daboijo", "1234", "daboijo");
     bed_egress.initializeFromDb(db);
 
     std::vector<std::unique_ptr<RtspAvClient>> clients;
