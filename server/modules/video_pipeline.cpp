@@ -17,11 +17,12 @@ namespace {
 const cv::Size kViewSize(kViewWidth, kViewHeight);
 const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 65};
 // 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지.
-// 주의: 이 값을 입력 fps에 가깝게 두면, 지터로 프레임이 조금만 빨리 와도 버려져
-// 실효 fps가 주저앉는다. 입력(15fps=66.7ms)보다 넉넉히 위(30fps=33ms)로 잡아
-// 정상 프레임은 지터가 있어도 다 통과시키고, 진짜 폭주만 막는다. 발열/CPU 상한은
-// RTSP 수신단 kMaxConvertFps=18이 큐 입력 단계에서 이미 1차로 눌러 준다.
-constexpr double kMainProcessInterval = 1.0 / 20.0;  // 20fps 초과만 방어
+// 주의: 이 값을 입력 fps에 "가깝게" 두면, 지터 없이도 캡 간격이 입력 간격보다
+// 크면 매 두 번째 프레임이 버려져 실효 fps가 절반으로 주저앉는다.
+// (예: 입력 20fps=50ms인데 캡 20fps=50ms면 경계선이라 지터로 드랍) 입력(20fps)보다
+// 넉넉히 위(30fps=33ms)로 잡아 정상 프레임은 다 통과시키고 진짜 폭주만 막는다.
+// RTSP 수신단 kMaxConvertFps=30이 큐 입력 단계에서 이미 1차로 눌러 준다.
+constexpr double kMainProcessInterval = 1.0 / 30.0;  // 30fps 초과만 방어
 
 // 스냅샷 버퍼 갱신 주기. care_qa는 최근 5초에서 3장만 뽑아 VLM에 보내므로
 // (recentKeyframes(ch, 3, 5.0)) 매 프레임 인코딩할 필요가 없다. 채널당 이 주기로만

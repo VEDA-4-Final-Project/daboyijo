@@ -19,13 +19,14 @@ extern "C" {
 
 namespace {
 constexpr int kReconnectDelaySec = 3;
-// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널 당 ~15fps만 소비하므로
-// (main.cpp의 kMainProcessInterval) 그 이상은 변환해 봐야 버려진다.
-// 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임 필수지만, sws_scale
-// 변환과 Mat 할당은 여기서 걸러 스킵한다 (고fps 입력 카메라 대비 안전판 —
-// 카메라 프로파일이 15fps면 사실상 전부 통과).
-// main 쪽 15fps 스로틀이 최종 관문이므로 여기는 살짝 여유(18fps)를 둔다.
-constexpr double kMaxConvertFps = 18.0;
+// BGR 변환·큐 전달 상한 fps. 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임
+// 필수지만, sws_scale 변환과 Mat 할당은 여기서 걸러 스킵한다 (고fps 입력 대비 안전판).
+// ★ 중요: 이 값은 반드시 입력 fps보다 "넉넉히" 위여야 한다. 입력 간격에 가까우면
+//   (예: 입력 20fps=50ms, 캡 18fps=55.6ms) 지터 없이도 매 두 번째 프레임이
+//   55.6>50 때문에 스킵돼 실효 fps가 절반(10fps)으로 주저앉는다.
+//   입력 20fps 운용 기준 30fps(33ms)로 여유를 둬 전 프레임 통과시킨다.
+//   (main.cpp의 kMainProcessInterval도 같은 이유로 30fps로 맞춰 둠)
+constexpr double kMaxConvertFps = 30.0;
 // (실험 기록) sws_scale에서 바로 960x540으로 다운스케일해 봤으나, MoveNet
 // 크롭 해상도가 같이 떨어져 원거리 사람의 자세 감지가 불안정해짐 → 원복.
 // 원본 해상도로 변환하고 GUI용 축소는 main.cpp의 cv::resize가 담당한다.
