@@ -16,13 +16,14 @@ namespace {
 // 그대로 쓴다. view가 비어 있을 때만 폴백으로 cv::resize.
 const cv::Size kViewSize(kViewWidth, kViewHeight);
 const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 65};
-// 프레임 레이트 방어선 — 너무 빨리 들어온 프레임은 버려서 발열·CPU 폭주 방지.
-// 주의: 이 값을 입력 fps에 "가깝게" 두면, 지터 없이도 캡 간격이 입력 간격보다
-// 크면 매 두 번째 프레임이 버려져 실효 fps가 절반으로 주저앉는다.
-// (예: 입력 20fps=50ms인데 캡 20fps=50ms면 경계선이라 지터로 드랍) 입력(20fps)보다
-// 넉넉히 위(30fps=33ms)로 잡아 정상 프레임은 다 통과시키고 진짜 폭주만 막는다.
-// RTSP 수신단 kMaxConvertFps=30이 큐 입력 단계에서 이미 1차로 눌러 준다.
-constexpr double kMainProcessInterval = 1.0 / 30.0;  // 30fps 초과만 방어
+// 프레임 레이트 방어선(폭주 방지). 판정은 벽시계가 아니라 촬영시각(PTS)으로 한다
+// (아래 runChannel 참조) — 디코딩이 버스티하게 뭉쳐 나와도 촬영 간격이 정상이면 통과.
+// ★ 확정 운영: 카메라 15fps. 한 Pi로는 15fps×4가 안정 상한이고, 20fps×4는 채널별
+//   스레드 4개가 720p JPEG를 동시 인코딩하며 CPU·메모리 대역폭을 포화시켜(인코딩
+//   wall-clock 17.5→26.3ms 팽창 관측) 채널 fps가 들쭉날쭉해진다 → 20fps는 2-Pi 분할.
+//   캡은 입력(15fps=66.7ms)보다 넉넉히 위(30fps=33ms)로 둬 정상 프레임은 다 통과시키고
+//   진짜 폭주(오설정 고fps 카메라)만 차단한다. (RTSP 수신단 kMaxConvertFps=60도 동일)
+constexpr double kMainProcessInterval = 1.0 / 30.0;  // 30fps 초과만 방어(폭주 차단)
 
 // 스냅샷 버퍼 갱신 주기. care_qa는 최근 5초에서 3장만 뽑아 VLM에 보내므로
 // (recentKeyframes(ch, 3, 5.0)) 매 프레임 인코딩할 필요가 없다. 채널당 이 주기로만
