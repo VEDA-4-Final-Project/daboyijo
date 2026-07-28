@@ -101,8 +101,19 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
                   int(a.blue()  * f + b.blue()  * (1 - f))).name();
 }
 
-// 영상 서버 접속 정보 (RPi 주소) — TODO: 설정 파일/실행 인자로 분리
-const char* kServerHost = "172.20.35.112";
+// 영상 서버 접속 정보 (RPi 주소) — 2-Pi 분할: 채널을 두 라즈베리에 2+2로 나눠 서빙.
+//   Pi A = ch0·ch1, Pi B = ch2·ch3. 각 Pi의 cameras.conf 채널 번호가 아래 인덱스와
+//   일치해야 하고(MainWindow::serverForChannel), Qt는 두 IP에 각각 붙는다.
+//   TODO: 설정 파일/실행 인자로 분리.
+const char* kServerHosts[2] = {
+    "172.20.35.180",   // Pi A (ch0·ch1)
+    "172.20.35.192",   // Pi B (ch2·ch3)  ← Pi B 실제 IP로 수정!
+};
+// 채널(0~3) → 담당 Pi의 호스트 문자열 (블랙박스 클립 URL 등 host가 필요한 곳용).
+// 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
+inline const char* hostForChannel(int ch) {
+    return kServerHosts[ch < 2 ? 0 : 1];
+}
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -196,10 +207,13 @@ MainWindow::MainWindow(QWidget *parent)
     // DB 입소자 목록 초기 로드 (main.cpp에서 연결을 이미 열어둠)
     refreshResidentTable();
 
-    // 2. 소켓 생성 및 시그널 연결
-    socket = new QTcpSocket(this);
-    connect(socket, &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
-    connect(socket, &QTcpSocket::stateChanged, this, &MainWindow::onSocketStateChanged);
+    // 2. 서버별 소켓 생성 및 시그널 연결 (2-Pi: 소켓 kNumServers개)
+    //    수신 슬롯 onReadyRead는 sender()로 어느 소켓이 신호를 냈는지 구분한다.
+    for (int i = 0; i < kNumServers; ++i) {
+        sockets[i] = new QTcpSocket(this);
+        connect(sockets[i], &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
+        connect(sockets[i], &QTcpSocket::stateChanged, this, &MainWindow::onSocketStateChanged);
+    }
 
     // 3. 명세서 스펙: 5500번 포트로 즉시 접속 (IP 주소는 RPi 주소 입력)
     //    끊기면 reconnectTimer가 kReconnectDelayMs 후 재접속 (24시간 무인 관제용)
@@ -217,88 +231,67 @@ MainWindow::MainWindow(QWidget *parent)
     vitalsTimer.start(2000);
     updateVitals();
 
-    // 🚀 [블랙박스 복구] 실행 시 HTTP 서버(/list)로 과거에 저장된 블랙박스 목록을
-    //    받아와 비상 로그 테이블을 복원한다. Qt를 껐다 켜도 과거 영상이 남게 하는 기능.
-    {
+    // 🚀 [블랙박스 복구] 각 Pi의 HTTP 서버(/list)에서 과거 클립 목록을 받아 병합한다.
+    //    2-Pi: 서버마다 자기 채널 클립만 갖고 있으므로 양쪽에서 받아 테이블에 누적한다.
+    if (logTable) logTable->setRowCount(0);  // 시작 전 1회만 비움 (응답들이 누적)
+    for (int si = 0; si < kNumServers; ++si) {
         auto* manager = new QNetworkAccessManager(this);
-        QUrl url(QStringLiteral("http://%1:%2/list")
-                     .arg(QString::fromLatin1(kServerHost)).arg(kClipHttpPort));
-        QNetworkRequest request(url);
-        QNetworkReply* reply = manager->get(request);
+        const QString host = QString::fromLatin1(kServerHosts[si]);
+        QUrl url(QStringLiteral("http://%1:%2/list").arg(host).arg(kClipHttpPort));
+        QNetworkReply* reply = manager->get(QNetworkRequest(url));
 
-        connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, host]() {
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
-                qDebug() << "⚠️ 과거 영상 목록 수집 실패:" << reply->errorString();
+                qDebug() << "⚠️ 과거 영상 목록 수집 실패(" << host << "):" << reply->errorString();
                 return;
             }
 
             const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-            if (!doc.isArray()) return;
+            if (!doc.isArray() || !logTable) return;
 
+            // 이 Pi가 준 목록을 테이블에 "추가"한다(비우지 않음 — 다른 Pi 것과 병합).
+            logTable->setSortingEnabled(false);
             const QJsonArray fileList = doc.array();
+            for (const QJsonValue& value : fileList) {
+                const QString fileName = value.toString();
+                // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
+                // 서버 저장 규칙: 낙상은 접미사 없음(chN_TS.mp4), 침상이탈은 _EGRESS.
+                const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                const QStringList parts = cleanName.split(QLatin1Char('_'));
+                if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
 
-            // 파일명 내부 타임스탬프 기준 최신순 정렬 (JSON 순서가 보장되지 않음)
-            QStringList sortedFiles;
-            for (const QJsonValue& value : fileList)
-                sortedFiles.append(value.toString());
-            std::sort(sortedFiles.begin(), sortedFiles.end(),
-                      [](const QString& a, const QString& b) {
-                auto ts = [](const QString& fn) -> qint64 {
-                    const QString clean = fn.left(fn.lastIndexOf('.'));
-                    const QStringList p = clean.split(QLatin1Char('_'));
-                    return (p.size() >= 2) ? p[1].toLongLong() : 0;
-                };
-                return ts(a) > ts(b);   // 최신이 위로
-            });
+                const int channel = parts[0].mid(2).toInt();   // "ch1" -> 1
+                const qint64 timestampMs = parts[1].toLongLong();
+                const QString rawType = (parts.size() >= 3) ? parts[2] : QString();
+                if (channel < 0 || channel >= 4) continue;
 
-            if (logTable) {
-                // 채우는 동안 자동정렬 잠금(삽입 중 재정렬로 setItem이 어긋나는 것 방지)
-                logTable->setSortingEnabled(false);
-                logTable->setRowCount(0);
+                const QString eventType =
+                    (rawType == QLatin1String("EGRESS")) ? QStringLiteral("침상 이탈")
+                                                         : QStringLiteral("낙상");
 
-                for (const QString& fileName : sortedFiles) {
-                    // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
-                    // 서버 저장 규칙: 낙상은 접미사 없음(chN_TS.mp4),
-                    //                침상이탈은 _EGRESS(chN_TS_EGRESS.mp4).
-                    const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
-                    const QStringList parts = cleanName.split(QLatin1Char('_'));
-                    if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
+                // 정렬(문자열 비교)이 시간순이 되도록 24시간(HH) 포맷 사용
+                const QString when = QDateTime::fromMSecsSinceEpoch(timestampMs)
+                                         .toString("yyyy-MM-dd HH:mm:ss");
 
-                    const int channel = parts[0].mid(2).toInt();   // "ch1" -> 1
-                    const qint64 timestampMs = parts[1].toLongLong();
-                    const QString rawType = (parts.size() >= 3) ? parts[2] : QString();
-                    if (channel < 0 || channel >= 4) continue;
+                const int row = logTable->rowCount();
+                logTable->insertRow(row);
 
-                    const QString eventType =
-                        (rawType == QLatin1String("EGRESS")) ? QStringLiteral("침상 이탈")
-                                                             : QStringLiteral("낙상");
+                auto* dtItem = new QTableWidgetItem(when);
+                // 이 목록을 준 Pi(host)에 그 클립이 있으므로 재생 URL도 그 host로.
+                const QString clipUrl = QStringLiteral("http://%1:%2/%3")
+                                             .arg(host).arg(kClipHttpPort).arg(fileName);
+                dtItem->setData(Qt::UserRole, clipUrl);
 
-                    // 정렬(문자열 비교)이 시간순이 되도록 24시간(HH) 포맷 사용
-                    const QString when = QDateTime::fromMSecsSinceEpoch(timestampMs)
-                                             .toString("yyyy-MM-dd HH:mm:ss");
-
-                    const int row = logTable->rowCount();
-                    logTable->insertRow(row);
-
-                    auto* dtItem = new QTableWidgetItem(when);
-                    // 서버 실제 파일명을 그대로 사용해 재생 URL을 정확히 매핑
-                    const QString clipUrl = QStringLiteral("http://%1:%2/%3")
-                                                 .arg(QString::fromLatin1(kServerHost))
-                                                 .arg(kClipHttpPort)
-                                                 .arg(fileName);
-                    dtItem->setData(Qt::UserRole, clipUrl);
-
-                    logTable->setItem(row, 0, dtItem);
-                    logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
-                    logTable->setItem(row, 2, new QTableWidgetItem(eventType));
-                    logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
-                }
-                // 채우기 완료 후 정렬 활성화 + 최신순 정렬
-                logTable->setSortingEnabled(true);
-                logTable->sortItems(0, Qt::DescendingOrder);
+                logTable->setItem(row, 0, dtItem);
+                logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+                logTable->setItem(row, 2, new QTableWidgetItem(eventType));
+                logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
             }
-            qDebug() << "✅ 과거 블랙박스 복원 완료 (총" << fileList.size() << "개)";
+            // 채우기 후 정렬 활성화 → 전체(양쪽 Pi) 최신순 재정렬 (0열 시간 문자열)
+            logTable->setSortingEnabled(true);
+            logTable->sortItems(0, Qt::DescendingOrder);
+            qDebug() << "✅ 블랙박스 복원 (" << host << "총" << fileList.size() << "개)";
         });
     }
 }
@@ -1359,8 +1352,9 @@ void MainWindow::toggleTheme()
                                             : QStringLiteral("🌙"));
 
     // applyTheme가 상태등을 기본값(빨강/회색)으로 리셋하므로 현재 상태를 즉시 복원한다.
-    const bool connected =
-        socket && socket->state() == QAbstractSocket::ConnectedState;
+    bool connected = true;
+    for (int i = 0; i < kNumServers; ++i)
+        if (sockets[i]->state() != QAbstractSocket::ConnectedState) connected = false;
     setConnectionState(connected, statusText->text());
     updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
 }
@@ -1384,34 +1378,42 @@ void MainWindow::updateClock()
 
 void MainWindow::connectToServer()
 {
-    if (socket->state() != QAbstractSocket::UnconnectedState) return;
-    setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
-    buffer.clear();  // 이전 연결의 파싱 잔여물 폐기
-    socket->connectToHost(QHostAddress(kServerHost), kServerPort);
-    qDebug() << "영상 서버 접속 시도:" << kServerHost << ":" << kServerPort;
+    // 끊겨 있는 서버 소켓만 골라 재접속 (일부 Pi만 끊긴 경우도 처리)
+    for (int i = 0; i < kNumServers; ++i) {
+        if (sockets[i]->state() != QAbstractSocket::UnconnectedState) continue;
+        buffers[i].clear();  // 이전 연결의 파싱 잔여물 폐기
+        sockets[i]->connectToHost(QHostAddress(kServerHosts[i]), kServerPort);
+        qDebug() << "영상 서버 접속 시도:" << kServerHosts[i] << ":" << kServerPort;
+    }
 }
 
-void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState state)
+void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 {
-    switch (state) {
-    case QAbstractSocket::ConnectedState:
-        setConnectionState(true, QStringLiteral("영상 서버 연결됨"));
-        break;
-    case QAbstractSocket::ConnectingState:
-    case QAbstractSocket::HostLookupState:
-        setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
-        break;
-    case QAbstractSocket::UnconnectedState:
-    default:
-        setConnectionState(false, QStringLiteral("영상 서버 연결 끊김 — 재접속 대기"));
-        // 신호 끊긴 채널은 LIVE 표시등 소등
-        for (int i = 0; i < 4; ++i)
-            liveDots[i]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
-        // 자동 재접속 예약 (스트림 오염으로 끊은 경우 포함)
-        if (state == QAbstractSocket::UnconnectedState && !reconnectTimer.isActive())
-            reconnectTimer.start();
-        break;
+    // 소켓이 여러 개(2-Pi)라 개별 state가 아니라 "전체 집계"로 상태 표시를 갱신한다.
+    int connected = 0, unconnected = 0;
+    for (int i = 0; i < kNumServers; ++i) {
+        const auto st = sockets[i]->state();
+        if (st == QAbstractSocket::ConnectedState) ++connected;
+        else if (st == QAbstractSocket::UnconnectedState) ++unconnected;
     }
+
+    if (connected == kNumServers)
+        setConnectionState(true, QStringLiteral("영상 서버 연결됨"));
+    else if (connected > 0)
+        setConnectionState(false, QStringLiteral("영상 서버 %1/%2 연결")
+                                      .arg(connected).arg(kNumServers));
+    else
+        setConnectionState(false, QStringLiteral("영상 서버 접속 중..."));
+
+    // 담당 Pi가 끊긴 채널의 LIVE 표시등 소등
+    for (int ch = 0; ch < 4; ++ch) {
+        if (sockets[serverForChannel(ch)]->state() != QAbstractSocket::ConnectedState)
+            liveDots[ch]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
+    }
+
+    // 끊긴 소켓이 하나라도 있으면 재접속 예약
+    if (unconnected > 0 && !reconnectTimer.isActive())
+        reconnectTimer.start();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1452,21 +1454,38 @@ void MainWindow::updateVitals()
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onReadyRead()
 {
-    // 🌟 명세서 가이드: 들어온 데이터를 무조건 글로벌 버퍼 뒤에 붙임
-    buffer.append(socket->readAll());
+    // 어느 서버 소켓(Pi)이 신호를 냈는지 판별 → 그 소켓 전용 버퍼로 파싱한다.
+    auto* sock = qobject_cast<QTcpSocket*>(sender());
+    if (!sock) return;
+    int idx = 0;
+    for (int i = 0; i < kNumServers; ++i)
+        if (sock == sockets[i]) { idx = i; break; }
+    QByteArray& buffer = buffers[idx];  // 이하 기존 파싱 코드는 이 지역 참조를 그대로 사용
 
-    // 버퍼에 데이터가 남아있는 동안 무한 반복 파싱
+    // 🌟 명세서 가이드: 들어온 데이터를 무조건 (이 소켓의) 버퍼 뒤에 붙임
+    buffer.append(sock->readAll());
+
+    // 🌟 지연(백로그) 제거: 이번 호출에 도착한 프레임을 채널별로 훑어
+    //    "가장 최신 1장"만 남긴다. 그 사이 오래된 프레임은 디코드·렌더를
+    //    아예 건너뛴다(화면엔 어차피 최신 것만 보이므로 헛일). 이렇게 하면
+    //    소비자(GUI 스레드)가 유입 속도를 못 따라가도 backlog가 쌓이지 않는다.
+    //    ※ 이벤트(낙상 등)는 절대 스킵하지 않고 파싱 즉시 처리한다.
+    QByteArray latestJpeg[4];               // 채널별 최신 프레임 JPEG 바이트
+    quint64    latestTs[4]  = {0, 0, 0, 0}; // 채널별 최신 프레임 서버 타임스탬프
+    bool       hasFrame[4]  = {false, false, false, false};
+
+    // 버퍼에 완성된 패킷이 남아있는 동안 반복 파싱
     while (true) {
         // 0) 매직(2바이트)으로 패킷 종류 식별 — 영상(0xDB4B) / 이벤트(0xDB4D)
         if (buffer.size() < (int)sizeof(uint16_t))
-            return;
+            break;  // 데이터 더 올 때까지 대기 → 아래에서 최신 프레임 렌더
         uint16_t magic;
         memcpy(&magic, buffer.constData(), sizeof(magic));
 
-        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) ──
+        // ── 이벤트 패킷 (낙상 통보 등, 페이로드 없음) — 스킵 금지, 즉시 처리 ──
         if (magic == kEvtMagic) {
             if (buffer.size() < (int)sizeof(dbj_evt_header_t))
-                return;  // 헤더가 덜 옴 — 다음 readyRead 대기
+                break;  // 헤더가 덜 옴 — 다음 readyRead 대기
             dbj_evt_header_t evt;
             memcpy(&evt, buffer.constData(), sizeof(evt));
             buffer.remove(0, sizeof(evt));
@@ -1485,7 +1504,7 @@ void MainWindow::onReadyRead()
         // ── 영상 프레임 패킷 ──
         // 1) 헤더 크기(16바이트)만큼도 안 모였으면 데이터 더 올 때까지 대기
         if (buffer.size() < (int)sizeof(dbj_vs_header_t))
-            return;
+            break;
 
         // 2) 헤더 영역 복사 (리틀엔디언 환경이므로 memcpy로 충분)
         dbj_vs_header_t header;
@@ -1499,7 +1518,7 @@ void MainWindow::onReadyRead()
                      << "(magic:" << Qt::hex << header.magic
                      << "payload_len:" << Qt::dec << header.payload_len << ")";
             buffer.clear(); // 오염된 버퍼 초기화
-            socket->abort(); // 즉시 끊기 → UnconnectedState → 재접속 타이머 가동
+            sock->abort(); // 즉시 끊기 → UnconnectedState → 재접속 타이머 가동
             return;
         }
 
@@ -1509,31 +1528,45 @@ void MainWindow::onReadyRead()
 
         // JPEG 데이터가 아직 다 안 왔으면 다음 readyRead 때까지 대기
         if (buffer.size() < total)
-            return;
+            break;
 
-        // 5) 정확한 페이로드 위치와 크기만큼 지정하여 QImage 생성
-        QImage image = QImage::fromData(
-            reinterpret_cast<const uchar*>(buffer.constData()) + sizeof(header),
-            header.payload_len,
-            "JPEG"
-            );
-
-        // 6) 지연 시간(Latency) 모니터링
-        qint64 current_time = QDateTime::currentMSecsSinceEpoch();
-        qint64 latency = current_time - header.timestamp_ms;
-        qDebug() << "Channel:" << header.channel << " | Latency:" << latency << "ms";
-
-        // 7) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 도려내기
-        buffer.remove(0, static_cast<int>(total));
-
-        // 8) channel 값으로 4분할 위젯 분배 및 렌더링
-        if (!image.isNull()) {
-            if (header.channel >= 0 && header.channel < 4) {
-                channelViews[header.channel]->setFrame(QPixmap::fromImage(image));
-                liveDots[header.channel]->setStyleSheet(
-                    QString("background:%1; border-radius:3px;").arg(kCritical));
-            }
+        // 5) 디코드는 뒤로 미루고, 채널별 "최신 프레임" 바이트만 보관한다.
+        //    (여기서 QImage 디코드/렌더를 하면 backlog의 오래된 프레임까지
+        //     전부 처리하게 되어 지연이 톱니처럼 쌓인다.)
+        if (header.channel < 4) {
+            latestJpeg[header.channel] = QByteArray(
+                buffer.constData() + sizeof(header),
+                static_cast<int>(header.payload_len)); // 이전 최신 프레임 덮어씀
+            latestTs[header.channel]  = header.timestamp_ms;
+            hasFrame[header.channel]  = true;
         }
+
+        // 6) 사용이 끝난 패킷만큼 버퍼 맨 앞에서 도려내기
+        buffer.remove(0, static_cast<int>(total));
+    }
+
+    // 7) 채널별 "가장 최신" 프레임만 디코드·렌더 (헛일 제거로 지연 최소화)
+    for (int ch = 0; ch < 4; ++ch) {
+        if (!hasFrame[ch])
+            continue;
+
+        QImage image = QImage::fromData(
+            reinterpret_cast<const uchar*>(latestJpeg[ch].constData()),
+            latestJpeg[ch].size(),
+            "JPEG");
+        if (image.isNull())
+            continue;
+
+        // 지연 시간(Latency) 모니터링 — 최신 프레임 기준으로만 출력
+        // ※ 서버·클라 PC 시계가 NTP로 동기화돼 있어야 값이 정확하다.
+        //   (동기 안 되면 두 시계 오프셋만큼 음수/양수로 치우침)
+        const qint64 latency =
+            QDateTime::currentMSecsSinceEpoch() - static_cast<qint64>(latestTs[ch]);
+        qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
+
+        channelViews[ch]->setFrame(QPixmap::fromImage(image));
+        liveDots[ch]->setStyleSheet(
+            QString("background:%1; border-radius:3px;").arg(kCritical));
     }
 }
 
@@ -1562,7 +1595,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         auto* dtItem = new QTableWidgetItem(when);
         // 서버는 낙상 클립을 접미사 없이 저장한다: chN_타임스탬프.mp4
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
-                                     .arg(QString::fromLatin1(kServerHost))
+                                     .arg(QString::fromLatin1(hostForChannel(channel)))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
                                      .arg(timestampMs);
@@ -1603,7 +1636,7 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         auto* dtItem = new QTableWidgetItem(when);
 
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_EGRESS.mp4")
-                                     .arg(QString::fromLatin1(kServerHost))
+                                     .arg(QString::fromLatin1(hostForChannel(channel)))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
                                      .arg(timestampMs);
@@ -1714,9 +1747,10 @@ void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
 
 void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
 {
-    if (!socket || socket->state() != QAbstractSocket::ConnectedState) {
+    QTcpSocket* sock = socketForChannel(channel);   // 이 채널을 담당하는 Pi 소켓
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
         QMessageBox::warning(this, QStringLiteral("전송 실패"),
-                             QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
+                             QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
         return;
     }
 
@@ -1740,8 +1774,8 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
             qBound(0.0, normPts[i].y() * kRoiCoordScale, double(kRoiCoordScale)));
         pkt.append(reinterpret_cast<const char*>(&p), sizeof(p));
     }
-    socket->write(pkt);
-    socket->flush();
+    sock->write(pkt);
+    sock->flush();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1783,7 +1817,9 @@ void MainWindow::onAlarmClearClicked()
             }
 
             // 2. 서버의 PrivacyMasker를 깨워서 다시 모자이크 씌우라고 0x03 바이너리 쏘기
-            if (socket && socket->state() == QAbstractSocket::ConnectedState) {
+            //    (채널마다 담당 Pi가 다르므로 그 채널의 소켓으로 보낸다)
+            QTcpSocket* sock = socketForChannel(channel);
+            if (sock && sock->state() == QAbstractSocket::ConnectedState) {
                 dbj_ctrl_header_t h;
                 h.magic = kCtrlMagic;                  // 0xDB4C
                 h.version = 0x01;
@@ -1792,16 +1828,16 @@ void MainWindow::onAlarmClearClicked()
                 h.point_count = 0;
                 h.reserved = 0;
 
-                socket->write(reinterpret_cast<const char*>(&h), sizeof(h));
+                sock->write(reinterpret_cast<const char*>(&h), sizeof(h));
+                sock->flush();  // 채널별 소켓이 다를 수 있어 즉시 flush
                 packetSent = true;
                 qDebug() << "🔓 [Qt -> 서버] 채널" << channel << "경보 확인 및 모자이크 복구 패킷 전송!";
             }
         }
     }
 
-    if (packetSent) {
-        socket->flush(); // 버퍼 비우고 네트워크 선으로 즉시 방출
-    } else {
+    // (flush는 위 루프에서 채널별 소켓마다 이미 처리)
+    if (!packetSent) {
         // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
         QMessageBox::information(this, QStringLiteral("경보 해제"),
                                  QStringLiteral("현재 활성화된 낙상/침상이탈 경보가 없습니다."));
@@ -1999,8 +2035,10 @@ void MainWindow::onSaveResident()
     int cameraId = editCameraId->text().trimmed().toInt();
     
     // 4채널 중 올바른 채널이고, 서버 소켓이 정상 연결된 상태일 때만 전송
-    if (editCameraId->text().trimmed().length() > 0 && cameraId >= 0 && cameraId < 4 && 
-        socket && socket->state() == QAbstractSocket::ConnectedState) 
+    QTcpSocket* riskSock =
+        (cameraId >= 0 && cameraId < 4) ? socketForChannel(cameraId) : nullptr;
+    if (editCameraId->text().trimmed().length() > 0 && cameraId >= 0 && cameraId < 4 &&
+        riskSock && riskSock->state() == QAbstractSocket::ConnectedState)
     {
         // 1. 위험도 텍스트를 서버가 이해하는 숫자 코드로 매칭 (하:1, 중:2, 상:3)
         int32_t statusVal = 1; 
@@ -2023,8 +2061,8 @@ void MainWindow::onSaveResident()
         pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
 
         // 4. 소켓 방출
-        socket->write(pkt);
-        socket->flush();
+        riskSock->write(pkt);
+        riskSock->flush();
         qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
         
         // 5. 로컬 GUI용 환자 정보 메모리 어레이(patients)도 즉시 동기화

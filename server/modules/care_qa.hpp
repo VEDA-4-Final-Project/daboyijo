@@ -22,10 +22,13 @@ class CareQaModule {
 public:
     using ConfirmCallback = std::function<void(int channel)>;
 
-    CareQaModule(SnapshotBuffer& snapshots, VlmClient& vlm,
-                 TelegramModule& telegram, ConfirmCallback on_confirm)
-        : snapshots_(snapshots), vlm_(vlm), telegram_(telegram),
-          on_confirm_(std::move(on_confirm)) {}
+    // snapshots     : 버퍼 A(전원 블러본) — Gemini/평상시 사진용
+    // snapshots_fall: 버퍼 B(낙상 선택본) — 낙상 시 보호자에게 보내는 사진용
+    CareQaModule(SnapshotBuffer& snapshots, SnapshotBuffer& snapshots_fall,
+                 VlmClient& vlm, TelegramModule& telegram,
+                 ConfirmCallback on_confirm)
+        : snapshots_(snapshots), snapshots_fall_(snapshots_fall), vlm_(vlm),
+          telegram_(telegram), on_confirm_(std::move(on_confirm)) {}
 
     // TelegramModule의 커맨드 핸들러로 등록. channel<0이면 방 매핑 불가.
     void handleMessage(int channel, const std::string& chat_id,
@@ -36,7 +39,8 @@ public:
     void reportFall(int channel);
 
 private:
-    SnapshotBuffer& snapshots_;
+    SnapshotBuffer& snapshots_;       // 버퍼 A: 전원 블러본
+    SnapshotBuffer& snapshots_fall_;  // 버퍼 B: 낙상 선택본
     VlmClient& vlm_;
     TelegramModule& telegram_;
     ConfirmCallback on_confirm_;

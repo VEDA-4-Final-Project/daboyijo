@@ -19,13 +19,17 @@ extern "C" {
 
 namespace {
 constexpr int kReconnectDelaySec = 3;
-// BGR 변환·큐 전달 상한 fps. 서버 파이프라인은 채널 당 ~15fps만 소비하므로
-// (main.cpp의 kMainProcessInterval) 그 이상은 변환해 봐야 버려진다.
-// 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임 필수지만, sws_scale
-// 변환과 Mat 할당은 여기서 걸러 스킵한다 (고fps 입력 카메라 대비 안전판 —
-// 카메라 프로파일이 15fps면 사실상 전부 통과).
-// main 쪽 15fps 스로틀이 최종 관문이므로 여기는 살짝 여유(18fps)를 둔다.
-constexpr double kMaxConvertFps = 18.0;
+// BGR 변환·큐 전달 상한 fps. 디코딩 자체는 H.264 참조 프레임 때문에 전 프레임
+// 필수지만, sws_scale 변환과 Mat 할당은 여기서 걸러 스킵한다 (고fps 입력 대비 안전판).
+// ★ 중요: 이 값은 반드시 입력 fps보다 "넉넉히" 위여야 한다. 입력 간격에 가까우면
+//   (예: 입력 20fps=50ms, 캡 18fps=55.6ms) 지터 없이도 매 두 번째 프레임이
+//   55.6>50 때문에 스킵돼 실효 fps가 절반(10fps)으로 주저앉는다.
+//   입력 20fps 운용 기준 여유롭게 둔다. 특히 H.264는 B-프레임 재정렬+네트워크
+//   배칭으로 디코딩 출력이 버스티(뭉쳐 나옴)해서, 벽시계 게이트 간격이 크면
+//   버스트 내 프레임이 드랍돼 실효 fps가 주저앉는다. 카메라가 20fps로 상한이라
+//   사실상 방어가 불필요 → 60fps(16.7ms)로 크게 열어 전 프레임을 통과시킨다.
+//   (main.cpp의 kMainProcessInterval은 최종 폭주 방어로 30fps 유지)
+constexpr double kMaxConvertFps = 60.0;
 // (실험 기록) sws_scale에서 바로 960x540으로 다운스케일해 봤으나, MoveNet
 // 크롭 해상도가 같이 떨어져 원거리 사람의 자세 감지가 불안정해짐 → 원복.
 // 원본 해상도로 변환하고 GUI용 축소는 main.cpp의 cv::resize가 담당한다.
@@ -153,6 +157,10 @@ bool RtspAvClient::openAndStream() {
     AVPacket* pkt = av_packet_alloc();
     SwsContext* sws = nullptr;  // YUV→BGR 변환기 (첫 프레임에서 지연 생성)
     int sws_w = 0, sws_h = 0;
+    // 화면 송출용 YUV→BGR + 축소(kViewWidth×kViewHeight) 변환기. 변환과 동시에
+    // 축소해 파이프라인의 cv::resize를 대체한다 (병목 스레드에서 축소 부하 제거).
+    SwsContext* sws_view = nullptr;
+    int sws_view_w = 0, sws_view_h = 0;
 
     // ── PTS(촬영 시각) 동기화 ──────────────────────────────────────
     // 영상은 디코딩·GOV 버퍼링 지연으로 늦게 도착하지만 메타는 즉시 온다.
@@ -202,10 +210,17 @@ bool RtspAvClient::openAndStream() {
                 while (avcodec_receive_frame(dctx, frame) == 0) {
                     frame_count_.fetch_add(1);
 
-                    // 소비 안 될 프레임은 BGR 변환 없이 버린다 (위 kMaxConvertFps 주석 참조)
-                    auto now = std::chrono::steady_clock::now();
-                    if (now - last_convert < convert_interval) continue;
-                    last_convert = now;
+                    // 소비 안 될 프레임은 BGR 변환 없이 버린다. 판정은 벽시계가 아니라
+                    // 촬영시각(PTS) 기준 — 디코딩이 버스티하게 뭉쳐 나와도 촬영 간격이
+                    // 정상(20fps=50ms)이면 통과시키고, 진짜 고fps만 걸러낸다.
+                    int64_t gate_vts = frame->best_effort_timestamp;
+                    if (gate_vts == AV_NOPTS_VALUE) gate_vts = frame->pts;
+                    const auto gate_ts =
+                        (gate_vts != AV_NOPTS_VALUE)
+                            ? ptsToCapture(gate_vts * vtb_sec)
+                            : std::chrono::steady_clock::now();
+                    if (gate_ts - last_convert < convert_interval) continue;
+                    last_convert = gate_ts;
 
                     if (!sws || sws_w != frame->width || sws_h != frame->height) {
                         if (sws) sws_freeContext(sws);
@@ -223,13 +238,32 @@ bool RtspAvClient::openAndStream() {
                     sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
                               dst, dst_stride);
 
-                    // 프레임 PTS → 촬영 시각 (없으면 수신 시각 폴백)
-                    int64_t vts = frame->best_effort_timestamp;
-                    if (vts == AV_NOPTS_VALUE) vts = frame->pts;
-                    auto captured = (vts != AV_NOPTS_VALUE)
-                                        ? ptsToCapture(vts * vtb_sec)
-                                        : std::chrono::steady_clock::now();
-                    queue_.push(Frame{channel_, std::move(img), captured});
+                    // 화면 송출용 축소본을 같은 YUV에서 바로 뽑는다 (변환+축소 1패스).
+                    // 원본이 화면 크기보다 클 때만 — 이하면 비워 두고 파이프라인이
+                    // image로 폴백 처리(업스케일)한다.
+                    cv::Mat view;
+                    if (frame->width > kViewWidth || frame->height > kViewHeight) {
+                        if (!sws_view || sws_view_w != frame->width ||
+                            sws_view_h != frame->height) {
+                            if (sws_view) sws_freeContext(sws_view);
+                            sws_view = sws_getContext(
+                                frame->width, frame->height,
+                                static_cast<AVPixelFormat>(frame->format),
+                                kViewWidth, kViewHeight, AV_PIX_FMT_BGR24,
+                                SWS_BILINEAR, nullptr, nullptr, nullptr);
+                            sws_view_w = frame->width;
+                            sws_view_h = frame->height;
+                        }
+                        view.create(kViewHeight, kViewWidth, CV_8UC3);
+                        uint8_t* vdst[1] = {view.data};
+                        int vdst_stride[1] = {static_cast<int>(view.step)};
+                        sws_scale(sws_view, frame->data, frame->linesize, 0,
+                                  frame->height, vdst, vdst_stride);
+                    }
+
+                    // 촬영시각은 위 게이트에서 이미 계산(gate_ts) → 그대로 재사용.
+                    queue_.push(Frame{channel_, std::move(img), gate_ts,
+                                      std::move(view)});
                 }
             }
         } else if (pkt->stream_index == data_idx && data_idx >= 0) {
@@ -266,6 +300,7 @@ bool RtspAvClient::openAndStream() {
 
     connected_.store(false);
     if (sws) sws_freeContext(sws);
+    if (sws_view) sws_freeContext(sws_view);
     av_packet_free(&pkt);
     av_frame_free(&frame);
     avcodec_free_context(&dctx);
