@@ -312,12 +312,12 @@ void MainWindow::buildUi()
     tabWidget = new QTabWidget();
     tabWidget->setObjectName("mainTabs");
 
-    // ── TAB 1: 실시간 관제 및 제어 (영상월 + 바이탈 패널) ──
+    // ── TAB 1: 실시간 관제 및 제어 (영상월이 전체 폭 사용) ──
+    // 바이탈(체온·심박)은 별도 패널 대신 각 영상 우상단에 오버레이로 표시한다.
     auto* body = new QHBoxLayout();
     body->setContentsMargins(16, 16, 16, 16);
     body->setSpacing(16);
     body->addWidget(buildVideoWall(), 1);
-    body->addWidget(buildVitalsPanel(), 0);
 
     auto* dashboardTab = new QWidget();
     dashboardTab->setLayout(body);
@@ -1344,9 +1344,6 @@ QTextEdit#formEdit:focus {
 
     // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
     statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
-    for (int i = 0; i < 4; ++i) {
-        vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kTextSub));
-    }
 }
 
 void MainWindow::toggleTheme()
@@ -1441,30 +1438,19 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 void MainWindow::updateVitals()
 {
     auto* rng = QRandomGenerator::global();
-    const QString now = QDateTime::currentDateTime().toString("HH:mm:ss");
 
     for (int i = 0; i < 4; ++i) {
         // 36.0~38.2℃ / 55~112bpm 범위로 자연스럽게 변동
         double temp = 36.0 + rng->bounded(220) / 100.0;
         int hr = 55 + rng->bounded(58);
 
-        const QString color = vitalColor(temp, hr);
+        const QColor color(vitalColor(temp, hr));  // 정상 초록 / 주의 노랑 / 위험 빨강
 
-        tempValues[i]->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
-        tempValues[i]->setStyleSheet(QString("color:%1;").arg(color));
-        hrValues[i]->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
-        hrValues[i]->setStyleSheet(QString("color:%1;").arg(color));
-
-        vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
-
-        const QString status = vitalStatusLabel(temp, hr);
-        vitalStatusBadges[i]->setText(status);
-        vitalStatusBadges[i]->setStyleSheet(QString(
-            "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
-            " padding:1px 10px; font-size:11px; font-weight:800;")
-            .arg(color, blendHex(color, kCard, 0.18)));
-
-        vitalUpdated[i]->setText(QStringLiteral("웨어러블 · 마지막 갱신 ") + now);
+        // 각 영상 우상단에 체온·심박을 오버레이로 표시(별도 패널 없음).
+        if (channelViews[i])
+            channelViews[i]->setVitals(
+                QString::number(temp, 'f', 1) + QStringLiteral("℃"),
+                QString::number(hr) + QStringLiteral(" bpm"), color);
     }
 }
 

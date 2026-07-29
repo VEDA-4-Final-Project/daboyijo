@@ -34,6 +34,8 @@ public:
     // NVR 스타일 오버레이 — 영상 위에 직접 그리는 정보.
     void setOverlayInfo(const QString& info);  // 좌하단 라벨(예: "201호-1 · 전승현")
     void setLive(bool on);                      // 우상단 LIVE/미연결 표시등
+    // 우상단 웨어러블 바이탈 오버레이 (체온·심박). color는 상태색(정상/주의/위험).
+    void setVitals(const QString& temp, const QString& hr, const QColor& color);
     void setRoi(const QPolygonF& normPts);    // 확정된 ROI(정규화) 주입
     QPolygonF roi() const { return roi_; }
     void clearRoi();
@@ -74,6 +76,9 @@ private:
     bool cameraConnected_ = false;  // 카메라 연결 상태 (시작 시 미연결)
     QString overlayInfo_;           // 좌하단 오버레이 라벨(병상·이름)
     bool live_ = false;             // 우상단 LIVE 표시등 상태
+    QString vitalTemp_, vitalHr_;   // 우상단 바이탈(체온·심박) 텍스트
+    QColor vitalColor_{0x8B, 0x98, 0xA5};  // 바이탈 상태색(기본 회색)
+    bool hasVitals_ = false;        // 바이탈 값 수신 여부
 
     bool alert_ = false;          // 낙상/침상이탈 경보 상태
     bool alertBlink_ = false;     // 점멸 on/off

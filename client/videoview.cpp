@@ -57,6 +57,14 @@ void VideoView::setLive(bool on) {
     update();
 }
 
+void VideoView::setVitals(const QString& temp, const QString& hr, const QColor& color) {
+    vitalTemp_ = temp;
+    vitalHr_ = hr;
+    vitalColor_ = color;
+    hasVitals_ = true;
+    update();
+}
+
 void VideoView::setRoi(const QPolygonF& normPts) {
     roi_ = normPts;
     update();
@@ -234,6 +242,20 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(QColor(0xE6, 0xED, 0xF3));
         p.drawText(QRectF(pill.left() + 8 + dr + 6, pill.top(), stW + 4, pill.height()),
                    Qt::AlignVCenter | Qt::AlignLeft, st);
+
+        // 바이탈(체온·심박) — LIVE 표시등 바로 아래, 우상단 정렬. 상태색으로.
+        if (hasVitals_) {
+            const QString vt = vitalTemp_ + QStringLiteral("   ") + vitalHr_;
+            const int vtW = sfm.horizontalAdvance(vt);
+            const int vH = sfm.height() + 6;
+            const int vW = vtW + 18;
+            QRectF vbox(width() - m - vW, pill.bottom() + 5, vW, vH);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 145));
+            p.drawRoundedRect(vbox, 5, 5);
+            p.setPen(vitalColor_);
+            p.drawText(vbox, Qt::AlignCenter, vt);
+        }
     }
 
     // 그리기 모드 안내 배너
