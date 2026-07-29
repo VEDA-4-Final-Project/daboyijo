@@ -20,6 +20,11 @@ class VideoView : public QWidget {
 public:
     explicit VideoView(int channel, QWidget* parent = nullptr);
 
+    int channel() const { return channel_; }
+    // 표시 채널 변경 (ROI 편집기처럼 한 위젯을 여러 채널에 재사용할 때).
+    // 그리던 것/미리보기는 초기화하고, roi_·frame_는 호출부가 새로 넣는다.
+    void setChannel(int ch);
+
     void setFrame(const QPixmap& frame);      // 새 영상 프레임 표시
     // 카메라 연결 여부. false면 "카메라 미연결" 안내를 표시하고 이전 프레임을 지운다.
     // (연결 요청 직후~첫 프레임 도착 전에는 true로 두면 "신호 대기 중"이 표시된다.)

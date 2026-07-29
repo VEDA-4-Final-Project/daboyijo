@@ -1594,7 +1594,12 @@ void MainWindow::onReadyRead()
             QDateTime::currentMSecsSinceEpoch() - static_cast<qint64>(latestTs[ch]);
         //qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
 
-        channelViews[ch]->setFrame(QPixmap::fromImage(image));
+        const QPixmap pix = QPixmap::fromImage(image);
+        channelViews[ch]->setFrame(pix);
+        // ROI 편집기가 이 채널을 보고 있으면 팝업 영상도 실시간 갱신.
+        if (roiEditorView && roiEditChannel == ch &&
+            cameraSettingsDialog && cameraSettingsDialog->isVisible())
+            roiEditorView->setFrame(pix);
         liveDots[ch]->setStyleSheet(
             QString("background:%1; border-radius:3px;").arg(kCritical));
     }
@@ -1686,81 +1691,47 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onRoiButtonClicked()
 {
-    // 이미 그리는 중이면 이 버튼은 "취소"로 동작
-    if (roiDrawing) {
-        for (auto* v : channelViews)
-            if (v && v->drawMode()) v->cancelDraft();
+    if (!roiEditorView) return;
+    // 그리는 중이면 이 버튼은 "취소"로 동작
+    if (roiEditorView->drawMode()) {
+        roiEditorView->cancelDraft();
         return;
     }
-
-    // 4채널 중 하나 선택 (병상/환자 이름으로 표기)
-    QStringList items;
-    for (int i = 0; i < 4; ++i)
-        items << QStringLiteral("채널 %1  ·  %2 (%3)")
-                     .arg(i + 1).arg(patients[i].name, patients[i].bed);
-
-    bool ok = false;
-    const QString choice = QInputDialog::getItem(
-        this, QStringLiteral("ROI 지정"),
-        QStringLiteral("침대 ROI를 그릴 채널을 선택하세요:"), items, 0, false, &ok);
-    if (!ok) return;
-
-    const int channel = items.indexOf(choice);
-    if (channel < 0 || channel >= 4) return;
-
-    channelViews[channel]->setDrawMode(true);  // 그리기 시작 (좌클릭=점, 더블클릭=완료)
+    // 팝업 편집기(현재 선택 채널)에 바로 그리기 시작 (좌클릭=점, 더블클릭=완료)
+    roiEditorView->setDrawMode(true);
 }
 
 void MainWindow::onRoiClearClicked()
 {
-    // 그리는 중이면 먼저 그 작업을 취소해야 헷갈리지 않는다
-    if (roiDrawing) {
-        for (auto* v : channelViews)
-            if (v && v->drawMode()) v->cancelDraft();
-    }
+    const int ch = roiEditChannel;
+    if (roiEditorView && roiEditorView->drawMode()) roiEditorView->cancelDraft();
 
-    // ROI가 실제로 설정된 채널만 후보로 제시
-    QStringList items;
-    QList<int> channels;
-    for (int i = 0; i < 4; ++i) {
-        if (channelViews[i] && !channelViews[i]->roi().isEmpty()) {
-            items << QStringLiteral("채널 %1  ·  %2 (%3)")
-                         .arg(i + 1).arg(patients[i].name, patients[i].bed);
-            channels << i;
-        }
-    }
-
-    if (items.isEmpty()) {
+    const bool hasRoi =
+        (channelViews[ch] && !channelViews[ch]->roi().isEmpty()) ||
+        (roiEditorView && !roiEditorView->roi().isEmpty());
+    if (!hasRoi) {
         QMessageBox::information(this, QStringLiteral("ROI 제거"),
-                                QStringLiteral("제거할 ROI가 설정된 채널이 없습니다."));
+                                 QStringLiteral("채널 %1에 제거할 ROI가 없습니다.").arg(ch + 1));
         return;
     }
-
-    bool ok = false;
-    const QString choice = QInputDialog::getItem(
-        this, QStringLiteral("ROI 제거"),
-        QStringLiteral("ROI를 제거할 채널을 선택하세요:"), items, 0, false, &ok);
-    if (!ok) return;
-
-    const int idx = items.indexOf(choice);
-    if (idx < 0) return;
-    const int channel = channels[idx];
 
     if (QMessageBox::question(
             this, QStringLiteral("ROI 제거"),
-            QStringLiteral("채널 %1의 침대 ROI를 제거할까요?").arg(channel + 1))
+            QStringLiteral("채널 %1의 침대 ROI를 제거할까요?").arg(ch + 1))
         != QMessageBox::Yes)
         return;
 
-    sendRoi(channel, QPolygonF(), true);   // 서버에 삭제 통보
-    channelViews[channel]->clearRoi();      // 로컬 오버레이 제거
-    qDebug() << "ROI 제거: ch" << channel;
+    sendRoi(ch, QPolygonF(), true);            // 서버에 삭제 통보
+    if (channelViews[ch]) channelViews[ch]->clearRoi();  // 메인 4분할 오버레이 제거
+    if (roiEditorView) roiEditorView->clearRoi();         // 편집기 오버레이 제거
+    qDebug() << "ROI 제거: ch" << ch;
 }
 
 void MainWindow::onRoiVisibilityToggled(bool on)
 {
     for (auto* v : channelViews)
         if (v) v->setRoiVisible(on);
+    if (roiEditorView) roiEditorView->setRoiVisible(on);
     if (roiToggleButton)
         roiToggleButton->setText(on ? QStringLiteral("표시")
                                     : QStringLiteral("숨김"));
@@ -1769,6 +1740,9 @@ void MainWindow::onRoiVisibilityToggled(bool on)
 void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
 {
     sendRoi(channel, normPts);
+    // 팝업 편집기에서 그린 ROI를 메인 4분할 화면에도 반영한다.
+    if (channel >= 0 && channel < 4 && channelViews[channel])
+        channelViews[channel]->setRoi(normPts);
     // 방금 그린 걸 볼 수 있도록 표시 토글이 꺼져 있으면 켠다
     if (roiToggleButton && !roiToggleButton->isChecked())
         roiToggleButton->setChecked(true);
@@ -1963,8 +1937,9 @@ void MainWindow::sendCameraClear(int channel)
     sock->flush();
 }
 
-// "카메라 설정" 팝업을 최초 1회 구성 — 카메라/ROI 탭. 버튼은 멤버라 이후에도
-// 기존 슬롯·토글 로직(예: '지정'↔'취소' 텍스트)이 그대로 동작한다.
+// "카메라 설정" 팝업을 최초 1회 구성 — 카메라·ROI 작업을 팝업 안에서 직접 한다.
+//   · 카메라 탭: 접속 정보 + [검색] → 결과표(팝업 내부에 채워짐) + [연결]/[해제]
+//   · ROI 탭:   채널 선택 → 그 채널 영상을 팝업에 표시 → 그 위에 직접 ROI 그림
 void MainWindow::buildCameraSettingsDialog()
 {
     if (cameraSettingsDialog) return;
@@ -1972,74 +1947,176 @@ void MainWindow::buildCameraSettingsDialog()
     cameraSettingsDialog = new QDialog(this);
     cameraSettingsDialog->setObjectName("panel");
     cameraSettingsDialog->setWindowTitle(QStringLiteral("카메라 설정"));
-    cameraSettingsDialog->resize(440, 320);
+    cameraSettingsDialog->resize(960, 680);
     auto* v = new QVBoxLayout(cameraSettingsDialog);
-    v->setContentsMargins(14, 14, 14, 14);
-    v->setSpacing(10);
+    v->setContentsMargins(16, 16, 16, 16);
+    v->setSpacing(12);
 
     auto* tabs = new QTabWidget(cameraSettingsDialog);
 
-    // ── 탭 1: 카메라 (연결 / 검색 / 해제) ──────────────────
+    // ══════════ 탭 1: 카메라 ══════════
     auto* camTab = new QWidget();
-    auto* camLay = new QVBoxLayout(camTab);
-    camLay->setSpacing(8);
-    auto* camDesc = new QLabel(
-        QStringLiteral("같은 망의 카메라를 검색하거나, IP를 직접 입력해 연결합니다."));
-    camDesc->setObjectName("segCaption");
-    camDesc->setWordWrap(true);
-    camLay->addWidget(camDesc);
+    auto* camV = new QVBoxLayout(camTab);
+    camV->setSpacing(10);
 
-    searchCameraButton = new QPushButton(QStringLiteral("🔍 카메라 검색"));
+    // 접속 정보 폼 (마지막 값 복원)
+    QSettings s;
+    auto* form = new QFormLayout();
+    camIpEdit = new QLineEdit(s.value(QStringLiteral("camera/ip")).toString());
+    camIpEdit->setPlaceholderText(
+        QStringLiteral("예: 172.20.35.140  (아래 검색 결과를 클릭하면 자동 입력)"));
+    camUserEdit = new QLineEdit(
+        s.value(QStringLiteral("camera/user"), QStringLiteral("admin")).toString());
+    camPwEdit = new QLineEdit();
+    camPwEdit->setEchoMode(QLineEdit::Password);
+    camPwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
+    camPortEdit = new QLineEdit(
+        QString::number(s.value(QStringLiteral("camera/port"), 554).toInt()));
+    camProfileEdit = new QLineEdit(
+        s.value(QStringLiteral("camera/profile"), QStringLiteral("profile2")).toString());
+    form->addRow(QStringLiteral("CCTV IP"), camIpEdit);
+    form->addRow(QStringLiteral("계정"), camUserEdit);
+    form->addRow(QStringLiteral("비밀번호"), camPwEdit);
+    form->addRow(QStringLiteral("포트"), camPortEdit);
+    form->addRow(QStringLiteral("프로파일"), camProfileEdit);
+    camV->addLayout(form);
+
+    // 액션 버튼 줄: 검색 / 연결 / 해제
+    auto* btnRow = new QHBoxLayout();
+    searchCameraButton = new QPushButton(QStringLiteral("🔍 같은 망 카메라 검색"));
     searchCameraButton->setObjectName("roiButton");
     searchCameraButton->setCursor(Qt::PointingHandCursor);
     connect(searchCameraButton, &QPushButton::clicked, this, &MainWindow::onSearchCameraClicked);
-    camLay->addWidget(searchCameraButton);
-
-    addCameraButton = new QPushButton(QStringLiteral("📷 카메라 연결 (IP 직접 입력)"));
+    addCameraButton = new QPushButton(QStringLiteral("📷 연결"));
     addCameraButton->setObjectName("roiButton");
     addCameraButton->setCursor(Qt::PointingHandCursor);
     connect(addCameraButton, &QPushButton::clicked, this, &MainWindow::onAddCameraClicked);
-    camLay->addWidget(addCameraButton);
-
-    clearCameraButton = new QPushButton(QStringLiteral("카메라 해제"));
+    clearCameraButton = new QPushButton(QStringLiteral("해제"));
     clearCameraButton->setObjectName("roiClear");
     clearCameraButton->setCursor(Qt::PointingHandCursor);
     connect(clearCameraButton, &QPushButton::clicked, this, &MainWindow::onCameraClearClicked);
-    camLay->addWidget(clearCameraButton);
-    camLay->addStretch();
+    btnRow->addWidget(searchCameraButton);
+    btnRow->addStretch();
+    btnRow->addWidget(addCameraButton);
+    btnRow->addWidget(clearCameraButton);
+    camV->addLayout(btnRow);
+
+    // 검색 결과 표 (팝업 내부에 인라인으로 채워진다 — 별도 창 안 띄움)
+    discoveryStatus = new QLabel(
+        QStringLiteral("‘검색’을 누르면 같은 망의 카메라가 아래에 나타납니다. 행을 클릭하면 IP가 채워져요."));
+    discoveryStatus->setObjectName("segCaption");
+    discoveryStatus->setWordWrap(true);
+    camV->addWidget(discoveryStatus);
+
+    discoveryTable = new QTableWidget(0, 3);
+    discoveryTable->setHorizontalHeaderLabels(
+        {QStringLiteral("모델"), QStringLiteral("IP"), QStringLiteral("MAC / ID")});
+    discoveryTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    discoveryTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    discoveryTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    discoveryTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    discoveryTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    discoveryTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    discoveryTable->verticalHeader()->setVisible(false);
+    // 행 클릭/더블클릭 → IP 입력칸에 채워준다.
+    auto fillIpFromRow = [this](int r, int) {
+        if (discoveryTable->item(r, 1)) camIpEdit->setText(discoveryTable->item(r, 1)->text());
+    };
+    connect(discoveryTable, &QTableWidget::cellClicked, this, fillIpFromRow);
+    connect(discoveryTable, &QTableWidget::cellDoubleClicked, this, fillIpFromRow);
+    camV->addWidget(discoveryTable, 1);
+
+    // 검색용 UDP 소켓 (1회 생성·재사용). 응답이 오면 표에 인라인으로 추가.
+    discoverySocket = new QUdpSocket(cameraSettingsDialog);
+    discoverySocket->bind(QHostAddress::AnyIPv4, 0, QAbstractSocket::ShareAddress);
+    connect(discoverySocket, &QUdpSocket::readyRead, this, [this]() {
+        while (discoverySocket->hasPendingDatagrams()) {
+            QByteArray dg;
+            dg.resize(static_cast<int>(discoverySocket->pendingDatagramSize()));
+            QHostAddress from;
+            discoverySocket->readDatagram(dg.data(), dg.size(), &from);
+            const DiscoveredCam cam = parseProbeMatch(dg);
+            if (cam.ip.isEmpty()) continue;
+            const QString key = cam.uuid.isEmpty() ? cam.ip : cam.uuid;
+            if (discoverySeen.contains(key)) continue;
+            discoverySeen.insert(key);
+            QString mac = macViaArp(cam.ip);
+            if (mac.isEmpty()) mac = QStringLiteral("-");
+            const int r = discoveryTable->rowCount();
+            discoveryTable->insertRow(r);
+            discoveryTable->setItem(r, 0, new QTableWidgetItem(cam.model));
+            discoveryTable->setItem(r, 1, new QTableWidgetItem(cam.ip));
+            discoveryTable->setItem(r, 2, new QTableWidgetItem(mac));
+        }
+    });
+
     tabs->addTab(camTab, QStringLiteral("카메라"));
 
-    // ── 탭 2: ROI (지정 / 제거 / 표시) ────────────────────
+    // ══════════ 탭 2: ROI ══════════
     auto* roiTab = new QWidget();
-    auto* roiLay = new QVBoxLayout(roiTab);
-    roiLay->setSpacing(8);
-    auto* roiDesc = new QLabel(
-        QStringLiteral("침대 감지 영역(ROI)을 지정·제거하거나 표시를 켜고 끕니다.\n"
-                       "'지정'을 누르면 이 창이 잠시 숨겨지고 영상에 직접 그립니다."));
-    roiDesc->setObjectName("segCaption");
-    roiDesc->setWordWrap(true);
-    roiLay->addWidget(roiDesc);
+    auto* roiV = new QVBoxLayout(roiTab);
+    roiV->setSpacing(10);
 
+    // 채널 선택 버튼 (1~4)
+    auto* chRow = new QHBoxLayout();
+    auto* chLabel = new QLabel(QStringLiteral("채널 선택:"));
+    chLabel->setObjectName("segCaption");
+    chRow->addWidget(chLabel);
+    for (int i = 0; i < 4; ++i) {
+        roiChannelButtons[i] =
+            new QPushButton(QStringLiteral("채널 %1").arg(i + 1));
+        roiChannelButtons[i]->setObjectName("roiToggle");
+        roiChannelButtons[i]->setCheckable(true);
+        roiChannelButtons[i]->setCursor(Qt::PointingHandCursor);
+        const int ch = i;
+        connect(roiChannelButtons[i], &QPushButton::clicked, this,
+                [this, ch]() { selectRoiChannel(ch); });
+        chRow->addWidget(roiChannelButtons[i]);
+    }
+    chRow->addStretch();
+    roiV->addLayout(chRow);
+
+    roiEditInfo = new QLabel(
+        QStringLiteral("채널을 고르면 아래에 그 채널 영상이 표시됩니다. ‘지정’을 누른 뒤 "
+                       "영상 위를 클릭해 침대 영역을 그리고, 더블클릭(또는 우클릭)으로 완료하세요."));
+    roiEditInfo->setObjectName("segCaption");
+    roiEditInfo->setWordWrap(true);
+    roiV->addWidget(roiEditInfo);
+
+    // 팝업 내부 편집용 영상 뷰 (한 위젯을 채널 전환하며 재사용)
+    roiEditorView = new VideoView(roiEditChannel);
+    roiEditorView->setObjectName("video");
+    roiEditorView->setMinimumHeight(380);
+    connect(roiEditorView, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    connect(roiEditorView, &VideoView::drawModeChanged, this, [this](int, bool on) {
+        roiDrawing = on;
+        if (roiButton)
+            roiButton->setText(on ? QStringLiteral("취소") : QStringLiteral("지정"));
+    });
+    roiV->addWidget(roiEditorView, 1);
+
+    // ROI 액션: 지정 / 제거 / 표시
+    auto* roiBtnRow = new QHBoxLayout();
     roiButton = new QPushButton(QStringLiteral("지정"));
     roiButton->setObjectName("roiButton");
     roiButton->setCursor(Qt::PointingHandCursor);
     connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
-    roiLay->addWidget(roiButton);
-
     roiClearButton = new QPushButton(QStringLiteral("제거"));
     roiClearButton->setObjectName("roiClear");
     roiClearButton->setCursor(Qt::PointingHandCursor);
     connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
-    roiLay->addWidget(roiClearButton);
-
     roiToggleButton = new QPushButton(QStringLiteral("표시"));
     roiToggleButton->setObjectName("roiToggle");
     roiToggleButton->setCheckable(true);
     roiToggleButton->setChecked(true);
     roiToggleButton->setCursor(Qt::PointingHandCursor);
     connect(roiToggleButton, &QPushButton::toggled, this, &MainWindow::onRoiVisibilityToggled);
-    roiLay->addWidget(roiToggleButton);
-    roiLay->addStretch();
+    roiBtnRow->addWidget(roiButton);
+    roiBtnRow->addWidget(roiClearButton);
+    roiBtnRow->addWidget(roiToggleButton);
+    roiBtnRow->addStretch();
+    roiV->addLayout(roiBtnRow);
+
     tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
 
     v->addWidget(tabs, 1);
@@ -2048,6 +2125,27 @@ void MainWindow::buildCameraSettingsDialog()
     closeBox->button(QDialogButtonBox::Close)->setText(QStringLiteral("닫기"));
     connect(closeBox, &QDialogButtonBox::rejected, cameraSettingsDialog, &QDialog::hide);
     v->addWidget(closeBox);
+
+    selectRoiChannel(0);  // 초기 편집 채널
+}
+
+// ROI 편집 채널 전환 — 그 채널 영상/기존 ROI를 편집기에 로드하고 버튼을 강조.
+void MainWindow::selectRoiChannel(int ch)
+{
+    if (ch < 0 || ch >= 4) return;
+    roiEditChannel = ch;
+    for (int i = 0; i < 4; ++i)
+        if (roiChannelButtons[i]) roiChannelButtons[i]->setChecked(i == ch);
+    if (!roiEditorView) return;
+
+    if (roiEditorView->drawMode()) roiEditorView->cancelDraft();
+    roiEditorView->setChannel(ch);
+    if (channelViews[ch]) {
+        roiEditorView->setCameraConnected(channelViews[ch]->cameraConnected());
+        roiEditorView->setRoi(channelViews[ch]->roi());  // 기존 ROI 로드
+    }
+    roiEditorView->setRoiVisible(!roiToggleButton || roiToggleButton->isChecked());
+    // 다음 프레임부터 onReadyRead가 이 편집기에 실시간 영상을 계속 넣어준다.
 }
 
 void MainWindow::onSettingsClicked()
@@ -2058,73 +2156,26 @@ void MainWindow::onSettingsClicked()
     cameraSettingsDialog->activateWindow();
 }
 
+// "연결" — 카메라 탭의 인라인 입력칸(IP/계정/비번/포트/프로파일)으로 바로 연결.
 void MainWindow::onAddCameraClicked()
 {
-    // 마지막 입력값을 QSettings에서 복원 (관제 PC 로컬).
-    QSettings s;
-    const QString lastIp      = s.value(QStringLiteral("camera/ip")).toString();
-    const QString lastUser    = s.value(QStringLiteral("camera/user"),
-                                        QStringLiteral("admin")).toString();
-    const int     lastPort    = s.value(QStringLiteral("camera/port"), 554).toInt();
-    const QString lastProfile = s.value(QStringLiteral("camera/profile"),
-                                        QStringLiteral("profile2")).toString();
+    if (!camIpEdit) return;   // 팝업 미구성(정상 흐름에선 발생 안 함)
 
-    // ── 입력 다이얼로그 ──────────────────────────────────────
-    QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("카메라 연결"));
-    auto* form = new QFormLayout(&dlg);
-
-    auto* ipEdit = new QLineEdit(lastIp, &dlg);
-    ipEdit->setPlaceholderText(QStringLiteral("예: 172.20.35.140"));
-    auto* userEdit = new QLineEdit(lastUser, &dlg);
-    auto* pwEdit = new QLineEdit(&dlg);
-    pwEdit->setEchoMode(QLineEdit::Password);
-    pwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
-    auto* portEdit = new QLineEdit(QString::number(lastPort), &dlg);
-    auto* profileEdit = new QLineEdit(lastProfile, &dlg);
-
-    form->addRow(QStringLiteral("CCTV IP"), ipEdit);
-    form->addRow(QStringLiteral("계정"), userEdit);
-    form->addRow(QStringLiteral("비밀번호"), pwEdit);
-    form->addRow(QStringLiteral("포트"), portEdit);
-    form->addRow(QStringLiteral("프로파일"), profileEdit);
-
-    auto* hint = new QLabel(
-        QStringLiteral("IP 하나로 4채널(센서)을 모두 연결합니다.\n"
-                       "ch0·1은 Pi A, ch2·3은 Pi B로 전송됩니다."), &dlg);
-    hint->setObjectName("segCaption");
-    form->addRow(hint);
-
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("연결"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("취소"));
-    form->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    if (dlg.exec() != QDialog::Accepted) return;
-
-    const QString ip = ipEdit->text().trimmed();
+    const QString ip = camIpEdit->text().trimmed();
     if (ip.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("입력 오류"),
-                             QStringLiteral("CCTV IP를 입력하세요."));
+                             QStringLiteral("CCTV IP를 입력하거나 검색 목록에서 선택하세요."));
         return;
     }
-    const QString user = userEdit->text().trimmed();
-    const QString pw = pwEdit->text();
     bool portOk = false;
-    const int port = portEdit->text().trimmed().toInt(&portOk);
+    const int port = camPortEdit->text().trimmed().toInt(&portOk);
     if (!portOk || port <= 0 || port > 65535) {
         QMessageBox::warning(this, QStringLiteral("입력 오류"),
                              QStringLiteral("포트 번호가 올바르지 않습니다."));
         return;
     }
-    const QString profile = profileEdit->text().trimmed().isEmpty()
-                                ? QStringLiteral("profile2")
-                                : profileEdit->text().trimmed();
-
-    connectCameraWith(ip, user, pw, port, profile);
+    connectCameraWith(ip, camUserEdit->text().trimmed(), camPwEdit->text(),
+                      port, camProfileEdit->text().trimmed());
 }
 
 // 수동 입력/검색 두 경로가 공유하는 실제 연결 처리.
@@ -2171,92 +2222,23 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
     }
 }
 
+// "검색" — 팝업 안(카메라 탭)의 discoveryTable에 인라인으로 결과를 채운다.
+// 별도 창을 띄우지 않는다. 응답 파싱·표 추가는 build 시 연결한 readyRead 람다가 처리.
 void MainWindow::onSearchCameraClicked()
 {
-    QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("카메라 검색 (ONVIF)"));
-    dlg.resize(560, 440);
-    auto* v = new QVBoxLayout(&dlg);
-
-    auto* status = new QLabel(QStringLiteral("같은 망의 ONVIF 카메라를 검색 중…"), &dlg);
-    v->addWidget(status);
-
-    auto* table = new QTableWidget(0, 3, &dlg);
-    table->setHorizontalHeaderLabels({QStringLiteral("모델"), QStringLiteral("IP"),
-                                      QStringLiteral("MAC / ID")});
-    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table->setSelectionMode(QAbstractItemView::SingleSelection);
-    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->verticalHeader()->setVisible(false);
-    v->addWidget(table, 1);
-
-    // 접속에 필요한 계정/포트/프로파일 (마지막 값 복원)
-    QSettings s;
-    auto* form = new QFormLayout();
-    auto* userEdit = new QLineEdit(
-        s.value(QStringLiteral("camera/user"), QStringLiteral("admin")).toString(), &dlg);
-    auto* pwEdit = new QLineEdit(&dlg);
-    pwEdit->setEchoMode(QLineEdit::Password);
-    pwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
-    auto* portEdit = new QLineEdit(
-        QString::number(s.value(QStringLiteral("camera/port"), 554).toInt()), &dlg);
-    auto* profileEdit = new QLineEdit(
-        s.value(QStringLiteral("camera/profile"), QStringLiteral("profile2")).toString(), &dlg);
-    form->addRow(QStringLiteral("계정"), userEdit);
-    form->addRow(QStringLiteral("비밀번호"), pwEdit);
-    form->addRow(QStringLiteral("포트"), portEdit);
-    form->addRow(QStringLiteral("프로파일"), profileEdit);
-    v->addLayout(form);
-
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("이 카메라로 연결"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("닫기"));
-    v->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    connect(table, &QTableWidget::cellDoubleClicked, &dlg,
-            [&dlg](int, int) { dlg.accept(); });  // 더블클릭으로도 연결
-
-    // ── WS-Discovery: 멀티캐스트 Probe 전송 → 유니캐스트 ProbeMatch 수신 ──
-    auto* udp = new QUdpSocket(&dlg);
-    if (!udp->bind(QHostAddress::AnyIPv4, 0, QAbstractSocket::ShareAddress))
-        status->setText(QStringLiteral("검색 소켓 열기 실패 — 방화벽/권한 확인"));
-
-    QSet<QString> seen;   // dlg.exec()가 블로킹하는 동안 이 지역변수는 살아 있음
-    connect(udp, &QUdpSocket::readyRead, &dlg, [udp, table, &seen]() {
-        while (udp->hasPendingDatagrams()) {
-            QByteArray dg;
-            dg.resize(static_cast<int>(udp->pendingDatagramSize()));
-            QHostAddress from;
-            udp->readDatagram(dg.data(), dg.size(), &from);
-            const DiscoveredCam cam = parseProbeMatch(dg);
-            qDebug() << "WS-Discovery 응답" << from.toString()
-                     << "→ ip:" << cam.ip << "model:" << cam.model;
-            if (cam.ip.isEmpty()) continue;
-            const QString key = cam.uuid.isEmpty() ? cam.ip : cam.uuid;
-            if (seen.contains(key)) continue;   // 재전송/중복 응답 제거
-            seen.insert(key);
-            // 실제 MAC은 ARP로 조회(같은 서브넷). 실패하면 '-'.
-            QString mac = macViaArp(cam.ip);
-            if (mac.isEmpty()) mac = QStringLiteral("-");
-            const int r = table->rowCount();
-            table->insertRow(r);
-            table->setItem(r, 0, new QTableWidgetItem(cam.model));
-            table->setItem(r, 1, new QTableWidgetItem(cam.ip));
-            table->setItem(r, 2, new QTableWidgetItem(mac));
-        }
-    });
+    if (!discoverySocket || !discoveryTable) return;
+    discoveryTable->setRowCount(0);
+    discoverySeen.clear();
+    if (discoveryStatus)
+        discoveryStatus->setText(QStringLiteral("같은 망의 ONVIF 카메라를 검색 중…"));
 
     const QByteArray probe = buildWsDiscoveryProbe();
     const QHostAddress mcast(QStringLiteral("239.255.255.250"));
+    QUdpSocket* sock = discoverySocket;
 
-    // ★ 핵심: 기본 멀티캐스트 인터페이스가 가상 어댑터로 잡히면 카메라가 Probe를
-    //   못 받는다 → IPv4·멀티캐스트 가능한 모든 인터페이스로 각각 쏜다.
-    auto sendProbes = [udp, probe, mcast]() {
+    // 기본 멀티캐스트 인터페이스가 가상 어댑터로 잡히면 카메라가 Probe를 못 받는다
+    // → IPv4·멀티캐스트 가능한 모든 인터페이스로 각각 쏜다.
+    auto sendProbes = [sock, probe, mcast]() {
         int sentOn = 0;
         for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
             const auto f = iface.flags();
@@ -2269,40 +2251,20 @@ void MainWindow::onSearchCameraClicked()
             for (const auto& e : iface.addressEntries())
                 if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) { hasV4 = true; break; }
             if (!hasV4) continue;
-            udp->setMulticastInterface(iface);
-            const qint64 n = udp->writeDatagram(probe, mcast, 3702);
-            qDebug() << "WS-Discovery Probe →" << iface.humanReadableName()
-                     << "bytes:" << n;
-            if (n > 0) ++sentOn;
+            sock->setMulticastInterface(iface);
+            if (sock->writeDatagram(probe, mcast, 3702) > 0) ++sentOn;
         }
-        if (sentOn == 0)  // 폴백: 기본 인터페이스로라도 전송
-            udp->writeDatagram(probe, mcast, 3702);
+        if (sentOn == 0) sock->writeDatagram(probe, mcast, 3702);  // 폴백
     };
 
     sendProbes();
-    QTimer::singleShot(1200, &dlg, sendProbes);   // UDP 유실 대비 재전송
-    QTimer::singleShot(5000, &dlg, [status, table]() {
-        status->setText(QStringLiteral("검색 완료 — %1대 발견 (없으면 '카메라 연결'로 IP 직접 입력)")
-                            .arg(table->rowCount()));
+    QTimer::singleShot(1200, this, sendProbes);   // UDP 유실 대비 재전송
+    QTimer::singleShot(5000, this, [this]() {
+        if (discoveryStatus && discoveryTable)
+            discoveryStatus->setText(
+                QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)")
+                    .arg(discoveryTable->rowCount()));
     });
-
-    if (dlg.exec() != QDialog::Accepted) return;
-
-    const int row = table->currentRow();
-    if (row < 0 || !table->item(row, 1)) {
-        QMessageBox::information(this, QStringLiteral("카메라 검색"),
-                                 QStringLiteral("목록에서 카메라를 선택하세요."));
-        return;
-    }
-    bool portOk = false;
-    const int port = portEdit->text().trimmed().toInt(&portOk);
-    if (!portOk || port <= 0 || port > 65535) {
-        QMessageBox::warning(this, QStringLiteral("입력 오류"),
-                             QStringLiteral("포트 번호가 올바르지 않습니다."));
-        return;
-    }
-    connectCameraWith(table->item(row, 1)->text(), userEdit->text().trimmed(),
-                      pwEdit->text(), port, profileEdit->text().trimmed());
 }
 
 void MainWindow::onCameraClearClicked()

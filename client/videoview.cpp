@@ -28,6 +28,15 @@ void VideoView::setFrame(const QPixmap& frame) {
     update();
 }
 
+void VideoView::setChannel(int ch) {
+    channel_ = ch;
+    draft_.clear();
+    hasHover_ = false;
+    drawMode_ = false;
+    setCursor(Qt::ArrowCursor);
+    update();  // roi_·frame_는 호출부(선택 슬롯)가 새 채널 값으로 채운다
+}
+
 void VideoView::setCameraConnected(bool on) {
     if (cameraConnected_ == on) return;
     cameraConnected_ = on;

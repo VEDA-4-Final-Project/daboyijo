@@ -11,6 +11,7 @@
 #include <QString>
 #include <QLineEdit>
 #include <QTextEdit>
+#include <QSet>
 
 #include "auth.h"
 
@@ -81,6 +82,7 @@ class QVBoxLayout;
 class QStackedWidget;
 class QMediaPlayer;
 class QVideoWidget;
+class QUdpSocket;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -303,11 +305,30 @@ private:
     QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
     QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
 
-    // "카메라 설정" 팝업 — 카메라(연결/검색/해제)·ROI(지정/제거/표시) 탭을 담는다.
+    // "카메라 설정" 팝업 — 카메라·ROI 작업을 팝업 안에서 직접 수행(탭 전환).
     // 비모달로 띄워 ROI 그리기(영상 클릭)가 가능하게 한다. 1회만 생성(멤버 재사용).
     QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
     QDialog* cameraSettingsDialog = nullptr;
     void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
+    void startCameraDiscovery();               // 인라인 ONVIF 검색 → discoveryTable 채움
+
+    // ── 카메라 탭(인라인) 위젯 ──
+    QLineEdit* camIpEdit = nullptr;
+    QLineEdit* camUserEdit = nullptr;
+    QLineEdit* camPwEdit = nullptr;
+    QLineEdit* camPortEdit = nullptr;
+    QLineEdit* camProfileEdit = nullptr;
+    QTableWidget* discoveryTable = nullptr;    // 검색 결과(모델/IP/MAC)
+    QLabel* discoveryStatus = nullptr;
+    QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
+    QSet<QString> discoverySeen;               // 중복 응답 제거
+
+    // ── ROI 탭(인라인 편집기) 위젯 ──
+    VideoView* roiEditorView = nullptr;        // 선택 채널 영상을 팝업에 표시 + ROI 그림
+    int roiEditChannel = 0;                    // 현재 편집 중인 채널(0~3)
+    QPushButton* roiChannelButtons[4] = {};    // 채널 선택 버튼(1~4)
+    QLabel* roiEditInfo = nullptr;
+    void selectRoiChannel(int ch);             // 편집 채널 전환 → 영상/ROI 로드
 };
 
 #endif // MAINWINDOW_H
