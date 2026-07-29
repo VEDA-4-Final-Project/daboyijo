@@ -455,47 +455,7 @@ QWidget* MainWindow::buildVideoWall()
     titleRow->addWidget(title);
     titleRow->addStretch();
 
-    // ── ROI 도구: 성격이 같은 3형제를 하나의 세그먼트 그룹으로 묶는다 ──
-    auto* roiGroup = new QFrame();
-    roiGroup->setObjectName("segGroup");
-    auto* roiGroupLay = new QHBoxLayout(roiGroup);
-    roiGroupLay->setContentsMargins(9, 3, 3, 3);
-    roiGroupLay->setSpacing(2);
-
-    auto* roiCaption = new QLabel(QStringLiteral("ROI"));
-    roiCaption->setObjectName("segCaption");
-    roiGroupLay->addWidget(roiCaption);
-
-    roiButton = new QPushButton(QStringLiteral("지정"));
-    roiButton->setObjectName("segBtn");
-    roiButton->setCursor(Qt::PointingHandCursor);
-    connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
-    roiGroupLay->addWidget(roiButton);
-
-    roiClearButton = new QPushButton(QStringLiteral("제거"));
-    roiClearButton->setObjectName("segBtnDanger");
-    roiClearButton->setCursor(Qt::PointingHandCursor);
-    connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
-    roiGroupLay->addWidget(roiClearButton);
-
-    roiToggleButton = new QPushButton(QStringLiteral("표시"));
-    roiToggleButton->setObjectName("segBtnToggle");
-    roiToggleButton->setCheckable(true);
-    roiToggleButton->setChecked(true);
-    roiToggleButton->setCursor(Qt::PointingHandCursor);
-    connect(roiToggleButton, &QPushButton::toggled, this,
-            &MainWindow::onRoiVisibilityToggled);
-    roiGroupLay->addWidget(roiToggleButton);
-
-    titleRow->addWidget(roiGroup);
-
-    // ROI 도구와 실시간 액션 사이 구분선
-    auto* toolSep = new QFrame();
-    toolSep->setFrameShape(QFrame::VLine);
-    toolSep->setObjectName("toolSep");
-    toolSep->setFixedHeight(22);
-    titleRow->addWidget(toolSep);
-
+    // ── 실시간 액션: 방송 / 경보해제만 노출. 나머지(카메라·ROI)는 "설정" 팝업으로 ──
     // 🎤 원격 방송(인터콤)
     micButton = new QPushButton(QStringLiteral("🎤 방송"));
     micButton->setObjectName("micButton");
@@ -512,29 +472,19 @@ QWidget* MainWindow::buildVideoWall()
             &MainWindow::onAlarmClearClicked);
     titleRow->addWidget(alarmClearButton);
 
-    // 📷 카메라 연결 — CCTV IP를 입력받아 서버로 전송(서버가 그 IP로 RTSP를 연다)
-    addCameraButton = new QPushButton(QStringLiteral("📷 카메라 연결"));
-    addCameraButton->setObjectName("roiButton");
-    addCameraButton->setCursor(Qt::PointingHandCursor);
-    connect(addCameraButton, &QPushButton::clicked, this,
-            &MainWindow::onAddCameraClicked);
-    titleRow->addWidget(addCameraButton);
+    // 액션과 설정 사이 구분선
+    auto* toolSep = new QFrame();
+    toolSep->setFrameShape(QFrame::VLine);
+    toolSep->setObjectName("toolSep");
+    toolSep->setFixedHeight(22);
+    titleRow->addWidget(toolSep);
 
-    // 🔍 카메라 검색 — 같은 망의 ONVIF 카메라를 자동 탐색해 목록에서 선택
-    searchCameraButton = new QPushButton(QStringLiteral("🔍 카메라 검색"));
-    searchCameraButton->setObjectName("roiButton");
-    searchCameraButton->setCursor(Qt::PointingHandCursor);
-    connect(searchCameraButton, &QPushButton::clicked, this,
-            &MainWindow::onSearchCameraClicked);
-    titleRow->addWidget(searchCameraButton);
-
-    // 카메라 해제 — 모든 채널 연결 끊기(서버가 RTSP 종료 후 대기)
-    clearCameraButton = new QPushButton(QStringLiteral("카메라 해제"));
-    clearCameraButton->setObjectName("segBtnDanger");
-    clearCameraButton->setCursor(Qt::PointingHandCursor);
-    connect(clearCameraButton, &QPushButton::clicked, this,
-            &MainWindow::onCameraClearClicked);
-    titleRow->addWidget(clearCameraButton);
+    // ⚙️ 카메라 설정 — 카메라(연결/검색/해제)·ROI(지정/제거/표시) 탭 팝업을 연다
+    settingsButton = new QPushButton(QStringLiteral("⚙️ 카메라 설정"));
+    settingsButton->setObjectName("roiButton");
+    settingsButton->setCursor(Qt::PointingHandCursor);
+    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
+    titleRow->addWidget(settingsButton);
 
     outer->addLayout(titleRow);
 
@@ -602,6 +552,8 @@ QWidget* MainWindow::buildVideoCard(int channel)
                 if (roiButton)
                     roiButton->setText(on ? QStringLiteral("취소")
                                           : QStringLiteral("지정"));
+                // 그리기 시작 시 설정 팝업을 숨겨 영상을 가리지 않게 한다.
+                if (on && cameraSettingsDialog) cameraSettingsDialog->hide();
             });
     lay->addWidget(video, 1);
 
@@ -2009,6 +1961,101 @@ void MainWindow::sendCameraClear(int channel)
     pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
     sock->write(pkt);
     sock->flush();
+}
+
+// "카메라 설정" 팝업을 최초 1회 구성 — 카메라/ROI 탭. 버튼은 멤버라 이후에도
+// 기존 슬롯·토글 로직(예: '지정'↔'취소' 텍스트)이 그대로 동작한다.
+void MainWindow::buildCameraSettingsDialog()
+{
+    if (cameraSettingsDialog) return;
+
+    cameraSettingsDialog = new QDialog(this);
+    cameraSettingsDialog->setObjectName("panel");
+    cameraSettingsDialog->setWindowTitle(QStringLiteral("카메라 설정"));
+    cameraSettingsDialog->resize(440, 320);
+    auto* v = new QVBoxLayout(cameraSettingsDialog);
+    v->setContentsMargins(14, 14, 14, 14);
+    v->setSpacing(10);
+
+    auto* tabs = new QTabWidget(cameraSettingsDialog);
+
+    // ── 탭 1: 카메라 (연결 / 검색 / 해제) ──────────────────
+    auto* camTab = new QWidget();
+    auto* camLay = new QVBoxLayout(camTab);
+    camLay->setSpacing(8);
+    auto* camDesc = new QLabel(
+        QStringLiteral("같은 망의 카메라를 검색하거나, IP를 직접 입력해 연결합니다."));
+    camDesc->setObjectName("segCaption");
+    camDesc->setWordWrap(true);
+    camLay->addWidget(camDesc);
+
+    searchCameraButton = new QPushButton(QStringLiteral("🔍 카메라 검색"));
+    searchCameraButton->setObjectName("roiButton");
+    searchCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(searchCameraButton, &QPushButton::clicked, this, &MainWindow::onSearchCameraClicked);
+    camLay->addWidget(searchCameraButton);
+
+    addCameraButton = new QPushButton(QStringLiteral("📷 카메라 연결 (IP 직접 입력)"));
+    addCameraButton->setObjectName("roiButton");
+    addCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(addCameraButton, &QPushButton::clicked, this, &MainWindow::onAddCameraClicked);
+    camLay->addWidget(addCameraButton);
+
+    clearCameraButton = new QPushButton(QStringLiteral("카메라 해제"));
+    clearCameraButton->setObjectName("roiClear");
+    clearCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(clearCameraButton, &QPushButton::clicked, this, &MainWindow::onCameraClearClicked);
+    camLay->addWidget(clearCameraButton);
+    camLay->addStretch();
+    tabs->addTab(camTab, QStringLiteral("카메라"));
+
+    // ── 탭 2: ROI (지정 / 제거 / 표시) ────────────────────
+    auto* roiTab = new QWidget();
+    auto* roiLay = new QVBoxLayout(roiTab);
+    roiLay->setSpacing(8);
+    auto* roiDesc = new QLabel(
+        QStringLiteral("침대 감지 영역(ROI)을 지정·제거하거나 표시를 켜고 끕니다.\n"
+                       "'지정'을 누르면 이 창이 잠시 숨겨지고 영상에 직접 그립니다."));
+    roiDesc->setObjectName("segCaption");
+    roiDesc->setWordWrap(true);
+    roiLay->addWidget(roiDesc);
+
+    roiButton = new QPushButton(QStringLiteral("지정"));
+    roiButton->setObjectName("roiButton");
+    roiButton->setCursor(Qt::PointingHandCursor);
+    connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
+    roiLay->addWidget(roiButton);
+
+    roiClearButton = new QPushButton(QStringLiteral("제거"));
+    roiClearButton->setObjectName("roiClear");
+    roiClearButton->setCursor(Qt::PointingHandCursor);
+    connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
+    roiLay->addWidget(roiClearButton);
+
+    roiToggleButton = new QPushButton(QStringLiteral("표시"));
+    roiToggleButton->setObjectName("roiToggle");
+    roiToggleButton->setCheckable(true);
+    roiToggleButton->setChecked(true);
+    roiToggleButton->setCursor(Qt::PointingHandCursor);
+    connect(roiToggleButton, &QPushButton::toggled, this, &MainWindow::onRoiVisibilityToggled);
+    roiLay->addWidget(roiToggleButton);
+    roiLay->addStretch();
+    tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
+
+    v->addWidget(tabs, 1);
+
+    auto* closeBox = new QDialogButtonBox(QDialogButtonBox::Close, cameraSettingsDialog);
+    closeBox->button(QDialogButtonBox::Close)->setText(QStringLiteral("닫기"));
+    connect(closeBox, &QDialogButtonBox::rejected, cameraSettingsDialog, &QDialog::hide);
+    v->addWidget(closeBox);
+}
+
+void MainWindow::onSettingsClicked()
+{
+    buildCameraSettingsDialog();   // 최초 1회만 실제로 생성
+    cameraSettingsDialog->show();  // 비모달 — 영상 클릭(ROI 그리기)이 가능하게
+    cameraSettingsDialog->raise();
+    cameraSettingsDialog->activateWindow();
 }
 
 void MainWindow::onAddCameraClicked()

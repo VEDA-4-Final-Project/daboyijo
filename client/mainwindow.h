@@ -121,6 +121,7 @@ private slots:
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
+    void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
 
 
     // TAB2: 비상 로그 조회 및 블랙박스
@@ -301,6 +302,12 @@ private:
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
     QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
     QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
+
+    // "카메라 설정" 팝업 — 카메라(연결/검색/해제)·ROI(지정/제거/표시) 탭을 담는다.
+    // 비모달로 띄워 ROI 그리기(영상 클릭)가 가능하게 한다. 1회만 생성(멤버 재사용).
+    QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
+    QDialog* cameraSettingsDialog = nullptr;
+    void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
 };
 
 #endif // MAINWINDOW_H
