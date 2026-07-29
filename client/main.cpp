@@ -13,6 +13,11 @@ int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
 
+    // QSettings 저장 위치를 고정 — 카메라 연결 IP·계정 등 관제 PC 로컬 설정이
+    // 기본 생성자 QSettings()로 일관되게 읽고 쓰이도록 조직/앱 이름을 지정한다.
+    QApplication::setOrganizationName(QStringLiteral("daboyijo"));
+    QApplication::setApplicationName(QStringLiteral("gvm-client"));
+
     QSqlDatabase db = QSqlDatabase::addDatabase("QMARIADB");
     db.setHostName("172.20.35.202");
     db.setPort(3306);

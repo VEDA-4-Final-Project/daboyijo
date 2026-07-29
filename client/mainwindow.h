@@ -55,11 +55,14 @@ struct dbj_evt_header_t {
 };                          // 18B
 #pragma pack(pop)
 
-// 제어 메시지 상수 (서버와 합의된 값)
+// 제어 메시지 상수 (서버와 합의된 값 — protocol/video_stream.h와 동일하게 유지)
 static constexpr uint16_t kCtrlMagic = 0xDB4C;
 static constexpr uint8_t kCtrlRoiSet = 0x01;
 static constexpr uint8_t kCtrlRoiClear = 0x02;
+static constexpr uint8_t kCtrlCameraSet = 0x05;    // 채널 카메라 연결 (헤더 뒤 RTSP URL)
+static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr int kRoiCoordScale = 10000;
+static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 
 // 이벤트 메시지 상수 (서버 스펙)
 static constexpr uint16_t kEvtMagic = 0xDB4D;
@@ -115,6 +118,7 @@ private slots:
     void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
+    void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
 
 
     // TAB2: 비상 로그 조회 및 블랙박스
@@ -267,11 +271,21 @@ private:
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
 
+    // 카메라 연결/해제를 서버로 전송 (CAMERA_SET/CLEAR).
+    // sendCamera는 해당 채널 담당 Pi로 RTSP URL을 보낸다. 성공 시 true.
+    bool sendCamera(int channel, const QString& rtspUrl);
+    void sendCameraClear(int channel);
+    // 단일 CCTV IP → 채널별 RTSP URL 생성 (PNM-C16083RVQ 4센서 규약).
+    static QString buildRtspUrl(const QString& ip, const QString& user,
+                                const QString& password, int port,
+                                const QString& profile, int channel);
+
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
+    QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
 };
 
 #endif // MAINWINDOW_H

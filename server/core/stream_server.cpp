@@ -194,6 +194,8 @@ void StreamServer::receiverLoop(Client& client) {
             size_t need = sizeof(dbj_ctrl_header_t);
             if (h.type == DBJ_CTRL_ROI_SET) {
                 need += static_cast<size_t>(h.point_count) * sizeof(dbj_roi_point_t);
+            } else if (h.type == DBJ_CTRL_CAMERA_SET) {
+                need += h.reserved;  // 헤더 뒤에 URL 문자열(reserved 바이트)이 옴
             }
             if (buf.size() - off < need) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
@@ -235,8 +237,25 @@ void StreamServer::receiverLoop(Client& client) {
 
                     case DBJ_CTRL_RISK_UPDATE: {
                         if (on_risk_level_) {
-                            int risk_level = h.point_count; 
+                            int risk_level = h.point_count;
                             on_risk_level_(h.channel, risk_level);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_CAMERA_SET: {
+                        if (on_camera_set_) {
+                            const char* p = reinterpret_cast<const char*>(
+                                buf.data() + off + sizeof(dbj_ctrl_header_t));
+                            std::string url(p, h.reserved);
+                            on_camera_set_(h.channel, url);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_CAMERA_CLEAR: {
+                        if (on_camera_clear_) {
+                            on_camera_clear_(h.channel);
                         }
                         break;
                     }

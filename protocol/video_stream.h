@@ -57,6 +57,17 @@ extern "C" {
 #define DBJ_CTRL_ROI_CLEAR  0x02    /* 채널 ROI 삭제 — 점 배열 없음 */
 #define DBJ_CTRL_ALARM_CONFIRM 0x03  /* 통합 경보 해제 — 점 배열 없음 */
 #define DBJ_CTRL_RISK_UPDATE  0x04  /* 입소자 위험도 갱신*/
+/* 채널 카메라 런타임 연결/해제 — Qt에서 CCTV를 지정하면 서버가 그 RTSP를 연다.
+ * cameras.conf에 URL을 미리 박지 않고, 관제 화면에서 카메라를 추가하는 구조.
+ *  - CAMERA_SET  : reserved(uint16)=이어지는 RTSP URL 문자열의 바이트 길이.
+ *                  헤더 뒤에 그만큼의 URL 바이트가 온다(널종단 없음). 서버는 해당
+ *                  채널 RtspAvClient를 이 URL로 (재)연결한다. 카메라 1대(4센서)의
+ *                  채널별 서브스트림 URL은 Qt가 만들어 채널마다 따로 보낸다.
+ *  - CAMERA_CLEAR: 문자열 없음. 해당 채널 연결을 끊고 대기 상태로 되돌린다. */
+#define DBJ_CTRL_CAMERA_SET   0x05  /* 채널 카메라 연결 — 헤더 뒤에 RTSP URL 문자열 */
+#define DBJ_CTRL_CAMERA_CLEAR 0x06  /* 채널 카메라 해제 — 문자열 없음 */
+
+#define DBJ_CAMERA_URL_MAX  512     /* CAMERA_SET URL 문자열 길이 상한 */
 
 /* 위험도 값 정의 (3단계 분기) */
 #define DBJ_RISK_LOW          1       /* 위험도 '하' -> 이탈해도 상관없음 (패스) */
@@ -82,8 +93,8 @@ typedef struct {
     uint8_t  type;         /* DBJ_CTRL_* */
     uint8_t  channel;      /* 대상 채널 0~3 */
     uint8_t  point_count;  /* ROI_SET 시 점 개수(0~32) 또는 RISK_UPDATE 시 위험도 값(1~3) */
-    uint16_t reserved;     /* 4바이트 정렬용 (0으로) */
-} dbj_ctrl_header_t;       /* 8바이트, 이어서 point_count개의 dbj_roi_point_t */
+    uint16_t reserved;     /* 기본 0. CAMERA_SET 시엔 이어지는 URL 문자열 바이트 길이 */
+} dbj_ctrl_header_t;       /* 8바이트, 이어서 point_count개의 dbj_roi_point_t 또는 reserved 바이트의 URL */
 
 typedef struct {
     uint16_t x;            /* 정규화 x × DBJ_ROI_COORD_SCALE (0~10000) */
