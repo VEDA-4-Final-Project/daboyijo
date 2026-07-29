@@ -45,6 +45,13 @@
 #include <QLineEdit>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QUdpSocket>
+#include <QUuid>
+#include <QXmlStreamReader>
+#include <QTimer>
+#include <QSet>
+#include <QRegularExpression>
+#include <QAbstractItemView>
 #include <algorithm>
 
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
@@ -510,6 +517,14 @@ QWidget* MainWindow::buildVideoWall()
     connect(addCameraButton, &QPushButton::clicked, this,
             &MainWindow::onAddCameraClicked);
     titleRow->addWidget(addCameraButton);
+
+    // 🔍 카메라 검색 — 같은 망의 ONVIF 카메라를 자동 탐색해 목록에서 선택
+    searchCameraButton = new QPushButton(QStringLiteral("🔍 카메라 검색"));
+    searchCameraButton->setObjectName("roiButton");
+    searchCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(searchCameraButton, &QPushButton::clicked, this,
+            &MainWindow::onSearchCameraClicked);
+    titleRow->addWidget(searchCameraButton);
 
     // 카메라 해제 — 모든 채널 연결 끊기(서버가 RTSP 종료 후 대기)
     clearCameraButton = new QPushButton(QStringLiteral("카메라 해제"));
@@ -1844,6 +1859,96 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
 //  (Qt는 실제 CCTV에 직접 붙지 않는다. 붙는 대상은 항상 Pi 서버.)
 // ═══════════════════════════════════════════════════════════
 
+// ── ONVIF WS-Discovery 헬퍼 (같은 망 카메라 자동 탐색) ──────────
+namespace {
+
+// 발견한 ONVIF 장비 1건.
+struct DiscoveredCam {
+    QString ip;
+    QString model;
+    QString mac;   // UUID에서 유도(대부분 카메라가 UUID에 MAC을 심음). 못 구하면 uuid.
+    QString uuid;  // EndpointReference — 중복 제거 키
+};
+
+// WS-Discovery Probe SOAP 메시지 (Types=NetworkVideoTransmitter → 카메라 대상).
+QByteArray buildWsDiscoveryProbe() {
+    const QString msgId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    return QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\""
+        " xmlns:w=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\""
+        " xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\""
+        " xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\">"
+        "<e:Header>"
+        "<w:MessageID>uuid:%1</w:MessageID>"
+        "<w:To e:mustUnderstand=\"true\">"
+        "urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>"
+        "<w:Action e:mustUnderstand=\"true\">"
+        "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action>"
+        "</e:Header>"
+        "<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types>"
+        "</d:Probe></e:Body></e:Envelope>").arg(msgId).toUtf8();
+}
+
+// Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조).
+QString modelFromScopes(const QString& scopes) {
+    QString name, hardware;
+    const QStringList toks =
+        scopes.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    for (const QString& t : toks) {
+        int i;
+        if ((i = t.indexOf(QStringLiteral("/name/"))) >= 0)
+            name = QUrl::fromPercentEncoding(t.mid(i + 6).toUtf8());
+        else if ((i = t.indexOf(QStringLiteral("/hardware/"))) >= 0)
+            hardware = QUrl::fromPercentEncoding(t.mid(i + 10).toUtf8());
+    }
+    if (!name.isEmpty() && !hardware.isEmpty())
+        return name + QStringLiteral(" (") + hardware + QStringLiteral(")");
+    if (!name.isEmpty()) return name;
+    if (!hardware.isEmpty()) return hardware;
+    return QStringLiteral("(알 수 없음)");
+}
+
+// UUID 꼬리(마지막 12 hex)를 MAC 형식으로 — 다수 카메라가 UUID에 MAC을 심는다.
+QString macFromUuid(const QString& uuid) {
+    QString hex;
+    for (QChar c : uuid) if (c.isLetterOrNumber()) hex += c;
+    if (hex.size() < 12) return QString();
+    const QString tail = hex.right(12).toUpper();
+    for (QChar c : tail)
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) return QString();
+    QStringList parts;
+    for (int i = 0; i < 12; i += 2) parts << tail.mid(i, 2);
+    return parts.join(':');
+}
+
+// ProbeMatch 응답 1개 파싱 → DiscoveredCam.
+DiscoveredCam parseProbeMatch(const QByteArray& datagram) {
+    DiscoveredCam cam;
+    QString xaddrs, scopes;
+    QXmlStreamReader xml(datagram);
+    while (!xml.atEnd()) {
+        if (xml.readNext() == QXmlStreamReader::StartElement) {
+            const QString name = xml.name().toString();  // 네임스페이스 접두어 제외 로컬명
+            if (name == QStringLiteral("XAddrs"))       xaddrs = xml.readElementText();
+            else if (name == QStringLiteral("Scopes"))  scopes = xml.readElementText();
+            else if (name == QStringLiteral("Address") && cam.uuid.isEmpty())
+                cam.uuid = xml.readElementText().trimmed();
+        }
+    }
+    if (!xaddrs.isEmpty()) {
+        const QString first =
+            xaddrs.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).value(0);
+        cam.ip = QUrl(first).host();
+    }
+    cam.model = modelFromScopes(scopes);
+    cam.mac = macFromUuid(cam.uuid);
+    if (cam.mac.isEmpty()) cam.mac = cam.uuid;
+    return cam;
+}
+
+}  // namespace
+
 // 단일 CCTV IP → 채널별 RTSP URL. PNM-C16083RVQ(4센서 1대)는 IP 하나에 서브채널
 // 0~3이 붙는다: rtsp://<계정>:<pw>@<IP>:<port>/<채널>/<profile>/media.smp
 QString MainWindow::buildRtspUrl(const QString& ip, const QString& user,
@@ -1968,17 +2073,29 @@ void MainWindow::onAddCameraClicked()
                                 ? QStringLiteral("profile2")
                                 : profileEdit->text().trimmed();
 
+    connectCameraWith(ip, user, pw, port, profile);
+}
+
+// 수동 입력/검색 두 경로가 공유하는 실제 연결 처리.
+void MainWindow::connectCameraWith(const QString& ip, const QString& user,
+                                   const QString& password, int port,
+                                   const QString& profile)
+{
+    const QString prof = profile.trimmed().isEmpty()
+                             ? QStringLiteral("profile2") : profile.trimmed();
+
     // 입력값 저장(폼 복원용). 비밀번호는 평문 저장을 피해 담지 않는다 — 다음
     // 연결 때 다시 입력한다(서버로는 v1 평문 TCP로 나가며, 추후 TLS 적용 예정).
+    QSettings s;
     s.setValue(QStringLiteral("camera/ip"), ip);
     s.setValue(QStringLiteral("camera/user"), user);
     s.setValue(QStringLiteral("camera/port"), port);
-    s.setValue(QStringLiteral("camera/profile"), profile);
+    s.setValue(QStringLiteral("camera/profile"), prof);
 
     // IP 하나 → 4채널 URL 생성 → 채널별 담당 Pi로 전송(socketForChannel이 라우팅).
     int sent = 0;
     for (int ch = 0; ch < 4; ++ch) {
-        const QString url = buildRtspUrl(ip, user, pw, port, profile, ch);
+        const QString url = buildRtspUrl(ip, user, password, port, prof, ch);
         lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
         if (channelViews[ch])
             channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
@@ -2001,6 +2118,110 @@ void MainWindow::onAddCameraClicked()
             QStringLiteral("4채널 연결 요청을 서버로 보냈습니다.\n"
                            "서버가 카메라를 여는 동안 잠시 후 영상이 표시됩니다."));
     }
+}
+
+void MainWindow::onSearchCameraClicked()
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("카메라 검색 (ONVIF)"));
+    dlg.resize(560, 440);
+    auto* v = new QVBoxLayout(&dlg);
+
+    auto* status = new QLabel(QStringLiteral("같은 망의 ONVIF 카메라를 검색 중…"), &dlg);
+    v->addWidget(status);
+
+    auto* table = new QTableWidget(0, 3, &dlg);
+    table->setHorizontalHeaderLabels({QStringLiteral("모델"), QStringLiteral("IP"),
+                                      QStringLiteral("MAC / ID")});
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->verticalHeader()->setVisible(false);
+    v->addWidget(table, 1);
+
+    // 접속에 필요한 계정/포트/프로파일 (마지막 값 복원)
+    QSettings s;
+    auto* form = new QFormLayout();
+    auto* userEdit = new QLineEdit(
+        s.value(QStringLiteral("camera/user"), QStringLiteral("admin")).toString(), &dlg);
+    auto* pwEdit = new QLineEdit(&dlg);
+    pwEdit->setEchoMode(QLineEdit::Password);
+    pwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
+    auto* portEdit = new QLineEdit(
+        QString::number(s.value(QStringLiteral("camera/port"), 554).toInt()), &dlg);
+    auto* profileEdit = new QLineEdit(
+        s.value(QStringLiteral("camera/profile"), QStringLiteral("profile2")).toString(), &dlg);
+    form->addRow(QStringLiteral("계정"), userEdit);
+    form->addRow(QStringLiteral("비밀번호"), pwEdit);
+    form->addRow(QStringLiteral("포트"), portEdit);
+    form->addRow(QStringLiteral("프로파일"), profileEdit);
+    v->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("이 카메라로 연결"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("닫기"));
+    v->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(table, &QTableWidget::cellDoubleClicked, &dlg,
+            [&dlg](int, int) { dlg.accept(); });  // 더블클릭으로도 연결
+
+    // ── WS-Discovery: 멀티캐스트 Probe 전송 → 유니캐스트 ProbeMatch 수신 ──
+    auto* udp = new QUdpSocket(&dlg);
+    if (!udp->bind(QHostAddress::AnyIPv4, 0, QAbstractSocket::ShareAddress))
+        status->setText(QStringLiteral("검색 소켓 열기 실패 — 방화벽/권한 확인"));
+
+    QSet<QString> seen;   // dlg.exec()가 블로킹하는 동안 이 지역변수는 살아 있음
+    connect(udp, &QUdpSocket::readyRead, &dlg, [udp, table, &seen]() {
+        while (udp->hasPendingDatagrams()) {
+            QByteArray dg;
+            dg.resize(static_cast<int>(udp->pendingDatagramSize()));
+            udp->readDatagram(dg.data(), dg.size());
+            const DiscoveredCam cam = parseProbeMatch(dg);
+            if (cam.ip.isEmpty()) continue;
+            const QString key = cam.uuid.isEmpty() ? cam.ip : cam.uuid;
+            if (seen.contains(key)) continue;   // 재전송/중복 응답 제거
+            seen.insert(key);
+            const int r = table->rowCount();
+            table->insertRow(r);
+            table->setItem(r, 0, new QTableWidgetItem(cam.model));
+            table->setItem(r, 1, new QTableWidgetItem(cam.ip));
+            table->setItem(r, 2, new QTableWidgetItem(cam.mac));
+        }
+    });
+
+    const QByteArray probe = buildWsDiscoveryProbe();
+    const QHostAddress mcast(QStringLiteral("239.255.255.250"));
+    udp->writeDatagram(probe, mcast, 3702);
+    QTimer::singleShot(1000, &dlg, [udp, probe, mcast]() {   // UDP 유실 대비 1회 재전송
+        udp->writeDatagram(probe, mcast, 3702);
+    });
+    QTimer::singleShot(4000, &dlg, [status, table]() {
+        status->setText(QStringLiteral("검색 완료 — %1대 발견 (없으면 '카메라 연결'로 IP 직접 입력)")
+                            .arg(table->rowCount()));
+    });
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const int row = table->currentRow();
+    if (row < 0 || !table->item(row, 1)) {
+        QMessageBox::information(this, QStringLiteral("카메라 검색"),
+                                 QStringLiteral("목록에서 카메라를 선택하세요."));
+        return;
+    }
+    bool portOk = false;
+    const int port = portEdit->text().trimmed().toInt(&portOk);
+    if (!portOk || port <= 0 || port > 65535) {
+        QMessageBox::warning(this, QStringLiteral("입력 오류"),
+                             QStringLiteral("포트 번호가 올바르지 않습니다."));
+        return;
+    }
+    connectCameraWith(table->item(row, 1)->text(), userEdit->text().trimmed(),
+                      pwEdit->text(), port, profileEdit->text().trimmed());
 }
 
 void MainWindow::onCameraClearClicked()

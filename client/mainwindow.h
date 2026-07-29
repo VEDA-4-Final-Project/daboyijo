@@ -119,6 +119,7 @@ private slots:
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
+    void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
 
 
@@ -286,6 +287,11 @@ private:
     static QString buildRtspUrl(const QString& ip, const QString& user,
                                 const QString& password, int port,
                                 const QString& profile, int channel);
+    // 주어진 접속 정보로 4채널 카메라를 연결(수동 입력/검색 두 경로가 공유).
+    // 4채널 URL 생성 → 담당 Pi로 전송 → 상태 반영 → QSettings 저장(비번 제외).
+    void connectCameraWith(const QString& ip, const QString& user,
+                           const QString& password, int port,
+                           const QString& profile);
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
@@ -293,6 +299,7 @@ private:
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
+    QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
     QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
 };
 
