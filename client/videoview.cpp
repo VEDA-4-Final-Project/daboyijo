@@ -222,37 +222,21 @@ void VideoView::paintEvent(QPaintEvent*) {
                        Qt::AlignVCenter | Qt::AlignLeft, info);
         }
 
-        // 우상단: LIVE(빨강 점) / 미연결(회색 점) 표시등.
-        QFont sf = font();
-        sf.setBold(true);
-        p.setFont(sf);
-        const QFontMetrics sfm(sf);
-        const QString st = live_ ? QStringLiteral("LIVE") : QStringLiteral("미연결");
-        const QColor dotc = live_ ? QColor(0xFF, 0x5A, 0x5F) : QColor(0x8B, 0x98, 0xA5);
-        const qreal dr = 6;
-        const int stW = sfm.horizontalAdvance(st);
-        const int pillH = sfm.height() + 6;
-        const int pillW = 8 + int(dr) + 6 + stW + 8;
-        QRectF pill(width() - m - pillW, m, pillW, pillH);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, 145));
-        p.drawRoundedRect(pill, pillH / 2.0, pillH / 2.0);
-        p.setBrush(dotc);
-        p.drawEllipse(QPointF(pill.left() + 8 + dr / 2, pill.center().y()), dr / 2, dr / 2);
-        p.setPen(QColor(0xE6, 0xED, 0xF3));
-        p.drawText(QRectF(pill.left() + 8 + dr + 6, pill.top(), stW + 4, pill.height()),
-                   Qt::AlignVCenter | Qt::AlignLeft, st);
-
-        // 바이탈(체온·심박) — LIVE 표시등 바로 아래, 우상단 정렬. 상태색으로.
+        // 우상단: 체온·심박 오버레이 (LIVE 대신 이 자리에). 상태색으로 조금 크게.
         if (hasVitals_) {
+            QFont vf = font();
+            vf.setBold(true);
+            vf.setPixelSize(16);
+            p.setFont(vf);
+            const QFontMetrics vfm(vf);
             const QString vt = vitalTemp_ + QStringLiteral("   ") + vitalHr_;
-            const int vtW = sfm.horizontalAdvance(vt);
-            const int vH = sfm.height() + 6;
-            const int vW = vtW + 18;
-            QRectF vbox(width() - m - vW, pill.bottom() + 5, vW, vH);
+            const int vtW = vfm.horizontalAdvance(vt);
+            const int vH = vfm.height() + 8;
+            const int vW = vtW + 22;
+            QRectF vbox(width() - m - vW, m, vW, vH);
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor(0, 0, 0, 145));
-            p.drawRoundedRect(vbox, 5, 5);
+            p.setBrush(QColor(0, 0, 0, 150));
+            p.drawRoundedRect(vbox, 6, 6);
             p.setPen(vitalColor_);
             p.drawText(vbox, Qt::AlignCenter, vt);
         }
