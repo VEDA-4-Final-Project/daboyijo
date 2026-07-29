@@ -52,6 +52,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <QAbstractItemView>
+#include <QNetworkInterface>
 #include <algorithm>
 
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
@@ -1886,8 +1887,8 @@ QByteArray buildWsDiscoveryProbe() {
         "<w:Action e:mustUnderstand=\"true\">"
         "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action>"
         "</e:Header>"
-        "<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types>"
-        "</d:Probe></e:Body></e:Envelope>").arg(msgId).toUtf8();
+        // Types를 비워 모든 ONVIF 장비가 응답하게 한다(카메라만 걸러 못 뜨는 경우 방지).
+        "<e:Body><d:Probe/></e:Body></e:Envelope>").arg(msgId).toUtf8();
 }
 
 // Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조).
@@ -2180,8 +2181,11 @@ void MainWindow::onSearchCameraClicked()
         while (udp->hasPendingDatagrams()) {
             QByteArray dg;
             dg.resize(static_cast<int>(udp->pendingDatagramSize()));
-            udp->readDatagram(dg.data(), dg.size());
+            QHostAddress from;
+            udp->readDatagram(dg.data(), dg.size(), &from);
             const DiscoveredCam cam = parseProbeMatch(dg);
+            qDebug() << "WS-Discovery 응답" << from.toString()
+                     << "→ ip:" << cam.ip << "model:" << cam.model;
             if (cam.ip.isEmpty()) continue;
             const QString key = cam.uuid.isEmpty() ? cam.ip : cam.uuid;
             if (seen.contains(key)) continue;   // 재전송/중복 응답 제거
@@ -2196,11 +2200,35 @@ void MainWindow::onSearchCameraClicked()
 
     const QByteArray probe = buildWsDiscoveryProbe();
     const QHostAddress mcast(QStringLiteral("239.255.255.250"));
-    udp->writeDatagram(probe, mcast, 3702);
-    QTimer::singleShot(1000, &dlg, [udp, probe, mcast]() {   // UDP 유실 대비 1회 재전송
-        udp->writeDatagram(probe, mcast, 3702);
-    });
-    QTimer::singleShot(4000, &dlg, [status, table]() {
+
+    // ★ 핵심: 기본 멀티캐스트 인터페이스가 가상 어댑터로 잡히면 카메라가 Probe를
+    //   못 받는다 → IPv4·멀티캐스트 가능한 모든 인터페이스로 각각 쏜다.
+    auto sendProbes = [udp, probe, mcast]() {
+        int sentOn = 0;
+        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+            const auto f = iface.flags();
+            if (!f.testFlag(QNetworkInterface::IsUp) ||
+                !f.testFlag(QNetworkInterface::IsRunning) ||
+                f.testFlag(QNetworkInterface::IsLoopBack) ||
+                !f.testFlag(QNetworkInterface::CanMulticast))
+                continue;
+            bool hasV4 = false;
+            for (const auto& e : iface.addressEntries())
+                if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) { hasV4 = true; break; }
+            if (!hasV4) continue;
+            udp->setMulticastInterface(iface);
+            const qint64 n = udp->writeDatagram(probe, mcast, 3702);
+            qDebug() << "WS-Discovery Probe →" << iface.humanReadableName()
+                     << "bytes:" << n;
+            if (n > 0) ++sentOn;
+        }
+        if (sentOn == 0)  // 폴백: 기본 인터페이스로라도 전송
+            udp->writeDatagram(probe, mcast, 3702);
+    };
+
+    sendProbes();
+    QTimer::singleShot(1200, &dlg, sendProbes);   // UDP 유실 대비 재전송
+    QTimer::singleShot(5000, &dlg, [status, table]() {
         status->setText(QStringLiteral("검색 완료 — %1대 발견 (없으면 '카메라 연결'로 IP 직접 입력)")
                             .arg(table->rowCount()));
     });
