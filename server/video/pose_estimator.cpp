@@ -54,9 +54,7 @@ constexpr float kMaxTorsoRatioForeshort = 1.0f;
 // 자세 판정이 흔들리는 걸 완화한다. 다운스케일 후라 픽셀 수가 적어 비용이 거의 0.
 // "아주 조금만" 밝히는 용도 — 과하면 노이즈가 부각돼 오히려 관절 신뢰도가
 // 흔들릴 수 있으니 작게 잡는다. 1.0이면 무효과. 실측 로그로 튜닝.
-// [밝기 OFF 2026-07-29] 밝기 보정 잠시 비활성 — 이 상수, 생성자 LUT 빌드,
-//   estimate()의 cv::LUT 적용 세 곳을 함께 주석 해제하면 복귀.
-// constexpr double kInputGamma = 1.15;
+constexpr double kInputGamma = 1.15;
 
 }  // namespace
 
@@ -110,21 +108,21 @@ PoseEstimator::PoseEstimator(const std::string& modelPath, int numThreads)
     impl_->input_w = input->dims->data[2];
     impl_->input_is_uint8 = (input->type == kTfLiteUInt8);
 
-    // [밝기 OFF 2026-07-29] 모델 입력 감마 LUT 빌드 비활성 (위 kInputGamma·아래
-    //   estimate()의 cv::LUT와 함께 주석 해제하면 복귀). input_lut가 비어 있으면
-    //   estimate()의 적용부는 자동으로 건너뛴다.
-    // if (std::fabs(kInputGamma - 1.0) > 1e-3) {
-    //     impl_->input_lut.create(1, 256, CV_8UC1);
-    //     uchar* p = impl_->input_lut.ptr<uchar>();
-    //     const double inv = 1.0 / kInputGamma;
-    //     for (int i = 0; i < 256; ++i) {
-    //         double v = std::pow(i / 255.0, inv) * 255.0 + 0.5;  // +0.5: 반올림
-    //         p[i] = static_cast<uchar>(v < 0.0 ? 0.0 : (v > 255.0 ? 255.0 : v));
-    //     }
-    // }
+    // [밝기 보정] 모델 입력용 감마 LUT를 1회 계산해 둔다 (kInputGamma≈1이면 미적용).
+    //   out = 255 * (in/255)^(1/gamma) — gamma>1이면 어두운 값이 올라가 밝아진다.
+    if (std::fabs(kInputGamma - 1.0) > 1e-3) {
+        impl_->input_lut.create(1, 256, CV_8UC1);
+        uchar* p = impl_->input_lut.ptr<uchar>();
+        const double inv = 1.0 / kInputGamma;
+        for (int i = 0; i < 256; ++i) {
+            double v = std::pow(i / 255.0, inv) * 255.0 + 0.5;  // +0.5: 반올림
+            p[i] = static_cast<uchar>(v < 0.0 ? 0.0 : (v > 255.0 ? 255.0 : v));
+        }
+    }
 
-    std::fprintf(stderr, "[pose] MoveNet 로드 완료 (%dx%d, %s)\n", impl_->input_w,
-                 impl_->input_h, impl_->input_is_uint8 ? "uint8" : "float32");
+    std::fprintf(stderr, "[pose] MoveNet 로드 완료 (%dx%d, %s, gamma=%.2f)\n",
+                 impl_->input_w, impl_->input_h,
+                 impl_->input_is_uint8 ? "uint8" : "float32", kInputGamma);
 }
 
 PoseEstimator::~PoseEstimator() = default;
@@ -157,9 +155,10 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
     const int off_y = (impl_->input_h - new_h) / 2;
     scaled.copyTo(resized(cv::Rect(off_x, off_y, new_w, new_h)));
 
-    // [밝기 OFF 2026-07-29] 모델 입력 감마 보정 비활성 (위 kInputGamma·생성자 LUT
-    //   빌드와 함께 주석 해제하면 복귀 — 작은 모델 입력에만 적용해 비용 거의 0).
-    // if (!impl_->input_lut.empty()) cv::LUT(resized, impl_->input_lut, resized);
+    // [밝기 보정] 작은 모델 입력에만 아주 약한 감마 보정 — 어두운 방 자세 판정 보강.
+    // 다운스케일 후라 픽셀 수가 적어 비용이 거의 0. 검은 레터박스 여백은 감마(0)=0
+    // 이라 그대로 유지된다. (kInputGamma≈1이면 LUT가 비어 있어 이 줄은 건너뜀)
+    if (!impl_->input_lut.empty()) cv::LUT(resized, impl_->input_lut, resized);
 
     if (!resized.isContinuous()) resized = resized.clone();
 
