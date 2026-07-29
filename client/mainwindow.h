@@ -12,6 +12,8 @@
 #include <QLineEdit>
 #include <QTextEdit>
 
+#include "auth.h"
+
 
 
 // 🌟 명세서 3번에 정의된 16바이트 리틀엔디언 구조체 그대로 구현
@@ -92,10 +94,15 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(const Auth::SessionUser& user, QWidget *parent = nullptr);
     ~MainWindow();
 
+    // 창이 닫힌 이유가 "로그아웃"이면 true — main()이 로그인 창을 다시 띄운다.
+    bool logoutRequested() const { return logoutRequested_; }
+
 private slots:
+    void onLogoutClicked();      // 로그아웃 — 확인 후 창을 닫고 로그인으로 복귀
+
     void onReadyRead();          // 명세서 가이드라인 구현 슬롯 (영상 수신)
     void onSocketStateChanged(QAbstractSocket::SocketState state);
     void connectToServer();      // 영상 서버 접속/재접속
@@ -141,6 +148,14 @@ private:
     PatientInfo patients[4];     // 병상별 환자 정보
     QLabel* clockLabel = nullptr;      // 상단 실시간 시계
     QPushButton* themeToggleButton = nullptr;  // 라이트/다크 테마 토글
+
+    // ── 로그인 세션 ──
+    Auth::SessionUser currentUser;         // 현재 로그인한 사용자
+    bool logoutRequested_ = false;         // 종료 vs 로그아웃 구분
+    QLabel* userNameLabel = nullptr;       // 헤더의 사용자 이름
+    QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
+    QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
+
     bool darkMode = false;             // 현재 다크모드 여부
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등

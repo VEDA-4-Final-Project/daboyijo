@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "theme.h"
 #include "videoview.h"
 #include <QHostAddress>
 #include <QPixmap>
@@ -42,41 +43,8 @@
 #include <QVariant>
 #include <algorithm>
 
-// ── 디자인 토큰 (라이트/다크 두 팔레트, 런타임 전환) ──────────
+// 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
 namespace {
-struct Palette {
-    const char *bgDeep, *panel, *card, *border,
-               *text, *sub, *accent, *normal, *warn, *critical;
-};
-
-// 밝은 의료 톤 (요양원 주간 관제 환경)
-const Palette kLight {
-    "#F4F7FA", "#FFFFFF", "#F0F4F8", "#DCE4EC",
-    "#1E2A32", "#5C6B78", "#12B5A6", "#2E9E5B", "#C77A11", "#E5484D"
-};
-// 다크 관제실 톤 (야간·통합 관제 환경, 강조색은 어두운 배경용으로 살짝 밝게)
-const Palette kDark {
-    "#0E141B", "#151D26", "#1C2733", "#2A3742",
-    "#E6EDF3", "#8B98A5", "#17C7B6", "#35B368", "#E0A030", "#FF5A5F"
-};
-
-// 현재 적용 중인 색 (전환 시 applyPalette로 재대입)
-const char* kBgDeep   = kLight.bgDeep;
-const char* kPanel    = kLight.panel;
-const char* kCard     = kLight.card;
-const char* kBorder   = kLight.border;
-const char* kTextMain = kLight.text;
-const char* kTextSub  = kLight.sub;
-const char* kAccent   = kLight.accent;
-const char* kNormal   = kLight.normal;
-const char* kWarn     = kLight.warn;
-const char* kCritical = kLight.critical;
-
-void applyPalette(const Palette& p) {
-    kBgDeep = p.bgDeep;   kPanel = p.panel;   kCard = p.card;   kBorder = p.border;
-    kTextMain = p.text;   kTextSub = p.sub;   kAccent = p.accent;
-    kNormal = p.normal;   kWarn = p.warn;     kCritical = p.critical;
-}
 
 // 상태 색상: 정상/주의/위험 판정
 QString vitalColor(double temp, int hr) {
@@ -106,8 +74,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 //   일치해야 하고(MainWindow::serverForChannel), Qt는 두 IP에 각각 붙는다.
 //   TODO: 설정 파일/실행 인자로 분리.
 const char* kServerHosts[2] = {
-    "172.20.35.180",   // Pi A (ch0·ch1)
-    "172.20.35.192",   // Pi B (ch2·ch3)  ← Pi B 실제 IP로 수정!
+    "172.20.35.202",   // Pi A (ch0·ch1)
+    "172.20.35.201",   // Pi B (ch2·ch3)  ← Pi B 실제 IP로 수정!
 };
 // 채널(0~3) → 담당 Pi의 호스트 문자열 (블랙박스 클립 URL 등 host가 필요한 곳용).
 // 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
@@ -189,9 +157,10 @@ constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
 constexpr uint8_t kCtrlAlarmConfirm = 0x03;
 }
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , currentUser(user)
 {
     ui->setupUi(this);
 
@@ -256,7 +225,7 @@ MainWindow::MainWindow(QWidget *parent)
             for (const QJsonValue& value : fileList) {
                 const QString fileName = value.toString();
                 // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
-                // 서버 저장 규칙: 낙상은 접미사 없음(chN_TS.mp4), 침상이탈은 _EGRESS.
+                // 서버 저장 규칙: 낙상은 _FALL, 침상이탈은 _EGRESS 접미사.
                 const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
                 const QStringList parts = cleanName.split(QLatin1Char('_'));
                 if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
@@ -399,7 +368,52 @@ QWidget* MainWindow::buildHeader()
     connect(themeToggleButton, &QPushButton::clicked, this, &MainWindow::toggleTheme);
     lay->addWidget(themeToggleButton);
 
+    // 구분선 + 로그인 사용자 / 로그아웃
+    auto* sep3 = new QFrame();
+    sep3->setFrameShape(QFrame::VLine);
+    sep3->setObjectName("headerSep");
+    sep3->setFixedHeight(28);
+    lay->addWidget(sep3);
+
+    // 이름 첫 글자를 딴 원형 배지 — 누가 로그인해 있는지 한눈에 보이게
+    userAvatarLabel = new QLabel();
+    userAvatarLabel->setObjectName("userAvatar");
+    userAvatarLabel->setFixedSize(28, 28);
+    userAvatarLabel->setAlignment(Qt::AlignCenter);
+    userAvatarLabel->setText(currentUser.name.left(1));
+    lay->addWidget(userAvatarLabel);
+
+    userNameLabel = new QLabel();
+    userNameLabel->setObjectName("userName");
+    userNameLabel->setText(currentUser.name);
+    userNameLabel->setToolTip(QStringLiteral("%1 (%2)")
+                                  .arg(currentUser.name, currentUser.loginId));
+    lay->addWidget(userNameLabel);
+
+    logoutButton = new QPushButton(QStringLiteral("로그아웃"));
+    logoutButton->setObjectName("logoutButton");
+    logoutButton->setCursor(Qt::PointingHandCursor);
+    connect(logoutButton, &QPushButton::clicked, this, &MainWindow::onLogoutClicked);
+    lay->addWidget(logoutButton);
+
     return header;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  로그아웃 — 창을 닫고 main()의 루프가 로그인 창을 다시 띄운다
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onLogoutClicked()
+{
+    // 관제 중 오조작으로 화면이 꺼지면 안 되므로 한 번 되묻는다.
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("로그아웃"),
+        QStringLiteral("로그아웃하시겠습니까?\n관제 화면이 종료되고 로그인 화면으로 돌아갑니다."),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    logoutRequested_ = true;
+    close();
 }
 
 QWidget* MainWindow::buildVideoWall()
@@ -1169,6 +1183,14 @@ void MainWindow::applyTheme()
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 12px; }
         #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
 
+        /* 로그인 사용자 표시 + 로그아웃 */
+        #userAvatar { background: %(accent); color: #fff; border-radius: 14px;
+                      font-size: 13px; font-weight: 800; }
+        #userName { color: %(text); font-size: 13px; font-weight: 700; }
+        #logoutButton { background: %(card); color: %(sub); border: 1px solid %(border);
+                        border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+        #logoutButton:hover { border-color: %(critical); color: %(critical); }
+
         #panel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
         /* 섹션 제목: 좌측 청록 악센트 바로 위계 부여 */
         #panelTitle { color: %(text); font-size: 15px; font-weight: 800;
@@ -1562,7 +1584,7 @@ void MainWindow::onReadyRead()
         //   (동기 안 되면 두 시계 오프셋만큼 음수/양수로 치우침)
         const qint64 latency =
             QDateTime::currentMSecsSinceEpoch() - static_cast<qint64>(latestTs[ch]);
-        qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
+        //qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
 
         channelViews[ch]->setFrame(QPixmap::fromImage(image));
         liveDots[ch]->setStyleSheet(
@@ -1593,7 +1615,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         const QString when = QDateTime::fromMSecsSinceEpoch(
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
-        // 서버는 낙상 클립을 접미사 없이 저장한다: chN_타임스탬프.mp4
+        // 서버 저장 규칙: 낙상은 _FALL 접미사 — chN_타임스탬프_FALL.mp4
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
                                      .arg(QString::fromLatin1(hostForChannel(channel)))
                                      .arg(kClipHttpPort)
