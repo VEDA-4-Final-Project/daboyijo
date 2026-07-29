@@ -32,7 +32,6 @@
 #include "fall_module.hpp"
 #include "frame_queue.hpp"
 #include "privacy_masker.hpp"
-#include "brightness_enhancer.hpp"
 #include "protocol/video_stream.h"
 #include "rtsp_av_client.hpp"
 #include "stats_reporter.hpp"
@@ -81,13 +80,6 @@ int main(int argc, char* argv[]) {
     FallModule fall;                // [낙상감지]
     BedEgressModule bed_egress;     // [침상탈출]
     PrivacyMasker privacy_masker;   // [블러처리]
-    // [밝기 보정] 프레임 전체 감마 보정으로 저조도 가시성 개선. gamma>1이면 밝게.
-    // LUT 룩업뿐이라 매우 싸다(부하 부담 거의 없음). 야간이 어두우면 값을 키우고,
-    // 낮에 하얗게 뜨면(과노출) 낮춰서 화면 보며 조절할 것 (은은하게: 1.2).
-    // [부하 테스트 2026-07-29] 송출 밝기 stage 부하 비교용으로 잠시 비활성
-    //   (선언도 함께 주석 — 미사용 경고 방지). 되살리려면 이 줄과 아래 addStage
-    //   블록을 함께 주석 해제.
-    // BrightnessEnhancer brightness_enhancer(1.5);
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
@@ -189,14 +181,6 @@ int main(int argc, char* argv[]) {
         privacy_masker.restoreFallen(ch, out, clean, dets);
         return true;
     });
-    // [밝기 보정] 프레임 전체 감마 보정. 블러 stage보다 "앞"에 두어 밝힌 뒤
-    //   얼굴 블러가 덮이게 한다(프라이버시 유지). AI 입력(clean)은 stage 실행
-    //   전에 캡처되므로 검출에는 영향이 없다 — 송출/스냅샷 화질만 개선.
-    // [부하 테스트 2026-07-29] 잠시 비활성 (위 선언부와 함께 주석 해제하면 복귀).
-    // pipeline.addStage([&](int ch, cv::Mat& img,
-    //                       const std::vector<Detection>& dets) {
-    //     brightness_enhancer.process(ch, img, dets);
-    // });
 
     // [블러처리] 송출 전 동적 프라이버시 마스킹 단계
     pipeline.addStage([&](int ch, cv::Mat& img,

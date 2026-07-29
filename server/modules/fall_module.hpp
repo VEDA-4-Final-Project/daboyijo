@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "ai_worker.hpp"
-#include "brightness_enhancer.hpp"
 #include "detection.hpp"
 #include "fall_detector.hpp"
 #include "pose_estimator.hpp"
@@ -66,10 +65,4 @@ private:
     // 채널 → 자세 추정 상태. addChannel은 메인 스레드에서 AI 워커 시작 전에만
     // 호출되고, 이후 각 항목은 그 채널의 워커 스레드 전용이라 락 불필요.
     std::map<int, std::unique_ptr<ChannelPose>> channels_;
-
-    // [밝기 보정] MoveNet에 넣기 전 "사람 크롭"에만 적용하는 감마 보정.
-    // 어두운 방에서 누움/서있음 판정이 흔들리는 걸 완화한다. 송출용 밝기와
-    // 별개로, 검출 정확도만 위해 값을 따로 조절할 수 있다(gamma>1이면 밝게).
-    // [부하 테스트 2026-07-29] 잠시 비활성 (fall_module.cpp의 사용부와 함께 주석).
-    // BrightnessEnhancer pose_brightness_{1.5};
 };
