@@ -23,6 +23,12 @@ MqttClient_veda::MqttClient_veda(const std::string& id) : m_id(id), m_mosq(nullp
 
 
 MqttClient_veda::~MqttClient_veda(){
+    stopLoop();
+    disconnect();
+    if(m_mosq) {
+       quitto_destroy(m_mosq);
+       m_mosq = nullptr;
+    }
     mosquitto_lib_cleanup();
     std::cout << "MQTT Client destroyed"<< std::endl;
 }
