@@ -96,11 +96,13 @@ void FallModule::processFrame(const AiJob& job) {
         // [밝기 보정] 어두운 방에서 자세 판정이 흔들리지 않도록, MoveNet에 넣기 전
         // 사람 크롭에만 감마 보정을 적용한다. raw_frame(roi)는 원본으로의 뷰이므로
         // clone해서 원본(다른 객체 크롭·다른 소비자)에 영향이 없게 한다.
-        cv::Mat crop = job.raw_frame(roi).clone();
-        pose_brightness_.process(job.channel, crop, {});
+        // [부하 테스트 2026-07-29] 잠시 비활성. 되살리려면 아래 두 줄 주석 해제 +
+        //   isLyingDown 인자를 crop 으로 바꾸고, fall_module.hpp의 pose_brightness_ 복구.
+        // cv::Mat crop = job.raw_frame(roi).clone();
+        // pose_brightness_.process(job.channel, crop, {});
 
         // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다
-        bool lying = ch.estimator.isLyingDown(crop);
+        bool lying = ch.estimator.isLyingDown(job.raw_frame(roi));
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                      job.channel + 1, t.object_id, lying ? "누움" : "서있음",
                      roi.width, roi.height);
