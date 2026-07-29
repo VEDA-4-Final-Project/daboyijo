@@ -53,6 +53,7 @@
 #include <QRegularExpression>
 #include <QAbstractItemView>
 #include <QNetworkInterface>
+#include <QProcess>
 #include <algorithm>
 
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
@@ -1910,17 +1911,20 @@ QString modelFromScopes(const QString& scopes) {
     return QStringLiteral("(알 수 없음)");
 }
 
-// UUID 꼬리(마지막 12 hex)를 MAC 형식으로 — 다수 카메라가 UUID에 MAC을 심는다.
-QString macFromUuid(const QString& uuid) {
-    QString hex;
-    for (QChar c : uuid) if (c.isLetterOrNumber()) hex += c;
-    if (hex.size() < 12) return QString();
-    const QString tail = hex.right(12).toUpper();
-    for (QChar c : tail)
-        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) return QString();
-    QStringList parts;
-    for (int i = 0; i < 12; i += 2) parts << tail.mid(i, 2);
-    return parts.join(':');
+// IP의 실제 MAC을 ARP 캐시에서 조회 (같은 서브넷 한정). WS-Discovery엔 MAC 표준
+// 필드가 없어 UUID로 추측하면 틀리므로, ProbeMatch를 이미 받은(=ARP 해석된) 카메라
+// 주소를 arp로 확인한다. Windows·Linux 모두 'arp -a <ip>' 출력에서 MAC을 파싱.
+QString macViaArp(const QString& ip) {
+    QProcess p;
+    p.start(QStringLiteral("arp"), {QStringLiteral("-a"), ip});
+    if (!p.waitForFinished(1500)) return QString();
+    const QString out = QString::fromLocal8Bit(p.readAllStandardOutput());
+    // 구분자는 ':'(리눅스) 또는 '-'(윈도우) — 둘 다 허용.
+    static const QRegularExpression re(
+        QStringLiteral("([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}"));
+    const auto m = re.match(out);
+    if (!m.hasMatch()) return QString();
+    return m.captured(0).toUpper().replace('-', ':');
 }
 
 // ProbeMatch 응답 1개 파싱 → DiscoveredCam.
@@ -1943,8 +1947,7 @@ DiscoveredCam parseProbeMatch(const QByteArray& datagram) {
         cam.ip = QUrl(first).host();
     }
     cam.model = modelFromScopes(scopes);
-    cam.mac = macFromUuid(cam.uuid);
-    if (cam.mac.isEmpty()) cam.mac = cam.uuid;
+    // MAC은 호출부(readyRead)에서 ARP로 실제값을 채운다 — 여기선 uuid만 보관.
     return cam;
 }
 
@@ -2190,11 +2193,14 @@ void MainWindow::onSearchCameraClicked()
             const QString key = cam.uuid.isEmpty() ? cam.ip : cam.uuid;
             if (seen.contains(key)) continue;   // 재전송/중복 응답 제거
             seen.insert(key);
+            // 실제 MAC은 ARP로 조회(같은 서브넷). 실패하면 '-'.
+            QString mac = macViaArp(cam.ip);
+            if (mac.isEmpty()) mac = QStringLiteral("-");
             const int r = table->rowCount();
             table->insertRow(r);
             table->setItem(r, 0, new QTableWidgetItem(cam.model));
             table->setItem(r, 1, new QTableWidgetItem(cam.ip));
-            table->setItem(r, 2, new QTableWidgetItem(cam.mac));
+            table->setItem(r, 2, new QTableWidgetItem(mac));
         }
     });
 
