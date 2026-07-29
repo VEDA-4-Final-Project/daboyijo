@@ -2,6 +2,7 @@
 #include "./ui_mainwindow.h"
 #include "theme.h"
 #include "videoview.h"
+#include "wintheme.h"
 #include <QHostAddress>
 #include <QPixmap>
 #include <QDateTime>
@@ -193,7 +194,12 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     patients[3] = { QStringLiteral("김예훈"), QStringLiteral("201호-4") };
 
     buildUi();
+    applyPalette(darkMode ? kDark : kLight);  // 기본 다크 팔레트로 시작
     applyTheme();
+    if (themeToggleButton)
+        themeToggleButton->setText(darkMode ? QStringLiteral("☀")
+                                            : QStringLiteral("🌙"));
+    enableDarkTitleBar(this);  // Windows 네이티브 타이틀바를 다크로
 
     // DB 입소자 목록 초기 로드 (main.cpp에서 연결을 이미 열어둠)
     refreshResidentTable();
@@ -1948,6 +1954,7 @@ void MainWindow::buildCameraSettingsDialog()
     cameraSettingsDialog->setObjectName("panel");
     cameraSettingsDialog->setWindowTitle(QStringLiteral("카메라 설정"));
     cameraSettingsDialog->resize(960, 680);
+    enableDarkTitleBar(cameraSettingsDialog);  // 팝업 타이틀바도 다크로
     auto* v = new QVBoxLayout(cameraSettingsDialog);
     v->setContentsMargins(16, 16, 16, 16);
     v->setSpacing(12);

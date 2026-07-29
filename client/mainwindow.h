@@ -169,7 +169,7 @@ private:
     QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
     QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
 
-    bool darkMode = false;             // 현재 다크모드 여부
+    bool darkMode = true;              // 현재 다크모드 여부 (기본 다크 관제 톤)
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구

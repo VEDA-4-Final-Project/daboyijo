@@ -12,6 +12,7 @@
 
 #include "auth.h"
 #include "theme.h"
+#include "wintheme.h"
 
 namespace {
 // 안내문 라벨 높이를 고정해 문구가 생겼다 사라질 때 아래 칸이 밀리지 않게 한다.
@@ -27,6 +28,7 @@ SignupDialog::SignupDialog(QWidget* parent)
 
     buildUi();
     setStyleSheet(authDialogStyleSheet());   // 로그인 창과 같은 스타일
+    enableDarkTitleBar(this);                // 네이티브 타이틀바도 다크로
 
     idEdit_->setFocus();
     updateSubmitEnabled();
