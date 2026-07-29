@@ -579,12 +579,15 @@ QWidget* MainWindow::buildVitalCard(int channel)
     card->setObjectName("vitalCard");
 
     auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(14, 12, 14, 12);
-    lay->setSpacing(10);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
 
-    // 헤더: 상태등 + 이름 + 병상 + 상태 배지
-    auto* head = new QHBoxLayout();
-    head->setSpacing(8);
+    // ── 헤더 바: 상태등 + 이름 + 병상 + 상태 배지 ──
+    auto* head = new QFrame();
+    head->setObjectName("vitalHead");
+    auto* hl = new QHBoxLayout(head);
+    hl->setContentsMargins(14, 9, 12, 9);
+    hl->setSpacing(8);
     vitalStatusDots[channel] = new QLabel();
     vitalStatusDots[channel]->setObjectName("vitalDot");
     vitalStatusDots[channel]->setFixedSize(9, 9);
@@ -595,39 +598,52 @@ QWidget* MainWindow::buildVitalCard(int channel)
     vitalStatusBadges[channel] = new QLabel(QStringLiteral("대기"));
     vitalStatusBadges[channel]->setObjectName("vitalBadge");
     vitalStatusBadges[channel]->setAlignment(Qt::AlignCenter);
-    head->addWidget(vitalStatusDots[channel]);
-    head->addWidget(name);
-    head->addWidget(bed);
-    head->addStretch();
-    head->addWidget(vitalStatusBadges[channel]);
-    lay->addLayout(head);
+    hl->addWidget(vitalStatusDots[channel]);
+    hl->addWidget(name);
+    hl->addWidget(bed);
+    hl->addStretch();
+    hl->addWidget(vitalStatusBadges[channel]);
+    lay->addWidget(head);
 
-    // 바이탈 값: 체온 / 심박수
-    auto* stats = new QHBoxLayout();
-    stats->setSpacing(10);
+    // ── 본문: 큰 판독값 2개 (체온 / 심박) — 환자 모니터 느낌 ──
+    auto* body = new QHBoxLayout();
+    body->setContentsMargins(14, 12, 14, 10);
+    body->setSpacing(10);
 
-    auto makeStat = [&](const QString& icon, const QString& caption, QLabel*& valueRef) {
+    auto makeStat = [&](const QString& icon, const QString& caption,
+                        const QString& unit, QLabel*& valueRef) {
         auto* box = new QFrame();
         box->setObjectName("statBox");
         auto* bl = new QVBoxLayout(box);
         bl->setContentsMargins(12, 10, 12, 10);
-        bl->setSpacing(2);
+        bl->setSpacing(4);
         auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
         cap->setObjectName("statCaption");
         valueRef = new QLabel(QStringLiteral("--"));
         valueRef->setObjectName("statValue");
+        auto* unitLbl = new QLabel(unit);
+        unitLbl->setObjectName("statUnit");
+        auto* valRow = new QHBoxLayout();
+        valRow->setContentsMargins(0, 0, 0, 0);
+        valRow->setSpacing(4);
+        valRow->addWidget(valueRef);
+        valRow->addWidget(unitLbl, 0, Qt::AlignBottom);
+        valRow->addStretch();
         bl->addWidget(cap);
-        bl->addWidget(valueRef);
+        bl->addLayout(valRow);
         return box;
     };
 
-    stats->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"), tempValues[channel]));
-    stats->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박수"), hrValues[channel]));
-    lay->addLayout(stats);
+    body->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"),
+                             QStringLiteral("℃"), tempValues[channel]));
+    body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
+                             QStringLiteral("bpm"), hrValues[channel]));
+    lay->addLayout(body);
 
-    // 갱신 시각
+    // ── 갱신 시각 ──
     vitalUpdated[channel] = new QLabel(QStringLiteral("웨어러블 연결 대기"));
     vitalUpdated[channel]->setObjectName("vitalUpdated");
+    vitalUpdated[channel]->setContentsMargins(14, 0, 14, 11);
     lay->addWidget(vitalUpdated[channel]);
 
     return card;
@@ -1207,11 +1223,15 @@ void MainWindow::applyTheme()
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
         #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 10px; }
-        #vitalName { color: %(text); font-size: 15px; font-weight: 700; }
+        #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
+                     border-top-left-radius: 10px; border-top-right-radius: 10px; }
+        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
         #vitalBed { color: %(sub); font-size: 12px; }
-        #statBox { background: %(panel); border: 1px solid %(border); border-radius: 8px; }
-        #statCaption { color: %(sub); font-size: 11px; }
-        #statValue { font-size: 22px; font-weight: 800; }
+        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 8px; }
+        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        #statValue { font-family: "Consolas", "D2Coding", monospace;
+                     font-size: 30px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
@@ -1430,9 +1450,9 @@ void MainWindow::updateVitals()
 
         const QString color = vitalColor(temp, hr);
 
-        tempValues[i]->setText(QString::number(temp, 'f', 1) + QStringLiteral(" ℃"));
+        tempValues[i]->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
         tempValues[i]->setStyleSheet(QString("color:%1;").arg(color));
-        hrValues[i]->setText(QString::number(hr) + QStringLiteral(" bpm"));
+        hrValues[i]->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
         hrValues[i]->setStyleSheet(QString("color:%1;").arg(color));
 
         vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
