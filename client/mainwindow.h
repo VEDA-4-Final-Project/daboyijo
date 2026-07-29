@@ -71,6 +71,7 @@ static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
+class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
 class QTabWidget;
@@ -178,6 +179,7 @@ private:
     QLabel* vitalStatusDots[4];        // 채널별 바이탈 상태등
     QLabel* vitalStatusBadges[4];      // 채널별 상태 배지(정상/주의/위험)
     QLabel* vitalUpdated[4];           // 채널별 마지막 갱신 시각
+    Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
 
     QTimer clockTimer;
     QTimer vitalsTimer;
