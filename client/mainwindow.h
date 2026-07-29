@@ -12,6 +12,8 @@
 #include <QLineEdit>
 #include <QTextEdit>
 
+#include "auth.h"
+
 
 
 // 🌟 명세서 3번에 정의된 16바이트 리틀엔디언 구조체 그대로 구현
@@ -53,11 +55,14 @@ struct dbj_evt_header_t {
 };                          // 18B
 #pragma pack(pop)
 
-// 제어 메시지 상수 (서버와 합의된 값)
+// 제어 메시지 상수 (서버와 합의된 값 — protocol/video_stream.h와 동일하게 유지)
 static constexpr uint16_t kCtrlMagic = 0xDB4C;
 static constexpr uint8_t kCtrlRoiSet = 0x01;
 static constexpr uint8_t kCtrlRoiClear = 0x02;
+static constexpr uint8_t kCtrlCameraSet = 0x05;    // 채널 카메라 연결 (헤더 뒤 RTSP URL)
+static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr int kRoiCoordScale = 10000;
+static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 
 // 이벤트 메시지 상수 (서버 스펙)
 static constexpr uint16_t kEvtMagic = 0xDB4D;
@@ -92,10 +97,15 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(const Auth::SessionUser& user, QWidget *parent = nullptr);
     ~MainWindow();
 
+    // 창이 닫힌 이유가 "로그아웃"이면 true — main()이 로그인 창을 다시 띄운다.
+    bool logoutRequested() const { return logoutRequested_; }
+
 private slots:
+    void onLogoutClicked();      // 로그아웃 — 확인 후 창을 닫고 로그인으로 복귀
+
     void onReadyRead();          // 명세서 가이드라인 구현 슬롯 (영상 수신)
     void onSocketStateChanged(QAbstractSocket::SocketState state);
     void connectToServer();      // 영상 서버 접속/재접속
@@ -108,6 +118,7 @@ private slots:
     void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
+    void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
 
 
     // TAB2: 비상 로그 조회 및 블랙박스
@@ -141,6 +152,14 @@ private:
     PatientInfo patients[4];     // 병상별 환자 정보
     QLabel* clockLabel = nullptr;      // 상단 실시간 시계
     QPushButton* themeToggleButton = nullptr;  // 라이트/다크 테마 토글
+
+    // ── 로그인 세션 ──
+    Auth::SessionUser currentUser;         // 현재 로그인한 사용자
+    bool logoutRequested_ = false;         // 종료 vs 로그아웃 구분
+    QLabel* userNameLabel = nullptr;       // 헤더의 사용자 이름
+    QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
+    QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
+
     bool darkMode = false;             // 현재 다크모드 여부
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
@@ -252,11 +271,21 @@ private:
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
 
+    // 카메라 연결/해제를 서버로 전송 (CAMERA_SET/CLEAR).
+    // sendCamera는 해당 채널 담당 Pi로 RTSP URL을 보낸다. 성공 시 true.
+    bool sendCamera(int channel, const QString& rtspUrl);
+    void sendCameraClear(int channel);
+    // 단일 CCTV IP → 채널별 RTSP URL 생성 (PNM-C16083RVQ 4센서 규약).
+    static QString buildRtspUrl(const QString& ip, const QString& user,
+                                const QString& password, int port,
+                                const QString& profile, int channel);
+
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
+    QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
 };
 
 #endif // MAINWINDOW_H

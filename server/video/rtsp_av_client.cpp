@@ -63,17 +63,62 @@ void RtspAvClient::start() {
 
 void RtspAvClient::stop() {
     running_.store(false);
+    url_cv_.notify_all();  // 대기 중이면 즉시 깨워 종료
     if (thread_.joinable()) {
         thread_.join();
     }
 }
 
+void RtspAvClient::reconnect(std::string url) {
+    {
+        std::lock_guard<std::mutex> lk(url_mutex_);
+        url_ = std::move(url);
+    }
+    reload_.store(true);   // 진행 중 스트림을 끊고 새 URL을 읽게 함
+    url_cv_.notify_all();  // 대기 상태였다면 깨움
+}
+
+void RtspAvClient::disconnect() {
+    {
+        std::lock_guard<std::mutex> lk(url_mutex_);
+        url_.clear();
+    }
+    reload_.store(true);   // 진행 중 스트림 중단 → run()이 대기 상태로 복귀
+    url_cv_.notify_all();
+}
+
+int RtspAvClient::interruptCb(void* opaque) {
+    auto* self = static_cast<RtspAvClient*>(opaque);
+    // 정지 요청이거나 URL 교체 요청이면 블로킹 I/O(av_read_frame/open)를 즉시 중단.
+    return (!self->running_.load() || self->reload_.load()) ? 1 : 0;
+}
+
 void RtspAvClient::run() {
     while (running_.load()) {
-        if (!openAndStream() && running_.load()) {
+        std::string url;
+        {
+            std::unique_lock<std::mutex> lk(url_mutex_);
+            if (url_.empty()) {
+                // 카메라 미지정 — Qt의 "카메라 연결" 신호가 올 때까지 대기.
+                url_cv_.wait_for(lk, std::chrono::milliseconds(500), [this] {
+                    return !running_.load() || !url_.empty();
+                });
+                continue;
+            }
+            url = url_;
+        }
+
+        reload_.store(false);
+        bool ok = openAndStream(url);
+
+        // URL 교체(reload_)로 끊긴 경우엔 백오프 없이 즉시 새 URL로 재시도.
+        // 그 외(네트워크 끊김 등)에는 기존처럼 재연결 대기.
+        if (!ok && running_.load() && !reload_.load()) {
             std::fprintf(stderr, "[ch%d] 재연결 %d초 대기\n", channel_ + 1,
                          kReconnectDelaySec);
-            for (int i = 0; i < kReconnectDelaySec * 10 && running_.load(); ++i) {
+            for (int i = 0; i < kReconnectDelaySec * 10 &&
+                            running_.load() && !reload_.load();
+                 ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         }
@@ -81,13 +126,18 @@ void RtspAvClient::run() {
 }
 
 // 1회 연결 → 패킷 수신 루프. 정상 종료(stop)든 오류든 자원 정리 후 반환.
-bool RtspAvClient::openAndStream() {
-    AVFormatContext* fmt = nullptr;
+bool RtspAvClient::openAndStream(const std::string& url) {
+    // 인터럽트 콜백을 걸려면 컨텍스트를 직접 할당해 open에 넘겨야 한다.
+    // (avformat_open_input은 실패 시 이 컨텍스트를 해제하고 포인터를 null로 만든다.)
+    AVFormatContext* fmt = avformat_alloc_context();
+    if (!fmt) return false;
+    fmt->interrupt_callback.callback = &RtspAvClient::interruptCb;
+    fmt->interrupt_callback.opaque = this;
 
     // 1차: rtsp_transport=tcp 로 시도. 실패 시 옵션 없이 재시도(진단 겸 폴백).
     AVDictionary* opts = nullptr;
     setRtspOptions(&opts);
-    int rc = avformat_open_input(&fmt, url_.c_str(), nullptr, &opts);
+    int rc = avformat_open_input(&fmt, url.c_str(), nullptr, &opts);
     av_dict_free(&opts);
 
     if (rc < 0) {
@@ -96,11 +146,12 @@ bool RtspAvClient::openAndStream() {
         std::fprintf(stderr, "[ch%d] tcp 옵션 연결 실패 (%d: %s) — 옵션 없이 재시도\n",
                      channel_ + 1, rc, err);
 
-        if (fmt) {
-            avformat_close_input(&fmt);
-            fmt = nullptr;
-        }
-        rc = avformat_open_input(&fmt, url_.c_str(), nullptr, nullptr);
+        // 위 실패로 fmt는 이미 해제·null → 폴백용으로 다시 할당(인터럽트 콜백 재설정).
+        fmt = avformat_alloc_context();
+        if (!fmt) return false;
+        fmt->interrupt_callback.callback = &RtspAvClient::interruptCb;
+        fmt->interrupt_callback.opaque = this;
+        rc = avformat_open_input(&fmt, url.c_str(), nullptr, nullptr);
         if (rc < 0) {
             char err2[128] = {0};
             av_strerror(rc, err2, sizeof(err2));

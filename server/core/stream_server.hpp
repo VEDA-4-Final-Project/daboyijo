@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -32,6 +33,10 @@ public:
     using ConfirmCallback = std::function<void(int channel)>;
     // 위험도 변경 시 호출될 콜백 함수 타입 정의 (채널 번호, 위험도 레벨)
     using RiskLevelCallback = std::function<void(int channel, int risk_level)>;
+    // Qt가 카메라를 지정/해제할 때 호출 — url은 채널의 전체 RTSP 주소.
+    // 수신 스레드에서 호출되므로 콜백 구현은 스레드 안전해야 한다.
+    using CameraSetCallback = std::function<void(int channel, const std::string& url)>;
+    using CameraClearCallback = std::function<void(int channel)>;
 
     explicit StreamServer(int port);
     ~StreamServer();
@@ -45,6 +50,9 @@ public:
     void setConfirmCallback(ConfirmCallback cb) { on_confirm_ = std::move(cb); }
     // 위험도 수신 콜백. start() 전 등록
     void setRiskLevelCallback(RiskLevelCallback cb) { on_risk_level_ = std::move(cb); }
+    // 카메라 연결/해제 수신 콜백. start() 전 등록
+    void setCameraSetCallback(CameraSetCallback cb) { on_camera_set_ = std::move(cb); }
+    void setCameraClearCallback(CameraClearCallback cb) { on_camera_clear_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -94,4 +102,6 @@ private:
     RoiCallback on_roi_;
     ConfirmCallback on_confirm_;
     RiskLevelCallback on_risk_level_;
+    CameraSetCallback on_camera_set_;
+    CameraClearCallback on_camera_clear_;
 };
