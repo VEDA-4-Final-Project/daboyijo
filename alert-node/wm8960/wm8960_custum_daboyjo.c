@@ -6,6 +6,26 @@
 #include <sound/pcm_params.h>
 
 
+//  wm8960 regester map 
+
+#define WM8960_LOUT1V           0x02
+#define WM8960_ROUT1V	        0x03
+#define WM8960_CLOKING          0x04
+#define WM8960_ADC_DAC_CTR1     0x05
+
+#define WM8960_L2MO             0x26
+#define WM8960_R2MO             0x27
+#define WM8960_LSPKV			0x28
+#define WM8960_RSPKV			0x29
+#define WM8960_POWER_MGMT1		0x19
+#define WM8960_POWER_MGMT2		0x1A
+#define WM8960_POWER_MGMT3		0x2F
+#define WM8960_LOUTMIX			0x22
+#define WM8960_ROUTMIX          0x25
+#define WM8960_CLASSD           0x31
+#define WM8960_RESET            0x0F
+//#define WM8960_
+
 static int veda_wm8960_write(struct i2c_client *client, uint8_t addr, uint8_t data_first, uint8_t data, char *messge)
 {
     
@@ -83,14 +103,14 @@ static int veda_wm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm
     if(((def>>2) & 3) != width_def){
         def = def & ~(0x3<<2);
         def = def | (width_def <<2);
-        ret = veda_wm8960_write(client,0x07,(uint8_t)(def>>8),(uint8_t)def,"audio inerface setting");
+        ret = veda_wm8960_write(client,WM8960_AUDIO_INTERFACE,(uint8_t)(def>>8),(uint8_t)def,"audio inerface setting");
         if(ret<0) return ret;
     }
     def = snd_soc_component_read(component, 0x04);
     if((((def>>3) & 7) != dacdiv) ||(((def >> 1) & 3) != sysclkdiv)){
         def = def & ~(0x1F<<1);
         def = def | (dacdiv <<3) | (sysclkdiv <<1);
-        ret = veda_wm8960_write(client,0x04,(uint8_t)(def>>8),(uint8_t)def,"clocking setting");
+        ret = veda_wm8960_write(client,WM8960_CLOKING,(uint8_t)(def>>8),(uint8_t)def,"clocking setting");
         if(ret<0) return ret;
     }
 
@@ -125,12 +145,12 @@ static const struct snd_soc_dapm_route veda_wm8960_dapm_routes[] = {
 
     
 static const struct snd_kcontrol_new veda_wm8960_controls[] = {
-    SOC_DOUBLE_R("Headphone Playback Volume",0x02,0x03, 0, 127,0),
+    SOC_DOUBLE_R("Headphone Playback Volume",WM8960_LOUT1V,WM8960_ROUT1V, 0, 127,0),
     
-    SOC_DOUBLE_R("Speaker Playback Volume", 0x28,0x29, 0, 127, 0),
-    SOC_DOUBLE_R("Mono Ouo Mix", 0x26,0x27, 7, 1, 0),
+    SOC_DOUBLE_R("Speaker Playback Volume", WM8960_LSPKV ,WM8960_R2MO, 0, 127, 0),
+    SOC_DOUBLE_R("Mono Ouo Mix", WM8960_LOUTMIX,WM8960_ROUTMIX, 7, 1, 0),
 
-    SOC_SINGLE("Playback Switch",0x05,3,1,1),
+    SOC_SINGLE("Playback Switch",WM8960_ADC_DAC_CTR1,3,1,1),
 };
 
 
@@ -158,22 +178,22 @@ struct snd_soc_dai_driver veda_wm8960_dai_driver = {
 
 
 static const struct reg_default wm8960_reg_defaults[] = {
-    {0x02, 0x179 },
-    {0x03, 0x179 },
-    {0x04, 0x000 },
-    {0x05, 0x008 },
-    {0x07, 0x002 },
-    {0x26, 0x000 },
-    {0x27, 0x000 },
-    {0x28, 0x179 },
-    {0x29, 0x179 },
+    {WM8960_LOUT1V, 0x179 },
+    {WM8960_ROUT1V, 0x179 },
+    {WM8960_CLOKING, 0x000 },
+    {WM8960_ADC_DAC_CTR1, 0x008 },
+    {WM8960_AUDIO_INTERFACE, 0x002 },
+    {WM8960_L2MO, 0x000 },
+    {WM8960_R2MO, 0x000 },
+    {WM8960_LSPKV, 0x179 },
+    {WM8960_RSPKV, 0x179 },
 };
     
 
 struct regmap_config wm8960_regmap = {
     .reg_bits = 7,
     .val_bits = 9,
-    .max_register = 0x38,
+    .max_register = 0x37,
 
     .cache_type = REGCACHE_RBTREE,
     .reg_defaults = wm8960_reg_defaults,
@@ -197,68 +217,68 @@ static int veda_wm8960_probe(struct i2c_client *client,const struct i2c_device_i
 
     // reset 
     // 0Fh 0 0000 0000
-    ret = veda_wm8960_write(client,0x0F,0,0x00,"reset");
+    ret = veda_wm8960_write(client,WM8960_RESET,0,0x00,"reset");
     if(ret<0) return ret;
 
     // clocking 
     // 04h 0 0000 0000 
-    ret = veda_wm8960_write(client,0x04,0,0x00,"clock setting");
+    ret = veda_wm8960_write(client,WM8960_CLOKING,0,0x00,"clock setting");
     if(ret<0) return ret;
 
     //audio interface
     // 07h 0 0000 0010 
-    ret = veda_wm8960_write(client,0x07,0,0x02,"audio inerface setting");
+    ret = veda_wm8960_write(client,WM8960_AUDIO_INTERFACE,0,0x02,"audio inerface setting");
     if(ret<0) return ret;
 
     // power mgmt
-    // 19h 0 1100 1000
-    ret = veda_wm8960_write(client,0x19,0,0xC8,"power up");
+    // 19h 0 1100 0000
+    ret = veda_wm8960_write(client,WM8960_POWER_MGMT1,0,0xC0,"power up");
     if(ret<0) return ret;
 
     // power mgmt 2
     // 1Ah 1 1111 1000
-    ret = veda_wm8960_write(client,0x1A,1,0xF8,"power(lout rout spkl spkr) up");
+    ret = veda_wm8960_write(client,WM8960_POWER_MGMT2,1,0xF8,"power(lout rout spkl spkr) up");
     if(ret<0) return ret;
 
 
     // power mgmt 3
     // 2Fh 0 0000 1100
-    ret = veda_wm8960_write(client,0x2F,0,0x0C,"power(lomix romix) up");
+    ret = veda_wm8960_write(client,WM8960_POWER_MGMT3,0,0x0C,"power(lomix romix) up");
     if(ret<0) return ret;
 
     // Left Output Mixer Routing 
-    // 22h 0 1101 0000
-    ret = veda_wm8960_write(client,0x22,1,0xD0,"Left Output Mixer Routing");
+    // 22h 1 1101 0000
+    ret = veda_wm8960_write(client,WM8960_LOUTMIX,1,0xD0,"Left Output Mixer Routing");
     if(ret<0) return ret;
 
     // Right Output Mixer Routing 
-    // 25h 0 1101 0000
-    ret = veda_wm8960_write(client,0x25,1,0xD0,"Right Output Mixer Routing");
+    // 25h 1 1101 0000
+    ret = veda_wm8960_write(client,WM8960_ROUTMIX,1,0xD0,"Right Output Mixer Routing");
     if(ret<0) return ret;
    
     // no mute
-    ret = regmap_write(regmap, 0x05, 0x00);
+    ret = regmap_write(regmap, WM8960_ADC_DAC_CTR1, 0x00);
     if (ret < 0) return ret;
 
     // class D control (speaker) 
     // 0x31
     // 7:6 
     // 00 off 01 left 10 right 11 left and right
-    // 0 0100 0000 (지금은 left만 나중에 양쪽으로 고칠 예정)
-    ret = veda_wm8960_write(client,0x31,0,0x40,"Speaker Output enabled");
+    // 0 0111 0111 (지금은 left만 나중에 양쪽으로 고칠 예정)
+    ret = veda_wm8960_write(client,WM8960_CLASSD,0,0x77,"Speaker Output enabled");
     if(ret<0) return ret;
 
 
 
     devm_snd_soc_register_component(&client->dev,&veda_wm8960_component_driver,&veda_wm8960_dai_driver,1);
     
-    ret = veda_wm8960_write(client, 0x02, 1, 0x79, "Headphone L Vol");
+    ret = veda_wm8960_write(client, WM8960_LOUT1V, 1, 0x79, "Headphone L Vol");
     if(ret<0) return ret;
-    ret = veda_wm8960_write(client, 0x03, 1, 0x79, "Headphone R Vol");
+    ret = veda_wm8960_write(client, WM8960_ROUT1V, 1, 0x79, "Headphone R Vol");
     if(ret<0) return ret;
-    ret = veda_wm8960_write(client, 0x28, 1, 0x79, "Speaker L Vol");
+    ret = veda_wm8960_write(client, WM8960_LSPKV, 1, 0x79, "Speaker L Vol");
     if(ret<0) return ret;
-    ret = veda_wm8960_write(client, 0x29, 1, 0x79, "Speaker R Vol");
+    ret = veda_wm8960_write(client, WM8960_RSPKV, 1, 0x79, "Speaker R Vol");
     if(ret<0) return ret;
 
 
