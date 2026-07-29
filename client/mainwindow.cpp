@@ -495,7 +495,7 @@ QWidget* MainWindow::buildVideoWall()
     outer->addLayout(titleRow);
 
     auto* grid = new QGridLayout();
-    grid->setSpacing(12);
+    grid->setSpacing(6);   // 촘촘한 관제 매트릭스 느낌
     grid->addWidget(buildVideoCard(0), 0, 0);
     grid->addWidget(buildVideoCard(1), 0, 1);
     grid->addWidget(buildVideoCard(2), 1, 0);
@@ -512,44 +512,15 @@ QWidget* MainWindow::buildVideoCard(int channel)
     card->setMinimumSize(420, 280);
 
     auto* lay = new QVBoxLayout(card);
-    card->setContentsMargins(0, 0, 0, 0);
+    lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
-    // 상단 오버레이 바: 병상/환자 + LIVE
-    auto* bar = new QFrame();
-    bar->setObjectName("videoBar");
-    bar->setFixedHeight(27);
-    auto* barLay = new QHBoxLayout(bar);
-    barLay->setContentsMargins(8, 0, 8, 0);
-    barLay->setSpacing(6);
-
-    auto* bed = new QLabel(patients[channel].bed);
-    bed->setObjectName("bedBadge");
-    auto* name = new QLabel(patients[channel].name);
-    name->setObjectName("bedName");
-    barLay->addWidget(bed);
-    barLay->addWidget(name);
-    barLay->addStretch();
-
-    auto* livePill = new QFrame();
-    livePill->setObjectName("livePill");
-    auto* lpLay = new QHBoxLayout(livePill);
-    lpLay->setContentsMargins(7, 1, 8, 1);
-    lpLay->setSpacing(5);
-    liveDots[channel] = new QLabel();
-    liveDots[channel]->setObjectName("liveDotOff");
-    liveDots[channel]->setFixedSize(6, 6);
-    auto* liveTxt = new QLabel(QStringLiteral("LIVE"));
-    liveTxt->setObjectName("liveText");
-    lpLay->addWidget(liveDots[channel]);
-    lpLay->addWidget(liveTxt);
-    barLay->addWidget(livePill);
-
-    lay->addWidget(bar);
-
-    // 영상 영역 — VideoView가 프레임 표시 + ROI 오버레이/그리기를 담당
+    // 영상 영역 — VideoView가 프레임 + NVR 오버레이(채널/이름/LIVE) + ROI를 담당.
+    // 별도 상단 바 없이 정보는 영상 위에 직접 얹는다(관제 콘솔 느낌).
     auto* video = new VideoView(channel);
     video->setObjectName("video");
+    video->setOverlayInfo(QStringLiteral("%1 · %2")
+                              .arg(patients[channel].bed, patients[channel].name));
     channelViews[channel] = video;
     connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
     connect(video, &VideoView::drawModeChanged, this,
@@ -1229,17 +1200,9 @@ void MainWindow::applyTheme()
                        border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
         #alarmButton:hover { background: #ff6b62; }
 
-        #videoCard { background: #0B0F14; border: 1px solid %(border); border-radius: 10px; }
-        #videoBar { background: %(panel); border-bottom: 1px solid %(border);
-                    border-top-left-radius: 10px; border-top-right-radius: 10px; }
-        #bedBadge { background: %(accent); color: #fff; font-size: 10px; font-weight: 800;
-                    padding: 1px 6px; border-radius: 5px; letter-spacing: 0.5px; }
-        #bedName { color: %(text); font-size: 12px; font-weight: 600; }
-        /* LIVE pill 배지 */
-        #livePill { background: %(card); border: 1px solid %(border); border-radius: 9px; }
-        #liveText { color: %(sub); font-size: 9px; font-weight: 800; letter-spacing: 1.5px; }
-        #video { color: #9AA7B2; font-size: 13px; background: #0B0F14;
-                 border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+        /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
+        #videoCard { background: #000000; border: 1px solid %(border); border-radius: 4px; }
+        #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 4px; }
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
@@ -1362,7 +1325,6 @@ QTextEdit#formEdit:focus {
     // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
     statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
     for (int i = 0; i < 4; ++i) {
-        liveDots[i]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
         vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kTextSub));
     }
 }
@@ -1434,8 +1396,9 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 
     // 담당 Pi가 끊긴 채널의 LIVE 표시등 소등
     for (int ch = 0; ch < 4; ++ch) {
-        if (sockets[serverForChannel(ch)]->state() != QAbstractSocket::ConnectedState)
-            liveDots[ch]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
+        if (channelViews[ch] &&
+            sockets[serverForChannel(ch)]->state() != QAbstractSocket::ConnectedState)
+            channelViews[ch]->setLive(false);
     }
 
     // Pi가 새로 연결됨(false→true)을 감지 → 저장된 카메라를 자동 재전송.
@@ -1602,12 +1565,11 @@ void MainWindow::onReadyRead()
 
         const QPixmap pix = QPixmap::fromImage(image);
         channelViews[ch]->setFrame(pix);
+        channelViews[ch]->setLive(true);   // 프레임 도착 → LIVE 표시등 점등
         // ROI 편집기가 이 채널을 보고 있으면 팝업 영상도 실시간 갱신.
         if (roiEditorView && roiEditChannel == ch &&
             cameraSettingsDialog && cameraSettingsDialog->isVisible())
             roiEditorView->setFrame(pix);
-        liveDots[ch]->setStyleSheet(
-            QString("background:%1; border-radius:3px;").arg(kCritical));
     }
 }
 
@@ -1981,6 +1943,9 @@ void MainWindow::buildCameraSettingsDialog()
         QString::number(s.value(QStringLiteral("camera/port"), 554).toInt()));
     camProfileEdit = new QLineEdit(
         s.value(QStringLiteral("camera/profile"), QStringLiteral("profile2")).toString());
+    // 다크 스타일 적용 — 스타일시트가 objectName "formEdit"인 입력칸만 칠한다.
+    for (QLineEdit* e : {camIpEdit, camUserEdit, camPwEdit, camPortEdit, camProfileEdit})
+        e->setObjectName(QStringLiteral("formEdit"));
     form->addRow(QStringLiteral("CCTV IP"), camIpEdit);
     form->addRow(QStringLiteral("계정"), camUserEdit);
     form->addRow(QStringLiteral("비밀번호"), camPwEdit);
@@ -2016,6 +1981,7 @@ void MainWindow::buildCameraSettingsDialog()
     camV->addWidget(discoveryStatus);
 
     discoveryTable = new QTableWidget(0, 3);
+    discoveryTable->setObjectName(QStringLiteral("logTable"));  // 다크 표 스타일 재사용
     discoveryTable->setHorizontalHeaderLabels(
         {QStringLiteral("모델"), QStringLiteral("IP"), QStringLiteral("MAC / ID")});
     discoveryTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -2130,6 +2096,7 @@ void MainWindow::buildCameraSettingsDialog()
 
     auto* closeBox = new QDialogButtonBox(QDialogButtonBox::Close, cameraSettingsDialog);
     closeBox->button(QDialogButtonBox::Close)->setText(QStringLiteral("닫기"));
+    closeBox->button(QDialogButtonBox::Close)->setObjectName(QStringLiteral("roiButton"));
     connect(closeBox, &QDialogButtonBox::rejected, cameraSettingsDialog, &QDialog::hide);
     v->addWidget(closeBox);
 
@@ -2296,8 +2263,10 @@ void MainWindow::onCameraClearClicked()
     for (int ch = 0; ch < 4; ++ch) {
         sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
         lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
-        if (channelViews[ch])
+        if (channelViews[ch]) {
+            channelViews[ch]->setLive(false);
             channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
+        }
     }
 }
 

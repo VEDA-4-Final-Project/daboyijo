@@ -173,7 +173,6 @@ private:
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구
-    QLabel* liveDots[4];               // 채널별 LIVE 표시등
     QLabel* tempValues[4];             // 채널별 체온 값
     QLabel* hrValues[4];               // 채널별 심박수 값
     QLabel* vitalStatusDots[4];        // 채널별 바이탈 상태등

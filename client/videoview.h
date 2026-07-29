@@ -30,6 +30,10 @@ public:
     // (연결 요청 직후~첫 프레임 도착 전에는 true로 두면 "신호 대기 중"이 표시된다.)
     void setCameraConnected(bool on);
     bool cameraConnected() const { return cameraConnected_; }
+
+    // NVR 스타일 오버레이 — 영상 위에 직접 그리는 정보.
+    void setOverlayInfo(const QString& info);  // 좌하단 라벨(예: "201호-1 · 전승현")
+    void setLive(bool on);                      // 우상단 LIVE/미연결 표시등
     void setRoi(const QPolygonF& normPts);    // 확정된 ROI(정규화) 주입
     QPolygonF roi() const { return roi_; }
     void clearRoi();
@@ -68,6 +72,8 @@ private:
     bool drawMode_ = false;
     bool roiVisible_ = true;
     bool cameraConnected_ = false;  // 카메라 연결 상태 (시작 시 미연결)
+    QString overlayInfo_;           // 좌하단 오버레이 라벨(병상·이름)
+    bool live_ = false;             // 우상단 LIVE 표시등 상태
 
     bool alert_ = false;          // 낙상/침상이탈 경보 상태
     bool alertBlink_ = false;     // 점멸 on/off
