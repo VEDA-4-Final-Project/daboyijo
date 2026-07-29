@@ -24,6 +24,14 @@ VideoView::VideoView(int channel, QWidget* parent)
 
 void VideoView::setFrame(const QPixmap& frame) {
     frame_ = frame;
+    cameraConnected_ = true;  // 프레임이 들어왔다는 건 카메라가 연결됐다는 뜻
+    update();
+}
+
+void VideoView::setCameraConnected(bool on) {
+    if (cameraConnected_ == on) return;
+    cameraConnected_ = on;
+    if (!on) frame_ = QPixmap();  // 미연결이면 이전 프레임 제거(정지화면 오해 방지)
     update();
 }
 
@@ -112,9 +120,13 @@ void VideoView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), Qt::black);
 
-    if (frame_.isNull()) {
+    if (!cameraConnected_) {
         p.setPen(QColor(139, 148, 158));
-        p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 없음"));
+        p.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap,
+                   QStringLiteral("📷 카메라 미연결\n상단 '카메라 연결'을 눌러 CCTV를 연결하세요"));
+    } else if (frame_.isNull()) {
+        p.setPen(QColor(139, 148, 158));
+        p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 대기 중…"));
     } else {
         p.drawPixmap(displayRect(), frame_, frame_.rect());
     }

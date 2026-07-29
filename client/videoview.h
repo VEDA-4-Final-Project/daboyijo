@@ -21,6 +21,10 @@ public:
     explicit VideoView(int channel, QWidget* parent = nullptr);
 
     void setFrame(const QPixmap& frame);      // 새 영상 프레임 표시
+    // 카메라 연결 여부. false면 "카메라 미연결" 안내를 표시하고 이전 프레임을 지운다.
+    // (연결 요청 직후~첫 프레임 도착 전에는 true로 두면 "신호 대기 중"이 표시된다.)
+    void setCameraConnected(bool on);
+    bool cameraConnected() const { return cameraConnected_; }
     void setRoi(const QPolygonF& normPts);    // 확정된 ROI(정규화) 주입
     QPolygonF roi() const { return roi_; }
     void clearRoi();
@@ -58,6 +62,7 @@ private:
     bool hasHover_ = false;
     bool drawMode_ = false;
     bool roiVisible_ = true;
+    bool cameraConnected_ = false;  // 카메라 연결 상태 (시작 시 미연결)
 
     bool alert_ = false;          // 낙상/침상이탈 경보 상태
     bool alertBlink_ = false;     // 점멸 on/off

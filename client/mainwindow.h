@@ -119,6 +119,7 @@ private slots:
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
+    void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
 
 
     // TAB2: 비상 로그 조회 및 블랙박스
@@ -144,6 +145,10 @@ private:
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
+    // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
+    // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
+    QString lastCameraUrl_[4];
+    bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
@@ -275,6 +280,8 @@ private:
     // sendCamera는 해당 채널 담당 Pi로 RTSP URL을 보낸다. 성공 시 true.
     bool sendCamera(int channel, const QString& rtspUrl);
     void sendCameraClear(int channel);
+    // Pi 재접속 시, 그 Pi 담당 채널의 마지막 카메라 URL을 자동 재전송한다.
+    void resendCamerasForServer(int serverIdx);
     // 단일 CCTV IP → 채널별 RTSP URL 생성 (PNM-C16083RVQ 4센서 규약).
     static QString buildRtspUrl(const QString& ip, const QString& user,
                                 const QString& password, int port,
@@ -286,6 +293,7 @@ private:
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
+    QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
 };
 
 #endif // MAINWINDOW_H

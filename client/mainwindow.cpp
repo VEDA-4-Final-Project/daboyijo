@@ -511,6 +511,14 @@ QWidget* MainWindow::buildVideoWall()
             &MainWindow::onAddCameraClicked);
     titleRow->addWidget(addCameraButton);
 
+    // 카메라 해제 — 모든 채널 연결 끊기(서버가 RTSP 종료 후 대기)
+    clearCameraButton = new QPushButton(QStringLiteral("카메라 해제"));
+    clearCameraButton->setObjectName("segBtnDanger");
+    clearCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(clearCameraButton, &QPushButton::clicked, this,
+            &MainWindow::onCameraClearClicked);
+    titleRow->addWidget(clearCameraButton);
+
     outer->addLayout(titleRow);
 
     auto* grid = new QGridLayout();
@@ -1455,6 +1463,15 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
             liveDots[ch]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
     }
 
+    // Pi가 새로 연결됨(false→true)을 감지 → 저장된 카메라를 자동 재전송.
+    // (서버는 재접속 후 카메라를 모르므로, 사용자가 다시 누르지 않아도 복구된다.)
+    for (int i = 0; i < kNumServers; ++i) {
+        const bool now = sockets[i]->state() == QAbstractSocket::ConnectedState;
+        if (now && !serverConnected_[i])
+            resendCamerasForServer(i);
+        serverConnected_[i] = now;
+    }
+
     // 끊긴 소켓이 하나라도 있으면 재접속 예약
     if (unconnected > 0 && !reconnectTimer.isActive())
         reconnectTimer.start();
@@ -1962,6 +1979,9 @@ void MainWindow::onAddCameraClicked()
     int sent = 0;
     for (int ch = 0; ch < 4; ++ch) {
         const QString url = buildRtspUrl(ip, user, pw, port, profile, ch);
+        lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
+        if (channelViews[ch])
+            channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
         if (sendCamera(ch, url)) ++sent;
     }
 
@@ -1980,6 +2000,48 @@ void MainWindow::onAddCameraClicked()
             this, QStringLiteral("카메라 연결 요청"),
             QStringLiteral("4채널 연결 요청을 서버로 보냈습니다.\n"
                            "서버가 카메라를 여는 동안 잠시 후 영상이 표시됩니다."));
+    }
+}
+
+void MainWindow::onCameraClearClicked()
+{
+    bool any = false;
+    for (int ch = 0; ch < 4; ++ch)
+        if (!lastCameraUrl_[ch].isEmpty()) any = true;
+    if (!any) {
+        QMessageBox::information(this, QStringLiteral("카메라 해제"),
+                                 QStringLiteral("연결된 카메라가 없습니다."));
+        return;
+    }
+
+    if (QMessageBox::question(
+            this, QStringLiteral("카메라 해제"),
+            QStringLiteral("모든 채널의 카메라 연결을 해제할까요?\n"
+                           "서버가 RTSP 연결을 끊고 대기 상태로 돌아갑니다."))
+        != QMessageBox::Yes) {
+        return;
+    }
+
+    for (int ch = 0; ch < 4; ++ch) {
+        sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
+        lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
+        if (channelViews[ch])
+            channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
+    }
+}
+
+// Pi가 (재)연결되면, 그 Pi 담당 채널의 마지막 카메라 URL을 자동으로 다시 보낸다.
+// 서버는 재부팅/재접속 후 카메라를 모르는 상태이므로, 사용자가 다시 누르지 않아도
+// 세션 중 지정해 둔 카메라가 자동 복구된다.
+void MainWindow::resendCamerasForServer(int serverIdx)
+{
+    for (int ch = 0; ch < 4; ++ch) {
+        if (serverForChannel(ch) != serverIdx) continue;
+        if (lastCameraUrl_[ch].isEmpty()) continue;
+        if (sendCamera(ch, lastCameraUrl_[ch])) {
+            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
+            qDebug() << "Pi" << serverIdx << "재접속 → ch" << ch << "카메라 자동 재전송";
+        }
     }
 }
 
