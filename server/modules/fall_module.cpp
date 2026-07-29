@@ -93,7 +93,8 @@ void FallModule::processFrame(const AiJob& job) {
                                      job.raw_frame.cols, job.raw_frame.rows);
         if (roi.width <= 0 || roi.height <= 0) continue;
 
-        // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다
+        // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다.
+        // (저조도 보정은 PoseEstimator가 모델 입력 단계에서 처리 — pose_estimator.cpp)
         bool lying = ch.estimator.isLyingDown(job.raw_frame(roi));
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                      job.channel + 1, t.object_id, lying ? "누움" : "서있음",

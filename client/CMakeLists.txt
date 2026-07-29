@@ -10,6 +10,13 @@ qt_add_executable(daboyijo
     mainwindow.ui
     videoview.cpp
     videoview.h
+    theme.h
+    auth.cpp
+    auth.h
+    logindialog.cpp
+    logindialog.h
+    signupdialog.cpp
+    signupdialog.h
 )
 qt_add_translations(
     TARGETS daboyijo

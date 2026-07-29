@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "theme.h"
 #include "videoview.h"
 #include <QHostAddress>
 #include <QPixmap>
@@ -40,43 +41,14 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QVariant>
+#include <QSettings>
+#include <QLineEdit>
+#include <QFormLayout>
+#include <QDialogButtonBox>
 #include <algorithm>
 
-// ── 디자인 토큰 (라이트/다크 두 팔레트, 런타임 전환) ──────────
+// 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
 namespace {
-struct Palette {
-    const char *bgDeep, *panel, *card, *border,
-               *text, *sub, *accent, *normal, *warn, *critical;
-};
-
-// 밝은 의료 톤 (요양원 주간 관제 환경)
-const Palette kLight {
-    "#F4F7FA", "#FFFFFF", "#F0F4F8", "#DCE4EC",
-    "#1E2A32", "#5C6B78", "#12B5A6", "#2E9E5B", "#C77A11", "#E5484D"
-};
-// 다크 관제실 톤 (야간·통합 관제 환경, 강조색은 어두운 배경용으로 살짝 밝게)
-const Palette kDark {
-    "#0E141B", "#151D26", "#1C2733", "#2A3742",
-    "#E6EDF3", "#8B98A5", "#17C7B6", "#35B368", "#E0A030", "#FF5A5F"
-};
-
-// 현재 적용 중인 색 (전환 시 applyPalette로 재대입)
-const char* kBgDeep   = kLight.bgDeep;
-const char* kPanel    = kLight.panel;
-const char* kCard     = kLight.card;
-const char* kBorder   = kLight.border;
-const char* kTextMain = kLight.text;
-const char* kTextSub  = kLight.sub;
-const char* kAccent   = kLight.accent;
-const char* kNormal   = kLight.normal;
-const char* kWarn     = kLight.warn;
-const char* kCritical = kLight.critical;
-
-void applyPalette(const Palette& p) {
-    kBgDeep = p.bgDeep;   kPanel = p.panel;   kCard = p.card;   kBorder = p.border;
-    kTextMain = p.text;   kTextSub = p.sub;   kAccent = p.accent;
-    kNormal = p.normal;   kWarn = p.warn;     kCritical = p.critical;
-}
 
 // 상태 색상: 정상/주의/위험 판정
 QString vitalColor(double temp, int hr) {
@@ -104,16 +76,25 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 // 영상 서버 접속 정보 (RPi 주소) — 2-Pi 분할: 채널을 두 라즈베리에 2+2로 나눠 서빙.
 //   Pi A = ch0·ch1, Pi B = ch2·ch3. 각 Pi의 cameras.conf 채널 번호가 아래 인덱스와
 //   일치해야 하고(MainWindow::serverForChannel), Qt는 두 IP에 각각 붙는다.
-//   TODO: 설정 파일/실행 인자로 분리.
-const char* kServerHosts[2] = {
-    "172.20.35.180",   // Pi A (ch0·ch1)
-    "172.20.35.192",   // Pi B (ch2·ch3)  ← Pi B 실제 IP로 수정!
-};
-// 채널(0~3) → 담당 Pi의 호스트 문자열 (블랙박스 클립 URL 등 host가 필요한 곳용).
-// 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
-inline const char* hostForChannel(int ch) {
-    return kServerHosts[ch < 2 ? 0 : 1];
+// 하드코딩 대신 QSettings(관제 PC 로컬)에 저장 — 기본값은 아래 상수이며, 관제
+// PC마다 다른 Pi를 볼 수 있게 설정에서 바꿀 수 있다. (CCTV IP와는 별개: 이건 Qt가
+// "붙는 서버" 주소이고, CCTV는 서버가 여는 카메라 주소다.)
+namespace {
+const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
+const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
+const char* kDefaultHostA  = "172.20.35.202";
+const char* kDefaultHostB  = "172.20.35.201";
+
+// 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
+QString serverHost(int idx) {
+    QSettings s;
+    return idx == 0 ? s.value(kSettingsHostA, kDefaultHostA).toString()
+                    : s.value(kSettingsHostB, kDefaultHostB).toString();
 }
+// 채널(0~3) → 담당 Pi의 호스트 (블랙박스 클립 URL 등 host가 필요한 곳용).
+// 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
+QString hostForChannel(int ch) { return serverHost(ch < 2 ? 0 : 1); }
+}  // namespace
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
@@ -189,9 +170,10 @@ constexpr quint32 kMaxPayloadLen = 4 * 1024 * 1024;
 constexpr uint8_t kCtrlAlarmConfirm = 0x03;
 }
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , currentUser(user)
 {
     ui->setupUi(this);
 
@@ -236,7 +218,7 @@ MainWindow::MainWindow(QWidget *parent)
     if (logTable) logTable->setRowCount(0);  // 시작 전 1회만 비움 (응답들이 누적)
     for (int si = 0; si < kNumServers; ++si) {
         auto* manager = new QNetworkAccessManager(this);
-        const QString host = QString::fromLatin1(kServerHosts[si]);
+        const QString host = serverHost(si);
         QUrl url(QStringLiteral("http://%1:%2/list").arg(host).arg(kClipHttpPort));
         QNetworkReply* reply = manager->get(QNetworkRequest(url));
 
@@ -256,7 +238,7 @@ MainWindow::MainWindow(QWidget *parent)
             for (const QJsonValue& value : fileList) {
                 const QString fileName = value.toString();
                 // 확장자(.mp4) 제거 후 '_' 기준으로 채널/타임스탬프/유형 분리.
-                // 서버 저장 규칙: 낙상은 접미사 없음(chN_TS.mp4), 침상이탈은 _EGRESS.
+                // 서버 저장 규칙: 낙상은 _FALL, 침상이탈은 _EGRESS 접미사.
                 const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
                 const QStringList parts = cleanName.split(QLatin1Char('_'));
                 if (parts.size() < 2) continue;   // 최소 chN_타임스탬프 필요
@@ -399,7 +381,52 @@ QWidget* MainWindow::buildHeader()
     connect(themeToggleButton, &QPushButton::clicked, this, &MainWindow::toggleTheme);
     lay->addWidget(themeToggleButton);
 
+    // 구분선 + 로그인 사용자 / 로그아웃
+    auto* sep3 = new QFrame();
+    sep3->setFrameShape(QFrame::VLine);
+    sep3->setObjectName("headerSep");
+    sep3->setFixedHeight(28);
+    lay->addWidget(sep3);
+
+    // 이름 첫 글자를 딴 원형 배지 — 누가 로그인해 있는지 한눈에 보이게
+    userAvatarLabel = new QLabel();
+    userAvatarLabel->setObjectName("userAvatar");
+    userAvatarLabel->setFixedSize(28, 28);
+    userAvatarLabel->setAlignment(Qt::AlignCenter);
+    userAvatarLabel->setText(currentUser.name.left(1));
+    lay->addWidget(userAvatarLabel);
+
+    userNameLabel = new QLabel();
+    userNameLabel->setObjectName("userName");
+    userNameLabel->setText(currentUser.name);
+    userNameLabel->setToolTip(QStringLiteral("%1 (%2)")
+                                  .arg(currentUser.name, currentUser.loginId));
+    lay->addWidget(userNameLabel);
+
+    logoutButton = new QPushButton(QStringLiteral("로그아웃"));
+    logoutButton->setObjectName("logoutButton");
+    logoutButton->setCursor(Qt::PointingHandCursor);
+    connect(logoutButton, &QPushButton::clicked, this, &MainWindow::onLogoutClicked);
+    lay->addWidget(logoutButton);
+
     return header;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  로그아웃 — 창을 닫고 main()의 루프가 로그인 창을 다시 띄운다
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onLogoutClicked()
+{
+    // 관제 중 오조작으로 화면이 꺼지면 안 되므로 한 번 되묻는다.
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("로그아웃"),
+        QStringLiteral("로그아웃하시겠습니까?\n관제 화면이 종료되고 로그인 화면으로 돌아갑니다."),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    logoutRequested_ = true;
+    close();
 }
 
 QWidget* MainWindow::buildVideoWall()
@@ -475,6 +502,14 @@ QWidget* MainWindow::buildVideoWall()
     connect(alarmClearButton, &QPushButton::clicked, this,
             &MainWindow::onAlarmClearClicked);
     titleRow->addWidget(alarmClearButton);
+
+    // 📷 카메라 연결 — CCTV IP를 입력받아 서버로 전송(서버가 그 IP로 RTSP를 연다)
+    addCameraButton = new QPushButton(QStringLiteral("📷 카메라 연결"));
+    addCameraButton->setObjectName("roiButton");
+    addCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(addCameraButton, &QPushButton::clicked, this,
+            &MainWindow::onAddCameraClicked);
+    titleRow->addWidget(addCameraButton);
 
     outer->addLayout(titleRow);
 
@@ -1240,6 +1275,14 @@ void MainWindow::applyTheme()
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 12px; }
         #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
 
+        /* 로그인 사용자 표시 + 로그아웃 */
+        #userAvatar { background: %(accent); color: #fff; border-radius: 14px;
+                      font-size: 13px; font-weight: 800; }
+        #userName { color: %(text); font-size: 13px; font-weight: 700; }
+        #logoutButton { background: %(card); color: %(sub); border: 1px solid %(border);
+                        border-radius: 8px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+        #logoutButton:hover { border-color: %(critical); color: %(critical); }
+
         #panel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
         /* 섹션 제목: 좌측 청록 악센트 바로 위계 부여 */
         #panelTitle { color: %(text); font-size: 15px; font-weight: 800;
@@ -1444,8 +1487,9 @@ void MainWindow::connectToServer()
     for (int i = 0; i < kNumServers; ++i) {
         if (sockets[i]->state() != QAbstractSocket::UnconnectedState) continue;
         buffers[i].clear();  // 이전 연결의 파싱 잔여물 폐기
-        sockets[i]->connectToHost(QHostAddress(kServerHosts[i]), kServerPort);
-        qDebug() << "영상 서버 접속 시도:" << kServerHosts[i] << ":" << kServerPort;
+        const QString host = serverHost(i);
+        sockets[i]->connectToHost(QHostAddress(host), kServerPort);
+        qDebug() << "영상 서버 접속 시도:" << host << ":" << kServerPort;
     }
 }
 
@@ -1624,7 +1668,7 @@ void MainWindow::onReadyRead()
         //   (동기 안 되면 두 시계 오프셋만큼 음수/양수로 치우침)
         const qint64 latency =
             QDateTime::currentMSecsSinceEpoch() - static_cast<qint64>(latestTs[ch]);
-        qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
+        //qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
 
         channelViews[ch]->setFrame(QPixmap::fromImage(image));
         liveDots[ch]->setStyleSheet(
@@ -1655,9 +1699,9 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
         const QString when = QDateTime::fromMSecsSinceEpoch(
                                  static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
         auto* dtItem = new QTableWidgetItem(when);
-        // 서버는 낙상 클립을 접미사 없이 저장한다: chN_타임스탬프.mp4
+        // 서버 저장 규칙: 낙상은 _FALL 접미사 — chN_타임스탬프_FALL.mp4
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_FALL.mp4")
-                                     .arg(QString::fromLatin1(hostForChannel(channel)))
+                                     .arg(hostForChannel(channel))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
                                      .arg(timestampMs);
@@ -1698,7 +1742,7 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         auto* dtItem = new QTableWidgetItem(when);
 
         const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_EGRESS.mp4")
-                                     .arg(QString::fromLatin1(hostForChannel(channel)))
+                                     .arg(hostForChannel(channel))
                                      .arg(kClipHttpPort)
                                      .arg(channel)
                                      .arg(timestampMs);
@@ -1838,6 +1882,167 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
     }
     sock->write(pkt);
     sock->flush();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  카메라 연결 — CCTV IP를 서버로 전송하면, 서버가 그 IP로 RTSP를 연다.
+//  (Qt는 실제 CCTV에 직접 붙지 않는다. 붙는 대상은 항상 Pi 서버.)
+// ═══════════════════════════════════════════════════════════
+
+// 단일 CCTV IP → 채널별 RTSP URL. PNM-C16083RVQ(4센서 1대)는 IP 하나에 서브채널
+// 0~3이 붙는다: rtsp://<계정>:<pw>@<IP>:<port>/<채널>/<profile>/media.smp
+QString MainWindow::buildRtspUrl(const QString& ip, const QString& user,
+                                 const QString& password, int port,
+                                 const QString& profile, int channel)
+{
+    return QStringLiteral("rtsp://%1:%2@%3:%4/%5/%6/media.smp")
+        .arg(user, password, ip)
+        .arg(port)
+        .arg(channel)
+        .arg(profile);
+}
+
+bool MainWindow::sendCamera(int channel, const QString& rtspUrl)
+{
+    QTcpSocket* sock = socketForChannel(channel);   // 이 채널 담당 Pi 소켓
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        return false;   // 연결 안 됨 — 호출자가 모아서 안내
+    }
+
+    const QByteArray url = rtspUrl.toUtf8();
+    const int len = qMin(url.size(), kCameraUrlMax);
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlCameraSet;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = static_cast<uint16_t>(len);   // 이어지는 URL 바이트 길이
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    pkt.append(url.constData(), len);
+    sock->write(pkt);
+    sock->flush();
+    return true;
+}
+
+void MainWindow::sendCameraClear(int channel)
+{
+    QTcpSocket* sock = socketForChannel(channel);
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) return;
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlCameraClear;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = 0;
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    sock->write(pkt);
+    sock->flush();
+}
+
+void MainWindow::onAddCameraClicked()
+{
+    // 마지막 입력값을 QSettings에서 복원 (관제 PC 로컬).
+    QSettings s;
+    const QString lastIp      = s.value(QStringLiteral("camera/ip")).toString();
+    const QString lastUser    = s.value(QStringLiteral("camera/user"),
+                                        QStringLiteral("admin")).toString();
+    const int     lastPort    = s.value(QStringLiteral("camera/port"), 554).toInt();
+    const QString lastProfile = s.value(QStringLiteral("camera/profile"),
+                                        QStringLiteral("profile2")).toString();
+
+    // ── 입력 다이얼로그 ──────────────────────────────────────
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("카메라 연결"));
+    auto* form = new QFormLayout(&dlg);
+
+    auto* ipEdit = new QLineEdit(lastIp, &dlg);
+    ipEdit->setPlaceholderText(QStringLiteral("예: 172.20.35.140"));
+    auto* userEdit = new QLineEdit(lastUser, &dlg);
+    auto* pwEdit = new QLineEdit(&dlg);
+    pwEdit->setEchoMode(QLineEdit::Password);
+    pwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
+    auto* portEdit = new QLineEdit(QString::number(lastPort), &dlg);
+    auto* profileEdit = new QLineEdit(lastProfile, &dlg);
+
+    form->addRow(QStringLiteral("CCTV IP"), ipEdit);
+    form->addRow(QStringLiteral("계정"), userEdit);
+    form->addRow(QStringLiteral("비밀번호"), pwEdit);
+    form->addRow(QStringLiteral("포트"), portEdit);
+    form->addRow(QStringLiteral("프로파일"), profileEdit);
+
+    auto* hint = new QLabel(
+        QStringLiteral("IP 하나로 4채널(센서)을 모두 연결합니다.\n"
+                       "ch0·1은 Pi A, ch2·3은 Pi B로 전송됩니다."), &dlg);
+    hint->setObjectName("segCaption");
+    form->addRow(hint);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("연결"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("취소"));
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const QString ip = ipEdit->text().trimmed();
+    if (ip.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("입력 오류"),
+                             QStringLiteral("CCTV IP를 입력하세요."));
+        return;
+    }
+    const QString user = userEdit->text().trimmed();
+    const QString pw = pwEdit->text();
+    bool portOk = false;
+    const int port = portEdit->text().trimmed().toInt(&portOk);
+    if (!portOk || port <= 0 || port > 65535) {
+        QMessageBox::warning(this, QStringLiteral("입력 오류"),
+                             QStringLiteral("포트 번호가 올바르지 않습니다."));
+        return;
+    }
+    const QString profile = profileEdit->text().trimmed().isEmpty()
+                                ? QStringLiteral("profile2")
+                                : profileEdit->text().trimmed();
+
+    // 입력값 저장(폼 복원용). 비밀번호는 평문 저장을 피해 담지 않는다 — 다음
+    // 연결 때 다시 입력한다(서버로는 v1 평문 TCP로 나가며, 추후 TLS 적용 예정).
+    s.setValue(QStringLiteral("camera/ip"), ip);
+    s.setValue(QStringLiteral("camera/user"), user);
+    s.setValue(QStringLiteral("camera/port"), port);
+    s.setValue(QStringLiteral("camera/profile"), profile);
+
+    // IP 하나 → 4채널 URL 생성 → 채널별 담당 Pi로 전송(socketForChannel이 라우팅).
+    int sent = 0;
+    for (int ch = 0; ch < 4; ++ch) {
+        const QString url = buildRtspUrl(ip, user, pw, port, profile, ch);
+        if (sendCamera(ch, url)) ++sent;
+    }
+
+    if (sent == 0) {
+        QMessageBox::warning(
+            this, QStringLiteral("전송 실패"),
+            QStringLiteral("영상 서버에 연결되어 있지 않습니다.\n"
+                           "서버 연결 상태를 확인하세요."));
+    } else if (sent < 4) {
+        QMessageBox::information(
+            this, QStringLiteral("일부 전송"),
+            QStringLiteral("4채널 중 %1채널만 전송했습니다.\n"
+                           "일부 Pi 서버가 끊겨 있습니다.").arg(sent));
+    } else {
+        QMessageBox::information(
+            this, QStringLiteral("카메라 연결 요청"),
+            QStringLiteral("4채널 연결 요청을 서버로 보냈습니다.\n"
+                           "서버가 카메라를 여는 동안 잠시 후 영상이 표시됩니다."));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
