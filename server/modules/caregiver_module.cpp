@@ -25,27 +25,39 @@ void CaregiverModule::addChannel(int channel) {
     detector_.setColorRange(kVestLower, kVestUpper);
     detector_.setThreshold(kVestThreshold);
 
+    //카메라 채널별 careTimer 등록
     auto result = timers_.emplace(
         channel, CareTimer(kAbsentTimeoutSec, kMinSessionSec));
     if (!result.second) return;  // 이미 등록됨
 
+    //result.first->first: channel (채널 번호)
+    //result.first->second: Caretiemr 객체
+    //[channel, this]로 현재 채널과 caregiverModule 객체 기억
+    //DB에 케어 시간 저장하는 콜백 등록
     result.first->second.onSessionEnd([channel, this](int dur) {
         std::printf("[ch%d] 케어 세션 종료: %d초\n", channel + 1, dur);
         db_.insertCareLog(channel, dur);
     });
 }
 
+
 void CaregiverModule::processFrame(const AiJob& job) {
+    //DetectionFrame 형식의 df 생성
     DetectionFrame df;
     df.channel = job.channel;
     df.objects = job.dets;
-    // raw_frame 사용
+
+    // 매 프레임마다 raw_frame과 df(채널번호, 탐지된 객체 목록)을 전달하여
+    // detector가 detectInFrame을 실행하여 요양사 탐지
     bool present = detector_.detectInFrame(job.raw_frame, df);
 
+    //현재 카메라의 CareTimer찾음
     auto it = timers_.find(job.channel);
+    //찾은 CareTimer에게 탐지 결과 전달
     if (it != timers_.end()) it->second.update(present);
 }
 
+//열려있는 세션들 강제 종료
 void CaregiverModule::flush() {
     for (auto& entry : timers_) {
         entry.second.flush();
