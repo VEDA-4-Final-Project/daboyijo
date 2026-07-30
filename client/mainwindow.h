@@ -274,7 +274,7 @@ private:
     void refreshCaregiverTable();
 
     // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
-    void handleFallEvent(int channel, quint64 timestampMs);
+    void handleFallEvent(int channel, quint64 timestampMs, float nx, float ny);
 
     // 침상 이탈 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
     void handleBedEgressEvent(int channel, quint64 timestampMs);
