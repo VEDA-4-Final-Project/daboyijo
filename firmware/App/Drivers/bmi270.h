@@ -14,11 +14,10 @@
 #define BMI270_REG_INIT_ADDR_1   0x5C  	// 스트림 주소 지정 레지스터 - 상위 8비트 (MSB)
 #define BMI270_REG_INIT_DATA     0x5E  	// 설정 데이터 스트림 입력 레지스터
 
-#define BMI270_REG_ACC_DATA_X 	 0x0C  	// 가속도 X축 데이터 시작 주소
+#define BMI270_REG_ACC_X_LSB     0x0C   // 가속도 데이터 시작 주소 (X축 LSB)
 #define BMI270_REG_ACC_CONF      0x40	// 가속도 데이터 속도(ODR) 및 대역폭 설정 레지스터
 #define BMI270_REG_ACC_RANGE     0x41   // 가속도 측정 범위 설정 레지스터
-
-#define BMI270_REG_GYR_X_LSB     0x12  	// 자이로 X축 데이터 시작 주소
+#define BMI270_REG_GYR_X_LSB     0x12   // 자이로 데이터 시작 주소 (X축 LSB)
 #define BMI270_REG_GYR_CONF      0x42  	// 자이로 ODR 및 대역폭 설정 레지스터
 #define BMI270_REG_GYR_RANGE     0x43  	// 자이로 측정 범위 설정 레지스터
 
@@ -40,7 +39,6 @@ HAL_StatusTypeDef BMI270_WriteRegister(uint8_t reg, uint8_t val);
 // --- [상위 레벨 API 함수] ---
 HAL_StatusTypeDef BMI270_Init(void);
 HAL_StatusTypeDef BMI270_Calibrate_Gyro(BMI270_Data_t *bias);
-HAL_StatusTypeDef BMI270_Read_Accel(BMI270_Data_t *accel);
-HAL_StatusTypeDef BMI270_Read_Gyro(BMI270_Data_t *gyro);
+void BMI270_Parse_DMA_Data(uint8_t *dma_buf, BMI270_Data_t *accel, BMI270_Data_t *gyro, BMI270_Data_t *bias);
 
-#endif /* BMI270_H_ */
+#endif /* APP_DRIVERS_BMI270_H_ */

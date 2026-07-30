@@ -1,201 +1,183 @@
 #include "heart_rate_calc.h"
-#include <stdio.h>
-#include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include "stm32f4xx_hal.h"
 
-#define WINDOW_SIZE        200  // 20ms * 200 = 4000ms (4초 슬라이딩 윈도우)
-#define TICK_INTERVAL_4S   200  // 4초 주기로 결과를 출력하기 위한 틱 카운트 (20ms * 200)
+#define MOTION_THRESHOLD     7.0f
+#define HOLD_DELAY_SAMPLES   10
 
-extern MAX30102_t hmax;
+// [심박수 계산용 디파인]
+#define PEAK_THRESHOLD       30.0f   // 0을 기준으로 출렁이는 순수 맥파용 문턱값
+#define MIN_RR_INTERVAL      350     // 350ms (최대 약 170 BPM 제한)
+#define MAX_RR_INTERVAL      1500    // 1500ms (최소 40 BPM 제한)
+#define STABILIZE_SAMPLES    75      // 손가락 접촉 후 필터 안정화까지 걸리는 샘플 수 (1.5초)
 
-// 모듈 내부 정적 변수 관리 (데이터 보호를 위해 static 선언)
-static uint32_t g_red_buffer[WINDOW_SIZE];
-static uint32_t g_ir_buffer[WINDOW_SIZE];
-static uint16_t g_filled_samples = 0;
-static uint16_t g_tick_counter = 0;
+static float sg_dc_red = 0.0f;
+static float sg_lpf_red = 0.0f;
+static uint32_t s_last_print_time = 0;
+static uint32_t s_motion_hold_counter = 0;
+static uint8_t s_was_frozen = 0;
 
-// 내부 연산용 정적 헬퍼 함수 선언 (외부 노출 차단)
-static void Calculate_HeartRate_Metrics(float *out_hr, float *out_spo2);
+// [안정화 카운터 및 심박 변수]
+static uint32_t s_stable_counter = 0;
+static uint32_t s_current_bpm = 0;
+static uint32_t s_last_peak_time = 0;
+static float s_prev_lpf_red = 0.0f;
+static float s_prev_prev_lpf_red = 0.0f;
 
-void HeartRateCalc_Init(void)
-{
-    g_filled_samples = 0;
-    g_tick_counter = 0;
+// 이벤트 상태 추적용 플래그
+static uint8_t s_finger_attached = 0;       // 1: 손가락 접촉 중, 0: 떨어짐
+static uint8_t s_stabilization_logged = 0;  // 초기 필터 안정화 완료 로그 플래그
+static uint8_t s_bpm_output_logged = 0;     // 첫 심박수 확정 로그 플래그
 
-    // 버퍼 초기화
-    for (int i = 0; i < WINDOW_SIZE; i++)
-    {
-        g_red_buffer[i] = 0;
-        g_ir_buffer[i] = 0;
-    }
-
-    printf("[ HR ] Module Initialized.\r\n");
+void HeartRateCalc_Init(void) {
+    HeartRateCalc_Reset();
 }
 
-void HeartRateCalc_Update(void)
-{
-    MAX30102_Data_t raw_data;
+void HeartRateCalc_Reset(void) {
+    sg_dc_red = 0.0f;
+    sg_lpf_red = 0.0f;
+    s_motion_hold_counter = 0;
+    s_was_frozen = 0;
+    s_stable_counter = 0;   // 안정화 카운터 리셋
 
-    // 1. FIFO에 밀려있는 모든 데이터를 수거하여 슬라이딩 윈도우에 업데이트 (오버플로우 방지)
-    while (MAX30102_Read_FIFO(&hmax, &raw_data) == HAL_OK)
-    {
-        // memmove를 이용한 고속 시프트 (오래된 데이터 버림)
-        memmove(&g_red_buffer[0], &g_red_buffer[1], (WINDOW_SIZE - 1) * sizeof(uint32_t));
-        memmove(&g_ir_buffer[0], &g_ir_buffer[1], (WINDOW_SIZE - 1) * sizeof(uint32_t));
+    s_current_bpm = 0;
+    s_last_peak_time = 0;
+    s_prev_lpf_red = 0.0f;
+    s_prev_prev_lpf_red = 0.0f;
 
-        // 가장 최신 데이터를 윈도우의 맨 끝(가장 우측)에 적재
-        g_red_buffer[WINDOW_SIZE - 1] = raw_data.red;
-        g_ir_buffer[WINDOW_SIZE - 1] = raw_data.ir;
+    s_last_print_time = HAL_GetTick();
 
-        // 초반 부팅 시 데이터가 200개 쌓일 때까지 카운트 파악
-        if (g_filled_samples < WINDOW_SIZE)
-        {
-            g_filled_samples++;
-        }
-    }
-
-    // 2. 4초에 한 번씩 심박수/산소포화도 계산 및 출력
-    g_tick_counter++;
-    if (g_tick_counter >= TICK_INTERVAL_4S)
-    {
-        g_tick_counter = 0;
-
-        // 데이터가 최소한 4초 분량(200샘플)은 꽉 차야 알고리즘이 정상 작동함
-        if (g_filled_samples < WINDOW_SIZE)
-        {
-            printf("[ HR ] Buffering data... (%d/%d)\r\n", g_filled_samples, WINDOW_SIZE);
-            return;
-        }
-
-        float heart_rate = 0.0f;
-        float spo2 = 0.0f;
-
-        // 3. 필터 및 DSP 연산 함수 호출하여 심박수/산소포화도 추출
-        Calculate_HeartRate_Metrics(&heart_rate, &spo2);
-
-        // 4. 최종 연산 결과 출력 (유효한 데이터일 때만 출력)
-        if (heart_rate > 0.0f)
-        {
-            printf("[ HR DATA ] Heart Rate: %.1f BPM | SpO2: %.1f %%\r\n", heart_rate, spo2);
-        }
-        else
-        {
-            printf("[ HR DATA ] Finger undetected or stabilizing...\r\n");
-        }
-    }
+    // 👉 리셋 시 상태 로그 플래그도 초기화 (s_finger_attached는 Update 함수에서 제어)
+    s_stabilization_logged = 0;
+    s_bpm_output_logged = 0;
 }
 
-static void Calculate_HeartRate_Metrics(float *out_hr, float *out_spo2)
-{
-    uint64_t red_sum = 0, ir_sum = 0;
+uint32_t HeartRateCalc_GetBPM(void) {
+    return s_current_bpm;
+}
 
-    // -------------------------------------------------------------------------
-    // 단계 1: DC (평균) 성분 계산
-    // -------------------------------------------------------------------------
-    for (int i = 0; i < WINDOW_SIZE; i++)
-    {
-        red_sum += g_red_buffer[i];
-        ir_sum += g_ir_buffer[i];
-    }
-    float red_dc = (float)red_sum / WINDOW_SIZE;
-    float ir_dc = (float)ir_sum / WINDOW_SIZE;
+uint32_t HeartRateCalc_GetSpO2(void) {
+    return 0;
+}
 
-    // -------------------------------------------------------------------------
-    // 단계 2: MAD (평균 절대 편차) 방식을 이용한 AC 성분 추출
-    // 베이스라인 드리프트 방어용 MAD 알고리즘 적용
-    // -------------------------------------------------------------------------
-    float red_mad = 0.0f;
-    float ir_mad = 0.0f;
-    for (int i = 0; i < WINDOW_SIZE; i++)
-    {
-        red_mad += fabsf((float)g_red_buffer[i] - red_dc);
-        ir_mad += fabsf((float)g_ir_buffer[i] - ir_dc);
-    }
-    red_mad /= WINDOW_SIZE;
-    ir_mad /= WINDOW_SIZE;
+HRState_t HeartRateCalc_Update(MAX30102_Data_t *sensor_data, float gyro_x, float gyro_y, float gyro_z) {
+    if (sensor_data == NULL) return HR_STAT_NONE;
 
-    // -------------------------------------------------------------------------
-    // 단계 3: 손가락 미부착 및 신호 불안정 예외 처리
-    // 변동 폭(AC)이 너무 작거나, 적외선 DC 값이 터무니없이 낮으면 무효화
-    // -------------------------------------------------------------------------
-    if (ir_mad < 30.0f || red_mad < 30.0f || ir_dc < 10000.0f)
-    {
-        *out_hr = 0.0f;
-        *out_spo2 = 0.0f;
-        return;
+    float raw_red = (float)sensor_data->red;
+    uint32_t current_time = HAL_GetTick();
+
+    // 손가락 탈착 감지 (30000 미만이면 즉시 초기화)
+    if (raw_red < 30000.0f) {
+        // 👉 [로그 4] 손가락 떼짐 감지 (기존에 붙어있던 상태였을 때만 1번 출력)
+        if (s_finger_attached) {
+            printf("\r\n[ EVENT ] === 손가락 탈착 감지: 측정 종료 ===\r\n\r\n");
+            s_finger_attached = 0;
+        }
+
+        HeartRateCalc_Reset();
+
+        if (current_time - s_last_print_time >= 5000) {
+            s_last_print_time = current_time;
+            printf("0,0.0,0,0.0\r\n");
+        }
+        return HR_STAT_NONE;
     }
 
-    // -------------------------------------------------------------------------
-    // 단계 4: 산소포화도(SpO2) 계산 (R-Value 기반 엠피리컬 표준 보정 공식)
-    // -------------------------------------------------------------------------
-    float R = (red_mad / red_dc) / (ir_mad / ir_dc);
-    float spo2_val = 104.0f - (17.0f * R);
-
-    // 인체 생리학적 임계 한계치 제한 적용
-    if (spo2_val > 100.0f) spo2_val = 100.0f;
-    if (spo2_val < 70.0f)  spo2_val = 70.0f;
-    *out_spo2 = spo2_val;
-
-    // -------------------------------------------------------------------------
-    // 단계 5: 고주파 노이즈 제거를 위한 5점 이동 평균 필터
-    // -------------------------------------------------------------------------
-    float filtered_ir[WINDOW_SIZE];
-
-    // 필터 윈도우 경계면(시작과 끝 2샘플씩)은 원본 데이터로 바이패스 복사
-    filtered_ir[0] = (float)g_ir_buffer[0];
-    filtered_ir[1] = (float)g_ir_buffer[1];
-    filtered_ir[WINDOW_SIZE - 2] = (float)g_ir_buffer[WINDOW_SIZE - 2];
-    filtered_ir[WINDOW_SIZE - 1] = (float)g_ir_buffer[WINDOW_SIZE - 1];
-
-    // 중심부 데이터에 대칭형 5점 평활화(Smoothing) 필터 적용
-    for (int i = 2; i < WINDOW_SIZE - 2; i++)
-    {
-        filtered_ir[i] = (g_ir_buffer[i - 2] + g_ir_buffer[i - 1] + g_ir_buffer[i] +
-                          g_ir_buffer[i + 1] + g_ir_buffer[i + 2]) / 5.0f;
+    // 👉 [로그 1] 손가락 처음 댐 감지
+    if (!s_finger_attached) {
+        printf("\r\n[ EVENT ] === 손가락 접촉 감지: 측정 시작 (필터 안정화 중...) ===\r\n");
+        s_finger_attached = 1;
     }
 
-    // -------------------------------------------------------------------------
-    // 단계 6: 필터링된 깨끗한 신호 기반 시간축 피크 검출
-    // -------------------------------------------------------------------------
-    int peak_indices[20];
-    int peak_count = 0;
+    // 모션 강도 계산
+    float motion_intensity = fabs(gyro_x) + fabs(gyro_y) + fabs(gyro_z);
 
-    // 50Hz ODR 기준 최대 심박수 한계선(180BPM) 설정을 위한 데드 타임(최소 15샘플 공백 유지)
-    const int min_peak_distance = 15;
+    if (motion_intensity > MOTION_THRESHOLD) {
+        s_motion_hold_counter = HOLD_DELAY_SAMPLES;
+    } else if (s_motion_hold_counter > 0) {
+        s_motion_hold_counter--;
+    }
 
-    for (int i = 1; i < WINDOW_SIZE - 1 && peak_count < 20; i++)
-    {
-        // 로컬 맥박 피크(극대점) 정밀 서칭
-        if (filtered_ir[i] > ir_dc && filtered_ir[i] > filtered_ir[i - 1] && filtered_ir[i] > filtered_ir[i + 1])
-        {
-            // 데드 타임 방어벽 검증
-            if (peak_count == 0 || (i - peak_indices[peak_count - 1]) > min_peak_distance)
-            {
-                peak_indices[peak_count++] = i;
+    // 움직임 제어 및 필터 적용
+    if (s_motion_hold_counter > 0) {
+        s_was_frozen = 1;
+    } else {
+        // 1. 최초 진입 시 하드웨어 첫 값으로 무조건 동기화
+        if (sg_dc_red < 1000.0f) {
+            sg_dc_red = raw_red;
+            sg_lpf_red = 0.0f;
+            s_prev_lpf_red = 0.0f;
+            s_prev_prev_lpf_red = 0.0f;
+            s_stable_counter = 0;
+            s_was_frozen = 0;
+        }
+
+        // 2. 타임아웃 기반 Fast-Lock 및 일반 모드 전환
+        if (s_was_frozen || s_stable_counter < STABILIZE_SAMPLES) {
+            sg_dc_red = (0.85f * sg_dc_red) + (0.15f * raw_red);
+            if (!s_was_frozen) {
+                s_stable_counter++;
+
+                // 👉 [로그 2] 초기 1.5초(75샘플) 하드웨어 필터 안정화 완료 시점 포착
+                if (s_stable_counter >= STABILIZE_SAMPLES && !s_stabilization_logged) {
+                    printf("[ EVENT ] === 필터 초기 안정화 완료: 신호 수집 및 심박원 추적 시작 ===\r\n");
+                    s_stabilization_logged = 1;
+                }
+            }
+            s_was_frozen = 0;
+        } else {
+            sg_dc_red = (0.97f * sg_dc_red) + (0.03f * raw_red);
+        }
+
+        // 순수 AC 맥파 신호 추출
+        float ac_red = raw_red - sg_dc_red;
+
+        // 고주파 노이즈 제거 LPF
+        sg_lpf_red = (0.75f * sg_lpf_red) + (0.25f * ac_red);
+
+        // -----------------------------------------------------------------
+        // [기울기 기반 피크 검출 로직]
+        // -----------------------------------------------------------------
+        if (s_prev_lpf_red > s_prev_prev_lpf_red && s_prev_lpf_red > sg_lpf_red) {
+            if (s_stable_counter >= STABILIZE_SAMPLES) {
+                if (s_prev_lpf_red > PEAK_THRESHOLD && s_prev_lpf_red < 1500.0f) {
+                    uint32_t rr_interval = current_time - s_last_peak_time;
+
+                    if (rr_interval >= MIN_RR_INTERVAL && rr_interval <= MAX_RR_INTERVAL) {
+                        uint32_t calculated_bpm = 60000 / rr_interval;
+
+                        if (s_current_bpm == 0) {
+                            s_current_bpm = calculated_bpm;
+                        } else {
+                            s_current_bpm = (s_current_bpm * 3 + calculated_bpm) / 4;
+                        }
+
+                        // 👉 [로그 3] 첫 유효 피크 수집 완료 및 유효 심박수(BPM) 최초 출력 시점
+                        if (!s_bpm_output_logged) {
+                            printf("[ EVENT ] === 유효 맥박 검출 성공: 본격적인 심박수 데이터 계산 시작 ===\r\n");
+                            s_bpm_output_logged = 1;
+                        }
+                    }
+                    s_last_peak_time = current_time;
+                }
             }
         }
+
+        s_prev_prev_lpf_red = s_prev_lpf_red;
+        s_prev_lpf_red = sg_lpf_red;
     }
 
-    // -------------------------------------------------------------------------
-    // 단계 7: 피크 간의 평균 간격을 기반으로 심박수(BPM) 최종 환산
-    // -------------------------------------------------------------------------
-    if (peak_count >= 2)
-    {
-        float total_intervals = 0.0f;
-        for (int i = 1; i < peak_count; i++)
-        {
-            total_intervals += (float)(peak_indices[i] - peak_indices[i - 1]);
-        }
-        float avg_interval_samples = total_intervals / (float)(peak_count - 1);
+    // 5초 주기 출력
+    if (current_time - s_last_print_time >= 5000) {
+        s_last_print_time = current_time;
 
-        // 50Hz ODR 기준 샘플 수를 분당 박동수(BPM)로 최종 환산 (60초 * 50Hz = 3000)
-        *out_hr = 3000.0f / avg_interval_samples;
+        printf("%lu,%.1f,%lu,%.1f\r\n",
+               (uint32_t)raw_red,
+               sg_lpf_red,
+               s_current_bpm,
+               motion_intensity);
+    }
 
-        // 정상적인 인간 생체 심박 범위를 벗어나면 에러(0.0) 처리
-        if (*out_hr < 40.0f || *out_hr > 200.0f) *out_hr = 0.0f;
-    }
-    else
-    {
-        *out_hr = 0.0f; // 피크 부족으로 연산 불가 처리
-    }
+    return HR_STAT_VALID;
 }

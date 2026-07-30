@@ -65,6 +65,9 @@ void Error_Handler(void);
 #define BMI270_INT2_Pin GPIO_PIN_6
 #define BMI270_INT2_GPIO_Port GPIOA
 #define BMI270_INT2_EXTI_IRQn EXTI9_5_IRQn
+#define MAX30102_INT_Pin GPIO_PIN_0
+#define MAX30102_INT_GPIO_Port GPIOB
+#define MAX30102_INT_EXTI_IRQn EXTI0_IRQn
 
 /* USER CODE BEGIN Private defines */
 
