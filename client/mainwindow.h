@@ -12,6 +12,7 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QSet>
+#include <QMap>
 
 #include "auth.h"
 
@@ -32,10 +33,10 @@ struct dbj_vs_header_t {
 struct dbj_ctrl_header_t {
     uint16_t magic;         // 2B (0xDB4C)
     uint8_t version;        // 1B (0x01)
-    uint8_t type;           // 1B (1=ROI_SET, 2=ROI_CLEAR, 3=FALL_CONFIRM)
+    uint8_t type;           // 1B (아래 kCtrl* 상수 참조)
     uint8_t channel;        // 1B (0~3)
-    uint8_t point_count;    // 1B (이어지는 점 개수)
-    uint16_t reserved;      // 2B (0)
+    uint8_t point_count;    // 1B (이어지는 점 개수 / 위험도 값)
+    uint16_t reserved;      // 2B (0, CAMERA_SET에선 URL 바이트 길이)
 };
 struct dbj_roi_point_t {
     uint16_t x;             // 정규화 x × 10000 (0~10000)
@@ -126,19 +127,17 @@ private slots:
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
     void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
 
-
     // TAB2: 비상 로그 조회 및 블랙박스
     void onSearchClicked();
     void onLogRowActivated(int row, int column);
-
 
     // TAB3: DB 관리
     void onResidentSelected(int row, int column);
     void onNewResident();
     void onSaveResident();
     void onDischargeResident();
-
-
+    void onReadmitResident();                          // 퇴원자 → 새 입원 에피소드 생성
+    void onAdmissionRowActivated(int row, int column);  // 이력 행 더블클릭 → 변경 내역 팝업
 
 private:
     Ui::MainWindow *ui;
@@ -175,11 +174,10 @@ private:
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구
-    QLabel* tempValues[4];             // 채널별 체온 값
-    QLabel* hrValues[4];               // 채널별 심박수 값
-    QLabel* vitalStatusDots[4];        // 채널별 바이탈 상태등
-    QLabel* vitalStatusBadges[4];      // 채널별 상태 배지(정상/주의/위험)
-    QLabel* vitalUpdated[4];           // 채널별 마지막 갱신 시각
+    QLabel* tempValues[4] = {};        // 채널별 체온 값
+    QLabel* hrValues[4] = {};          // 채널별 심박수 값
+    QLabel* vitalStatusDots[4] = {};   // 채널별 바이탈 상태등
+    QLabel* vitalStatusBadges[4] = {}; // 채널별 상태 배지(정상/주의/위험)
     Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
 
     QTimer clockTimer;
@@ -209,8 +207,13 @@ private:
     QVBoxLayout* careTimeList = nullptr;
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
-    // 입소자 목록
+    // 입소자 목록 (residents = 현재 상태, 사람당 1행)
     QTableWidget* residentTable = nullptr;
+
+    // 입원 이력 (admissions = 입원 에피소드, 입원할 때마다 1행)
+    //   행 = 한 번의 입원, 더블클릭 → 그 기간의 변경 내역 팝업
+    QTableWidget* admissionTable = nullptr;
+    QLabel* admissionInfo = nullptr;     // "입원 N건" 안내 문구
 
     // 상세/편집 폼 — 기본정보
     QLineEdit* editName       = nullptr;
@@ -233,9 +236,6 @@ private:
 
     // 특이사항
     QTextEdit* editNotes = nullptr;
-
-    // 요양사 목록
-    QTableWidget* caregiverTable = nullptr;
 
     // 현재 선택된 resident_id (-1이면 신규 등록 모드)
     int selectedResidentId = -1;
@@ -267,11 +267,22 @@ private:
     QWidget* buildDbTab();
     QWidget* buildResidentSection();
     QWidget* buildResidentForm();
-    QWidget* buildCaregiverSection();
+    QWidget* buildAdmissionHistory();   // 입원 이력 표 + 안내 문구
 
     // TAB3 데이터 갱신
     void refreshResidentTable();
-    void refreshCaregiverTable();
+    void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
+    void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
+
+    // ── 변경 로그(resident_changes) 기록 ──
+    // snapshotResident와 formSnapshot은 같은 "라벨 → 값" 체계를 쓴다(키가 같아야 비교 성립).
+    QMap<QString, QString> snapshotResident(int id);   // UPDATE 전 DB 값 = 수정 전
+    QMap<QString, QString> formSnapshot() const;       // 폼 입력 값 = 수정 후
+    int  currentAdmissionId(int residentId);           // 가장 최근 입원 에피소드 id
+    void logChanges(int residentId, int admissionId,
+                    const QMap<QString, QString>& before,
+                    const QMap<QString, QString>& after,
+                    const QString& changeType);        // 달라진 필드만 INSERT
 
     // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
     void handleFallEvent(int channel, quint64 timestampMs, float nx, float ny);
@@ -312,7 +323,6 @@ private:
     QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
     QDialog* cameraSettingsDialog = nullptr;
     void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
-    void startCameraDiscovery();               // 인라인 ONVIF 검색 → discoveryTable 채움
 
     // ── 카메라 탭(인라인) 위젯 ──
     QLineEdit* camIpEdit = nullptr;

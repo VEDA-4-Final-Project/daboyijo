@@ -24,7 +24,6 @@
 #include <QDateEdit>
 #include <QSlider>
 #include <QStyle>
-#include <QSplitter>
 #include <QGroupBox>
 #include <QFormLayout>
 #include <QMediaPlayer>
@@ -61,6 +60,18 @@
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
 namespace {
 
+// 변경 로그에 남길 필드 (라벨, residents 컬럼) — 이 배열만 고치면 로그 대상이 바뀐다.
+struct LoggedField { const char* label; const char* column; };
+const LoggedField kLoggedFields[] = {
+    {"이름", "name"},               {"병실", "room"},
+    {"침대", "bed"},                {"카메라 채널", "camera_id"},
+    {"웨어러블 ID", "wearable_id"}, {"위험도", "risk_level"},
+    {"입원일", "admitted_at"},      {"퇴원 예정일", "discharge_due"},
+    {"상태", "status"},             {"보호자 이름", "guardian_name"},
+    {"보호자 전화", "guardian_phone"}, {"보호자 관계", "guardian_relation"},
+    {"특이사항", "notes"},
+    };
+
 // 상태 색상: 정상/주의/위험 판정
 QString vitalColor(double temp, int hr) {
     if (temp >= 38.0 || hr >= 110 || hr <= 45) return kCritical;
@@ -93,8 +104,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.35.218";
-const char* kDefaultHostB  = "172.20.35.201";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -950,7 +961,6 @@ QWidget* MainWindow::buildDbTab()
     refreshBtn->setCursor(Qt::PointingHandCursor);
     connect(refreshBtn, &QPushButton::clicked, this, [this]() {
         refreshResidentTable();
-        refreshCaregiverTable();
     });
 
     statusBar->addWidget(dbStatusDot);
@@ -959,14 +969,7 @@ QWidget* MainWindow::buildDbTab()
     statusBar->addWidget(refreshBtn);
     outer->addLayout(statusBar);
 
-    // 입소자 섹션 + 요양사 섹션 상하 분할
-    auto* splitter = new QSplitter(Qt::Vertical);
-    splitter->addWidget(buildResidentSection());
-    splitter->addWidget(buildCaregiverSection());
-    splitter->setStretchFactor(0, 7);
-    splitter->setStretchFactor(1, 3);
-    outer->addWidget(splitter, 1);
-
+    outer->addWidget(buildResidentSection(), 1);
     return panel;
 }
 
@@ -986,19 +989,37 @@ QWidget* MainWindow::buildResidentSection()
     leftCol->addWidget(listTitle);
 
     residentTable = new QTableWidget(0, 8);
+
     residentTable->setObjectName("logTable");
+
     residentTable->setHorizontalHeaderLabels({
+
         QStringLiteral("ID"), QStringLiteral("이름"),
-        QStringLiteral("병실"), QStringLiteral("침대"),
-        QStringLiteral("채널"), QStringLiteral("웨어러블"),
-        QStringLiteral("위험도"), QStringLiteral("상태")
+
+            QStringLiteral("병실"), QStringLiteral("침대"),
+
+            QStringLiteral("채널"), QStringLiteral("웨어러블"),
+
+            QStringLiteral("위험도"), QStringLiteral("상태")
+
     });
+
     residentTable->horizontalHeader()->setStretchLastSection(true);
+
     residentTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+
     residentTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
     residentTable->setMinimumWidth(420);
+
     connect(residentTable, &QTableWidget::cellClicked,
+
             this, &MainWindow::onResidentSelected);
+
+    leftCol->addWidget(residentTable, 3);
+    leftCol->addWidget(buildAdmissionHistory(), 2);   // ← 목록 아래에 이력
+
+
     leftCol->addWidget(residentTable, 1);
 
     auto* leftWrap = new QWidget();
@@ -1121,9 +1142,15 @@ QWidget* MainWindow::buildResidentForm()
     dischargeBtn->setCursor(Qt::PointingHandCursor);
     connect(dischargeBtn, &QPushButton::clicked, this, &MainWindow::onDischargeResident);
 
+    auto* readmitBtn = new QPushButton(QStringLiteral("재입원"));      // ← 추가
+    readmitBtn->setObjectName("roiButton");
+    readmitBtn->setCursor(Qt::PointingHandCursor);
+    connect(readmitBtn, &QPushButton::clicked, this, &MainWindow::onReadmitResident);
+
     btnRow->addWidget(newBtn);
     btnRow->addWidget(saveBtn);
     btnRow->addStretch();
+    btnRow->addWidget(readmitBtn);      // ← 추가 (퇴원 왼쪽)
     btnRow->addWidget(dischargeBtn);
     lay->addLayout(btnRow);
     lay->addStretch();
@@ -1132,33 +1159,156 @@ QWidget* MainWindow::buildResidentForm()
     return scroll;
 }
 
-QWidget* MainWindow::buildCaregiverSection()
+QWidget* MainWindow::buildAdmissionHistory()
 {
-    auto* card = new QFrame();
-    card->setObjectName("vitalCard");
+    auto* box = new QGroupBox(QStringLiteral("입원 이력"));
+    box->setObjectName("formGroup");
+    auto* lay = new QVBoxLayout(box);
+    lay->setSpacing(6);
 
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(12, 12, 12, 12);
-    lay->setSpacing(8);
+    admissionInfo = new QLabel(
+        QStringLiteral("입소자를 선택하면 입원 이력이 표시됩니다. "
+                       "행을 더블클릭하면 그 기간의 변경 내역이 열립니다."));
+    admissionInfo->setObjectName("segCaption");
+    admissionInfo->setWordWrap(true);
+    lay->addWidget(admissionInfo);
 
-    auto* title = new QLabel(QStringLiteral("요양사 관리"));
-    title->setObjectName("panelTitle");
-    lay->addWidget(title);
-
-    caregiverTable = new QTableWidget(0, 5);
-    caregiverTable->setObjectName("logTable");
-    caregiverTable->setHorizontalHeaderLabels({
-        QStringLiteral("ID"), QStringLiteral("이름"),
-        QStringLiteral("연락처"), QStringLiteral("근무조"),
-        QStringLiteral("상태")
-    });
-    caregiverTable->horizontalHeader()->setStretchLastSection(true);
-    caregiverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    caregiverTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    lay->addWidget(caregiverTable, 1);
-
-    return card;
+    admissionTable = new QTableWidget(0, 4);
+    admissionTable->setObjectName("logTable");
+    admissionTable->setHorizontalHeaderLabels(
+        {QStringLiteral("입원일"), QStringLiteral("퇴원일"),
+         QStringLiteral("상태"),   QStringLiteral("변경")});
+    admissionTable->horizontalHeader()->setStretchLastSection(true);
+    admissionTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    admissionTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    admissionTable->verticalHeader()->setVisible(false);
+    connect(admissionTable, &QTableWidget::cellDoubleClicked,
+            this, &MainWindow::onAdmissionRowActivated);
+    lay->addWidget(admissionTable, 1);
+    return box;
 }
+
+void MainWindow::refreshAdmissionTable(int residentId)
+{
+    if (!admissionTable) return;
+    admissionTable->setRowCount(0);
+    if (residentId < 0) {
+        admissionInfo->setText(QStringLiteral("입소자를 선택하세요."));
+        return;
+    }
+
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT a.admission_id, a.admitted_at, a.discharged_at, a.status, "
+        " (SELECT COUNT(*) FROM resident_changes c "
+        "   WHERE c.admission_id = a.admission_id) AS chg "
+        "FROM admissions a WHERE a.resident_id=? "
+        "ORDER BY a.admitted_at DESC, a.admission_id DESC"));
+    q.addBindValue(residentId);
+    if (!q.exec()) {
+        qDebug() << "입원 이력 조회 실패:" << q.lastError().text();
+        return;
+    }
+
+    while (q.next()) {
+        const int row = admissionTable->rowCount();
+        admissionTable->insertRow(row);
+
+        auto* inItem = new QTableWidgetItem(q.value(1).toDate().toString("yyyy-MM-dd"));
+        inItem->setData(Qt::UserRole, q.value(0).toInt());   // admission_id 숨겨둠
+        admissionTable->setItem(row, 0, inItem);
+
+        const QVariant out = q.value(2);
+        admissionTable->setItem(row, 1, new QTableWidgetItem(
+                                            out.isNull() ? QStringLiteral("—") : out.toDate().toString("yyyy-MM-dd")));
+        admissionTable->setItem(row, 2, new QTableWidgetItem(q.value(3).toString()));
+        admissionTable->setItem(row, 3, new QTableWidgetItem(
+                                            QStringLiteral("%1건").arg(q.value(4).toInt())));
+    }
+
+    admissionInfo->setText(QStringLiteral("입원 %1건 — 행 더블클릭 시 변경 내역")
+                               .arg(admissionTable->rowCount()));
+}
+
+void MainWindow::onAdmissionRowActivated(int row, int /*column*/)
+{
+    auto* item = admissionTable ? admissionTable->item(row, 0) : nullptr;
+    if (!item) return;
+    showChangeLogDialog(item->data(Qt::UserRole).toInt());
+}
+
+// 선택한 입원 에피소드의 변경 내역만 팝업으로 — [수정 전] → [수정 후] 형식.
+void MainWindow::showChangeLogDialog(int admissionId)
+{
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT changed_at, change_type, field_label, old_value, new_value, changed_by "
+        "FROM resident_changes WHERE admission_id=? "
+        "ORDER BY changed_at DESC, change_id DESC"));
+    q.addBindValue(admissionId);
+    if (!q.exec()) {
+        QMessageBox::critical(this, QStringLiteral("조회 실패"), q.lastError().text());
+        return;
+    }
+
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);   // 닫으면 자동 정리
+    dlg->setObjectName("panel");
+    dlg->setWindowTitle(QStringLiteral("변경 내역"));
+    dlg->resize(820, 480);
+    enableDarkTitleBar(dlg);
+
+    auto* lay = new QVBoxLayout(dlg);
+    lay->setContentsMargins(16, 16, 16, 16);
+    lay->setSpacing(10);
+
+    auto* tbl = new QTableWidget(0, 5);
+    tbl->setObjectName("logTable");
+    tbl->setHorizontalHeaderLabels(
+        {QStringLiteral("시각"), QStringLiteral("구분"), QStringLiteral("항목"),
+         QStringLiteral("변경 내용"), QStringLiteral("작업자")});
+    tbl->horizontalHeader()->setStretchLastSection(false);
+    tbl->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tbl->verticalHeader()->setVisible(false);
+
+    auto shown = [](const QString& s) {
+        return s.isEmpty() ? QStringLiteral("(없음)") : s;
+    };
+
+    while (q.next()) {
+        const int row = tbl->rowCount();
+        tbl->insertRow(row);
+        tbl->setItem(row, 0, new QTableWidgetItem(
+                                 q.value(0).toDateTime().toString("yyyy-MM-dd HH:mm:ss")));
+        tbl->setItem(row, 1, new QTableWidgetItem(q.value(1).toString()));
+        tbl->setItem(row, 2, new QTableWidgetItem(q.value(2).toString()));
+        tbl->setItem(row, 3, new QTableWidgetItem(
+                                 QStringLiteral("[수정 전] %1   →   [수정 후] %2")
+                                     .arg(shown(q.value(3).toString()), shown(q.value(4).toString()))));
+        tbl->setItem(row, 4, new QTableWidgetItem(q.value(5).toString()));
+    }
+    tbl->resizeColumnsToContents();
+    tbl->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+
+    if (tbl->rowCount() == 0) {
+        auto* empty = new QLabel(QStringLiteral("이 입원 기간에 기록된 변경 내역이 없습니다."));
+        empty->setObjectName("segCaption");
+        lay->addWidget(empty);
+    }
+    lay->addWidget(tbl, 1);
+
+    auto* closeBox = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    closeBox->button(QDialogButtonBox::Close)->setText(QStringLiteral("닫기"));
+    closeBox->button(QDialogButtonBox::Close)->setObjectName(QStringLiteral("roiButton"));
+    connect(closeBox, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    lay->addWidget(closeBox);
+
+    dlg->show();
+}
+
+
 
 // ═══════════════════════════════════════════════════════════
 //  스타일 (QSS)
@@ -1324,7 +1474,6 @@ QTextEdit#formEdit:focus {
             border-left: 4px solid transparent; border-right: 4px solid transparent;
             border-top: 5px solid %(sub); margin-right: 8px; }
 
-        QSplitter::handle { background: %(border); }
 
         /* ── 캘린더 팝업 (QDateEdit) ── */
         QCalendarWidget QWidget { background: %(panel); color: %(text); }
@@ -2506,12 +2655,6 @@ void MainWindow::refreshResidentTable()
     qDebug() << "입소자 목록 새로고침 —" << residentTable->rowCount() << "명 로드";
 }
 
-void MainWindow::refreshCaregiverTable()
-{
-    caregiverTable->setRowCount(0);
-    qDebug() << "요양사 목록 새로고침 (DB 연동 전)";
-}
-
 void MainWindow::onResidentSelected(int row, int /*column*/)
 {
     if (!residentTable || row < 0) return;
@@ -2552,6 +2695,8 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     editGuardianRelation->setText(q.value(11).toString());
     editNotes->setPlainText(q.value(12).toString());
 
+    refreshAdmissionTable(selectedResidentId);
+
     qDebug() << "입소자 선택 — ID:" << selectedResidentId;
 }
 
@@ -2571,7 +2716,87 @@ void MainWindow::onNewResident()
     editStatus->setCurrentIndex(1);
     editAdmittedAt->setDate(QDate::currentDate());
     editDischargeDue->setDate(QDate::currentDate().addMonths(1));
+    refreshAdmissionTable(-1);   // 아직 저장 안 된 신규 → 이력 없음
     editName->setFocus();
+}
+
+// 저장 직전 DB의 값 — 라벨→문자열 맵. (변경 "전" 스냅샷)
+QMap<QString, QString> MainWindow::snapshotResident(int id)
+{
+    QMap<QString, QString> m;
+    QStringList cols;
+    for (const auto& f : kLoggedFields) cols << QLatin1String(f.column);
+
+    QSqlQuery q;
+    q.prepare(QStringLiteral("SELECT %1 FROM residents WHERE resident_id=?")
+                  .arg(cols.join(QLatin1Char(','))));
+    q.addBindValue(id);
+    if (!q.exec() || !q.next()) return m;
+
+    int i = 0;
+    for (const auto& f : kLoggedFields) {
+        const QVariant v = q.value(i++);
+        m.insert(QString::fromUtf8(f.label), v.isNull() ? QString() : v.toString());
+    }
+    return m;
+}
+
+// 현재 폼에 입력된 값 — 위와 같은 라벨 체계로 (변경 "후" 스냅샷)
+QMap<QString, QString> MainWindow::formSnapshot() const
+{
+    QMap<QString, QString> m;
+    m[QStringLiteral("이름")]        = editName->text().trimmed();
+    m[QStringLiteral("병실")]        = editRoom->text().trimmed();
+    m[QStringLiteral("침대")]        = editBed->text().trimmed();
+    m[QStringLiteral("카메라 채널")] = editCameraId->text().trimmed();
+    m[QStringLiteral("웨어러블 ID")] = editWearableId->text().trimmed();
+    m[QStringLiteral("위험도")]      = editRiskLevel->currentText();
+    m[QStringLiteral("입원일")]      = editAdmittedAt->date().toString(Qt::ISODate);
+    m[QStringLiteral("퇴원 예정일")] = editDischargeDue->date().toString(Qt::ISODate);
+    m[QStringLiteral("상태")]        = editStatus->currentText();
+    m[QStringLiteral("보호자 이름")] = editGuardianName->text().trimmed();
+    m[QStringLiteral("보호자 전화")] = editGuardianPhone->text().trimmed();
+    m[QStringLiteral("보호자 관계")] = editGuardianRelation->text().trimmed();
+    m[QStringLiteral("특이사항")]    = editNotes->toPlainText();
+    return m;
+}
+
+// 그 입소자의 "가장 최근" 입원 에피소드 id (없으면 -1)
+int MainWindow::currentAdmissionId(int residentId)
+{
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT admission_id FROM admissions WHERE resident_id=? "
+        "ORDER BY admitted_at DESC, admission_id DESC LIMIT 1"));
+    q.addBindValue(residentId);
+    return (q.exec() && q.next()) ? q.value(0).toInt() : -1;
+}
+
+// before↔after를 비교해 달라진 필드만 resident_changes에 남긴다.
+void MainWindow::logChanges(int residentId, int admissionId,
+                            const QMap<QString, QString>& before,
+                            const QMap<QString, QString>& after,
+                            const QString& changeType)
+{
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "INSERT INTO resident_changes "
+        "(resident_id, admission_id, field_label, old_value, new_value, "
+        " change_type, changed_by) VALUES (?,?,?,?,?,?,?)"));
+
+    for (auto it = after.constBegin(); it != after.constEnd(); ++it) {
+        const QString oldV = before.value(it.key());
+        if (oldV == it.value()) continue;      // 안 바뀐 건 로그 남기지 않음
+        q.bindValue(0, residentId);
+        q.bindValue(1, admissionId > 0 ? QVariant(admissionId) : QVariant());
+        q.bindValue(2, it.key());
+        q.bindValue(3, oldV);
+        q.bindValue(4, it.value());
+        q.bindValue(5, changeType);
+        q.bindValue(6, currentUser.name);      // 로그인 사용자 = 작업자
+        if (!q.exec())
+            qDebug() << "변경 로그 기록 실패:" << q.lastError().text();
+    }
 }
 
 void MainWindow::onSaveResident()
@@ -2593,6 +2818,10 @@ void MainWindow::onSaveResident()
     };
 
     const bool isNew = (selectedResidentId < 0);
+
+    // 변경 전 값은 UPDATE 실행 전에 읽어둬야 한다 (실행 후엔 이미 덮어써짐).
+    const QMap<QString, QString> before =
+        isNew ? QMap<QString, QString>() : snapshotResident(selectedResidentId);
 
     QSqlQuery q;
     if (isNew) {
@@ -2633,8 +2862,29 @@ void MainWindow::onSaveResident()
         return;
     }
 
-    if (isNew)
+    if (isNew) {
         selectedResidentId = q.lastInsertId().toInt();
+        // 신규 등록이면 첫 입원 에피소드를 만든다.
+        QSqlQuery a;
+        a.prepare(QStringLiteral(
+            "INSERT INTO admissions "
+            "(resident_id, admitted_at, discharge_due, status, room, bed) "
+            "VALUES (?,?,?,'재원',?,?)"));
+        a.addBindValue(selectedResidentId);
+        a.addBindValue(editAdmittedAt->date());
+        a.addBindValue(editDischargeDue->date());
+        a.addBindValue(editRoom->text().trimmed());
+        a.addBindValue(editBed->text().trimmed());
+        if (!a.exec()) qDebug() << "입원 에피소드 생성 실패:" << a.lastError().text();
+    }
+
+    const int admId = currentAdmissionId(selectedResidentId);
+    logChanges(selectedResidentId, admId, before, formSnapshot(),
+               isNew ? QStringLiteral("등록") : QStringLiteral("수정"));
+
+
+
+
     int cameraId = editCameraId->text().trimmed().toInt();
     
     // 4채널 중 올바른 채널이고, 서버 소켓이 정상 연결된 상태일 때만 전송
@@ -2674,6 +2924,7 @@ void MainWindow::onSaveResident()
     }
 
     refreshResidentTable();
+    refreshAdmissionTable(selectedResidentId);
     QMessageBox::information(this, QStringLiteral("저장"),
                              isNew ? QStringLiteral("신규 입소자가 등록되었습니다.")
                                    : QStringLiteral("수정 내용이 저장되었습니다."));
@@ -2701,6 +2952,20 @@ void MainWindow::onDischargeResident()
         return;
     }
 
+    // 에피소드도 닫는다 — 이 날짜가 이력 테이블의 "퇴원일"로 표시된다.
+    const int admId = currentAdmissionId(selectedResidentId);
+    QSqlQuery a;
+    a.prepare(QStringLiteral("UPDATE admissions SET discharged_at=CURDATE(), "
+                             "status='퇴원' WHERE admission_id=?"));
+    a.addBindValue(admId);
+    a.exec();
+
+    logChanges(selectedResidentId, admId,
+               {{QStringLiteral("상태"), QStringLiteral("재원")}},
+               {{QStringLiteral("상태"), QStringLiteral("퇴원")}},
+               QStringLiteral("퇴원"));
+    refreshAdmissionTable(selectedResidentId);
+
     // 폼의 상태 콤보도 '퇴원'으로 반영
     const int i = editStatus->findText(QStringLiteral("퇴원"));
     if (i >= 0) editStatus->setCurrentIndex(i);
@@ -2710,3 +2975,48 @@ void MainWindow::onDischargeResident()
                              QStringLiteral("퇴원 처리되었습니다."));
     qDebug() << "퇴원 처리 완료 — ID:" << selectedResidentId;
 }
+
+void MainWindow::onReadmitResident()
+{
+    if (selectedResidentId < 0) {
+        QMessageBox::warning(this, QStringLiteral("선택 없음"),
+                             QStringLiteral("재입원 처리할 입소자를 먼저 선택해주세요."));
+        return;
+    }
+    if (QMessageBox::question(
+            this, QStringLiteral("재입원 처리"),
+            QStringLiteral("새 입원 기록을 만들까요?\n(이전 입원 이력은 그대로 보존됩니다)"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
+
+    QSqlQuery a;
+    a.prepare(QStringLiteral(
+        "INSERT INTO admissions (resident_id, admitted_at, status, room, bed) "
+        "VALUES (?, CURDATE(), '재원', ?, ?)"));
+    a.addBindValue(selectedResidentId);
+    a.addBindValue(editRoom->text().trimmed());
+    a.addBindValue(editBed->text().trimmed());
+    if (!a.exec()) {
+        QMessageBox::critical(this, QStringLiteral("재입원 실패"), a.lastError().text());
+        return;
+    }
+
+    QSqlQuery r;
+    r.prepare(QStringLiteral("UPDATE residents SET status='재원', admitted_at=CURDATE() "
+                             "WHERE resident_id=?"));
+    r.addBindValue(selectedResidentId);
+    r.exec();
+
+    logChanges(selectedResidentId, currentAdmissionId(selectedResidentId),
+               {{QStringLiteral("상태"), QStringLiteral("퇴원")}},
+               {{QStringLiteral("상태"), QStringLiteral("재원")}},
+               QStringLiteral("재입원"));
+
+    const int i = editStatus->findText(QStringLiteral("재원"));
+    if (i >= 0) editStatus->setCurrentIndex(i);
+    editAdmittedAt->setDate(QDate::currentDate());
+    refreshResidentTable();
+    refreshAdmissionTable(selectedResidentId);
+}
+
+
