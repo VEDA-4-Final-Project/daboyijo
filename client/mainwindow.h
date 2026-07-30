@@ -137,7 +137,6 @@ private slots:
     void onNewResident();
     void onSaveResident();
     void onDischargeResident();
-    void onResidentSearch();
 
 
 
@@ -212,11 +211,9 @@ private:
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록
     QTableWidget* residentTable = nullptr;
-    QLineEdit* residentSearchEdit = nullptr;
 
     // 상세/편집 폼 — 기본정보
     QLineEdit* editName       = nullptr;
-    QDateEdit* editBirthDate  = nullptr;
     QLineEdit* editRoom       = nullptr;
     QLineEdit* editBed        = nullptr;
     QLineEdit* editCameraId   = nullptr;
@@ -273,7 +270,7 @@ private:
     QWidget* buildCaregiverSection();
 
     // TAB3 데이터 갱신
-    void refreshResidentTable(const QString& nameFilter=QString());
+    void refreshResidentTable();
     void refreshCaregiverTable();
 
     // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
@@ -281,9 +278,6 @@ private:
 
     // 침상 이탈 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
     void handleBedEgressEvent(int channel, quint64 timestampMs);
-
-    // 로그 한 행을 '확인' 상태로 표시 (블랙박스 영상 열람 시)
-    void markLogConfirmed(int row);
 
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);

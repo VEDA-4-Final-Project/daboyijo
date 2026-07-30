@@ -691,20 +691,12 @@ QWidget* MainWindow::buildSearchFilters()
     bar->setObjectName("filterBar");
     auto* lay = new QHBoxLayout(bar);
     lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(16);   // body의 setSpacing(16)과 동일
-
-    // ── 좌측(비율 6): 필터 + 검색 버튼 — 로그 테이블 폭에 맞춰 정렬 ──
-    auto* leftWrap = new QWidget();
-    auto* left = new QHBoxLayout(leftWrap);
-    left->setContentsMargins(0, 0, 0, 0);
-    left->setSpacing(10);
+    lay->setSpacing(10);
 
     filterDateFrom = new QDateEdit(QDate::currentDate().addDays(-7));
     filterDateFrom->setCalendarPopup(true);
-    filterDateFrom->setMinimumWidth(130);
     filterDateTo = new QDateEdit(QDate::currentDate());
     filterDateTo->setCalendarPopup(true);
-    filterDateTo->setMinimumWidth(130);
 
     filterRoom = new QComboBox();
     filterRoom->addItems({QStringLiteral("전체 병실"), QStringLiteral("201호-1"),
@@ -720,22 +712,16 @@ QWidget* MainWindow::buildSearchFilters()
     searchBtn->setCursor(Qt::PointingHandCursor);
     connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onSearchClicked);
 
-    left->addWidget(new QLabel(QStringLiteral("날짜")));
-    left->addWidget(filterDateFrom);
-    left->addWidget(new QLabel(QStringLiteral("~")));
-    left->addWidget(filterDateTo);
-    left->addWidget(new QLabel(QStringLiteral("병실")));
-    left->addWidget(filterRoom);
-    left->addWidget(new QLabel(QStringLiteral("이벤트")));
-    left->addWidget(filterEventType);
-    left->addStretch();
-    left->addWidget(searchBtn);
-
-    // ── 우측(비율 4): 대시보드 자리 — 비워둠 ──
-    auto* rightWrap = new QWidget();
-
-    lay->addWidget(leftWrap, 6);
-    lay->addWidget(rightWrap, 4);
+    lay->addWidget(new QLabel(QStringLiteral("날짜")));
+    lay->addWidget(filterDateFrom);
+    lay->addWidget(new QLabel(QStringLiteral("~")));
+    lay->addWidget(filterDateTo);
+    lay->addWidget(new QLabel(QStringLiteral("병실")));
+    lay->addWidget(filterRoom);
+    lay->addWidget(new QLabel(QStringLiteral("이벤트")));
+    lay->addWidget(filterEventType);
+    lay->addStretch();
+    lay->addWidget(searchBtn);
     return bar;
 }
 
@@ -747,16 +733,6 @@ QWidget* MainWindow::buildLogTable()
         {QStringLiteral("날짜/시간"), QStringLiteral("병실"),
          QStringLiteral("이벤트"), QStringLiteral("상태")});
     logTable->horizontalHeader()->setStretchLastSection(true);
-    // ── 컬럼 폭 설정 ──
-    auto* header = logTable->horizontalHeader();
-    // 날짜/시간: "2026-07-22 12:39:54"가 다 보이도록 넉넉히 고정
-    header->setSectionResizeMode(0, QHeaderView::Fixed);
-    logTable->setColumnWidth(0, 170);
-    // 병실 / 이벤트: 내용 길이에 맞춰 자동
-    header->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    header->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    // 상태: 남는 폭 모두 차지 (마지막 컬럼)
-    header->setStretchLastSection(true);
     logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     connect(logTable, &QTableWidget::cellDoubleClicked,
@@ -969,9 +945,18 @@ QWidget* MainWindow::buildDbTab()
     dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
     dbStatusText->setObjectName("statusText");
 
+    auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
+    refreshBtn->setObjectName("roiButton");
+    refreshBtn->setCursor(Qt::PointingHandCursor);
+    connect(refreshBtn, &QPushButton::clicked, this, [this]() {
+        refreshResidentTable();
+        refreshCaregiverTable();
+    });
+
     statusBar->addWidget(dbStatusDot);
     statusBar->addWidget(dbStatusText);
     statusBar->addStretch();
+    statusBar->addWidget(refreshBtn);
     outer->addLayout(statusBar);
 
     // 입소자 섹션 + 요양사 섹션 상하 분할
@@ -1000,41 +985,10 @@ QWidget* MainWindow::buildResidentSection()
     listTitle->setObjectName("panelTitle");
     leftCol->addWidget(listTitle);
 
-    // ── 이름 검색 행 (검색 시 재원+퇴원 모두 조회) ──
-    auto* searchRow = new QHBoxLayout();
-    searchRow->setSpacing(6);
-
-    residentSearchEdit = new QLineEdit();
-    residentSearchEdit->setObjectName("formEdit");
-    residentSearchEdit->setPlaceholderText(QStringLiteral("이름 검색 (재원·퇴원 전체)"));
-    // 엔터로도 검색
-    connect(residentSearchEdit, &QLineEdit::returnPressed,
-            this, &MainWindow::onResidentSearch);
-
-    auto* searchBtn = new QPushButton(QStringLiteral("검색"));
-    searchBtn->setObjectName("roiButton");
-    searchBtn->setCursor(Qt::PointingHandCursor);
-    connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onResidentSearch);
-
-    auto* showAllBtn = new QPushButton(QStringLiteral("전체"));
-    showAllBtn->setObjectName("roiButton");
-    showAllBtn->setCursor(Qt::PointingHandCursor);
-    // "전체"는 검색창 비우고 재원자 목록으로 복귀
-    connect(showAllBtn, &QPushButton::clicked, this, [this] {
-        residentSearchEdit->clear();
-        refreshResidentTable();   // 인자 없음 → 재원자만
-    });
-
-    searchRow->addWidget(residentSearchEdit, 1);
-    searchRow->addWidget(searchBtn);
-    searchRow->addWidget(showAllBtn);
-    leftCol->addLayout(searchRow);
-
-    residentTable = new QTableWidget(0, 9);
+    residentTable = new QTableWidget(0, 8);
     residentTable->setObjectName("logTable");
     residentTable->setHorizontalHeaderLabels({
-        QStringLiteral("환자 ID"), QStringLiteral("이름"),
-        QStringLiteral("생년월일"),
+        QStringLiteral("ID"), QStringLiteral("이름"),
         QStringLiteral("병실"), QStringLiteral("침대"),
         QStringLiteral("채널"), QStringLiteral("웨어러블"),
         QStringLiteral("위험도"), QStringLiteral("상태")
@@ -1069,16 +1023,6 @@ QWidget* MainWindow::buildResidentForm()
     lay->setSpacing(12);
     lay->setContentsMargins(0, 0, 6, 0);
 
-    // ── 상단: 신규 등록 (폼을 비우고 새 입소자 입력 모드로 전환) ──
-    auto* topRow = new QHBoxLayout();
-    auto* newBtn = new QPushButton(QStringLiteral("＋ 신규 등록"));
-    newBtn->setObjectName("roiButton");
-    newBtn->setCursor(Qt::PointingHandCursor);
-    connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewResident);
-    topRow->addWidget(newBtn);
-    topRow->addStretch();
-    lay->addLayout(topRow);
-
     auto makeGroup = [](const QString& title) {
         auto* g = new QGroupBox(title);
         g->setObjectName("formGroup");
@@ -1099,15 +1043,6 @@ QWidget* MainWindow::buildResidentForm()
     basicForm->setLabelAlignment(Qt::AlignLeft);
     basicForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     basicForm->addRow(QStringLiteral("이름"),        makeField("홍길동", editName));
-
-    // 생년월일 — 동명이인 구분용
-    editBirthDate = new QDateEdit(QDate(1950, 1, 1));
-    editBirthDate->setCalendarPopup(true);
-    editBirthDate->setObjectName("formEdit");
-    editBirthDate->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-    editBirthDate->setDateRange(QDate(1900, 1, 1), QDate::currentDate());
-    basicForm->addRow(QStringLiteral("생년월일"), editBirthDate);
-
     basicForm->addRow(QStringLiteral("병실"),        makeField("201", editRoom));
     basicForm->addRow(QStringLiteral("침대"),        makeField("A", editBed));
     basicForm->addRow(QStringLiteral("카메라 채널"), makeField("0~3", editCameraId));
@@ -1135,23 +1070,12 @@ QWidget* MainWindow::buildResidentForm()
     editAdmittedAt = new QDateEdit(QDate::currentDate());
     editAdmittedAt->setCalendarPopup(true);
     editAdmittedAt->setObjectName("formEdit");
-    editAdmittedAt->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-    editAdmittedAt->setDateRange(QDate(2000, 1, 1), QDate(2100, 12, 31));
     careForm->addRow(QStringLiteral("입원일"), editAdmittedAt);
 
     editDischargeDue = new QDateEdit(QDate::currentDate().addMonths(1));
     editDischargeDue->setCalendarPopup(true);
     editDischargeDue->setObjectName("formEdit");
-    editDischargeDue->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-    editDischargeDue->setDateRange(QDate(2000, 1, 1), QDate(2100, 12, 31));
     careForm->addRow(QStringLiteral("퇴원 예정일"), editDischargeDue);
-
-    // 입원일을 바꾸면 퇴원 예정일의 하한이 따라 움직인다
-    // → 퇴원일이 입원일보다 앞서는 상태를 UI에서 원천 차단
-    connect(editAdmittedAt, &QDateEdit::dateChanged, this, [this](const QDate& d) {
-        editDischargeDue->setMinimumDate(d);
-    });
-    editDischargeDue->setMinimumDate(editAdmittedAt->date());
 
     editStatus = new QComboBox();
     editStatus->setObjectName("formEdit");
@@ -1180,10 +1104,14 @@ QWidget* MainWindow::buildResidentForm()
     notesLay->addWidget(editNotes);
     lay->addWidget(notesGroup);
 
-    // ── 하단 버튼: 저장 / 퇴원 처리 ──
+    // ── 버튼 ──
     auto* btnRow = new QHBoxLayout();
+    auto* newBtn = new QPushButton(QStringLiteral("신규 등록"));
+    newBtn->setObjectName("roiButton");
+    newBtn->setCursor(Qt::PointingHandCursor);
+    connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewResident);
 
-    auto* saveBtn = new QPushButton(QStringLiteral("저장"));
+    auto* saveBtn = new QPushButton(QStringLiteral("수정 저장"));
     saveBtn->setObjectName("roiButton");
     saveBtn->setCursor(Qt::PointingHandCursor);
     connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveResident);
@@ -1193,6 +1121,7 @@ QWidget* MainWindow::buildResidentForm()
     dischargeBtn->setCursor(Qt::PointingHandCursor);
     connect(dischargeBtn, &QPushButton::clicked, this, &MainWindow::onDischargeResident);
 
+    btnRow->addWidget(newBtn);
     btnRow->addWidget(saveBtn);
     btnRow->addStretch();
     btnRow->addWidget(dischargeBtn);
@@ -1344,6 +1273,7 @@ void MainWindow::applyTheme()
 QLabel {
     color: %(text);
 }
+
 QGroupBox#formGroup {
     color: %(text);
     border: 1px solid %(border);
@@ -1352,6 +1282,7 @@ QGroupBox#formGroup {
     padding: 14px 10px 10px 10px;
     font-weight: 700;
 }
+
 QGroupBox#formGroup::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
@@ -1360,12 +1291,14 @@ QGroupBox#formGroup::title {
     color: %(text);
     background: %(card);
 }
+
 QGroupBox#formGroup QLabel {
     color: %(text);
     font-weight: 600;
     font-size: 13px;
     min-width: 90px;
 }
+
 QLineEdit#formEdit,
 QTextEdit#formEdit,
 QComboBox#formEdit,
@@ -1376,21 +1309,24 @@ QDateEdit#formEdit {
     border-radius: 6px;
     padding: 4px 8px;
 }
+
 QLineEdit#formEdit:focus,
 QTextEdit#formEdit:focus {
     border-color: %(accent);
 }
+
         QComboBox#formEdit QAbstractItemView {
             background: %(bgDeep); color: %(text);
             border: 1px solid %(border);
             selection-background-color: %(accent); selection-color: #fff; }
+        QComboBox#formEdit::drop-down { border: none; width: 20px; }
+        QComboBox#formEdit::down-arrow { image: none; width: 0; height: 0;
+            border-left: 4px solid transparent; border-right: 4px solid transparent;
+            border-top: 5px solid %(sub); margin-right: 8px; }
 
         QSplitter::handle { background: %(border); }
 
-        /* ── 캘린더 팝업 (QDateEdit) ──
-           QSpinBox(연도 입력칸)는 의도적으로 스타일링하지 않는다.
-           배경/테두리만 지정해도 Qt가 스타일시트 렌더링 경로로 전환되면서
-           위/아래 스핀 버튼이 뭉개져 클릭이 안 되거나 화살표가 사라진다. */
+        /* ── 캘린더 팝업 (QDateEdit) ── */
         QCalendarWidget QWidget { background: %(panel); color: %(text); }
         QCalendarWidget QAbstractItemView {
             background: %(bgDeep); color: %(text);
@@ -1401,6 +1337,8 @@ QTextEdit#formEdit:focus {
         QCalendarWidget QToolButton {
             background: transparent; color: %(text); border: none; padding: 4px 8px; }
         QCalendarWidget QToolButton:hover { background: %(border); border-radius: 4px; }
+        QCalendarWidget QSpinBox {
+            background: %(bgDeep); color: %(text); border: 1px solid %(border); }
         QCalendarWidget QAbstractItemView:disabled { color: %(sub); }
 
         /* ── 공용 다이얼로그·메시지박스·메뉴 ──
@@ -2525,10 +2463,6 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
         qDebug() << "블랙박스 재생 요청 — row" << row << "(클립 URL 없음, DB 연동 전 로그로 추정)";
         return;
     }
-
-    // 영상을 열었으므로 이 이벤트는 '확인' 처리
-    markLogConfirmed(row);
-
     qDebug() << "블랙박스 재생 요청 —" << url;
     if (blackboxDialog) {
         blackboxDialog->show();
@@ -2538,57 +2472,19 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
     playBlackboxClip(url);
 }
 
-// 상태 컬럼(3번)을 '미확인' → '확인'으로 바꾸고 초록색으로 표시.
-void MainWindow::markLogConfirmed(int row)
-{
-    if (!logTable || row < 0 || row >= logTable->rowCount()) return;
-
-    auto* statusItem = logTable->item(row, 3);
-    if (!statusItem) return;
-    if (statusItem->text() == QStringLiteral("확인")) return;   // 이미 확인됨
-
-    // 텍스트 변경 중 자동 재정렬이 일어나면 행이 움직여 엉뚱한 셀을 건드릴 수 있다.
-    const bool wasSorting = logTable->isSortingEnabled();
-    logTable->setSortingEnabled(false);
-
-    statusItem->setText(QStringLiteral("확인"));
-    statusItem->setForeground(QColor(QString::fromLatin1(kNormal)));   // 정상=초록
-
-    logTable->setSortingEnabled(wasSorting);
-
-    qDebug() << "로그 확인 처리 — row" << row;
-}
-
 // ═══════════════════════════════════════════════════════════
 //  TAB3 슬롯 — 자리표시자 (DB 쿼리 연동 전)
 // ═══════════════════════════════════════════════════════════
-void MainWindow::refreshResidentTable(const QString& nameFilter)
+void MainWindow::refreshResidentTable()
 {
     if (!residentTable) return;
     residentTable->setRowCount(0);
 
-    // 검색어 유무로 쿼리 분기:
-    //  - 비어 있으면 재원자만 (평상시 목록)
-    //  - 있으면 이름 LIKE 검색 (재원·퇴원 전부 — 퇴원자 과거 기록 조회용)
-    const QString trimmed = nameFilter.trimmed();
-    const bool searching = !trimmed.isEmpty();
-
-    QSqlQuery q;
-    if (searching) {
-        q.prepare(QStringLiteral(
-            "SELECT resident_id, name, birth_Date, room, bed, camera_id, wearable_id, "
-            "risk_level, status FROM residents "
-            "WHERE name LIKE ? ORDER BY resident_id"));
-        q.addBindValue(QStringLiteral("%%1%").arg(trimmed));   // 부분 일치
-    } else {
-        q.prepare(QStringLiteral(
-            "SELECT resident_id, name, birth_date, room, bed, camera_id, wearable_id, "
-            "risk_level, status FROM residents "
-            "WHERE status = ? ORDER BY resident_id"));
-        q.addBindValue(QStringLiteral("재원"));
-    }
-
-    if (!q.exec()) {
+    // main.cpp에서 열어둔 기본 연결(QMARIADB) 사용
+    QSqlQuery q(QStringLiteral(
+        "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+        "risk_level, status FROM residents ORDER BY resident_id"));
+    if (q.lastError().isValid()) {
         qDebug() << "입소자 목록 조회 실패:" << q.lastError().text();
         return;
     }
@@ -2596,23 +2492,14 @@ void MainWindow::refreshResidentTable(const QString& nameFilter)
     while (q.next()) {
         const int row = residentTable->rowCount();
         residentTable->insertRow(row);
-        for (int col = 0; col < 9; ++col) {
+        for (int col = 0; col < 8; ++col) {
             const QVariant v = q.value(col);
             auto* item = new QTableWidgetItem(
                 v.isNull() ? QStringLiteral("-") : v.toString());
             residentTable->setItem(row, col, item);
         }
     }
-
-    qDebug() << (searching ? "이름 검색" : "재원자 목록")
-             << "—" << residentTable->rowCount() << "명 로드";
-}
-
-void MainWindow::onResidentSearch()
-{
-    // 검색창 텍스트로 필터. 비어 있으면 refreshResidentTable이 재원자 목록으로 복귀.
-    refreshResidentTable(residentSearchEdit ? residentSearchEdit->text()
-                                            : QString());
+    qDebug() << "입소자 목록 새로고침 —" << residentTable->rowCount() << "명 로드";
 }
 
 void MainWindow::refreshCaregiverTable()
@@ -2632,7 +2519,7 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     q.prepare(QStringLiteral(
         "SELECT name, room, bed, camera_id, wearable_id, risk_level, "
         "admitted_at, discharge_due, status, guardian_name, guardian_phone, "
-        "guardian_relation, notes, birth_date FROM residents WHERE resident_id = ?"));
+        "guardian_relation, notes FROM residents WHERE resident_id = ?"));
     q.addBindValue(id);
     if (!q.exec() || !q.next()) {
         qDebug() << "입소자 상세 조회 실패:" << q.lastError().text();
@@ -2653,9 +2540,6 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     editCameraId->setText(q.value(3).isNull() ? QString() : q.value(3).toString());
     editWearableId->setText(q.value(4).isNull() ? QString() : q.value(4).toString());
     setCombo(editRiskLevel, q.value(5).toString());
-
-    // 하한을 잠시 풀고 입원일 → 퇴원일 순서로 세팅 (하한 때문에 값이 튕기는 것 방지)
-    editDischargeDue->setMinimumDate(QDate(2000, 1, 1));
     if (q.value(6).toDate().isValid())  editAdmittedAt->setDate(q.value(6).toDate());
     if (q.value(7).toDate().isValid())  editDischargeDue->setDate(q.value(7).toDate());
     setCombo(editStatus, q.value(8).toString());
@@ -2664,11 +2548,6 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     editGuardianRelation->setText(q.value(11).toString());
     editNotes->setPlainText(q.value(12).toString());
 
-    // 생년월일 (NULL이면 기본값으로)
-    if (q.value(13).toDate().isValid())
-        editBirthDate->setDate(q.value(13).toDate());
-    else
-        editBirthDate->setDate(QDate(1950, 1, 1));
     qDebug() << "입소자 선택 — ID:" << selectedResidentId;
 }
 
@@ -2686,9 +2565,7 @@ void MainWindow::onNewResident()
     editNotes->clear();
     editRiskLevel->setCurrentIndex(1);
     editStatus->setCurrentIndex(1);
-    editBirthDate->setDate(QDate(1950, 1, 1));
     editAdmittedAt->setDate(QDate::currentDate());
-    editDischargeDue->setMinimumDate(QDate::currentDate()); //하한 먼저 갱신
     editDischargeDue->setDate(QDate::currentDate().addMonths(1));
     editName->setFocus();
 }
@@ -2698,14 +2575,6 @@ void MainWindow::onSaveResident()
     if (editName->text().trimmed().isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("입력 오류"),
                              QStringLiteral("이름을 입력해주세요."));
-        return;
-    }
-
-    // 입원일이 퇴원 예정일보다 늦을 수 없다
-    if (editAdmittedAt->date() > editDischargeDue->date()) {
-        QMessageBox::warning(this, QStringLiteral("날짜 오류"),
-                             QStringLiteral("입원일은 퇴원 예정일보다 늦을 수 없습니다."));
-        editAdmittedAt->setFocus();
         return;
     }
 
@@ -2728,14 +2597,14 @@ void MainWindow::onSaveResident()
             "INSERT INTO residents "
             "(name, room, bed, camera_id, wearable_id, risk_level, admitted_at, "
             " discharge_due, status, guardian_name, guardian_phone, "
-            " guardian_relation, notes, birth_date) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+            " guardian_relation, notes) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"));
     } else {
         q.prepare(QStringLiteral(
             "UPDATE residents SET name=?, room=?, bed=?, camera_id=?, "
             " wearable_id=?, risk_level=?, admitted_at=?, discharge_due=?, "
             " status=?, guardian_name=?, guardian_phone=?, guardian_relation=?, "
-            " notes=?, birth_date=? WHERE resident_id=?"));
+            " notes=? WHERE resident_id=?"));
     }
 
     q.addBindValue(editName->text().trimmed());
@@ -2751,7 +2620,6 @@ void MainWindow::onSaveResident()
     q.addBindValue(editGuardianPhone->text().trimmed());
     q.addBindValue(editGuardianRelation->text().trimmed());
     q.addBindValue(editNotes->toPlainText());
-    q.addBindValue(editBirthDate->date());
     if (!isNew)
         q.addBindValue(selectedResidentId);
 
