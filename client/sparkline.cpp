@@ -6,6 +6,8 @@
 
 Sparkline::Sparkline(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(28);
+    // 카드가 세로로 커지면 남는 공간을 그래프가 흡수(헤더·수치는 고정) → 빈틈 없이 채움.
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAttribute(Qt::WA_TransparentForMouseEvents, true);  // 클릭 방해 안 하게
 }
 

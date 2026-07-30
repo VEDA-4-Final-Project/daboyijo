@@ -564,9 +564,9 @@ QWidget* MainWindow::buildVitalsPanel()
     auto* list = new QVBoxLayout(inner);
     list->setContentsMargins(0, 0, 6, 0);
     list->setSpacing(10);
+    // 카드마다 stretch 1 → 세로 공간을 균등하게 나눠 채운다(하단 빈공간 제거).
     for (int i = 0; i < 4; ++i)
-        list->addWidget(buildVitalCard(i));
-    list->addStretch();
+        list->addWidget(buildVitalCard(i), 1);
 
     scroll->setWidget(inner);
     outer->addWidget(scroll, 1);
@@ -1826,23 +1826,36 @@ QByteArray buildWsDiscoveryProbe() {
         "<e:Body><d:Probe/></e:Body></e:Envelope>").arg(msgId).toUtf8();
 }
 
-// Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조).
+// Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조, 그래도 없으면 모델형 토큰).
 QString modelFromScopes(const QString& scopes) {
+    qDebug() << "ONVIF scopes:" << scopes;  // 미상 장비 진단용
     QString name, hardware;
     const QStringList toks =
         scopes.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
     for (const QString& t : toks) {
         int i;
-        if ((i = t.indexOf(QStringLiteral("/name/"))) >= 0)
+        if ((i = t.indexOf(QStringLiteral("/name/"), 0, Qt::CaseInsensitive)) >= 0)
             name = QUrl::fromPercentEncoding(t.mid(i + 6).toUtf8());
-        else if ((i = t.indexOf(QStringLiteral("/hardware/"))) >= 0)
+        else if ((i = t.indexOf(QStringLiteral("/hardware/"), 0, Qt::CaseInsensitive)) >= 0)
             hardware = QUrl::fromPercentEncoding(t.mid(i + 10).toUtf8());
     }
     if (!name.isEmpty() && !hardware.isEmpty())
         return name + QStringLiteral(" (") + hardware + QStringLiteral(")");
     if (!name.isEmpty()) return name;
     if (!hardware.isEmpty()) return hardware;
-    return QStringLiteral("(알 수 없음)");
+
+    // 폴백: name/hardware 스코프가 없는 장비 — 스코프 마지막 세그먼트 중 "모델처럼"
+    // 생긴 토큰(대문자+숫자, 예: PNO-A9081R, XND-6080)을 찾아 표시한다.
+    static const QRegularExpression modelLike(
+        QStringLiteral("^[A-Z][A-Z0-9]*-?[A-Z0-9]{3,}$"));
+    for (const QString& t : toks) {
+        const QString seg =
+            QUrl::fromPercentEncoding(t.mid(t.lastIndexOf('/') + 1).toUtf8());
+        if (seg.contains(QRegularExpression(QStringLiteral("[0-9]"))) &&
+            modelLike.match(seg).hasMatch())
+            return seg;
+    }
+    return QStringLiteral("ONVIF 카메라");
 }
 
 // IP의 실제 MAC을 ARP 캐시에서 조회 (같은 서브넷 한정). WS-Discovery엔 MAC 표준
@@ -1979,18 +1992,13 @@ void MainWindow::buildCameraSettingsDialog()
     camPwEdit = new QLineEdit();
     camPwEdit->setEchoMode(QLineEdit::Password);
     camPwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
-    camPortEdit = new QLineEdit(
-        QString::number(s.value(QStringLiteral("camera/port"), 554).toInt()));
-    camProfileEdit = new QLineEdit(
-        s.value(QStringLiteral("camera/profile"), QStringLiteral("profile2")).toString());
+    // 포트(554)·프로파일(profile2)은 고정 — 입력받지 않는다.
     // 다크 스타일 적용 — 스타일시트가 objectName "formEdit"인 입력칸만 칠한다.
-    for (QLineEdit* e : {camIpEdit, camUserEdit, camPwEdit, camPortEdit, camProfileEdit})
+    for (QLineEdit* e : {camIpEdit, camUserEdit, camPwEdit})
         e->setObjectName(QStringLiteral("formEdit"));
     form->addRow(QStringLiteral("CCTV IP"), camIpEdit);
     form->addRow(QStringLiteral("계정"), camUserEdit);
     form->addRow(QStringLiteral("비밀번호"), camPwEdit);
-    form->addRow(QStringLiteral("포트"), camPortEdit);
-    form->addRow(QStringLiteral("프로파일"), camProfileEdit);
     camV->addLayout(form);
 
     // 액션 버튼 줄: 검색 / 연결 / 해제
@@ -2034,6 +2042,9 @@ void MainWindow::buildCameraSettingsDialog()
     // 행 클릭/더블클릭 → IP 입력칸에 채워준다.
     auto fillIpFromRow = [this](int r, int) {
         if (discoveryTable->item(r, 1)) camIpEdit->setText(discoveryTable->item(r, 1)->text());
+        // 다른 카메라를 고르면 이전 카메라의 계정·비번은 남기지 않고 초기화.
+        camUserEdit->setText(QStringLiteral("admin"));
+        camPwEdit->clear();
     };
     connect(discoveryTable, &QTableWidget::cellClicked, this, fillIpFromRow);
     connect(discoveryTable, &QTableWidget::cellDoubleClicked, this, fillIpFromRow);
@@ -2170,7 +2181,7 @@ void MainWindow::onSettingsClicked()
     cameraSettingsDialog->activateWindow();
 }
 
-// "연결" — 카메라 탭의 인라인 입력칸(IP/계정/비번/포트/프로파일)으로 바로 연결.
+// "연결" — 카메라 탭의 IP/계정/비번으로 바로 연결. 포트·프로파일은 고정값.
 void MainWindow::onAddCameraClicked()
 {
     if (!camIpEdit) return;   // 팝업 미구성(정상 흐름에선 발생 안 함)
@@ -2181,15 +2192,9 @@ void MainWindow::onAddCameraClicked()
                              QStringLiteral("CCTV IP를 입력하거나 검색 목록에서 선택하세요."));
         return;
     }
-    bool portOk = false;
-    const int port = camPortEdit->text().trimmed().toInt(&portOk);
-    if (!portOk || port <= 0 || port > 65535) {
-        QMessageBox::warning(this, QStringLiteral("입력 오류"),
-                             QStringLiteral("포트 번호가 올바르지 않습니다."));
-        return;
-    }
+    // 포트(554)·프로파일(profile2)은 카메라 규약상 고정.
     connectCameraWith(ip, camUserEdit->text().trimmed(), camPwEdit->text(),
-                      port, camProfileEdit->text().trimmed());
+                      554, QStringLiteral("profile2"));
 }
 
 // 수동 입력/검색 두 경로가 공유하는 실제 연결 처리.

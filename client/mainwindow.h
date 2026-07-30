@@ -317,8 +317,6 @@ private:
     QLineEdit* camIpEdit = nullptr;
     QLineEdit* camUserEdit = nullptr;
     QLineEdit* camPwEdit = nullptr;
-    QLineEdit* camPortEdit = nullptr;
-    QLineEdit* camProfileEdit = nullptr;
     QTableWidget* discoveryTable = nullptr;    // 검색 결과(모델/IP/MAC)
     QLabel* discoveryStatus = nullptr;
     QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
