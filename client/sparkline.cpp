@@ -5,7 +5,7 @@
 #include <algorithm>
 
 Sparkline::Sparkline(QWidget* parent) : QWidget(parent) {
-    setMinimumHeight(34);
+    setMinimumHeight(28);
     setAttribute(Qt::WA_TransparentForMouseEvents, true);  // 클릭 방해 안 하게
 }
 

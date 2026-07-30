@@ -563,7 +563,7 @@ QWidget* MainWindow::buildVitalsPanel()
     auto* inner = new QWidget();
     auto* list = new QVBoxLayout(inner);
     list->setContentsMargins(0, 0, 6, 0);
-    list->setSpacing(12);
+    list->setSpacing(10);
     for (int i = 0; i < 4; ++i)
         list->addWidget(buildVitalCard(i));
     list->addStretch();
@@ -587,7 +587,7 @@ QWidget* MainWindow::buildVitalCard(int channel)
     auto* head = new QFrame();
     head->setObjectName("vitalHead");
     auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(14, 9, 12, 9);
+    hl->setContentsMargins(14, 7, 12, 7);
     hl->setSpacing(8);
     vitalStatusDots[channel] = new QLabel();
     vitalStatusDots[channel]->setObjectName("vitalDot");
@@ -608,7 +608,7 @@ QWidget* MainWindow::buildVitalCard(int channel)
 
     // ── 본문: 큰 판독값 2개 (체온 / 심박) — 환자 모니터 느낌 ──
     auto* body = new QHBoxLayout();
-    body->setContentsMargins(14, 12, 14, 10);
+    body->setContentsMargins(14, 9, 14, 6);
     body->setSpacing(10);
 
     auto makeStat = [&](const QString& icon, const QString& caption,
@@ -616,8 +616,8 @@ QWidget* MainWindow::buildVitalCard(int channel)
         auto* box = new QFrame();
         box->setObjectName("statBox");
         auto* bl = new QVBoxLayout(box);
-        bl->setContentsMargins(12, 10, 12, 10);
-        bl->setSpacing(4);
+        bl->setContentsMargins(12, 7, 12, 7);
+        bl->setSpacing(2);
         auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
         cap->setObjectName("statCaption");
         valueRef = new QLabel(QStringLiteral("--"));
@@ -643,7 +643,7 @@ QWidget* MainWindow::buildVitalCard(int channel)
 
     // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
     auto* sparkRow = new QHBoxLayout();
-    sparkRow->setContentsMargins(14, 0, 14, 4);
+    sparkRow->setContentsMargins(14, 0, 14, 10);
     hrSpark[channel] = new Sparkline();
     hrSpark[channel]->setRange(40, 140);
     hrSpark[channel]->setGuides({
@@ -654,12 +654,6 @@ QWidget* MainWindow::buildVitalCard(int channel)
     });
     sparkRow->addWidget(hrSpark[channel]);
     lay->addLayout(sparkRow);
-
-    // ── 갱신 시각 ──
-    vitalUpdated[channel] = new QLabel(QStringLiteral("웨어러블 연결 대기"));
-    vitalUpdated[channel]->setObjectName("vitalUpdated");
-    vitalUpdated[channel]->setContentsMargins(14, 0, 14, 11);
-    lay->addWidget(vitalUpdated[channel]);
 
     return card;
 }
@@ -1245,8 +1239,8 @@ void MainWindow::applyTheme()
         #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 8px; }
         #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
         #statValue { font-family: "Consolas", "D2Coding", monospace;
-                     font-size: 30px; font-weight: 800; }
-        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
+                     font-size: 25px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 4px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
@@ -1456,7 +1450,6 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 void MainWindow::updateVitals()
 {
     auto* rng = QRandomGenerator::global();
-    const QString now = QDateTime::currentDateTime().toString("HH:mm:ss");
 
     for (int i = 0; i < 4; ++i) {
         // 목업: 기본은 정상 범위 (36.3~37.0℃ / 64~88bpm)
@@ -1492,8 +1485,6 @@ void MainWindow::updateVitals()
             hrSpark[i]->setLineColor(QColor(color));
             hrSpark[i]->addValue(hr);
         }
-
-        vitalUpdated[i]->setText(QStringLiteral("웨어러블 · 마지막 갱신 ") + now);
     }
 }
 
