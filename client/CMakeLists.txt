@@ -11,6 +11,10 @@ qt_add_executable(daboyijo
     videoview.cpp
     videoview.h
     theme.h
+    wintheme.cpp
+    wintheme.h
+    sparkline.cpp
+    sparkline.h
     auth.cpp
     auth.h
     logindialog.cpp
@@ -31,6 +35,9 @@ target_link_libraries(daboyijo
         Qt::Multimedia
         Qt::MultimediaWidgets
 )
+if(WIN32)
+    target_link_libraries(daboyijo PRIVATE dwmapi)  # 네이티브 다크 타이틀바
+endif()
 install(TARGETS daboyijo
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

@@ -11,6 +11,7 @@
 #include <QString>
 #include <QLineEdit>
 #include <QTextEdit>
+#include <QSet>
 
 #include "auth.h"
 
@@ -70,6 +71,7 @@ static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
+class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
 class QTabWidget;
@@ -81,6 +83,7 @@ class QVBoxLayout;
 class QStackedWidget;
 class QMediaPlayer;
 class QVideoWidget;
+class QUdpSocket;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -119,6 +122,9 @@ private slots:
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
+    void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
+    void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
+    void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
 
 
     // TAB2: 비상 로그 조회 및 블랙박스
@@ -144,6 +150,11 @@ private:
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
+    // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
+    // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
+    QString lastCameraUrl_[4];
+    bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
+    bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
@@ -160,16 +171,16 @@ private:
     QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
     QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
 
-    bool darkMode = false;             // 현재 다크모드 여부
+    bool darkMode = true;              // 현재 다크모드 여부 (기본 다크 관제 톤)
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구
-    QLabel* liveDots[4];               // 채널별 LIVE 표시등
     QLabel* tempValues[4];             // 채널별 체온 값
     QLabel* hrValues[4];               // 채널별 심박수 값
     QLabel* vitalStatusDots[4];        // 채널별 바이탈 상태등
     QLabel* vitalStatusBadges[4];      // 채널별 상태 배지(정상/주의/위험)
     QLabel* vitalUpdated[4];           // 채널별 마지막 갱신 시각
+    Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
 
     QTimer clockTimer;
     QTimer vitalsTimer;
@@ -275,10 +286,17 @@ private:
     // sendCamera는 해당 채널 담당 Pi로 RTSP URL을 보낸다. 성공 시 true.
     bool sendCamera(int channel, const QString& rtspUrl);
     void sendCameraClear(int channel);
+    // Pi 재접속 시, 그 Pi 담당 채널의 마지막 카메라 URL을 자동 재전송한다.
+    void resendCamerasForServer(int serverIdx);
     // 단일 CCTV IP → 채널별 RTSP URL 생성 (PNM-C16083RVQ 4센서 규약).
     static QString buildRtspUrl(const QString& ip, const QString& user,
                                 const QString& password, int port,
                                 const QString& profile, int channel);
+    // 주어진 접속 정보로 4채널 카메라를 연결(수동 입력/검색 두 경로가 공유).
+    // 4채널 URL 생성 → 담당 Pi로 전송 → 상태 반영 → QSettings 저장(비번 제외).
+    void connectCameraWith(const QString& ip, const QString& user,
+                           const QString& password, int port,
+                           const QString& profile);
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
@@ -286,6 +304,31 @@ private:
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
+    QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
+    QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
+
+    // "카메라 설정" 팝업 — 카메라·ROI 작업을 팝업 안에서 직접 수행(탭 전환).
+    // 비모달로 띄워 ROI 그리기(영상 클릭)가 가능하게 한다. 1회만 생성(멤버 재사용).
+    QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
+    QDialog* cameraSettingsDialog = nullptr;
+    void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
+    void startCameraDiscovery();               // 인라인 ONVIF 검색 → discoveryTable 채움
+
+    // ── 카메라 탭(인라인) 위젯 ──
+    QLineEdit* camIpEdit = nullptr;
+    QLineEdit* camUserEdit = nullptr;
+    QLineEdit* camPwEdit = nullptr;
+    QTableWidget* discoveryTable = nullptr;    // 검색 결과(모델/IP/MAC)
+    QLabel* discoveryStatus = nullptr;
+    QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
+    QSet<QString> discoverySeen;               // 중복 응답 제거
+
+    // ── ROI 탭(인라인 편집기) 위젯 ──
+    VideoView* roiEditorView = nullptr;        // 선택 채널 영상을 팝업에 표시 + ROI 그림
+    int roiEditChannel = 0;                    // 현재 편집 중인 채널(0~3)
+    QPushButton* roiChannelButtons[4] = {};    // 채널 선택 버튼(1~4)
+    QLabel* roiEditInfo = nullptr;
+    void selectRoiChannel(int ch);             // 편집 채널 전환 → 영상/ROI 로드
 };
 
 #endif // MAINWINDOW_H

@@ -1,6 +1,8 @@
 #include "videoview.h"
 
 #include <QColor>
+#include <QFont>
+#include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -24,6 +26,42 @@ VideoView::VideoView(int channel, QWidget* parent)
 
 void VideoView::setFrame(const QPixmap& frame) {
     frame_ = frame;
+    cameraConnected_ = true;  // 프레임이 들어왔다는 건 카메라가 연결됐다는 뜻
+    update();
+}
+
+void VideoView::setChannel(int ch) {
+    channel_ = ch;
+    draft_.clear();
+    hasHover_ = false;
+    drawMode_ = false;
+    setCursor(Qt::ArrowCursor);
+    update();  // roi_·frame_는 호출부(선택 슬롯)가 새 채널 값으로 채운다
+}
+
+void VideoView::setCameraConnected(bool on) {
+    if (cameraConnected_ == on) return;
+    cameraConnected_ = on;
+    if (!on) frame_ = QPixmap();  // 미연결이면 이전 프레임 제거(정지화면 오해 방지)
+    update();
+}
+
+void VideoView::setOverlayInfo(const QString& info) {
+    overlayInfo_ = info;
+    update();
+}
+
+void VideoView::setLive(bool on) {
+    if (live_ == on) return;
+    live_ = on;
+    update();
+}
+
+void VideoView::setVitals(const QString& temp, const QString& hr, const QColor& color) {
+    vitalTemp_ = temp;
+    vitalHr_ = hr;
+    vitalColor_ = color;
+    hasVitals_ = true;
     update();
 }
 
@@ -112,9 +150,13 @@ void VideoView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), Qt::black);
 
-    if (frame_.isNull()) {
+    if (!cameraConnected_) {
         p.setPen(QColor(139, 148, 158));
-        p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 없음"));
+        p.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap,
+                   QStringLiteral("📷 카메라 미연결\n상단 '카메라 연결'을 눌러 CCTV를 연결하세요"));
+    } else if (frame_.isNull()) {
+        p.setPen(QColor(139, 148, 158));
+        p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 대기 중…"));
     } else {
         p.drawPixmap(displayRect(), frame_, frame_.rect());
     }
@@ -147,6 +189,59 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(QPen(kVertex, 1));
         p.setBrush(kDraftLine);
         for (const auto& pt : poly) p.drawEllipse(pt, 4, 4);
+    }
+
+    // ── NVR 스타일 오버레이 (영상 위 정보: 채널·이름 / LIVE) ──
+    {
+        const int m = 8;
+
+        // 좌하단: CH 태그(청록) + 병상·이름(회백), 반투명 검정 캡슐 위에.
+        QFont lf = font();
+        lf.setBold(true);
+        p.setFont(lf);
+        const QFontMetrics fm(lf);
+        const QString chTag = QStringLiteral("CH%1").arg(channel_ + 1);
+        const QString info = overlayInfo_;
+        const int gap = info.isEmpty() ? 0 : 8;
+        const int chW = fm.horizontalAdvance(chTag);
+        const int infoW = fm.horizontalAdvance(info);
+        const int boxH = fm.height() + 8;
+        const int boxW = 10 + chW + gap + infoW + 10;
+        QRectF box(m, height() - m - boxH, boxW, boxH);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 145));
+        p.drawRoundedRect(box, 5, 5);
+        qreal tx = box.left() + 10;
+        p.setPen(QColor(0x17, 0xC7, 0xB6));
+        p.drawText(QRectF(tx, box.top(), chW + 2, box.height()),
+                   Qt::AlignVCenter | Qt::AlignLeft, chTag);
+        if (!info.isEmpty()) {
+            tx += chW + gap;
+            p.setPen(QColor(0xE6, 0xED, 0xF3));
+            p.drawText(QRectF(tx, box.top(), infoW + 2, box.height()),
+                       Qt::AlignVCenter | Qt::AlignLeft, info);
+        }
+
+        // 우상단: LIVE(빨강 점) / 미연결(회색 점) 표시등.
+        QFont sf = font();
+        sf.setBold(true);
+        p.setFont(sf);
+        const QFontMetrics sfm(sf);
+        const QString st = live_ ? QStringLiteral("LIVE") : QStringLiteral("미연결");
+        const QColor dotc = live_ ? QColor(0xFF, 0x5A, 0x5F) : QColor(0x8B, 0x98, 0xA5);
+        const qreal dr = 6;
+        const int stW = sfm.horizontalAdvance(st);
+        const int pillH = sfm.height() + 6;
+        const int pillW = 8 + int(dr) + 6 + stW + 8;
+        QRectF pill(width() - m - pillW, m, pillW, pillH);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 145));
+        p.drawRoundedRect(pill, pillH / 2.0, pillH / 2.0);
+        p.setBrush(dotc);
+        p.drawEllipse(QPointF(pill.left() + 8 + dr / 2, pill.center().y()), dr / 2, dr / 2);
+        p.setPen(QColor(0xE6, 0xED, 0xF3));
+        p.drawText(QRectF(pill.left() + 8 + dr + 6, pill.top(), stW + 4, pill.height()),
+                   Qt::AlignVCenter | Qt::AlignLeft, st);
     }
 
     // 그리기 모드 안내 배너

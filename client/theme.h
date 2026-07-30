@@ -44,7 +44,7 @@ inline void applyPalette(const Palette& p) {
 }
 
 // 로그인·회원가입 창 공용 스타일시트.
-// 두 창은 로그인 전이라 테마 토글이 없으므로 라이트 팔레트로 고정한다.
+// 앱 전체를 어두운 톤으로 통일하므로 이 두 창도 다크 팔레트로 고정한다.
 // (관제 화면은 MainWindow::applyTheme가 현재 팔레트로 따로 만든다)
 inline QString authDialogStyleSheet()
 {
@@ -87,15 +87,15 @@ inline QString authDialogStyleSheet()
         #authSep { color: %(border); }
         #authFooter { color: %(sub); font-size: 11px; }
     )")
-        .replace("%(bgDeep)", kLight.bgDeep)
-        .replace("%(panel)", kLight.panel)
-        .replace("%(border)", kLight.border)
-        .replace("%(text)", kLight.text)
-        .replace("%(sub)", kLight.sub)
-        .replace("%(normal)", kLight.normal)
-        .replace("%(accentHover)", "#0E9E92")   // accent(#12B5A6)보다 한 단계 진한 톤
-        .replace("%(accent)", kLight.accent)
-        .replace("%(critical)", kLight.critical);
+        .replace("%(bgDeep)", kDark.bgDeep)
+        .replace("%(panel)", kDark.panel)
+        .replace("%(border)", kDark.border)
+        .replace("%(text)", kDark.text)
+        .replace("%(sub)", kDark.sub)
+        .replace("%(normal)", kDark.normal)
+        .replace("%(accentHover)", "#3AD4C4")   // accent(#17C7B6)보다 한 단계 밝은 톤
+        .replace("%(accent)", kDark.accent)
+        .replace("%(critical)", kDark.critical);
 }
 
 #endif  // THEME_H
