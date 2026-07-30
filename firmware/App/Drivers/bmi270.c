@@ -1,5 +1,6 @@
 #include "bmi270.h"
 #include "bmi270_config.h"
+#include <stdio.h>
 
 extern SPI_HandleTypeDef hspi2;
 
@@ -39,7 +40,7 @@ HAL_StatusTypeDef BMI270_Init(void)
 	uint8_t chip_id = 0;
 	uint8_t internal_stat = 0;
 
-    printf("\r\n=== BMI270 Clean Initialization ===\r\n");
+    printf("=== BMI270 Clean Initialization ===\r\n");
 
     // 1. 칩 ID 확인 및 통신 점검
     if (BMI270_ReadRegister(BMI270_REG_CHIP_ID, &chip_id) != HAL_OK) return HAL_ERROR;
@@ -94,8 +95,8 @@ HAL_StatusTypeDef BMI270_Init(void)
 		HAL_Delay(10);
 
 		// ODR 및 대역폭 설정 (동기화 모드 유지)
-		if (BMI270_WriteRegister(BMI270_REG_ACC_CONF, 0xA8) != HAL_OK) return HAL_ERROR;
-		if (BMI270_WriteRegister(BMI270_REG_GYR_CONF, 0xA9) != HAL_OK) return HAL_ERROR;
+		if (BMI270_WriteRegister(BMI270_REG_ACC_CONF, 0x87) != HAL_OK) return HAL_ERROR;
+		if (BMI270_WriteRegister(BMI270_REG_GYR_CONF, 0x88) != HAL_OK) return HAL_ERROR;
 		HAL_Delay(10);
 
 		// 측정 범위 설정 (가속도: ±2g, 자이로: ±2000dps)
@@ -114,84 +115,73 @@ HAL_StatusTypeDef BMI270_Init(void)
 // 자이로 영점 오프셋(Bias) 보정
 HAL_StatusTypeDef BMI270_Calibrate_Gyro(BMI270_Data_t *bias)
 {
-	if (bias == NULL) return HAL_ERROR;
-	printf("[INFO] Calibrating Gyroscope... Keep the device still.\r\n");
+    if (bias == NULL) return HAL_ERROR;
+    printf("[INFO] Calibrating Gyroscope... Keep the device still.\r\n");
 
-    float sum_x = 0, sum_y = 0, sum_z = 0;
+    int32_t sum_x = 0, sum_y = 0, sum_z = 0;
     int sample_count = 100;
-    BMI270_Data_t raw_gyro;
+
+    // Read 명령(0x80) + 시작 주소 + 더미(1B) + 데이터(6B) = 총 8바이트 필요
+    uint8_t tx_buf[8] = {0,};
+    uint8_t rx_buf[8] = {0,};
+    tx_buf[0] = BMI270_REG_GYR_X_LSB | 0x80;
 
     for (int i = 0; i < sample_count; i++) {
-        if (BMI270_Read_Gyro(&raw_gyro) == HAL_OK) {
-            sum_x += raw_gyro.x;
-            sum_y += raw_gyro.y;
-            sum_z += raw_gyro.z;
-        } else {
-            return HAL_ERROR;
-        }
-        HAL_Delay(10);	// ODR 속도(100Hz)에 맞춰 10ms씩 대기
+        HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_RESET);
+        // TransmitReceive 하나로 안전하게 8바이트 송수신 처리 (락업 방지)
+        HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(&hspi2, tx_buf, rx_buf, 8, 100);
+        HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
+
+        if (status != HAL_OK) return HAL_ERROR;
+
+        // BMI270 SPI 규칙: rx_buf[0]=더미(명령어타이밍), rx_buf[1]=SPI더미클럭, rx_buf[2]부터 진짜 데이터
+        int16_t raw_x = (int16_t)(((uint16_t)rx_buf[3] << 8) | rx_buf[2]);
+        int16_t raw_y = (int16_t)(((uint16_t)rx_buf[5] << 8) | rx_buf[4]);
+        int16_t raw_z = (int16_t)(((uint16_t)rx_buf[7] << 8) | rx_buf[6]);
+
+        sum_x += raw_x;
+        sum_y += raw_y;
+        sum_z += raw_z;
+
+        HAL_Delay(20); // 50Hz 주기에 맞춤
     }
 
-    // 결과값을 인자로 들어온 bias 구조체 주소에 저장
-    bias->x = sum_x / (float)sample_count;
-    bias->y = sum_y / (float)sample_count;
-    bias->z = sum_z / (float)sample_count;
+    bias->x = ((float)sum_x / (float)sample_count) / 16.4f;
+    bias->y = ((float)sum_y / (float)sample_count) / 16.4f;
+    bias->z = ((float)sum_z / (float)sample_count) / 16.4f;
 
     printf("[SUCCESS] Calibration Done! Bias -> X:%.1f, Y:%.1f, Z:%.1f dps\r\n",
-    		bias->x, bias->y, bias->z);
+            bias->x, bias->y, bias->z);
 
     return HAL_OK;
 }
 
-// 가속도계 XYZ축 데이터 일괄 복사 및 물리 단위(g) 변환
-HAL_StatusTypeDef BMI270_Read_Accel(BMI270_Data_t *accel)
+// DMA 데이터 파싱 함수 (main의 콜백에서 이미 2바이트를 잘라냈으므로 [0]부터 읽는 것이 맞음)
+void BMI270_Parse_DMA_Data(uint8_t *dma_buf, BMI270_Data_t *accel, BMI270_Data_t *gyro, BMI270_Data_t *bias)
 {
-	if (accel == NULL) return HAL_ERROR;
+    if (dma_buf == NULL || accel == NULL || gyro == NULL) return;
 
-	uint8_t tx_buf[8] = {BMI270_REG_ACC_DATA_X | 0x80, 0,};
-	uint8_t rx_buf[8] = {0,};
+    // 2바이트 오프셋 적용하여 실제 12바이트 데이터 패킷 정확히 매핑
+    int16_t acc_x_raw = (int16_t)(((uint16_t)dma_buf[3]  << 8) | dma_buf[2]);
+    int16_t acc_y_raw = (int16_t)(((uint16_t)dma_buf[5]  << 8) | dma_buf[4]);
+    int16_t acc_z_raw = (int16_t)(((uint16_t)dma_buf[7]  << 8) | dma_buf[6]);
 
-	HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_RESET);
-	HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(&hspi2, tx_buf, rx_buf, 8, 100);
-	HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
+    int16_t gyr_x_raw = (int16_t)(((uint16_t)dma_buf[9]  << 8) | dma_buf[8]);
+    int16_t gyr_y_raw = (int16_t)(((uint16_t)dma_buf[11] << 8) | dma_buf[10]);
+    int16_t gyr_z_raw = (int16_t)(((uint16_t)dma_buf[13] << 8) | dma_buf[12]);
 
-	if (status != HAL_OK) return status;
+    // 물리 단위 변환 (g 및 dps)
+    accel->x = (float)acc_x_raw / 16384.0f;
+    accel->y = (float)acc_y_raw / 16384.0f;
+    accel->z = (float)acc_z_raw / 16384.0f;
 
-	// 더미 바이트(rx_buf[1]) 이후 2, 3번째 인덱스부터 X축 시작
-	int16_t raw_x = (int16_t)((rx_buf[3] << 8) | rx_buf[2]);
-	int16_t raw_y = (int16_t)((rx_buf[5] << 8) | rx_buf[4]);
-	int16_t raw_z = (int16_t)((rx_buf[7] << 8) | rx_buf[6]);
+    gyro->x = (float)gyr_x_raw / 16.4f;
+    gyro->y = (float)gyr_y_raw / 16.4f;
+    gyro->z = (float)gyr_z_raw / 16.4f;
 
-	// 풀스케일 ±2g 설정 기준: 16384 LSB = 1g
-	accel->x = (float)raw_x / 16384.0f;
-	accel->y = (float)raw_y / 16384.0f;
-	accel->z = (float)raw_z / 16384.0f;
-
-	return HAL_OK;
-}
-
-// 자이로스코프 XYZ축 데이터 일괄 복사 및 물리 단위(dps) 변환
-HAL_StatusTypeDef BMI270_Read_Gyro(BMI270_Data_t *gyro)
-{
-    if (gyro == NULL) return HAL_ERROR;
-
-    uint8_t tx_buf[8] = {BMI270_REG_GYR_X_LSB | 0x80, 0,};
-    uint8_t rx_buf[8] = {0,};
-
-    HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_RESET);
-    HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(&hspi2, tx_buf, rx_buf, 8, 100);
-    HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
-
-    if (status != HAL_OK) return status;
-
-    int16_t raw_x = (int16_t)((rx_buf[3] << 8) | rx_buf[2]);
-    int16_t raw_y = (int16_t)((rx_buf[5] << 8) | rx_buf[4]);
-    int16_t raw_z = (int16_t)((rx_buf[7] << 8) | rx_buf[6]);
-
-    // 풀스케일 ±2000dps 설정 기준: 16.384 LSB = 1dps
-    gyro->x = (float)raw_x / 16.384f;
-    gyro->y = (float)raw_y / 16.384f;
-    gyro->z = (float)raw_z / 16.384f;
-
-    return HAL_OK;
+    if (bias != NULL) {
+        gyro->x -= bias->x;
+        gyro->y -= bias->y;
+        gyro->z -= bias->z;
+    }
 }

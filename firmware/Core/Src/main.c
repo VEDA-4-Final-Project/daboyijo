@@ -2,24 +2,16 @@
 /**
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
+  * @brief          : Optimized Fall Detection & Health Monitoring System (50Hz)
   ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "i2c.h"
 #include "spi.h"
+#include "tim.h"
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
@@ -27,6 +19,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
+#include "bmi270.h"
+#include "max30102.h"
 #include "fall_detection.h"
 #include "heart_rate_calc.h"
 #include "usbd_cdc_if.h"
@@ -50,18 +45,36 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-BMI270_Data_t accData;
-BMI270_Data_t gyrData;
-BMI270_Data_t gyroBias = {0};	// 자이로 영점 저장
+BMI270_Data_t gyroBias = {0};
 
-MAX30102_t hmax;
-MAX30102_Data_t hrData;
+/* 실시간 비동기 제어용 상태 동기화 플래그 */
+volatile uint8_t g_timer_fired = 0;
+volatile uint8_t g_spi_ready = 0;
+volatile uint8_t g_i2c_ready = 0;
+
+/* 동적 잡음 억제(Motion Blanking)용 최신 자이로 데이터 글로벌 보관소 */
+volatile float g_latest_gyro_x = 0.0f;
+volatile float g_latest_gyro_y = 0.0f;
+volatile float g_latest_gyro_z = 0.0f;
+
+/* SPI 비동기 통신 전용 버퍼 */
+static uint8_t spi_tx_buf[14] = {0};
+static uint8_t spi_raw_buf[14] = {0};
+
+/* I2C 비동기 통신 전용 버퍼 및 구조체 (MAX30102) */
+static uint8_t i2c_raw_buf[6] = {0};
+MAX30102_Data_t maxData = {0};
+
+/* 알림 메시지 버퍼 */
+uint8_t tx_alert_buf[] = "🚨 FALL DETECTED!\r\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+void SPI2_DMA_Reset_Unlock(void);
+static void Process_IMU_Data(void);  // 💡 메인 루프 다이어트용 서브 함수
+static void Process_PPG_Data(void);  // 💡 메인 루프 다이어트용 서브 함수
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -98,49 +111,96 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_SPI2_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
+
+  /* 1. 하드웨어 및 센서 초기화 */
   if (BMI270_Init() != HAL_OK) {
+      printf(">> [ERROR] BMI270 Init Failed!\r\n");
       while(1) {
-          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13); // 에러 알림 LED 깜빡임
+          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
           HAL_Delay(100);
       }
   }
 
-  if (MAX30102_Init(&hmax, &hi2c1) != HAL_OK) {
-	while(1) {
-		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-		HAL_Delay(50);
-	}
+  if (MAX30102_Init() != HAL_OK) {
+      printf(">> [ERROR] MAX30102 Init Failed!\r\n");
+      while(1) {
+          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+          HAL_Delay(50);
+      }
   }
 
+  /* 2. 알고리즘 초기화 및 센서 캘리브레이션 */
   if (BMI270_Calibrate_Gyro(&gyroBias) != HAL_OK) {
-        printf("[WARNING] Gyro Calibration Failed! Using default zero bias.\r\n");
+      printf("[WARNING] Gyro Calibration Failed! Using default zero bias.\r\n");
   }
 
   FallDetection_Init(gyroBias);
   HeartRateCalc_Init();
+
+  /* 3. 통신 라인 안전 초기화 */
+  SPI2_DMA_Reset_Unlock();
+
+  /* 4. 시스템 메인 타이머 (50Hz) 인터럽트 시작 */
+  __HAL_TIM_CLEAR_IT(&htim3, TIM_IT_UPDATE);
+  __HAL_TIM_SET_COUNTER(&htim3, 0);
+
+  if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK) {
+      printf(">> [ERROR] Failed to start Timer3 IT!\r\n");
+  }
+  printf(">> Realtime Monitoring Start\r\n\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint32_t last_tick = HAL_GetTick();
-  while (1) {
-      if (HAL_GetTick() - last_tick >= 20)
-      {
-          last_tick = HAL_GetTick();
+  while (1)
+  {
+      /* ------------------------------------------------------------------
+       * [STAGE 1] TIM3 타이머 인터럽트 트리거 블록 (20ms 주기)
+       * ------------------------------------------------------------------ */
+	  if (g_timer_fired == 1)
+	  {
+		  g_timer_fired = 0;
 
-          FallDetection_Update();
-          HeartRateCalc_Update();
-      }
+		  if (hspi2.State == HAL_SPI_STATE_READY)
+		  {
+			  memset(spi_tx_buf, 0, sizeof(spi_tx_buf));
+			  spi_tx_buf[0] = 0x0C | 0x80; // Register 0x0C read 명령
+
+			  HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_RESET);
+			  HAL_StatusTypeDef spi_stat = HAL_SPI_TransmitReceive_DMA(&hspi2, spi_tx_buf, spi_raw_buf, 14);
+
+			  if (spi_stat != HAL_OK)
+			  {
+				  // 만약 숏이 나거나 문제가 생겼을 때만 예외적으로 언락을 호출합니다.
+				  HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
+				  SPI2_DMA_Reset_Unlock();
+			  }
+		  }
+		  else
+		  {
+			  SPI2_DMA_Reset_Unlock();
+		  }
+	  }
+
+      /* ------------------------------------------------------------------
+       * [STAGE 2 & 3] 데이터 처리 및 알고리즘 구동 (함수화로 대폭 축소)
+       * ------------------------------------------------------------------ */
+      Process_IMU_Data(); // 💡 SPI 완료 검사, 자이로 파싱 및 낙상 감지 처리
+      Process_PPG_Data(); // 💡 I2C 완료 검사, 맥파 분석 및 자이로 연동 처리
+  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+
   /* USER CODE END 3 */
 }
 
@@ -190,13 +250,145 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+/**
+  * @brief 💡 [STAGE 2 구현] IMU 데이터 수신 완료 시 자이로 파싱 및 낙상 연산 처리
+  */
+static void Process_IMU_Data(void)
+{
+    if (g_spi_ready == 1)
+    {
+        g_spi_ready = 0;
+
+        // BMI270 SPI Raw 버퍼에서 실시간 자이로 값 추출 및 dps 단위 변환 (±2000 dps 기준)
+        int16_t raw_gx = (int16_t)((spi_raw_buf[9] << 8) | spi_raw_buf[8]);
+        int16_t raw_gy = (int16_t)((spi_raw_buf[11] << 8) | spi_raw_buf[10]);
+        int16_t raw_gz = (int16_t)((spi_raw_buf[13] << 8) | spi_raw_buf[12]);
+
+        g_latest_gyro_x = (float)raw_gx / 16.4f;
+        g_latest_gyro_y = (float)raw_gy / 16.4f;
+        g_latest_gyro_z = (float)raw_gz / 16.4f;
+
+        // 낙상 감지 알고리즘 업데이트
+        FallState_t current_state = FallDetection_Update(spi_raw_buf);
+
+        if (current_state == FALL_DETECTED)
+        {
+            printf("\r\n🚨🚨🚨 [ALERT] FALL DETECTED!!! 🚨🚨🚨\r\n\r\n");
+            if (huart2.gState == HAL_UART_STATE_READY) {
+                HAL_UART_Transmit_DMA(&huart2, tx_alert_buf, sizeof(tx_alert_buf) - 1);
+            }
+        }
+    }
+}
+
+/**
+  * @brief 💡 [STAGE 3 구현] PPG 데이터 수신 완료 시 자이로 연동 심박/산소포화도 연산 처리
+  */
+static void Process_PPG_Data(void)
+{
+    if (g_i2c_ready == 1)
+    {
+        g_i2c_ready = 0; // 레이스 컨디션 방지를 위해 플래그 먼저 클리어
+
+        // I2C DMA raw 데이터를 정밀 구조체형 데이터로 파싱
+        MAX30102_Parse_DMA_Data(i2c_raw_buf, &maxData);
+
+        // 💡 중요: 파싱된 최신 BMI270 자이로 데이터를 함께 주입하여 모션 블랭킹 구동
+        HeartRateCalc_Update(&maxData, g_latest_gyro_x, g_latest_gyro_y, g_latest_gyro_z);
+
+        // MAX30102 인터럽트 레지스터를 읽어 상태 플래그 클리어 (다음 인터럽트 방출 보장)
+        uint8_t status_dummy = 0;
+        MAX30102_ReadRegister(MAX30102_REG_INT_STAT_1, &status_dummy);
+    }
+}
+
+/**
+  * @brief SPI DMA 통신 데드락 강제 해제 및 버스 언락 물리 구현
+  */
+void SPI2_DMA_Reset_Unlock(void)
+{
+    HAL_SPI_DMAStop(&hspi2);
+    __HAL_SPI_DISABLE(&hspi2);
+    __HAL_SPI_ENABLE(&hspi2);
+    HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
+}
+
+/**
+  * @brief 타이머 주기 경과 콜백 (TIM3 오버플로우 발생 시 50Hz 속도로 점프)
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM3)
+    {
+        g_timer_fired = 1;
+    }
+}
+
+/**
+  * @brief GPIO 외부 인터럽트 콜백 (MAX30102의 INT 핀 트리거 시 호출)
+  */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_0)
+    {
+    	if(g_i2c_ready == 0)
+    	{
+    		HAL_I2C_Mem_Read_DMA(&hi2c1, MAX30102_I2C_ADDR, MAX30102_REG_FIFO_DATA,
+    				I2C_MEMADD_SIZE_8BIT, i2c_raw_buf, 6);
+    	}
+    }
+}
+
+/**
+  * @brief I2C 메모리 수신 완료 콜백
+  */
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+    if (hi2c->Instance == I2C1)
+    {
+        g_i2c_ready = 1;
+    }
+}
+
+/**
+  * @brief SPI 송수신 완료 콜백
+  */
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI2)
+    {
+        HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
+        g_spi_ready = 1;
+    }
+}
+
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi->Instance == SPI2)
+    {
+        HAL_SPI_TxRxCpltCallback(hspi);
+    }
+}
+
+/**
+  * @brief printf 표준 출력을 USB CDC 시리얼 터미널로 우회시키는 터널링 가상 함수
+  */
 int _write(int file, char *ptr, int len)
 {
-    uint32_t timeout = 50; // 최대 50ms 동안만 시도
-    while (CDC_Transmit_FS((uint8_t*)ptr, len) == 1)
+    extern USBD_HandleTypeDef hUsbDeviceFS;
+    if (hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED)
     {
-        HAL_Delay(1);
-        if (--timeout == 0) break; // PC가 안 받으면 그냥 포기하고 탈출
+        return len;
+    }
+
+    volatile uint32_t retry_count = 100;
+    while (CDC_Transmit_FS((uint8_t*)ptr, len) == USBD_BUSY)
+    {
+        retry_count--;
+        if (retry_count == 0)
+        {
+            break;
+        }
     }
     return len;
 }
@@ -209,7 +401,6 @@ int _write(int file, char *ptr, int len)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
