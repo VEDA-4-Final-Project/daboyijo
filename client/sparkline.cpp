@@ -26,21 +26,55 @@ void Sparkline::clear() {
     update();
 }
 
+void Sparkline::setRange(double lo, double hi) {
+    fixedRange_ = true;
+    rangeLo_ = lo;
+    rangeHi_ = hi;
+    update();
+}
+
+void Sparkline::setGuides(const QVector<QPair<double, QColor>>& guides) {
+    guides_ = guides;
+    update();
+}
+
 void Sparkline::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
+    const QRectF r = rect().adjusted(1, 3, -1, -3);
+
+    // Y 범위: 고정이면 그대로, 아니면 최근값 min~max 자동.
+    double lo, hi;
+    if (fixedRange_) {
+        lo = rangeLo_;
+        hi = rangeHi_;
+    } else {
+        if (values_.size() < 2) return;
+        lo = *std::min_element(values_.begin(), values_.end());
+        hi = *std::max_element(values_.begin(), values_.end());
+        if (hi - lo < 1e-6) { lo -= 1.0; hi += 1.0; }
+    }
+    const double span = (hi - lo > 1e-6) ? (hi - lo) : 1.0;
+    auto yAt = [&](double v) {
+        v = qBound(lo, v, hi);
+        return r.bottom() - (v - lo) / span * r.height();
+    };
+
+    // 기준선(주의/위험 임계) — 점선, 값 선보다 아래에 먼저 그린다.
+    for (const auto& g : guides_) {
+        QColor c = g.second;
+        c.setAlpha(110);
+        QPen pen(c, 1.0, Qt::DashLine);
+        p.setPen(pen);
+        const double gy = yAt(g.first);
+        p.drawLine(QPointF(r.left(), gy), QPointF(r.right(), gy));
+    }
+
     const int n = values_.size();
     if (n < 2) return;
 
-    const QRectF r = rect().adjusted(1, 3, -1, -3);
-    double lo = *std::min_element(values_.begin(), values_.end());
-    double hi = *std::max_element(values_.begin(), values_.end());
-    if (hi - lo < 1e-6) { lo -= 1.0; hi += 1.0; }  // 평평하면 살짝 벌려 중앙에
-    const double span = hi - lo;
-
     auto xAt = [&](int i) { return r.left() + r.width() * i / double(n - 1); };
-    auto yAt = [&](double v) { return r.bottom() - (v - lo) / span * r.height(); };
 
     QPainterPath line;
     for (int i = 0; i < n; ++i) {

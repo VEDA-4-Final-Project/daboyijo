@@ -641,10 +641,17 @@ QWidget* MainWindow::buildVitalCard(int channel)
                              QStringLiteral("bpm"), hrValues[channel]));
     lay->addLayout(body);
 
-    // ── 심박 미니 추세 그래프 ──
+    // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
     auto* sparkRow = new QHBoxLayout();
     sparkRow->setContentsMargins(14, 0, 14, 4);
     hrSpark[channel] = new Sparkline();
+    hrSpark[channel]->setRange(40, 140);
+    hrSpark[channel]->setGuides({
+        {110.0, QColor(QString::fromLatin1(kCritical))},  // 고 위험
+        {100.0, QColor(QString::fromLatin1(kWarn))},      // 고 주의
+        { 55.0, QColor(QString::fromLatin1(kWarn))},      // 저 주의
+        { 45.0, QColor(QString::fromLatin1(kCritical))},  // 저 위험
+    });
     sparkRow->addWidget(hrSpark[channel]);
     lay->addLayout(sparkRow);
 
@@ -1452,9 +1459,18 @@ void MainWindow::updateVitals()
     const QString now = QDateTime::currentDateTime().toString("HH:mm:ss");
 
     for (int i = 0; i < 4; ++i) {
-        // 목업: 항상 정상 범위로만 변동 (36.3~37.0℃ / 64~88bpm) — 경보 안 뜨게
+        // 목업: 기본은 정상 범위 (36.3~37.0℃ / 64~88bpm)
         double temp = 36.3 + rng->bounded(70) / 100.0;
         int hr = 64 + rng->bounded(24);
+
+        // 전승현(채널 0)만 테스트로 급등/급락을 섞어 그래프가 임계선을 넘는 걸 보여준다.
+        if (i == 0) {
+            const int roll = rng->bounded(100);
+            if      (roll < 15) hr = 112 + rng->bounded(28);  // 급등 112~139 (위험)
+            else if (roll < 25) hr = 40  + rng->bounded(9);   // 급락 40~48  (위험)
+            else if (roll < 42) hr = 96  + rng->bounded(13);  // 상승 96~108 (주의)
+            // 나머지는 정상 유지
+        }
 
         const QString color = vitalColor(temp, hr);
 
