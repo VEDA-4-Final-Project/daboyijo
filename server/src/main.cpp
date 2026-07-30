@@ -140,8 +140,8 @@ int main(int argc, char* argv[]) {
     });
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
-        std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) obj=%d cx=%.2f cy=%.2f\n",
-                     ch + 1, at.object_id, at.cx, at.cy);
+        // std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) obj=%d cx=%.2f cy=%.2f\n",
+        //              ch + 1, at.object_id, at.cx, at.cy);
         privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);

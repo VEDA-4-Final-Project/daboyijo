@@ -126,7 +126,7 @@ void BlackboxRecorder::flushLocked() {
         buf_.pop_front();
     }
     if (buf_.empty()) {
-        std::fprintf(stderr, "[blackbox] ch%d 키프레임 없음 — 저장 취소\n", channel_);
+        // std::fprintf(stderr, "[blackbox] ch%d 키프레임 없음 — 저장 취소\n", channel_);
         return;
     }
 
@@ -143,7 +143,7 @@ void BlackboxRecorder::flushLocked() {
     AVFormatContext* ofmt = nullptr;
     avformat_alloc_output_context2(&ofmt, nullptr, "mp4", tmp_path);
     if (!ofmt) {
-        std::fprintf(stderr, "[blackbox] ch%d 출력 컨텍스트 생성 실패\n", channel_);
+        // std::fprintf(stderr, "[blackbox] ch%d 출력 컨텍스트 생성 실패\n", channel_);
         buf_.clear();
         return;
     }
@@ -154,7 +154,7 @@ void BlackboxRecorder::flushLocked() {
 
     if (!(ofmt->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&ofmt->pb, tmp_path, AVIO_FLAG_WRITE) < 0) {
-            std::fprintf(stderr, "[blackbox] ch%d 파일 열기 실패: %s\n", channel_, tmp_path);
+            // std::fprintf(stderr, "[blackbox] ch%d 파일 열기 실패: %s\n", channel_, tmp_path);
             avformat_free_context(ofmt);
             buf_.clear();
             return;
@@ -167,7 +167,7 @@ void BlackboxRecorder::flushLocked() {
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "movflags", "faststart", 0);
     if (avformat_write_header(ofmt, &opts) < 0) {
-        std::fprintf(stderr, "[blackbox] ch%d 헤더 쓰기 실패\n", channel_);
+        // std::fprintf(stderr, "[blackbox] ch%d 헤더 쓰기 실패\n", channel_);
         av_dict_free(&opts);
         avio_closep(&ofmt->pb);
         avformat_free_context(ofmt);
@@ -222,15 +222,15 @@ void BlackboxRecorder::flushLocked() {
 
     // 다 썼으니 최종 이름으로 원자적 노출 — 이 시점부터 HTTP로 재생 가능.
     if (std::rename(tmp_path, path) != 0) {
-        std::fprintf(stderr, "[blackbox] ch%d rename 실패 (%s → %s)\n", channel_,
-                     tmp_path, path);
+        // std::fprintf(stderr, "[blackbox] ch%d rename 실패 (%s → %s)\n", channel_,
+        //              tmp_path, path);
         std::remove(tmp_path);
         buf_.clear();
         return;
     }
 
-    std::fprintf(stderr, "[blackbox] ch%d 저장 완료: %s (%zu패킷)\n", channel_, path,
-                 packet_count);
+    // std::fprintf(stderr, "[blackbox] ch%d 저장 완료: %s (%zu패킷)\n", channel_, path,
+    //              packet_count);
 
     if (onClipReady_) onClipReady_(channel_, path, eventUnixMs_);
     buf_.clear();

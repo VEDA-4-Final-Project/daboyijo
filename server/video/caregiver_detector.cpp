@@ -73,8 +73,8 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     bool result = (ratio >= threshold_) && (mean_sat >= min_sat_);
 
     if(ratio>=0.03){
-    std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
-                 ratio, mean_sat, result ? "O" : "X");
+    // std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
+    //              ratio, mean_sat, result ? "O" : "X");
     }
 
     return result;
@@ -117,8 +117,8 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
         // 어떤 obj가 어느 거리(bbox 크기)에서 요양사로 인정됐는지 본다.
         bool is_cg = isCaregiver(frame(box));
         if (is_cg) {
-            std::fprintf(stderr, "  ↳ ch%d obj%d bbox=%dx%d\n",
-                         df.channel + 1, obj.object_id, w, h);
+            // std::fprintf(stderr, "  ↳ ch%d obj%d bbox=%dx%d\n",
+            //              df.channel + 1, obj.object_id, w, h);
         }
         if (is_cg) return true;   // 보호사 하나라도 있으면 true
     }
