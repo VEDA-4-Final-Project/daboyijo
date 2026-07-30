@@ -36,18 +36,15 @@ void CaregiverModule::addChannel(int channel) {
     detector_.setThreshold(kVestThreshold);
     detector_.setMinSaturation(kMinSaturation);
 
-    //카메라 채널별 careTimer 등록
+    // 카메라 채널별 careTimer 등록
     auto result = timers_.emplace(
         channel, CareTimer(kAbsentTimeoutSec, kMinSessionSec));
     if (!result.second) return;  // 이미 등록됨
 
-    //result.first->first: channel (채널 번호)
-    //result.first->second: Caretiemr 객체
-    //[channel, this]로 현재 채널과 caregiverModule 객체 기억
-    //DB에 케어 시간 저장하는 콜백 등록
+    // timer에 채널 번호 주입
+    result.first->second.setChannel(channel);
+
     result.first->second.onSessionEnd([channel, this](int dur) {
-        // ★ printf(stdout)는 파이프로 넘길 때 블록 버퍼링돼 다른 로그에 묻힌다.
-        //   stderr는 무버퍼라 즉시 출력됨.
         std::fprintf(stderr, "[ch%d] 케어 세션 종료: %d초\n", channel + 1, dur);
         db_.insertCareLog(channel, dur);
     });

@@ -18,7 +18,7 @@ void CareTimer::update(bool caregiverPresent) {
             sessionStart_ = now;
             // ★ cout에서 stderr로 변경 — 파이프 버퍼링 때문에 세션 로그가
             //   caregiver 로그 뒤에 묻혀 안 보이던 문제 해결
-            std::fprintf(stderr, "[세션 시작]\n");
+            std::fprintf(stderr, "[ch%d] [세션 시작]\n",channel_ +1);
         }
     } else if (inSession_) {
         if (sec(now - lastSeen_) >= absentTimeout_) {   // 일정 시간 미감지
@@ -35,10 +35,10 @@ void CareTimer::endSession() {
     int dur = static_cast<int>(sec(lastSeen_ - sessionStart_));
     inSession_ = false;
     if (dur >= minSession_) {
-        std::fprintf(stderr, "[세션 종료] 케어 시간: %d초\n", dur);
+        std::fprintf(stderr, "[ch%d] [세션 종료] 케어 시간: %d초\n", channel_ +1, dur);
         if (onEnd_) onEnd_(dur);           // 등록된 콜백 호출 (예: DB INSERT)
     } else {
-        std::fprintf(stderr, "[무시] 너무 짧은 접촉 (%d초)\n", dur);
+        std::fprintf(stderr, "[ch%d] [무시] 너무 짧은 접촉 (%d초)\n", channel_ + 1, dur);
     }
 }
 

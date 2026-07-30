@@ -22,6 +22,8 @@ public:
     // 세션 종료 시 실행할 콜백 등록 (예: care_log INSERT)
     void onSessionEnd(SessionCallback cb);
 
+    void setChannel(int ch) { channel_ = ch; }
+
     // 세션 중인지 확인하게 해줌
     bool inSession() const { return inSession_; }
 
@@ -32,6 +34,7 @@ private:
     double absentTimeout_;
     double minSession_;
     bool inSession_ = false;
+    int channel_ = -1;
     std::chrono::steady_clock::time_point sessionStart_;
     std::chrono::steady_clock::time_point lastSeen_;
     SessionCallback onEnd_;
