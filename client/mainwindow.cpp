@@ -1874,21 +1874,7 @@ QString modelFromScopes(const QString& scopes) {
     return QStringLiteral("ONVIF 카메라");
 }
 
-// IP의 실제 MAC을 ARP 캐시에서 조회 (같은 서브넷 한정). WS-Discovery엔 MAC 표준
-// 필드가 없어 UUID로 추측하면 틀리므로, ProbeMatch를 이미 받은(=ARP 해석된) 카메라
-// 주소를 arp로 확인한다. Windows·Linux 모두 'arp -a <ip>' 출력에서 MAC을 파싱.
-QString macViaArp(const QString& ip) {
-    QProcess p;
-    p.start(QStringLiteral("arp"), {QStringLiteral("-a"), ip});
-    if (!p.waitForFinished(1500)) return QString();
-    const QString out = QString::fromLocal8Bit(p.readAllStandardOutput());
-    // 구분자는 ':'(리눅스) 또는 '-'(윈도우) — 둘 다 허용.
-    static const QRegularExpression re(
-        QStringLiteral("([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}"));
-    const auto m = re.match(out);
-    if (!m.hasMatch()) return QString();
-    return m.captured(0).toUpper().replace('-', ':');
-}
+// (MAC은 readyRead에서 arp를 비동기로 돌려 채운다 — 동기 조회는 응답 유실을 유발했다.)
 
 // ProbeMatch 응답 1개 파싱 → DiscoveredCam.
 DiscoveredCam parseProbeMatch(const QByteArray& datagram) {
@@ -2067,8 +2053,22 @@ void MainWindow::buildCameraSettingsDialog()
     camV->addWidget(discoveryTable, 1);
 
     // 검색용 UDP 소켓 (1회 생성·재사용). 응답이 오면 표에 인라인으로 추가.
+    // 일부 카메라는 ProbeMatch를 "우리 소스 포트"가 아니라 well-known 3702나
+    // 멀티캐스트 그룹으로 보낸다 → 3702에 공유 바인드 + 그룹 가입으로 놓치지 않는다.
     discoverySocket = new QUdpSocket(cameraSettingsDialog);
-    discoverySocket->bind(QHostAddress::AnyIPv4, 0, QAbstractSocket::ShareAddress);
+    if (!discoverySocket->bind(QHostAddress::AnyIPv4, 3702,
+            QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint))
+        discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress);  // 폴백
+    {
+        const QHostAddress grp(QStringLiteral("239.255.255.250"));
+        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+            const auto f = iface.flags();
+            if (f.testFlag(QNetworkInterface::IsUp) &&
+                f.testFlag(QNetworkInterface::CanMulticast) &&
+                !f.testFlag(QNetworkInterface::IsLoopBack))
+                discoverySocket->joinMulticastGroup(grp, iface);  // 실패 무해
+        }
+    }
     connect(discoverySocket, &QUdpSocket::readyRead, this, [this]() {
         while (discoverySocket->hasPendingDatagrams()) {
             QByteArray dg;
@@ -2094,13 +2094,33 @@ void MainWindow::buildCameraSettingsDialog()
                 continue;
             }
             discoverySeen.insert(cam.ip);
-            QString mac = macViaArp(cam.ip);
-            if (mac.isEmpty()) mac = QStringLiteral("-");
             const int r = discoveryTable->rowCount();
             discoveryTable->insertRow(r);
             discoveryTable->setItem(r, 0, new QTableWidgetItem(cam.model));
             discoveryTable->setItem(r, 1, new QTableWidgetItem(cam.ip));
-            discoveryTable->setItem(r, 2, new QTableWidgetItem(mac));
+            discoveryTable->setItem(r, 2, new QTableWidgetItem(QStringLiteral("…")));
+
+            // MAC 조회는 비동기로 — 여기서 arp를 동기(1.5초 블로킹)로 돌리면 그 사이
+            // 몰려오는 다른 카메라 응답이 유실된다(첫 검색에서 1대만 잡히던 원인).
+            const QString ip = cam.ip;
+            auto* arp = new QProcess(this);
+            connect(arp, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, arp, ip](int, QProcess::ExitStatus) {
+                        const QString out =
+                            QString::fromLocal8Bit(arp->readAllStandardOutput());
+                        arp->deleteLater();
+                        static const QRegularExpression re(
+                            QStringLiteral("([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}"));
+                        const auto m = re.match(out);
+                        const QString mac = m.hasMatch()
+                            ? m.captured(0).toUpper().replace('-', ':') : QStringLiteral("-");
+                        for (int rr = 0; rr < discoveryTable->rowCount(); ++rr) {
+                            auto* ipIt = discoveryTable->item(rr, 1);
+                            auto* mcIt = discoveryTable->item(rr, 2);
+                            if (ipIt && ipIt->text() == ip && mcIt) mcIt->setText(mac);
+                        }
+                    });
+            arp->start(QStringLiteral("arp"), {QStringLiteral("-a"), ip});
         }
     });
 
@@ -2306,9 +2326,11 @@ void MainWindow::onSearchCameraClicked()
         if (sentOn == 0) sock->writeDatagram(probe, mcast, 3702);  // 폴백
     };
 
-    sendProbes();
-    QTimer::singleShot(1200, this, sendProbes);   // UDP 유실 대비 재전송
-    QTimer::singleShot(5000, this, [this]() {
+    sendProbes();                                  // UDP 유실·타이밍 대비 여러 번 재전송
+    QTimer::singleShot(700, this, sendProbes);
+    QTimer::singleShot(1600, this, sendProbes);
+    QTimer::singleShot(3000, this, sendProbes);
+    QTimer::singleShot(6500, this, [this]() {
         if (discoveryStatus && discoveryTable)
             discoveryStatus->setText(
                 QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)")
