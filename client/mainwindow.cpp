@@ -2053,22 +2053,11 @@ void MainWindow::buildCameraSettingsDialog()
     camV->addWidget(discoveryTable, 1);
 
     // 검색용 UDP 소켓 (1회 생성·재사용). 응답이 오면 표에 인라인으로 추가.
-    // 일부 카메라는 ProbeMatch를 "우리 소스 포트"가 아니라 well-known 3702나
-    // 멀티캐스트 그룹으로 보낸다 → 3702에 공유 바인드 + 그룹 가입으로 놓치지 않는다.
+    // 임의 포트에 바인드 → 카메라는 우리가 보낸 소스 포트로 유니캐스트 ProbeMatch를
+    // 돌려준다. (3702 공유 바인드는 Windows에서 유니캐스트 응답을 다른 프로세스가
+    // 가로채 오히려 아무것도 못 받으므로 쓰지 않는다.)
     discoverySocket = new QUdpSocket(cameraSettingsDialog);
-    if (!discoverySocket->bind(QHostAddress::AnyIPv4, 3702,
-            QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint))
-        discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress);  // 폴백
-    {
-        const QHostAddress grp(QStringLiteral("239.255.255.250"));
-        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
-            const auto f = iface.flags();
-            if (f.testFlag(QNetworkInterface::IsUp) &&
-                f.testFlag(QNetworkInterface::CanMulticast) &&
-                !f.testFlag(QNetworkInterface::IsLoopBack))
-                discoverySocket->joinMulticastGroup(grp, iface);  // 실패 무해
-        }
-    }
+    discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress);
     connect(discoverySocket, &QUdpSocket::readyRead, this, [this]() {
         while (discoverySocket->hasPendingDatagrams()) {
             QByteArray dg;
