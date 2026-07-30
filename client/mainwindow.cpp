@@ -1547,7 +1547,9 @@ void MainWindow::onReadyRead()
 
             if (evt.channel < 4) {
                 if (evt.type == kEvtFall) {
-                    handleFallEvent(evt.channel, evt.timestamp_ms);
+                    handleFallEvent(evt.channel, evt.timestamp_ms,
+                                    evt.x / float(kRoiCoordScale),
+                                    evt.y / float(kRoiCoordScale));
                 }
                 else if (evt.type == kEvtBedEgress) {
                     handleBedEgressEvent(evt.channel, evt.timestamp_ms);
@@ -1635,13 +1637,15 @@ void MainWindow::onReadyRead()
 // ═══════════════════════════════════════════════════════════
 //  낙상 이벤트 — 빨간색 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
-void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
+void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, float ny)
 {
     // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
         fallActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"));
+            // 서버가 보낸 낙상 발생 위치(정규화 0~1)에 십자 조준점 표시
+            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"),
+                                            QPointF(nx, ny));
         }
         qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
