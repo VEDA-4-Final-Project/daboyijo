@@ -14,6 +14,7 @@
 
 #include "signupdialog.h"
 #include "theme.h"
+#include "wintheme.h"
 
 namespace {
 // "아이디 저장" 체크 시 마지막 로그인 아이디를 남겨둘 위치
@@ -32,6 +33,7 @@ LoginDialog::LoginDialog(QWidget* parent)
 
     buildUi();
     setStyleSheet(authDialogStyleSheet());   // 회원가입 창과 같은 스타일
+    enableDarkTitleBar(this);                // 네이티브 타이틀바도 다크로
 
     // 중괄호 초기화 — 괄호로 쓰면 컴파일러가 함수 선언으로 읽는다(most vexing parse)
     QSettings settings{QLatin1String(kOrgName), QLatin1String(kAppName)};
