@@ -1,8 +1,7 @@
 #include "caregiver_detector.hpp"
 #include <algorithm>   // std::max, std::min
-#include <cstdio>
-#include <vector>
-#include <opencv2/imgcodecs.hpp>
+#include <cstdio>      // std::fprintf
+#include <vector>      // std::vector
 
 CaregiverDetector::CaregiverDetector(cv::Scalar lower, cv::Scalar upper, double threshold)
     : lower_(lower), upper_(upper), threshold_(threshold) {}
@@ -41,7 +40,7 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
     // 전체 픽셀 수가 아니라 "가장 큰 덩어리" 하나만 — 흩어진 얼굴·손은 탈락
-    // ★ 평균 채도를 재려면 그 덩어리가 몇 번째인지 알아야 해서 인덱스도 기억
+    // 평균 채도를 재려면 그 덩어리가 몇 번째인지 알아야 해서 인덱스도 기억
     double maxArea = 0;
     int maxIdx = -1;
     for (size_t i = 0; i < contours.size(); ++i) {
@@ -55,7 +54,8 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     // ratio (화면에서 주황색이 차지하는 비율)이 threshold_ 이상인지 판단
     double ratio = maxArea / (mask.rows * mask.cols);
 
-    // ★ 최대 덩어리 내부의 평균 채도(S) 측정
+    
+    //   최대 덩어리 내부의 평균 채도(S) 측정
     //   blob = 그 덩어리만 흰색인 마스크. cv::mean에 마스크로 넘기면
     //   덩어리 안쪽 픽셀만 평균 내므로, 배경이 섞이지 않은 순수 옷 색이 나온다.
     double mean_sat = 0;

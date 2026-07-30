@@ -29,7 +29,7 @@ private:
     cv::Scalar lower_;
     cv::Scalar upper_;
     double threshold_;
-    // ★ 조끼 판정 최소 평균 채도. 실측상 조끼는 S 150~207,
+    //   조끼 판정 최소 평균 채도. 실측상 조끼는 S 150~207,
     //   피부·사복·나무는 S 55~137로 갈려서 이 값이 주 판정 역할을 한다.
     double min_sat_ = 150.0;
 };
