@@ -8,9 +8,9 @@
 class CaregiverDetector {
 public:
     // HSV 하한/상한과 판정 임계값(유니폼 색 픽셀 비율)
-    CaregiverDetector(cv::Scalar lower = cv::Scalar(8, 100, 180),
-                      cv::Scalar upper = cv::Scalar(25, 255, 255),
-                      double threshold = 0.2);
+    CaregiverDetector(cv::Scalar lower = cv::Scalar(5, 50, 50),
+                      cv::Scalar upper = cv::Scalar(28, 255, 255),
+                      double threshold = 0.08);
 
     // 사람 영역(personROI)이 보호사인지 판정
     bool isCaregiver(const cv::Mat& personROI) const;
@@ -22,10 +22,16 @@ public:
     void setColorRange(const cv::Scalar& lower, const cv::Scalar& upper);
     void setThreshold(double threshold);
 
+    // ★ 튜닝용 — 최소 평균 채도 조정 (caregiver_module.cpp에서 주입)
+    void setMinSaturation(double s) { min_sat_ = s; }
+
 private:
     cv::Scalar lower_;
     cv::Scalar upper_;
     double threshold_;
+    //   조끼 판정 최소 평균 채도. 실측상 조끼는 S 150~207,
+    //   피부·사복·나무는 S 55~137로 갈려서 이 값이 주 판정 역할을 한다.
+    double min_sat_ = 150.0;
 };
 
 #endif // CAREGIVER_DETECTOR_HPP

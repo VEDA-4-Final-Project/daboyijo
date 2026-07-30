@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <opencv2/opencv.hpp>
 
 // WiseAI(ONVIF) 메타데이터에서 파싱한 객체 1개.
 // 좌표는 0.0~1.0 정규화 (BoundingBox 픽셀값에 tt:Transformation 적용 후).
@@ -23,9 +22,11 @@ struct Detection {
 
     float width() const { return right - left; }
     float height() const { return bottom - top; }
+
     // 종횡비(가로/세로). 서 있으면 <1, 누우면 >1 경향 → 낙상 판정 단서.
     float aspectRatio() const {
         float h = height();
+        // h>0이면 width()/h
         return h > 1e-6f ? width() / h : 0.0f;
     }
     bool isHuman() const { return type == "Human"; }
@@ -34,32 +35,40 @@ struct Detection {
 // 한 프레임(한 시점)의 감지 결과 묶음. video → core 로 넘어가는 데이터 계약.
 struct DetectionFrame {
     int channel = 0;
+
+    // 프레임을 받은 시각
     std::chrono::steady_clock::time_point received_at;
+    // 프레임을 받았을 때 감지되는 객체들의 목록
     std::vector<Detection> objects;
 
-    // 사람 객체 수 (occupancy). 요양보호사 진입 감지·재실 판단용.
+    // 사람 객체 수 (occupancy). 요양보호사 진입 감지·재실 판단용. -> 사람 인원 수 카운트
     int humanCount() const {
         int n = 0;
-        for (const auto& o : objects) {
-            if (o.isHuman()) ++n;
+        for (const auto& o : objects) { 
+            if (o.isHuman()) ++n;   //type이 human이면 +1
         }
         return n;
     }
 };
 
 // 사람의 발끝(바운딩 박스 하단의 중앙)이 침대 ROI(다각형) 밖으로 나갔는지 판정.
+// 침상이탈 판단
 inline bool isFeetInRoi(const Detection& det, const std::vector<std::pair<float, float>>& roi) {
     if (roi.empty()) return false;
 
+    // 발끝 좌표 (좌우중앙,하단)
     float px = (det.left + det.right) / 2.0f;
     float py = det.bottom;
 
     bool inside = false;
+    // roi박스가 4개의 점이므로 4개의 변 (i와 j)
     for (size_t i = 0, j = roi.size() - 1; i < roi.size(); j = i++) {
-        const float xi = roi[i].first, yi = roi[i].second;
-        const float xj = roi[j].first, yj = roi[j].second;
+        const float xi = roi[i].first, yi = roi[i].second;  // i번 꼭지점 (x,y)
+        const float xj = roi[j].first, yj = roi[j].second;  // j번 꼭지점 (x,y)
+
+        // yi,yj를 잇는 변이 py를 지나가는가
         if (((yi > py) != (yj > py)) &&
-            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))
+            (px < (xj - xi) * (py - yi) / (yj - yi) + xi))  // 그 선분과 만나는 x좌표보다 사람이 왼쪽에 있는가
             inside = !inside;
     }
     

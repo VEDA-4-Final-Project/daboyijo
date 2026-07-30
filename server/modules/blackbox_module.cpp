@@ -39,8 +39,8 @@ void BlackboxModule::attachChannel(RtspAvClient& client) {
     auto recorder = std::make_unique<BlackboxRecorder>(
         ch, kBlackboxDir, kBlackboxPreSec, kBlackboxPostSec);
     recorder->onClipReady([](int rch, const std::string& path, int64_t eventMs) {
-        std::printf("[ch%d] 블랙박스 저장 완료: %s (이벤트 %lld)\n", rch,
-                    path.c_str(), static_cast<long long>(eventMs));
+        // std::printf("[ch%d] 블랙박스 저장 완료: %s (이벤트 %lld)\n", rch,
+        //             path.c_str(), static_cast<long long>(eventMs));
     });
 
     BlackboxRecorder* recorder_ptr = recorder.get();

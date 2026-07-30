@@ -63,3 +63,9 @@ server/blackbox_clips/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+server/daboijo_dump.sql
+server/daboijo_dump_fixed.sql
+*.user
+*.user
+*.tmp
+*.TMP
