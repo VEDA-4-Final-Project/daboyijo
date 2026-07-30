@@ -154,6 +154,7 @@ private:
     // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
     QString lastCameraUrl_[4];
     bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
+    bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태

@@ -1604,6 +1604,9 @@ void MainWindow::onReadyRead()
     for (int ch = 0; ch < 4; ++ch) {
         if (!hasFrame[ch])
             continue;
+        // 해제한 채널은 서버가 잠깐 더 보내는 프레임을 무시 → 검은 미연결 화면 유지
+        if (videoSuppressed_[ch])
+            continue;
 
         QImage image = QImage::fromData(
             reinterpret_cast<const uchar*>(latestJpeg[ch].constData()),
@@ -2257,6 +2260,7 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
     for (int ch = 0; ch < 4; ++ch) {
         const QString url = buildRtspUrl(ip, user, password, port, prof, ch);
         lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
+        videoSuppressed_[ch] = false;  // 프레임 표시 재개
         if (channelViews[ch])
             channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
         if (sendCamera(ch, url)) ++sent;
@@ -2349,6 +2353,7 @@ void MainWindow::onCameraClearClicked()
     for (int ch = 0; ch < 4; ++ch) {
         sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
         lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
+        videoSuppressed_[ch] = true;    // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
         if (channelViews[ch]) {
             channelViews[ch]->setLive(false);
             channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
@@ -2365,6 +2370,7 @@ void MainWindow::resendCamerasForServer(int serverIdx)
         if (serverForChannel(ch) != serverIdx) continue;
         if (lastCameraUrl_[ch].isEmpty()) continue;
         if (sendCamera(ch, lastCameraUrl_[ch])) {
+            videoSuppressed_[ch] = false;  // 프레임 표시 재개
             if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
             qDebug() << "Pi" << serverIdx << "재접속 → ch" << ch << "카메라 자동 재전송";
         }
