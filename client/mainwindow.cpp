@@ -1828,7 +1828,6 @@ QByteArray buildWsDiscoveryProbe() {
 
 // Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조, 그래도 없으면 모델형 토큰).
 QString modelFromScopes(const QString& scopes) {
-    qDebug() << "ONVIF scopes:" << scopes;  // 미상 장비 진단용
     QString name, hardware;
     const QStringList toks =
         scopes.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
@@ -1840,7 +1839,8 @@ QString modelFromScopes(const QString& scopes) {
             hardware = QUrl::fromPercentEncoding(t.mid(i + 10).toUtf8());
     }
     if (!name.isEmpty() && !hardware.isEmpty())
-        return name + QStringLiteral(" (") + hardware + QStringLiteral(")");
+        return name == hardware ? name
+                                : name + QStringLiteral(" (") + hardware + QStringLiteral(")");
     if (!name.isEmpty()) return name;
     if (!hardware.isEmpty()) return hardware;
 
@@ -2061,9 +2061,23 @@ void MainWindow::buildCameraSettingsDialog()
             discoverySocket->readDatagram(dg.data(), dg.size(), &from);
             const DiscoveredCam cam = parseProbeMatch(dg);
             if (cam.ip.isEmpty()) continue;
-            const QString key = cam.uuid.isEmpty() ? cam.ip : cam.uuid;
-            if (discoverySeen.contains(key)) continue;
-            discoverySeen.insert(key);
+
+            // 같은 카메라가 응답을 여러 번(모델 있는 것 + scopes 빈 것) 보낸다 →
+            // IP 기준 한 행만 유지. 이미 있으면 "더 나은 모델명"이 왔을 때만 갱신.
+            const bool realModel = (cam.model != QStringLiteral("ONVIF 카메라"));
+            if (discoverySeen.contains(cam.ip)) {
+                if (realModel) {
+                    for (int r = 0; r < discoveryTable->rowCount(); ++r) {
+                        auto* ipItem = discoveryTable->item(r, 1);
+                        auto* mdItem = discoveryTable->item(r, 0);
+                        if (ipItem && ipItem->text() == cam.ip && mdItem &&
+                            mdItem->text() == QStringLiteral("ONVIF 카메라"))
+                            mdItem->setText(cam.model);  // 플레이스홀더 → 실제 모델
+                    }
+                }
+                continue;
+            }
+            discoverySeen.insert(cam.ip);
             QString mac = macViaArp(cam.ip);
             if (mac.isEmpty()) mac = QStringLiteral("-");
             const int r = discoveryTable->rowCount();
