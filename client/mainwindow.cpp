@@ -93,7 +93,7 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.35.202";
+const char* kDefaultHostA  = "172.20.35.218";
 const char* kDefaultHostB  = "172.20.35.201";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
@@ -1014,6 +1014,7 @@ QWidget* MainWindow::buildResidentSection()
 QWidget* MainWindow::buildResidentForm()
 {
     auto* scroll = new QScrollArea();
+    scroll->setObjectName("vitalScroll");  // 투명 배경 재사용 (기본 흰 배경 방지)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
 
@@ -1339,6 +1340,21 @@ QTextEdit#formEdit:focus {
         QCalendarWidget QSpinBox {
             background: %(bgDeep); color: %(text); border: 1px solid %(border); }
         QCalendarWidget QAbstractItemView:disabled { color: %(sub); }
+
+        /* ── 공용 다이얼로그·메시지박스·메뉴 ──
+           기본 스타일이 흰 배경으로 떠서 밝은 글씨가 안 보이는 것 방지 */
+        QMessageBox, QInputDialog, QDialog { background: %(panel); }
+        QMessageBox QLabel, QInputDialog QLabel { color: %(text); }
+        QMessageBox QPushButton, QInputDialog QPushButton {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 6px; padding: 5px 16px; font-size: 12px; font-weight: 600;
+            min-width: 60px; }
+        QMessageBox QPushButton:hover, QInputDialog QPushButton:hover { border-color: %(accent); }
+        QMessageBox QPushButton:default, QInputDialog QPushButton:default {
+            background: %(accent); color: #fff; border-color: %(accent); }
+        QMenu { background: %(panel); color: %(text); border: 1px solid %(border); }
+        QMenu::item:selected { background: %(accent); color: #fff; }
+        QToolTip { background: %(card); color: %(text); border: 1px solid %(border); }
     )")
                             .replace("%(bgDeep)", kBgDeep)
                             .replace("%(panel)", kPanel)
