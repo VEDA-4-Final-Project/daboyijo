@@ -20,6 +20,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "bmi270.h"
 #include "max30102.h"
 #include "fall_detection.h"
@@ -34,7 +35,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -73,8 +73,8 @@ uint8_t tx_alert_buf[] = "🚨 FALL DETECTED!\r\n";
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void SPI2_DMA_Reset_Unlock(void);
-static void Process_IMU_Data(void);  // 💡 메인 루프 다이어트용 서브 함수
-static void Process_PPG_Data(void);  // 💡 메인 루프 다이어트용 서브 함수
+static void Process_IMU_Data(void);
+static void Process_PPG_Data(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -88,7 +88,6 @@ static void Process_PPG_Data(void);  // 💡 메인 루프 다이어트용 서�
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -180,7 +179,6 @@ int main(void)
 
 			  if (spi_stat != HAL_OK)
 			  {
-				  // 만약 숏이 나거나 문제가 생겼을 때만 예외적으로 언락을 호출합니다.
 				  HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
 				  SPI2_DMA_Reset_Unlock();
 			  }
@@ -192,10 +190,10 @@ int main(void)
 	  }
 
       /* ------------------------------------------------------------------
-       * [STAGE 2 & 3] 데이터 처리 및 알고리즘 구동 (함수화로 대폭 축소)
+       * [STAGE 2 & 3] 데이터 처리 및 알고리즘 구동
        * ------------------------------------------------------------------ */
-      Process_IMU_Data(); // 💡 SPI 완료 검사, 자이로 파싱 및 낙상 감지 처리
-      Process_PPG_Data(); // 💡 I2C 완료 검사, 맥파 분석 및 자이로 연동 처리
+      Process_IMU_Data();
+      Process_PPG_Data();
   }
     /* USER CODE END WHILE */
 
@@ -213,14 +211,9 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -234,8 +227,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -250,61 +241,52 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-/**
-  * @brief 💡 [STAGE 2 구현] IMU 데이터 수신 완료 시 자이로 파싱 및 낙상 연산 처리
-  */
 static void Process_IMU_Data(void)
 {
     if (g_spi_ready == 1)
     {
         g_spi_ready = 0;
 
-        // BMI270 SPI Raw 버퍼에서 실시간 자이로 값 추출 및 dps 단위 변환 (±2000 dps 기준)
-        int16_t raw_gx = (int16_t)((spi_raw_buf[9] << 8) | spi_raw_buf[8]);
-        int16_t raw_gy = (int16_t)((spi_raw_buf[11] << 8) | spi_raw_buf[10]);
-        int16_t raw_gz = (int16_t)((spi_raw_buf[13] << 8) | spi_raw_buf[12]);
+        BMI270_Data_t accel_data = {0};
+        BMI270_Data_t gyro_data = {0};
 
-        g_latest_gyro_x = (float)raw_gx / 16.4f;
-        g_latest_gyro_y = (float)raw_gy / 16.4f;
-        g_latest_gyro_z = (float)raw_gz / 16.4f;
+        BMI270_Parse_DMA_Data(spi_raw_buf, &accel_data, &gyro_data, &gyroBias);
 
-        // 낙상 감지 알고리즘 업데이트
-        FallState_t current_state = FallDetection_Update(spi_raw_buf);
+        g_latest_gyro_x = gyro_data.x;
+        g_latest_gyro_y = gyro_data.y;
+        g_latest_gyro_z = gyro_data.z;
 
-        if (current_state == FALL_DETECTED)
-        {
-            printf("\r\n🚨🚨🚨 [ALERT] FALL DETECTED!!! 🚨🚨🚨\r\n\r\n");
-            if (huart2.gState == HAL_UART_STATE_READY) {
-                HAL_UART_Transmit_DMA(&huart2, tx_alert_buf, sizeof(tx_alert_buf) - 1);
-            }
-        }
+        uint8_t is_worn_flag = HeartRateCalc_IsWorn();
+
+        FallDetection_Update(&accel_data, &gyro_data, is_worn_flag);
     }
 }
 
-/**
-  * @brief 💡 [STAGE 3 구현] PPG 데이터 수신 완료 시 자이로 연동 심박/산소포화도 연산 처리
-  */
 static void Process_PPG_Data(void)
 {
     if (g_i2c_ready == 1)
     {
-        g_i2c_ready = 0; // 레이스 컨디션 방지를 위해 플래그 먼저 클리어
+        g_i2c_ready = 0;
 
-        // I2C DMA raw 데이터를 정밀 구조체형 데이터로 파싱
         MAX30102_Parse_DMA_Data(i2c_raw_buf, &maxData);
 
-        // 💡 중요: 파싱된 최신 BMI270 자이로 데이터를 함께 주입하여 모션 블랭킹 구동
-        HeartRateCalc_Update(&maxData, g_latest_gyro_x, g_latest_gyro_y, g_latest_gyro_z);
+        HeartRateCalc_Process_DMA(&maxData, g_latest_gyro_x, g_latest_gyro_y, g_latest_gyro_z);
 
-        // MAX30102 인터럽트 레지스터를 읽어 상태 플래그 클리어 (다음 인터럽트 방출 보장)
-        uint8_t status_dummy = 0;
-        MAX30102_ReadRegister(MAX30102_REG_INT_STAT_1, &status_dummy);
+        uint8_t dummy_stat = 0;
+        MAX30102_ReadRegister(MAX30102_REG_INT_STAT_1, &dummy_stat);
     }
 }
 
-/**
-  * @brief SPI DMA 통신 데드락 강제 해제 및 버스 언락 물리 구현
-  */
+// 낙상 확정 시 UART 송신
+void Send_Fall_Alert_Hardware(void)
+{
+    if (huart2.gState == HAL_UART_STATE_READY)
+    {
+        HAL_UART_Transmit_DMA(&huart2, tx_alert_buf, sizeof(tx_alert_buf) - 1);
+    }
+}
+
+// SPI 데드락 탈출
 void SPI2_DMA_Reset_Unlock(void)
 {
     HAL_SPI_DMAStop(&hspi2);
@@ -313,9 +295,7 @@ void SPI2_DMA_Reset_Unlock(void)
     HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
 }
 
-/**
-  * @brief 타이머 주기 경과 콜백 (TIM3 오버플로우 발생 시 50Hz 속도로 점프)
-  */
+// 타이머 인터럽트
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM3)
@@ -324,9 +304,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
 }
 
-/**
-  * @brief GPIO 외부 인터럽트 콜백 (MAX30102의 INT 핀 트리거 시 호출)
-  */
+// 심박센서 인터럽트
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
     if (GPIO_Pin == GPIO_PIN_0)
@@ -339,9 +317,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
 }
 
-/**
-  * @brief I2C 메모리 수신 완료 콜백
-  */
+// I2C 수신 완료
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->Instance == I2C1)
@@ -350,9 +326,7 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
     }
 }
 
-/**
-  * @brief SPI 송수신 완료 콜백
-  */
+// SPI 수신 완료
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi->Instance == SPI2)
@@ -370,9 +344,6 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
     }
 }
 
-/**
-  * @brief printf 표준 출력을 USB CDC 시리얼 터미널로 우회시키는 터널링 가상 함수
-  */
 int _write(int file, char *ptr, int len)
 {
     extern USBD_HandleTypeDef hUsbDeviceFS;
@@ -381,7 +352,7 @@ int _write(int file, char *ptr, int len)
         return len;
     }
 
-    volatile uint32_t retry_count = 100;
+    volatile uint32_t retry_count = 2000;
     while (CDC_Transmit_FS((uint8_t*)ptr, len) == USBD_BUSY)
     {
         retry_count--;
@@ -394,33 +365,16 @@ int _write(int file, char *ptr, int len)
 }
 /* USER CODE END 4 */
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
