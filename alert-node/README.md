@@ -36,7 +36,16 @@ hub75
 64x32 HUB75 LED 패널 드라이버입니다. wm8960 과 달리 런타임 dtoverlay 로는
 안 올라가고, config.txt 설정 + 재부팅이 필요합니다.
 
-먼저 부트 설정을 넣습니다. (한 번만, 재부팅 필요)
+먼저 부트 설정을 넣습니다. 기기당 한 번만 하면 되고, 재부팅이 필요합니다.
+(현재 개발용 Pi 에는 이미 적용돼 있습니다. 아래로 확인 후 되어 있으면
+이 단계는 건너뛰고 바로 make reload 로 갑니다.)
+
+```
+grep -E "hub75|audio|spi=off|gpio=12" /boot/config.txt
+grep -o "isolcpus=[^ ]*" /boot/cmdline.txt
+```
+
+안 되어 있으면 아래를 추가합니다.
 
 ```
 # /boot/config.txt
@@ -49,7 +58,7 @@ dtparam=audio=off       # 아날로그 오디오가 같은 PWM0 사용 - 충돌 
 isolcpus=3 irqaffinity=0,1,2    # CPU3 = 리프레시 전용
 ```
 
-빌드하고 오버레이를 배포합니다.
+빌드하고 오버레이를 배포합니다. 오버레이는 dts 를 고쳤을 때만 다시 하면 됩니다.
 
 ```
 sudo apt install raspberrypi-kernel-headers
@@ -60,10 +69,10 @@ make                              # hub75.ko 와 hub75.dtbo 둘 다 생성
 
 sudo cp hub75.dtbo /boot/overlays/
 
-sudo reboot
+sudo reboot                       # 부트 설정이나 오버레이를 바꿨을 때만
 ```
 
-재부팅 후 모듈을 올립니다.
+모듈을 올립니다.
 
 ```
 cd hub75
