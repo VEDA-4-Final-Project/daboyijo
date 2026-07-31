@@ -26,6 +26,7 @@
 #include "fall_detection.h"
 #include "heart_rate_calc.h"
 #include "usbd_cdc_if.h"
+#include "hm10.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,8 +66,11 @@ static uint8_t spi_raw_buf[14] = {0};
 static uint8_t i2c_raw_buf[6] = {0};
 MAX30102_Data_t maxData = {0};
 
-/* 알림 메시지 버퍼 */
-uint8_t tx_alert_buf[] = "🚨 FALL DETECTED!\r\n";
+/* HM-10 낙상 의심 플래그 (확정 시 세우고, 일정 시간 유지 후 자동 해제) */
+volatile uint8_t  g_fall_flag = 0;
+volatile uint32_t g_fall_flag_ms = 0;
+#define HM10_FALL_HOLD_MS   5000   /* 낙상 플래그 유지 시간(ms) — 카메라 교차검증 윈도우 확보 */
+#define HM10_VITAL_PERIOD_MS 1000  /* 바이탈 주기 송신 간격(ms) */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,6 +79,7 @@ void SystemClock_Config(void);
 void SPI2_DMA_Reset_Unlock(void);
 static void Process_IMU_Data(void);
 static void Process_PPG_Data(void);
+static void HM10_Send_Now(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -118,6 +123,8 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  hm10_init(&huart2); // HM-10을 USART2에 등록 (기존 낙상 알림 UART 재활용)
+
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
   /* 1. 하드웨어 및 센서 초기화 */
@@ -194,6 +201,24 @@ int main(void)
        * ------------------------------------------------------------------ */
       Process_IMU_Data();
       Process_PPG_Data();
+
+      /* ------------------------------------------------------------------
+       * [STAGE 4] HM-10 BLE 주기 송신 (1Hz) — 바이탈 + 낙상 플래그
+       * ------------------------------------------------------------------ */
+      static uint32_t last_vital_ms = 0;
+      uint32_t now = HAL_GetTick();
+
+      /* 낙상 플래그 유지 시간 경과 시 자동 해제 */
+      if (g_fall_flag && (now - g_fall_flag_ms >= HM10_FALL_HOLD_MS))
+      {
+          g_fall_flag = 0;
+      }
+
+      if (now - last_vital_ms >= HM10_VITAL_PERIOD_MS)
+      {
+          last_vital_ms = now;
+          HM10_Send_Now();
+      }
   }
     /* USER CODE END WHILE */
 
@@ -277,13 +302,25 @@ static void Process_PPG_Data(void)
     }
 }
 
-// 낙상 확정 시 UART 송신
+// 현재 바이탈 + 낙상 플래그를 HM-10 5바이트 패킷으로 송신
+static void HM10_Send_Now(void)
+{
+    uint32_t bpm  = HeartRateCalc_GetBPM();
+    uint32_t spo2 = HeartRateCalc_GetSpO2();
+    uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   // 심박 8bit 클램프
+
+    // 온도: temperature_calc 미구현 → 우선 0 더미
+    uint8_t temp = 0;
+
+    hm10_send_packet(hr, (uint8_t)spo2, temp, g_fall_flag);
+}
+
+// 낙상 확정 시 호출 (fall_detection.c) → 플래그 세우고 즉시 1회 송신
 void Send_Fall_Alert_Hardware(void)
 {
-    if (huart2.gState == HAL_UART_STATE_READY)
-    {
-        HAL_UART_Transmit_DMA(&huart2, tx_alert_buf, sizeof(tx_alert_buf) - 1);
-    }
+    g_fall_flag = HM10_FALL_SUSPECT;
+    g_fall_flag_ms = HAL_GetTick();
+    HM10_Send_Now();   // 다음 주기(1s) 기다리지 않고 즉시 반영
 }
 
 // SPI 데드락 탈출
