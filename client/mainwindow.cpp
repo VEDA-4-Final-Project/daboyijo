@@ -111,8 +111,7 @@ private:
 // 변경 로그에 남길 필드 (라벨, residents 컬럼) — 이 배열만 고치면 로그 대상이 바뀐다.
 struct LoggedField { const char* label; const char* column; };
 const LoggedField kLoggedFields[] = {
-    {"이름", "name"},               {"병실", "room"},
-    {"침대", "bed"},                {"카메라 채널", "camera_id"},
+    {"이름", "name"},               {"카메라 채널", "camera_id"},
     {"웨어러블 ID", "wearable_id"}, {"위험도", "risk_level"},
     {"입원일", "admitted_at"},      {"퇴원 예정일", "discharge_due"},
     {"상태", "status"},             {"보호자 이름", "guardian_name"},
@@ -394,8 +393,8 @@ void MainWindow::buildUi()
     // ── TAB 2: 비상 로그 조회 및 블랙박스 ──
     tabWidget->addTab(buildLogArchiveTab(), QStringLiteral("비상 로그 조회 및 블랙박스"));
 
-    // ── TAB 3: DB 관리 ──
-    tabWidget->addTab(buildDbTab(), QStringLiteral("DB 관리"));
+    // ── TAB 3: 입소자 관리 ──
+    tabWidget->addTab(buildDbTab(), QStringLiteral("입소자 관리"));
 
     root->addWidget(tabWidget, 1);
 
@@ -799,7 +798,7 @@ QWidget* MainWindow::buildLogTable()
     logTable = new QTableWidget(0, 4);
     logTable->setObjectName("logTable");
     logTable->setHorizontalHeaderLabels(
-        {QStringLiteral("날짜/시간"), QStringLiteral("병실"),
+        {QStringLiteral("날짜/시간"), QStringLiteral("채널"),
          QStringLiteral("이벤트"), QStringLiteral("상태")});
     logTable->horizontalHeader()->setStretchLastSection(true);
     // 날짜/시간(0열)은 "yyyy-MM-dd HH:mm:ss"가 잘리지 않도록 내용 폭에 맞춘다.
@@ -1149,8 +1148,6 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
     while (q.next()) {
         const int     id      = q.value(0).toInt();
         const QString name    = q.value(1).toString();
-        const QString room    = q.value(2).toString();
-        const QString bed     = q.value(3).toString();
         const QVariant camVar = q.value(4);
         const QString risk    = q.value(6).toString();
         const QString status  = q.value(7).toString();
@@ -1186,7 +1183,7 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         const QString chStr = camVar.isNull()
             ? QStringLiteral("채널 미지정")
             : QStringLiteral("채널 %1").arg(camVar.toInt() + 1);
-        auto* metaLbl = new QLabel(QStringLiteral("%1-%2 · %3").arg(room, bed, chStr));
+        auto* metaLbl = new QLabel(chStr);
         metaLbl->setObjectName("resMeta");
         metaLbl->setAttribute(Qt::WA_TransparentForMouseEvents);
         nameCol->addWidget(nameLbl);
@@ -1244,8 +1241,6 @@ QWidget* MainWindow::buildResidentFormBody()
     basicForm->setLabelAlignment(Qt::AlignLeft);
     basicForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     basicForm->addRow(QStringLiteral("이름"),        makeField("홍길동", editName));
-    basicForm->addRow(QStringLiteral("병실"),        makeField("201", editRoom));
-    basicForm->addRow(QStringLiteral("침대"),        makeField("A", editBed));
     basicForm->addRow(QStringLiteral("카메라 채널"), makeField("1~4", editCameraId));
     basicForm->addRow(QStringLiteral("웨어러블 ID"), makeField("기기 번호", editWearableId));
     lay->addWidget(basicGroup);
@@ -1280,7 +1275,8 @@ QWidget* MainWindow::buildResidentFormBody()
 
     editStatus = new QComboBox();
     editStatus->setObjectName("formEdit");
-    editStatus->addItems({QStringLiteral("퇴원"), QStringLiteral("재원")});
+    // 재원을 먼저 둬서 신규 등록 시 기본값이 재원이 되도록 한다.
+    editStatus->addItems({QStringLiteral("재원"), QStringLiteral("퇴원")});
     careForm->addRow(QStringLiteral("상태"), editStatus);
     lay->addWidget(careGroup);
 
@@ -1415,13 +1411,9 @@ void MainWindow::refreshResidentDialogHeader()
     dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
                               : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));
 
-    const QString room = editRoom->text().trimmed();
-    const QString bed  = editBed->text().trimmed();
-    const QString cam  = editCameraId->text().trimmed();
-    QStringList parts;
-    if (!room.isEmpty() || !bed.isEmpty()) parts << QStringLiteral("%1-%2").arg(room, bed);
-    if (!cam.isEmpty()) parts << QStringLiteral("채널 %1").arg(cam);
-    dlgSubMeta->setText(parts.join(QStringLiteral(" · ")));
+    const QString cam = editCameraId->text().trimmed();
+    dlgSubMeta->setText(cam.isEmpty() ? QStringLiteral("채널 미지정")
+                                      : QStringLiteral("채널 %1").arg(cam));
 
     auto styleBadge = [](QLabel* b, const QString& text, const char* color) {
         b->setText(text);
@@ -2012,9 +2004,8 @@ void MainWindow::updateCareTime()
 
     for (int ch = 0; ch < 4; ++ch) {
         if (careNameLabels[ch])
-            careNameLabels[ch]->setText(QStringLiteral("채널 %1 · %2 %3")
-                                            .arg(ch + 1)
-                                            .arg(patients[ch].bed, patients[ch].name));
+            careNameLabels[ch]->setText(QStringLiteral("채널 %1 · %2")
+                                            .arg(ch + 1).arg(patients[ch].name));
         if (!careStatLabels[ch]) continue;
 
         // 1분 미만 세션도 "0분"으로 묻히지 않게 60초 미만은 초로 표기.
@@ -3041,9 +3032,9 @@ void MainWindow::loadPatientsFromDb()
 
     QSqlQuery q;
     if (!q.exec(QStringLiteral(
-            "SELECT camera_id, name, room, bed FROM residents "
+            "SELECT camera_id, name FROM residents "
             "WHERE status='재원' AND camera_id BETWEEN 0 AND 3 "
-            "ORDER BY camera_id, bed"))) {
+            "ORDER BY camera_id, resident_id"))) {
         qDebug() << "채널 환자 매핑 조회 실패:" << q.lastError().text();
         return;
     }
@@ -3054,8 +3045,8 @@ void MainWindow::loadPatientsFromDb()
         if (ch < 0 || ch >= 4 || assigned[ch]) continue;   // 채널당 대표 1명만
         assigned[ch] = true;
         patients[ch].name = q.value(1).toString();
-        patients[ch].bed  = q.value(2).toString() + QStringLiteral("-")
-                          + q.value(3).toString();
+        // 위치는 채널로만 표기(bed 필드에 "채널 N"). 기본값과 동일 형식.
+        patients[ch].bed  = QStringLiteral("채널 %1").arg(ch + 1);
     }
 }
 
@@ -3102,8 +3093,7 @@ void MainWindow::loadResidentIntoForm(int id)
     };
 
     editName->setText(q.value(0).toString());
-    editRoom->setText(q.value(1).toString());
-    editBed->setText(q.value(2).toString());
+    // value(1)=room, value(2)=bed 는 병실/침대 제거로 폼에 반영하지 않는다.
     // DB는 0~3으로 저장, 화면엔 1~4로 보여준다(사람이 읽기 쉬운 채널 번호).
     editCameraId->setText(q.value(3).isNull() ? QString()
                                               : QString::number(q.value(3).toInt() + 1));
@@ -3126,16 +3116,14 @@ void MainWindow::onNewResident()
 {
     selectedResidentId = -1;
     editName->clear();
-    editRoom->clear();
-    editBed->clear();
     editCameraId->clear();
     editWearableId->clear();
     editGuardianName->clear();
     editGuardianPhone->clear();
     editGuardianRelation->clear();
     editNotes->clear();
-    editRiskLevel->setCurrentIndex(1);
-    editStatus->setCurrentIndex(1);
+    editRiskLevel->setCurrentIndex(1);   // 위험도 기본 '중'
+    editStatus->setCurrentText(QStringLiteral("재원"));  // 신규는 항상 재원으로 시작
     editAdmittedAt->setDate(QDate::currentDate());
     editDischargeDue->setDate(QDate::currentDate().addMonths(1));
     refreshAdmissionTable(-1);   // 아직 저장 안 된 신규 → 이력 없음
@@ -3172,8 +3160,6 @@ QMap<QString, QString> MainWindow::formSnapshot() const
 {
     QMap<QString, QString> m;
     m[QStringLiteral("이름")]        = editName->text().trimmed();
-    m[QStringLiteral("병실")]        = editRoom->text().trimmed();
-    m[QStringLiteral("침대")]        = editBed->text().trimmed();
     m[QStringLiteral("카메라 채널")] = editCameraId->text().trimmed();
     m[QStringLiteral("웨어러블 ID")] = editWearableId->text().trimmed();
     m[QStringLiteral("위험도")]      = editRiskLevel->currentText();
@@ -3267,21 +3253,19 @@ void MainWindow::onSaveResident()
         // caregiver_id는 요양사 테이블 연동 전이라 제외(기본 NULL)
         q.prepare(QStringLiteral(
             "INSERT INTO residents "
-            "(name, room, bed, camera_id, wearable_id, risk_level, admitted_at, "
+            "(name, camera_id, wearable_id, risk_level, admitted_at, "
             " discharge_due, status, guardian_name, guardian_phone, "
             " guardian_relation, notes) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)"));
     } else {
         q.prepare(QStringLiteral(
-            "UPDATE residents SET name=?, room=?, bed=?, camera_id=?, "
+            "UPDATE residents SET name=?, camera_id=?, "
             " wearable_id=?, risk_level=?, admitted_at=?, discharge_due=?, "
             " status=?, guardian_name=?, guardian_phone=?, guardian_relation=?, "
             " notes=? WHERE resident_id=?"));
     }
 
     q.addBindValue(editName->text().trimmed());
-    q.addBindValue(editRoom->text().trimmed());
-    q.addBindValue(editBed->text().trimmed());
     q.addBindValue(channelOrNull(editCameraId->text()));
     q.addBindValue(textOrNull(editWearableId->text()));
     q.addBindValue(editRiskLevel->currentText());
@@ -3307,13 +3291,11 @@ void MainWindow::onSaveResident()
         QSqlQuery a;
         a.prepare(QStringLiteral(
             "INSERT INTO admissions "
-            "(resident_id, admitted_at, discharge_due, status, room, bed) "
-            "VALUES (?,?,?,'재원',?,?)"));
+            "(resident_id, admitted_at, discharge_due, status) "
+            "VALUES (?,?,?,'재원')"));
         a.addBindValue(selectedResidentId);
         a.addBindValue(editAdmittedAt->date());
         a.addBindValue(editDischargeDue->date());
-        a.addBindValue(editRoom->text().trimmed());
-        a.addBindValue(editBed->text().trimmed());
         if (!a.exec()) qDebug() << "입원 에피소드 생성 실패:" << a.lastError().text();
     }
 
@@ -3436,11 +3418,9 @@ void MainWindow::onReadmitResident()
 
     QSqlQuery a;
     a.prepare(QStringLiteral(
-        "INSERT INTO admissions (resident_id, admitted_at, status, room, bed) "
-        "VALUES (?, CURDATE(), '재원', ?, ?)"));
+        "INSERT INTO admissions (resident_id, admitted_at, status) "
+        "VALUES (?, CURDATE(), '재원')"));
     a.addBindValue(selectedResidentId);
-    a.addBindValue(editRoom->text().trimmed());
-    a.addBindValue(editBed->text().trimmed());
     if (!a.exec()) {
         QMessageBox::critical(this, QStringLiteral("재입원 실패"), a.lastError().text());
         return;

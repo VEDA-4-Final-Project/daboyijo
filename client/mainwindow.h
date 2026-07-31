@@ -93,7 +93,7 @@ QT_END_NAMESPACE
 // 채널(=병상)별 환자 / 웨어러블 정보 묶음
 struct PatientInfo {
     QString name;   // 환자 이름
-    QString bed;    // 병상 표기 (예: 201호-1)
+    QString bed;    // 위치 표기 — 병실/침대 제거 후 "채널 N"을 담는다(오버레이/바이탈 공용)
 };
 
 class MainWindow : public QMainWindow
@@ -237,10 +237,8 @@ private:
     QTableWidget* admissionTable = nullptr;
     QLabel* admissionInfo = nullptr;     // "입원 N건" 안내 문구
 
-    // 상세/편집 폼 — 기본정보
+    // 상세/편집 폼 — 기본정보 (병실/침대는 제거, 위치는 카메라 채널로 표기)
     QLineEdit* editName       = nullptr;
-    QLineEdit* editRoom       = nullptr;
-    QLineEdit* editBed        = nullptr;
     QLineEdit* editCameraId   = nullptr;
     QLineEdit* editWearableId = nullptr;
 
