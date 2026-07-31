@@ -31,10 +31,10 @@ private:
     snd_pcm_t *pcm_handle;
     std::string device_name;
 
-    snd_mixer_t *volume_elem;
+    snd_mixer_t *mixer_handle;
+    snd_mixer_elem_t *volume_elem;
     std::string card_name;
 
-    int initMixer(const std::string& mix_crtl_name = "Speaker");
 
     //백그라운드 재생 전용 스레드 객체 
     std::thread play_thread;
@@ -46,6 +46,10 @@ private:
 
     // 실제 파일 읽기와 alsa쓰기를 담당할 백그라운드 함수 
     void playbackWorker(const std::string& file_path);
+
+
+    // mixer 초기 설정 함수 
+    int initMixer(const std::string& mix_crtl_name = "Speaker");
 
 public:
     VedaAudioPlayer(const std::string&dev_name = "plughw:CARD=WM8960CustomSou,DEV=0", const std::string& card_name = "hw:CARD=WM8960CustomSou");
