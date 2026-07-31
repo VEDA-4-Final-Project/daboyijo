@@ -199,11 +199,10 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
 {
     ui->setupUi(this);
 
-    // 병상별 환자 정보 (실제 환자 DB 연동 지점)
-    patients[0] = { QStringLiteral("전승현"), QStringLiteral("201호-1") };
-    patients[1] = { QStringLiteral("박민용"), QStringLiteral("201호-2") };
-    patients[2] = { QStringLiteral("이교민"), QStringLiteral("201호-3") };
-    patients[3] = { QStringLiteral("김예훈"), QStringLiteral("201호-4") };
+    // 채널별 환자 정보는 DB(residents)에서 채운다 — 하드코딩하지 않는다.
+    // camera_id로 채널에 매핑되므로, 입소자를 등록해야 해당 채널에 이름이 뜬다.
+    // (main.cpp에서 DB 연결을 이미 열어둬 buildUi 전에 조회 가능)
+    loadPatientsFromDb();
 
     buildUi();
     applyPalette(darkMode ? kDark : kLight);  // 기본 다크 팔레트로 시작
@@ -215,6 +214,10 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
 
     // DB 입소자 목록 초기 로드 (main.cpp에서 연결을 이미 열어둠)
     refreshResidentTable();
+
+    // 이전 세션에서 연결해 둔 카메라 채널을 복원한다. 서버는 Qt 재시작과 무관하게
+    // 스트리밍을 유지하므로, URL이 없어도 활성 채널을 알면 "해제"가 정상 동작한다.
+    restoreCameraActive();
 
     // 2. 서버별 소켓 생성 및 시그널 연결 (2-Pi: 소켓 kNumServers개)
     //    수신 슬롯 onReadyRead는 sender()로 어느 소켓이 신호를 냈는지 구분한다.
@@ -239,6 +242,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // 케어 타임 대시보드: 10초마다 care_logs를 재조회해 채널별 케어시간 갱신.
+    connect(&careTimeTimer, &QTimer::timeout, this, &MainWindow::updateCareTime);
+    careTimeTimer.start(10000);
+    updateCareTime();
 
     // 🚀 [블랙박스 복구] 각 Pi의 HTTP 서버(/list)에서 과거 클립 목록을 받아 병합한다.
     //    2-Pi: 서버마다 자기 채널 클립만 갖고 있으므로 양쪽에서 받아 테이블에 누적한다.
@@ -605,8 +613,10 @@ QWidget* MainWindow::buildVitalCard(int channel)
     vitalStatusDots[channel]->setFixedSize(9, 9);
     auto* name = new QLabel(patients[channel].name);
     name->setObjectName("vitalName");
+    vitalNameLabels[channel] = name;
     auto* bed = new QLabel(patients[channel].bed);
     bed->setObjectName("vitalBed");
+    vitalBedLabels[channel] = bed;
     vitalStatusBadges[channel] = new QLabel(QStringLiteral("대기"));
     vitalStatusBadges[channel]->setObjectName("vitalBadge");
     vitalStatusBadges[channel]->setAlignment(Qt::AlignCenter);
@@ -932,9 +942,33 @@ QWidget* MainWindow::buildCareTimeDashboard()
 
     careTimeList = new QVBoxLayout();
     careTimeList->setSpacing(6);
+    for (int ch = 0; ch < 4; ++ch)
+        careTimeList->addWidget(buildCareTimeCard(ch));
     lay->addLayout(careTimeList);
     lay->addStretch();
     return card;
+}
+
+// 케어 타임 카드 1개(채널당) — 이름/통계 라벨만 멤버로 잡아두고, updateCareTime()이
+// 텍스트를 갱신한다. 실제 케어시간은 서버가 care_logs에 쌓는 값을 그대로 읽는다.
+QWidget* MainWindow::buildCareTimeCard(int channel)
+{
+    auto* row = new QFrame();
+    row->setObjectName("vitalHead");   // 바이탈 헤더와 동일한 카드 톤 재사용
+    auto* v = new QVBoxLayout(row);
+    v->setContentsMargins(14, 8, 14, 8);
+    v->setSpacing(2);
+
+    careNameLabels[channel] = new QLabel(
+        QStringLiteral("채널 %1 · —").arg(channel + 1));
+    careNameLabels[channel]->setObjectName("vitalName");
+
+    careStatLabels[channel] = new QLabel(QStringLiteral("오늘 0분 · 0회 · —"));
+    careStatLabels[channel]->setObjectName("segCaption");
+
+    v->addWidget(careNameLabels[channel]);
+    v->addWidget(careStatLabels[channel]);
+    return row;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1094,7 +1128,7 @@ QWidget* MainWindow::buildResidentForm()
     basicForm->addRow(QStringLiteral("이름"),        makeField("홍길동", editName));
     basicForm->addRow(QStringLiteral("병실"),        makeField("201", editRoom));
     basicForm->addRow(QStringLiteral("침대"),        makeField("A", editBed));
-    basicForm->addRow(QStringLiteral("카메라 채널"), makeField("0~3", editCameraId));
+    basicForm->addRow(QStringLiteral("카메라 채널"), makeField("1~4", editCameraId));
     basicForm->addRow(QStringLiteral("웨어러블 ID"), makeField("기기 번호", editWearableId));
     lay->addWidget(basicGroup);
 
@@ -1678,6 +1712,52 @@ void MainWindow::updateVitals()
             hrSpark[i]->setLineColor(QColor(color));
             hrSpark[i]->addValue(hr);
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  케어 타임 대시보드 — 서버가 care_logs에 쌓는 실데이터를 채널별로 집계해 표시.
+//  (요양사 감지 → CareTimer 세션 종료 → insertCareLog가 채널·케어시간 기록)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::updateCareTime()
+{
+    // 채널별 오늘(00:00~) 케어시간 합계·세션수·최근 종료시각.
+    int totalSec[4] = {};
+    int sessions[4] = {};
+    QString lastSeen[4];
+
+    QSqlQuery q;
+    if (q.exec(QStringLiteral(
+            "SELECT camera_id, COALESCE(SUM(duration_sec),0), COUNT(*), MAX(end_time) "
+            "FROM care_logs WHERE DATE(end_time)=CURDATE() GROUP BY camera_id"))) {
+        while (q.next()) {
+            const int ch = q.value(0).toInt();
+            if (ch < 0 || ch >= 4) continue;   // 4채널 밖 기록은 무시
+            totalSec[ch] = q.value(1).toInt();
+            sessions[ch] = q.value(2).toInt();
+            const QDateTime end = q.value(3).toDateTime();
+            if (end.isValid()) lastSeen[ch] = end.toString(QStringLiteral("HH:mm"));
+        }
+    } else {
+        qDebug() << "케어로그 조회 실패:" << q.lastError().text();
+    }
+
+    for (int ch = 0; ch < 4; ++ch) {
+        if (careNameLabels[ch])
+            careNameLabels[ch]->setText(QStringLiteral("채널 %1 · %2 %3")
+                                            .arg(ch + 1)
+                                            .arg(patients[ch].bed, patients[ch].name));
+        if (!careStatLabels[ch]) continue;
+
+        // 1분 미만 세션도 "0분"으로 묻히지 않게 60초 미만은 초로 표기.
+        const int total = totalSec[ch];
+        const QString dur = total >= 60 ? QStringLiteral("%1분").arg(total / 60)
+                                        : QStringLiteral("%1초").arg(total);
+        careStatLabels[ch]->setText(
+            QStringLiteral("오늘 %1 · %2회 · 최근 %3")
+                .arg(dur)
+                .arg(sessions[ch])
+                .arg(lastSeen[ch].isEmpty() ? QStringLiteral("—") : lastSeen[ch]));
     }
 }
 
@@ -2441,11 +2521,13 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
     for (int ch = 0; ch < 4; ++ch) {
         const QString url = buildRtspUrl(ip, user, password, port, prof, ch);
         lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
+        cameraActive_[ch] = true;   // 연결됨(재시작 후에도 해제 가능하도록 지속 저장)
         videoSuppressed_[ch] = false;  // 프레임 표시 재개
         if (channelViews[ch])
             channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
         if (sendCamera(ch, url)) ++sent;
     }
+    persistCameraActive();
 
     if (sent == 0) {
         QMessageBox::warning(
@@ -2516,7 +2598,7 @@ void MainWindow::onCameraClearClicked()
 {
     bool any = false;
     for (int ch = 0; ch < 4; ++ch)
-        if (!lastCameraUrl_[ch].isEmpty()) any = true;
+        if (cameraActive_[ch]) any = true;   // Qt 재시작 후엔 URL이 비어도 이 플래그로 판단
     if (!any) {
         QMessageBox::information(this, QStringLiteral("카메라 해제"),
                                  QStringLiteral("연결된 카메라가 없습니다."));
@@ -2534,10 +2616,37 @@ void MainWindow::onCameraClearClicked()
     for (int ch = 0; ch < 4; ++ch) {
         sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
         lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
+        cameraActive_[ch] = false;      // 미연결로 표시(지속 저장 반영)
         videoSuppressed_[ch] = true;    // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
         if (channelViews[ch]) {
             channelViews[ch]->setLive(false);
             channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
+        }
+    }
+    persistCameraActive();
+}
+
+// 활성 채널 집합을 QSettings에 비트마스크로 저장/복원한다. URL(비밀번호)은 담지 않는다.
+void MainWindow::persistCameraActive()
+{
+    int mask = 0;
+    for (int ch = 0; ch < 4; ++ch)
+        if (cameraActive_[ch]) mask |= (1 << ch);
+    QSettings s;
+    s.setValue(QStringLiteral("camera/active_mask"), mask);
+}
+
+// 시작 시 호출 — 서버가 아직 스트리밍 중인 채널을 "연결됨"으로 복원해 해제를 가능케 한다.
+// 프레임이 오면 setLive(true)로 실제 영상이 뜨고, 그전까지는 "신호 대기 중…"을 보여준다.
+void MainWindow::restoreCameraActive()
+{
+    QSettings s;
+    const int mask = s.value(QStringLiteral("camera/active_mask"), 0).toInt();
+    for (int ch = 0; ch < 4; ++ch) {
+        cameraActive_[ch] = (mask & (1 << ch)) != 0;
+        if (cameraActive_[ch]) {
+            videoSuppressed_[ch] = false;
+            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
         }
     }
 }
@@ -2653,6 +2762,48 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
     playBlackboxClip(url);
 }
 
+// residents(재원)를 camera_id로 채널(0~3)에 매핑해 patients[]를 채운다.
+// 채널에 등록된 입소자가 없으면 "미배정"으로 둔다(하드코딩 이름 없음).
+// 한 채널에 2명이 배정된 경우 병상 순으로 먼저 나오는 1명을 대표로 표시한다.
+void MainWindow::loadPatientsFromDb()
+{
+    for (int ch = 0; ch < 4; ++ch)
+        patients[ch] = { QStringLiteral("미배정"),
+                         QStringLiteral("채널 %1").arg(ch + 1) };
+
+    QSqlQuery q;
+    if (!q.exec(QStringLiteral(
+            "SELECT camera_id, name, room, bed FROM residents "
+            "WHERE status='재원' AND camera_id BETWEEN 0 AND 3 "
+            "ORDER BY camera_id, bed"))) {
+        qDebug() << "채널 환자 매핑 조회 실패:" << q.lastError().text();
+        return;
+    }
+
+    bool assigned[4] = {};
+    while (q.next()) {
+        const int ch = q.value(0).toInt();
+        if (ch < 0 || ch >= 4 || assigned[ch]) continue;   // 채널당 대표 1명만
+        assigned[ch] = true;
+        patients[ch].name = q.value(1).toString();
+        patients[ch].bed  = q.value(2).toString() + QStringLiteral("-")
+                          + q.value(3).toString();
+    }
+}
+
+// patients[]를 실제 화면 요소(영상 오버레이 + 바이탈 카드 이름/병상)에 다시 반영한다.
+// 케어 타임 대시보드는 updateCareTime()에서 patients[]를 직접 읽으므로 여기선 제외.
+void MainWindow::refreshPatientLabels()
+{
+    for (int ch = 0; ch < 4; ++ch) {
+        if (channelViews[ch])
+            channelViews[ch]->setOverlayInfo(
+                QStringLiteral("%1 · %2").arg(patients[ch].bed, patients[ch].name));
+        if (vitalNameLabels[ch]) vitalNameLabels[ch]->setText(patients[ch].name);
+        if (vitalBedLabels[ch])  vitalBedLabels[ch]->setText(patients[ch].bed);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════
 //  TAB3 슬롯 — 자리표시자 (DB 쿼리 연동 전)
 // ═══════════════════════════════════════════════════════════
@@ -2692,9 +2843,11 @@ void MainWindow::refreshResidentTable(const QString& nameFilter)
         residentTable->insertRow(row);
         for (int col = 0; col < 8; ++col) {
             const QVariant v = q.value(col);
-            auto* item = new QTableWidgetItem(
-                v.isNull() ? QStringLiteral("-") : v.toString());
-            residentTable->setItem(row, col, item);
+            // col 4 = camera_id: DB(0~3)를 목록에도 1~4로 표시(폼과 통일).
+            QString text = v.isNull() ? QStringLiteral("-") : v.toString();
+            if (col == 4 && !v.isNull())
+                text = QString::number(v.toInt() + 1);
+            residentTable->setItem(row, col, new QTableWidgetItem(text));
         }
     }
 
@@ -2738,7 +2891,9 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     editName->setText(q.value(0).toString());
     editRoom->setText(q.value(1).toString());
     editBed->setText(q.value(2).toString());
-    editCameraId->setText(q.value(3).isNull() ? QString() : q.value(3).toString());
+    // DB는 0~3으로 저장, 화면엔 1~4로 보여준다(사람이 읽기 쉬운 채널 번호).
+    editCameraId->setText(q.value(3).isNull() ? QString()
+                                              : QString::number(q.value(3).toInt() + 1));
     editWearableId->setText(q.value(4).isNull() ? QString() : q.value(4).toString());
     setCombo(editRiskLevel, q.value(5).toString());
     if (q.value(6).toDate().isValid())  editAdmittedAt->setDate(q.value(6).toDate());
@@ -2790,7 +2945,11 @@ QMap<QString, QString> MainWindow::snapshotResident(int id)
     int i = 0;
     for (const auto& f : kLoggedFields) {
         const QVariant v = q.value(i++);
-        m.insert(QString::fromUtf8(f.label), v.isNull() ? QString() : v.toString());
+        QString text = v.isNull() ? QString() : v.toString();
+        // camera_id는 DB(0~3) → 표시(1~4)로 맞춰 폼 스냅샷과 같은 기준으로 비교/기록.
+        if (!v.isNull() && QLatin1String(f.column) == QLatin1String("camera_id"))
+            text = QString::number(v.toInt() + 1);
+        m.insert(QString::fromUtf8(f.label), text);
     }
     return m;
 }
@@ -2861,10 +3020,23 @@ void MainWindow::onSaveResident()
         return;
     }
 
-    // 빈 칸은 NULL로 저장 (camera_id는 정수, wearable_id는 문자열)
-    auto intOrNull = [](const QString& s) -> QVariant {
+    // 카메라 채널은 화면에서 1~4로 입력받되 DB엔 0~3으로 저장한다.
+    const QString camText = editCameraId->text().trimmed();
+    if (!camText.isEmpty()) {
+        bool ok = false;
+        const int camNo = camText.toInt(&ok);
+        if (!ok || camNo < 1 || camNo > 4) {
+            QMessageBox::warning(this, QStringLiteral("입력 오류"),
+                                 QStringLiteral("카메라 채널은 1~4 사이로 입력해주세요."));
+            return;
+        }
+    }
+
+    // 빈 칸은 NULL로 저장 (wearable_id는 문자열)
+    // 화면 채널(1~4) → DB 채널(0~3). 빈 칸은 NULL.
+    auto channelOrNull = [](const QString& s) -> QVariant {
         const QString t = s.trimmed();
-        return t.isEmpty() ? QVariant() : QVariant(t.toInt());
+        return t.isEmpty() ? QVariant() : QVariant(t.toInt() - 1);
     };
     auto textOrNull = [](const QString& s) -> QVariant {
         const QString t = s.trimmed();
@@ -2897,7 +3069,7 @@ void MainWindow::onSaveResident()
     q.addBindValue(editName->text().trimmed());
     q.addBindValue(editRoom->text().trimmed());
     q.addBindValue(editBed->text().trimmed());
-    q.addBindValue(intOrNull(editCameraId->text()));
+    q.addBindValue(channelOrNull(editCameraId->text()));
     q.addBindValue(textOrNull(editWearableId->text()));
     q.addBindValue(editRiskLevel->currentText());
     q.addBindValue(editAdmittedAt->date());
@@ -2939,12 +3111,14 @@ void MainWindow::onSaveResident()
 
 
 
-    int cameraId = editCameraId->text().trimmed().toInt();
-    
+    // 화면 채널(1~4) → 내부 채널(0~3). 빈 칸이면 -1이 되어 전송 조건에서 걸러진다.
+    // camText는 함수 앞부분(입력 검증)에서 이미 editCameraId 값으로 잡아둠.
+    int cameraId = camText.isEmpty() ? -1 : camText.toInt() - 1;
+
     // 4채널 중 올바른 채널이고, 서버 소켓이 정상 연결된 상태일 때만 전송
     QTcpSocket* riskSock =
         (cameraId >= 0 && cameraId < 4) ? socketForChannel(cameraId) : nullptr;
-    if (editCameraId->text().trimmed().length() > 0 && cameraId >= 0 && cameraId < 4 &&
+    if (cameraId >= 0 && cameraId < 4 &&
         riskSock && riskSock->state() == QAbstractSocket::ConnectedState)
     {
         // 1. 위험도 텍스트를 서버가 이해하는 숫자 코드로 매칭 (하:1, 중:2, 상:3)
@@ -2971,14 +3145,14 @@ void MainWindow::onSaveResident()
         riskSock->write(pkt);
         riskSock->flush();
         qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
-        
-        // 5. 로컬 GUI용 환자 정보 메모리 어레이(patients)도 즉시 동기화
-        patients[cameraId].name = editName->text().trimmed();
-        patients[cameraId].bed = editRoom->text().trimmed() + QStringLiteral("-") + editBed->text().trimmed();
     }
 
     refreshResidentTable();
     refreshAdmissionTable(selectedResidentId);
+    // 채널↔환자 매핑을 DB 기준으로 다시 읽어 영상/바이탈 이름을 갱신한다.
+    // (채널 재배정·이름 변경·camera_id 해제 등 모든 경우를 한 번에 반영)
+    loadPatientsFromDb();
+    refreshPatientLabels();
     QMessageBox::information(this, QStringLiteral("저장"),
                              isNew ? QStringLiteral("신규 입소자가 등록되었습니다.")
                                    : QStringLiteral("수정 내용이 저장되었습니다."));
@@ -3025,6 +3199,8 @@ void MainWindow::onDischargeResident()
     if (i >= 0) editStatus->setCurrentIndex(i);
 
     refreshResidentTable();
+    loadPatientsFromDb();    // 퇴원 → 그 채널을 "미배정"으로 되돌린다
+    refreshPatientLabels();
     QMessageBox::information(this, QStringLiteral("퇴원 처리"),
                              QStringLiteral("퇴원 처리되었습니다."));
     qDebug() << "퇴원 처리 완료 — ID:" << selectedResidentId;
@@ -3071,6 +3247,8 @@ void MainWindow::onReadmitResident()
     editAdmittedAt->setDate(QDate::currentDate());
     refreshResidentTable();
     refreshAdmissionTable(selectedResidentId);
+    loadPatientsFromDb();    // 재입원 → 그 채널에 이름 복원
+    refreshPatientLabels();
 }
 
 
