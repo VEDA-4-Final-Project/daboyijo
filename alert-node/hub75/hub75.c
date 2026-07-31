@@ -231,6 +231,26 @@ static void hub75_pwm_wait(struct hub75 *h)
 	writel(PWM_CTL_USEF1 | PWM_CTL_POLA1 | PWM_CTL_CLRF1, h->pwm_regs + PWM_CTL);
 }
 
+/*
+ * hub75_pwm_init 의 역순 - OE 를 일반 출력-HIGH(소등)로 되돌리고 PWM/클럭 정지
+ * quiesce(rmmod/shutdown)와 probe 에러 경로가 공용으로 쓴다
+ */
+static void hub75_pwm_off(struct hub75 *h)
+{
+	u32 fsel;
+
+	/* OE 를 다시 일반 출력-HIGH(소등)로 - 래치를 먼저 소등값으로 채우고 전환 */
+	gpiod_set_value(h->oe, 0);		// 출력 래치 = 소등(물리 HIGH)
+	fsel = readl(h->gpio_regs + GPFSEL1);
+	fsel &= ~(7 << OE_FSEL_SHIFT);
+	fsel |= (1 << OE_FSEL_SHIFT);		// 출력(=1)로 복원
+	writel(fsel, h->gpio_regs + GPFSEL1);
+
+	/* PWM 정지 + 클럭 끄기 */
+	writel(0, h->pwm_regs + PWM_CTL);
+	writel(CM_PASSWD | CM_KILL, h->cm_regs + CM_PWMCTL);
+}
+
 /* 테스트 패턴: 왼쪽 어두움 -> 오른쪽 밝음 회색 그라데이션 */
 static void hub75_fill_test(struct hub75 *h)
 {
@@ -600,8 +620,10 @@ static int hub75_probe(struct platform_device *pdev)
 	/* 프레임버퍼 설정 */
 	h->fb_size = h->rows * h->cols * 3;
 	h->fb = vmalloc_user(h->fb_size);	// 페이지 정렬 + 0으로 초기화 + mmap 가능
-	if (!h->fb)
-		return -ENOMEM;
+	if (!h->fb) {
+		ret = -ENOMEM;
+		goto err_pwm;	// 여기부터는 OE 가 ALT0(PWM) 이라 하드웨어 복원이 필요
+	}
 	hub75_fill_test(h);
 	hub75_update_lut(h);	// 첫 프레임부터 유효한 조회표로
 
@@ -652,26 +674,16 @@ err_misc:
 	misc_deregister(&h->misc);
 err_fb:
 	vfree(h->fb);
+err_pwm:
+	hub75_pwm_off(h);	// OE 를 ALT0 에 남기고 나가면 핀·클럭이 주인 없이 뜬다
 	return ret;
 }
 
 /* 소등 절차 - remove(rmmod)와 shutdown(재부팅/전원끔)이 공용으로 사용 */
 static void hub75_quiesce(struct hub75 *h)
 {
-	u32 fsel;
-
 	kthread_stop(h->thread);	// 스레드 정지 (fb 읽기 중단)
-
-	/* OE 를 다시 일반 출력-HIGH(소등)로 - 래치를 먼저 소등값으로 채우고 전환 */
-	gpiod_set_value(h->oe, 0);		// 출력 래치 = 소등(물리 HIGH)
-	fsel = readl(h->gpio_regs + GPFSEL1);
-	fsel &= ~(7 << OE_FSEL_SHIFT);
-	fsel |= (1 << OE_FSEL_SHIFT);		// 출력(=1)로 복원
-	writel(fsel, h->gpio_regs + GPFSEL1);
-
-	/* PWM 정지 + 클럭 끄기 */
-	writel(0, h->pwm_regs + PWM_CTL);
-	writel(CM_PASSWD | CM_KILL, h->cm_regs + CM_PWMCTL);
+	hub75_pwm_off(h);			// OE 소등 복원 + PWM/클럭 정지
 }
 
 /* remove 함수 - rmmod 때 (소등 + 정리) */
