@@ -744,6 +744,8 @@ QWidget* MainWindow::buildLogTable()
         {QStringLiteral("날짜/시간"), QStringLiteral("병실"),
          QStringLiteral("이벤트"), QStringLiteral("상태")});
     logTable->horizontalHeader()->setStretchLastSection(true);
+    // 날짜/시간(0열)은 "yyyy-MM-dd HH:mm:ss"가 잘리지 않도록 내용 폭에 맞춘다.
+    logTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     connect(logTable, &QTableWidget::cellDoubleClicked,
@@ -1018,9 +1020,6 @@ QWidget* MainWindow::buildResidentSection()
 
     leftCol->addWidget(residentTable, 3);
     leftCol->addWidget(buildAdmissionHistory(), 2);   // ← 목록 아래에 이력
-
-
-    leftCol->addWidget(residentTable, 1);
 
     auto* leftWrap = new QWidget();
     leftWrap->setLayout(leftCol);
@@ -2634,9 +2633,11 @@ void MainWindow::refreshResidentTable()
     residentTable->setRowCount(0);
 
     // main.cpp에서 열어둔 기본 연결(QMARIADB) 사용
+    // 퇴원자는 목록에서 제외 (status가 NULL이면 재원으로 간주해 노출)
     QSqlQuery q(QStringLiteral(
         "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
-        "risk_level, status FROM residents ORDER BY resident_id"));
+        "risk_level, status FROM residents "
+        "WHERE COALESCE(status, '') <> '퇴원' ORDER BY resident_id"));
     if (q.lastError().isValid()) {
         qDebug() << "입소자 목록 조회 실패:" << q.lastError().text();
         return;
