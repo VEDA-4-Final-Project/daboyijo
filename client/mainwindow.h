@@ -133,7 +133,6 @@ private slots:
     void onLogRowActivated(int row, int column);
 
     // TAB3: DB 관리
-    void onResidentSelected(int row, int column);
     void onResidentSearch();   // 이름으로 입소자 검색(재원·퇴원 전체)
     void onNewResident();
     void onSaveResident();
@@ -219,9 +218,19 @@ private:
     QWidget* buildCareTimeCard(int channel);
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
-    // 입소자 목록 (residents = 현재 상태, 사람당 1행)
-    QTableWidget* residentTable = nullptr;
-    QLineEdit*    residentSearchEdit = nullptr;  // 이름 검색창(재원·퇴원 전체 조회)
+    // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
+    QWidget*   residentCardHost = nullptr;   // FlowLayout이 붙는 카드 컨테이너
+    QLabel*    residentCountLabel = nullptr; // "재원 N명 / 검색 결과 N명"
+    QLineEdit* residentSearchEdit = nullptr; // 이름 검색창(재원·퇴원 전체 조회)
+
+    // 입소자 편집 다이얼로그(1회 생성 후 재사용) + 헤더 요소
+    QDialog* residentDialog   = nullptr;
+    QLabel*  dlgAvatar        = nullptr;  // 이름 이니셜 원형 배지
+    QLabel*  dlgNameBig       = nullptr;  // 큰 이름
+    QLabel*  dlgSubMeta       = nullptr;  // "201호-2 · 채널 2" 등
+    QLabel*  dlgStatusBadge   = nullptr;  // 재원/퇴원
+    QLabel*  dlgRiskBadge     = nullptr;  // 위험도 상/중/하
+    QPushButton* dlgDischargeBtn = nullptr;  // 상태에 따라 퇴원↔재입원 토글
 
     // 입원 이력 (admissions = 입원 에피소드, 입원할 때마다 1행)
     //   행 = 한 번의 입원, 더블클릭 → 그 기간의 변경 내역 팝업
@@ -278,13 +287,16 @@ private:
 
     // TAB3 빌드 헬퍼
     QWidget* buildDbTab();
-    QWidget* buildResidentSection();
-    QWidget* buildResidentForm();
+    QWidget* buildResidentFormBody();   // 편집 다이얼로그에 들어갈 폼(그룹들)만
     QWidget* buildAdmissionHistory();   // 입원 이력 표 + 안내 문구
+    void ensureResidentDialog();        // 편집 다이얼로그 1회 생성
+    void openResidentEditor(int residentId);  // id<0이면 신규, 아니면 로드 후 다이얼로그 표시
+    void loadResidentIntoForm(int residentId);// residents → 폼 필드 채우기
+    void refreshResidentDialogHeader();       // 다이얼로그 상단 아바타/배지 갱신
 
     // TAB3 데이터 갱신
     // nameFilter 비어 있으면 재원자만, 있으면 이름 LIKE 검색(재원·퇴원 전체)
-    void refreshResidentTable(const QString& nameFilter = QString());
+    void refreshResidentCards(const QString& nameFilter = QString());
     void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
     // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
     void loadPatientsFromDb();

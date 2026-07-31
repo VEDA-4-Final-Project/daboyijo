@@ -55,10 +55,58 @@
 #include <QAbstractItemView>
 #include <QNetworkInterface>
 #include <QProcess>
+#include <QLayout>
 #include <algorithm>
 
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
 namespace {
+
+// 폭에 맞춰 자식 위젯을 좌→우로 채우고 넘치면 다음 줄로 접는 레이아웃.
+// 입소자 카드 그리드가 창 크기에 따라 열 수를 자동 조절하도록 쓴다(Qt 공식 예제 기반).
+class FlowLayout : public QLayout {
+public:
+    explicit FlowLayout(QWidget* parent, int margin = 0, int hs = 14, int vs = 14)
+        : QLayout(parent), hSpace_(hs), vSpace_(vs) {
+        setContentsMargins(margin, margin, margin, margin);
+    }
+    ~FlowLayout() override { QLayoutItem* it; while ((it = takeAt(0))) delete it; }
+
+    void addItem(QLayoutItem* item) override { items_.append(item); }
+    int count() const override { return items_.size(); }
+    QLayoutItem* itemAt(int i) const override { return items_.value(i); }
+    QLayoutItem* takeAt(int i) override {
+        return (i >= 0 && i < items_.size()) ? items_.takeAt(i) : nullptr;
+    }
+    Qt::Orientations expandingDirections() const override { return {}; }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int w) const override { return doLayout(QRect(0, 0, w, 0), true); }
+    void setGeometry(const QRect& r) override { QLayout::setGeometry(r); doLayout(r, false); }
+    QSize sizeHint() const override { return minimumSize(); }
+    QSize minimumSize() const override {
+        QSize s;
+        for (QLayoutItem* it : items_) s = s.expandedTo(it->minimumSize());
+        const QMargins m = contentsMargins();
+        return s + QSize(m.left() + m.right(), m.top() + m.bottom());
+    }
+private:
+    int doLayout(const QRect& rect, bool test) const {
+        const QMargins m = contentsMargins();
+        const QRect eff = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom());
+        int x = eff.x(), y = eff.y(), lineH = 0;
+        for (QLayoutItem* it : items_) {
+            const QSize sz = it->sizeHint();
+            int nextX = x + sz.width() + hSpace_;
+            if (nextX - hSpace_ > eff.right() && lineH > 0) {
+                x = eff.x(); y += lineH + vSpace_; nextX = x + sz.width() + hSpace_; lineH = 0;
+            }
+            if (!test) it->setGeometry(QRect(QPoint(x, y), sz));
+            x = nextX; lineH = qMax(lineH, sz.height());
+        }
+        return y + lineH - rect.y() + m.bottom();
+    }
+    QList<QLayoutItem*> items_;
+    int hSpace_, vSpace_;
+};
 
 // 변경 로그에 남길 필드 (라벨, residents 컬럼) — 이 배열만 고치면 로그 대상이 바뀐다.
 struct LoggedField { const char* label; const char* column; };
@@ -212,8 +260,8 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
                                             : QStringLiteral("🌙"));
     enableDarkTitleBar(this);  // Windows 네이티브 타이틀바를 다크로
 
-    // DB 입소자 목록 초기 로드 (main.cpp에서 연결을 이미 열어둠)
-    refreshResidentTable();
+    // DB 입소자 목록(카드) 초기 로드 (main.cpp에서 연결을 이미 열어둠)
+    refreshResidentCards();
 
     // 이전 세션에서 연결해 둔 카메라 채널을 복원한다. 서버는 Qt 재시작과 무관하게
     // 스트리밍을 유지하므로, URL이 없어도 활성 채널을 알면 "해제"가 정상 동작한다.
@@ -980,11 +1028,13 @@ QWidget* MainWindow::buildDbTab()
     panel->setObjectName("panel");
 
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(16, 14, 16, 16);
-    outer->setSpacing(16);
+    outer->setContentsMargins(18, 16, 18, 16);
+    outer->setSpacing(14);
 
-    // DB 연결 상태 표시 (멤버 변수에 할당 — 나중에 동적 갱신 가능)
-    auto* statusBar = new QHBoxLayout();
+    // ── 상단 툴바: DB 상태 · 검색 · 신규등록 · 새로고침 ──
+    auto* toolbar = new QHBoxLayout();
+    toolbar->setSpacing(10);
+
     dbStatusDot = new QLabel();
     dbStatusDot->setObjectName("statusDot");
     dbStatusDot->setFixedSize(10, 10);
@@ -992,115 +1042,184 @@ QWidget* MainWindow::buildDbTab()
     dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
     dbStatusText->setObjectName("statusText");
 
-    auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
-    refreshBtn->setObjectName("roiButton");
-    refreshBtn->setCursor(Qt::PointingHandCursor);
-    connect(refreshBtn, &QPushButton::clicked, this, [this]() {
-        refreshResidentTable();
-    });
-
-    statusBar->addWidget(dbStatusDot);
-    statusBar->addWidget(dbStatusText);
-    statusBar->addStretch();
-    statusBar->addWidget(refreshBtn);
-    outer->addLayout(statusBar);
-
-    outer->addWidget(buildResidentSection(), 1);
-    return panel;
-}
-
-QWidget* MainWindow::buildResidentSection()
-{
-    auto* card = new QFrame();
-    card->setObjectName("vitalCard");
-
-    auto* lay = new QHBoxLayout(card);
-    lay->setContentsMargins(12, 12, 12, 12);
-    lay->setSpacing(16);
-
-    // ── 좌측: 입소자 목록 ──
-    auto* leftCol = new QVBoxLayout();
-    auto* listTitle = new QLabel(QStringLiteral("입소자 목록"));
-    listTitle->setObjectName("panelTitle");
-    leftCol->addWidget(listTitle);
-
-    // ── 이름 검색 행 (검색 시 재원+퇴원 전체 조회, 평상시엔 재원자만) ──
-    auto* searchRow = new QHBoxLayout();
-    searchRow->setSpacing(6);
-
     residentSearchEdit = new QLineEdit();
-    residentSearchEdit->setObjectName("formEdit");
-    residentSearchEdit->setPlaceholderText(QStringLiteral("이름 검색 (재원·퇴원 전체)"));
-    connect(residentSearchEdit, &QLineEdit::returnPressed,   // 엔터로도 검색
-            this, &MainWindow::onResidentSearch);
+    residentSearchEdit->setObjectName("searchEdit");
+    residentSearchEdit->setPlaceholderText(QStringLiteral("🔍  이름 검색 (재원·퇴원 전체)"));
+    residentSearchEdit->setClearButtonEnabled(true);
+    residentSearchEdit->setMinimumWidth(240);
+    residentSearchEdit->setFixedHeight(34);
+    // 타이핑하는 즉시 필터(빈 값이면 재원자만). 엔터도 같은 동작.
+    connect(residentSearchEdit, &QLineEdit::textChanged, this,
+            [this](const QString& t) { refreshResidentCards(t); });
 
-    auto* searchBtn = new QPushButton(QStringLiteral("검색"));
-    searchBtn->setObjectName("roiButton");
-    searchBtn->setCursor(Qt::PointingHandCursor);
-    connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onResidentSearch);
+    auto* newBtn = new QPushButton(QStringLiteral("＋ 신규 등록"));
+    newBtn->setObjectName("primaryButton");
+    newBtn->setCursor(Qt::PointingHandCursor);
+    newBtn->setFixedHeight(34);
+    connect(newBtn, &QPushButton::clicked, this, [this] { openResidentEditor(-1); });
 
-    auto* showAllBtn = new QPushButton(QStringLiteral("전체"));
-    showAllBtn->setObjectName("roiButton");
-    showAllBtn->setCursor(Qt::PointingHandCursor);
-    // "전체"는 검색창을 비우고 재원자 목록으로 복귀
-    connect(showAllBtn, &QPushButton::clicked, this, [this] {
-        residentSearchEdit->clear();
-        refreshResidentTable();   // 인자 없음 → 재원자만
-    });
+    auto* refreshBtn = new QPushButton(QStringLiteral("↻"));
+    refreshBtn->setObjectName("iconButton");
+    refreshBtn->setCursor(Qt::PointingHandCursor);
+    refreshBtn->setFixedSize(34, 34);
+    refreshBtn->setToolTip(QStringLiteral("새로고침"));
+    connect(refreshBtn, &QPushButton::clicked, this,
+            [this] { refreshResidentCards(residentSearchEdit->text()); });
 
-    searchRow->addWidget(residentSearchEdit, 1);
-    searchRow->addWidget(searchBtn);
-    searchRow->addWidget(showAllBtn);
-    leftCol->addLayout(searchRow);
+    toolbar->addWidget(dbStatusDot);
+    toolbar->addWidget(dbStatusText);
+    toolbar->addSpacing(8);
+    toolbar->addStretch();
+    toolbar->addWidget(residentSearchEdit);
+    toolbar->addWidget(newBtn);
+    toolbar->addWidget(refreshBtn);
+    outer->addLayout(toolbar);
 
-    residentTable = new QTableWidget(0, 8);
+    // ── 결과 개수 캡션 ──
+    residentCountLabel = new QLabel(QStringLiteral("입소자 목록"));
+    residentCountLabel->setObjectName("segCaption");
+    outer->addWidget(residentCountLabel);
 
-    residentTable->setObjectName("logTable");
-
-    residentTable->setHorizontalHeaderLabels({
-
-        QStringLiteral("ID"), QStringLiteral("이름"),
-
-            QStringLiteral("병실"), QStringLiteral("침대"),
-
-            QStringLiteral("채널"), QStringLiteral("웨어러블"),
-
-            QStringLiteral("위험도"), QStringLiteral("상태")
-
-    });
-
-    residentTable->horizontalHeader()->setStretchLastSection(true);
-
-    residentTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-
-    residentTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-
-    residentTable->setMinimumWidth(420);
-
-    connect(residentTable, &QTableWidget::cellClicked,
-
-            this, &MainWindow::onResidentSelected);
-
-    leftCol->addWidget(residentTable, 3);
-    leftCol->addWidget(buildAdmissionHistory(), 2);   // ← 목록 아래에 이력
-
-    auto* leftWrap = new QWidget();
-    leftWrap->setLayout(leftCol);
-    lay->addWidget(leftWrap, 5);
-
-    // ── 우측: 상세/편집 폼 ──
-    lay->addWidget(buildResidentForm(), 5);
-
-    return card;
-}
-
-QWidget* MainWindow::buildResidentForm()
-{
+    // ── 카드 그리드(스크롤 + FlowLayout으로 폭 따라 자동 줄바꿈) ──
     auto* scroll = new QScrollArea();
-    scroll->setObjectName("vitalScroll");  // 투명 배경 재사용 (기본 흰 배경 방지)
+    scroll->setObjectName("vitalScroll");
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
 
+    residentCardHost = new QWidget();
+    residentCardHost->setObjectName("cardHost");
+    new FlowLayout(residentCardHost, 2, 14, 14);   // host가 소유(부모 지정)
+    scroll->setWidget(residentCardHost);
+    outer->addWidget(scroll, 1);
+
+    return panel;
+}
+
+// 위험도/상태 텍스트를 색상 칩으로 만드는 헬퍼(파일 로컬).
+namespace {
+QLabel* makeChip(const QString& text, const char* color) {
+    auto* chip = new QLabel(text);
+    chip->setAttribute(Qt::WA_TransparentForMouseEvents);
+    chip->setStyleSheet(QString(
+        "color:%1; border:1px solid %1; border-radius:9px;"
+        " padding:1px 9px; font-size:11px; font-weight:800; background:transparent;")
+        .arg(color));
+    return chip;
+}
+}  // namespace
+
+// 카드 그리드를 DB에서 다시 채운다. nameFilter가 있으면 이름 LIKE(재원·퇴원 전체),
+// 없으면 재원자만. 각 카드 클릭 → 편집 다이얼로그.
+void MainWindow::refreshResidentCards(const QString& nameFilter)
+{
+    if (!residentCardHost || !residentCardHost->layout()) return;
+    QLayout* fl = residentCardHost->layout();
+
+    // 기존 카드 제거
+    QLayoutItem* old;
+    while ((old = fl->takeAt(0))) {
+        if (old->widget()) old->widget()->deleteLater();
+        delete old;
+    }
+
+    const QString trimmed = nameFilter.trimmed();
+    const bool searching = !trimmed.isEmpty();
+
+    QSqlQuery q;
+    if (searching) {
+        q.prepare(QStringLiteral(
+            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+            "risk_level, status FROM residents "
+            "WHERE name LIKE ? ORDER BY status DESC, resident_id"));
+        q.addBindValue(QStringLiteral("%%1%").arg(trimmed));
+    } else {
+        q.prepare(QStringLiteral(
+            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+            "risk_level, status FROM residents "
+            "WHERE status = ? ORDER BY camera_id, resident_id"));
+        q.addBindValue(QStringLiteral("재원"));
+    }
+
+    if (!q.exec()) {
+        qDebug() << "입소자 카드 조회 실패:" << q.lastError().text();
+        return;
+    }
+
+    int n = 0;
+    while (q.next()) {
+        const int     id      = q.value(0).toInt();
+        const QString name    = q.value(1).toString();
+        const QString room    = q.value(2).toString();
+        const QString bed     = q.value(3).toString();
+        const QVariant camVar = q.value(4);
+        const QString risk    = q.value(6).toString();
+        const QString status  = q.value(7).toString();
+        const bool    active  = (status == QStringLiteral("재원"));
+
+        auto* card = new QPushButton();
+        card->setObjectName("resCard");
+        card->setProperty("inactive", !active);   // 퇴원 카드는 흐리게(QSS)
+        card->setCursor(Qt::PointingHandCursor);
+        card->setFixedSize(212, 120);
+        connect(card, &QPushButton::clicked, this, [this, id] { openResidentEditor(id); });
+
+        auto* cv = new QVBoxLayout(card);
+        cv->setContentsMargins(14, 12, 14, 12);
+        cv->setSpacing(8);
+
+        // 상단: 아바타 + 이름/병상
+        auto* top = new QHBoxLayout();
+        top->setSpacing(10);
+        auto* avatar = new QLabel(name.left(1));
+        avatar->setAttribute(Qt::WA_TransparentForMouseEvents);
+        avatar->setAlignment(Qt::AlignCenter);
+        avatar->setFixedSize(38, 38);
+        avatar->setStyleSheet(QString(
+            "background:%1; color:#fff; border-radius:19px;"
+            " font-size:16px; font-weight:800;").arg(active ? kAccent : kTextSub));
+
+        auto* nameCol = new QVBoxLayout();
+        nameCol->setSpacing(1);
+        auto* nameLbl = new QLabel(name.isEmpty() ? QStringLiteral("(이름 없음)") : name);
+        nameLbl->setObjectName("resName");
+        nameLbl->setAttribute(Qt::WA_TransparentForMouseEvents);
+        const QString chStr = camVar.isNull()
+            ? QStringLiteral("채널 미지정")
+            : QStringLiteral("채널 %1").arg(camVar.toInt() + 1);
+        auto* metaLbl = new QLabel(QStringLiteral("%1-%2 · %3").arg(room, bed, chStr));
+        metaLbl->setObjectName("resMeta");
+        metaLbl->setAttribute(Qt::WA_TransparentForMouseEvents);
+        nameCol->addWidget(nameLbl);
+        nameCol->addWidget(metaLbl);
+
+        top->addWidget(avatar);
+        top->addLayout(nameCol, 1);
+        cv->addLayout(top);
+
+        // 하단: 위험도 칩 + 상태 칩
+        auto* chips = new QHBoxLayout();
+        chips->setSpacing(6);
+        const char* riskColor = risk == QStringLiteral("상") ? kCritical
+                              : risk == QStringLiteral("중") ? kWarn : kNormal;
+        chips->addWidget(makeChip(QStringLiteral("위험 %1").arg(risk.isEmpty() ? QStringLiteral("-") : risk), riskColor));
+        chips->addWidget(makeChip(status.isEmpty() ? QStringLiteral("-") : status,
+                                  active ? kNormal : kTextSub));
+        chips->addStretch();
+        cv->addLayout(chips);
+
+        fl->addWidget(card);
+        ++n;
+    }
+
+    if (residentCountLabel)
+        residentCountLabel->setText(searching
+            ? QStringLiteral("검색 결과 %1명").arg(n)
+            : QStringLiteral("재원 중 %1명 · 카드를 클릭하면 상세/편집").arg(n));
+}
+
+// 편집 다이얼로그에 들어갈 폼(그룹들) — 버튼/스크롤은 다이얼로그 쪽에서 감싼다.
+QWidget* MainWindow::buildResidentFormBody()
+{
     auto* inner = new QWidget();
     auto* lay = new QVBoxLayout(inner);
     lay->setSpacing(12);
@@ -1111,7 +1230,6 @@ QWidget* MainWindow::buildResidentForm()
         g->setObjectName("formGroup");
         return g;
     };
-
     auto makeField = [](const QString& placeholder, QLineEdit*& ref) {
         ref = new QLineEdit();
         ref->setObjectName("formEdit");
@@ -1186,39 +1304,157 @@ QWidget* MainWindow::buildResidentForm()
     editNotes->setMaximumHeight(80);
     notesLay->addWidget(editNotes);
     lay->addWidget(notesGroup);
-
-    // ── 버튼 ──
-    auto* btnRow = new QHBoxLayout();
-    auto* newBtn = new QPushButton(QStringLiteral("신규 등록"));
-    newBtn->setObjectName("roiButton");
-    newBtn->setCursor(Qt::PointingHandCursor);
-    connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewResident);
-
-    auto* saveBtn = new QPushButton(QStringLiteral("수정 저장"));
-    saveBtn->setObjectName("roiButton");
-    saveBtn->setCursor(Qt::PointingHandCursor);
-    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveResident);
-
-    auto* dischargeBtn = new QPushButton(QStringLiteral("퇴원 처리"));
-    dischargeBtn->setObjectName("alarmButton");
-    dischargeBtn->setCursor(Qt::PointingHandCursor);
-    connect(dischargeBtn, &QPushButton::clicked, this, &MainWindow::onDischargeResident);
-
-    auto* readmitBtn = new QPushButton(QStringLiteral("재입원"));      // ← 추가
-    readmitBtn->setObjectName("roiButton");
-    readmitBtn->setCursor(Qt::PointingHandCursor);
-    connect(readmitBtn, &QPushButton::clicked, this, &MainWindow::onReadmitResident);
-
-    btnRow->addWidget(newBtn);
-    btnRow->addWidget(saveBtn);
-    btnRow->addStretch();
-    btnRow->addWidget(readmitBtn);      // ← 추가 (퇴원 왼쪽)
-    btnRow->addWidget(dischargeBtn);
-    lay->addLayout(btnRow);
     lay->addStretch();
 
-    scroll->setWidget(inner);
-    return scroll;
+    return inner;
+}
+
+// 편집 다이얼로그 1회 생성: 상단 프로필 헤더 + (폼 | 입원이력) 본문 + 하단 액션바.
+void MainWindow::ensureResidentDialog()
+{
+    if (residentDialog) return;
+
+    residentDialog = new QDialog(this);
+    residentDialog->setObjectName("editDialog");   // QDialog 기본 배경(패널색) 사용
+    residentDialog->setWindowTitle(QStringLiteral("입소자 관리"));
+    residentDialog->resize(920, 640);
+    enableDarkTitleBar(residentDialog);
+
+    auto* root = new QVBoxLayout(residentDialog);
+    root->setContentsMargins(18, 16, 18, 16);
+    root->setSpacing(14);
+
+    // ── 상단 프로필 헤더 ──
+    auto* header = new QFrame();
+    header->setObjectName("dlgHeader");
+    auto* hl = new QHBoxLayout(header);
+    hl->setContentsMargins(16, 12, 16, 12);
+    hl->setSpacing(14);
+
+    dlgAvatar = new QLabel();
+    dlgAvatar->setFixedSize(52, 52);
+    dlgAvatar->setAlignment(Qt::AlignCenter);
+
+    auto* nameCol = new QVBoxLayout();
+    nameCol->setSpacing(2);
+    dlgNameBig = new QLabel(QStringLiteral("신규 입소자"));
+    dlgNameBig->setObjectName("dlgName");
+    dlgSubMeta = new QLabel(QString());
+    dlgSubMeta->setObjectName("dlgSub");
+    nameCol->addWidget(dlgNameBig);
+    nameCol->addWidget(dlgSubMeta);
+
+    dlgRiskBadge = new QLabel();
+    dlgStatusBadge = new QLabel();
+
+    hl->addWidget(dlgAvatar);
+    hl->addLayout(nameCol);
+    hl->addStretch();
+    hl->addWidget(dlgRiskBadge);
+    hl->addWidget(dlgStatusBadge);
+    root->addWidget(header);
+
+    // ── 본문: 좌 폼(스크롤) | 우 입원이력 ──
+    auto* body = new QHBoxLayout();
+    body->setSpacing(16);
+
+    auto* formScroll = new QScrollArea();
+    formScroll->setObjectName("vitalScroll");
+    formScroll->setWidgetResizable(true);
+    formScroll->setFrameShape(QFrame::NoFrame);
+    formScroll->setWidget(buildResidentFormBody());
+    body->addWidget(formScroll, 3);
+    body->addWidget(buildAdmissionHistory(), 2);
+    root->addLayout(body, 1);
+
+    // ── 하단 액션바 ──
+    auto* footer = new QHBoxLayout();
+    footer->setSpacing(8);
+
+    auto* saveBtn = new QPushButton(QStringLiteral("저장"));
+    saveBtn->setObjectName("primaryButton");
+    saveBtn->setCursor(Qt::PointingHandCursor);
+    saveBtn->setMinimumWidth(96);
+    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveResident);
+
+    dlgDischargeBtn = new QPushButton(QStringLiteral("퇴원 처리"));
+    dlgDischargeBtn->setObjectName("dangerButton");
+    dlgDischargeBtn->setCursor(Qt::PointingHandCursor);
+    // 현재 상태에 따라 퇴원↔재입원. 처리 후 헤더/카드 갱신은 각 핸들러가 담당.
+    connect(dlgDischargeBtn, &QPushButton::clicked, this, [this] {
+        if (editStatus->currentText() == QStringLiteral("재원")) onDischargeResident();
+        else                                                     onReadmitResident();
+    });
+
+    auto* closeBtn = new QPushButton(QStringLiteral("닫기"));
+    closeBtn->setObjectName("roiButton");
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    connect(closeBtn, &QPushButton::clicked, residentDialog, &QDialog::close);
+
+    footer->addWidget(saveBtn);
+    footer->addStretch();
+    footer->addWidget(dlgDischargeBtn);
+    footer->addWidget(closeBtn);
+    root->addLayout(footer);
+}
+
+// 다이얼로그 상단 프로필(아바타·이름·병상·배지·퇴원버튼)을 폼 현재값 기준으로 갱신.
+void MainWindow::refreshResidentDialogHeader()
+{
+    if (!residentDialog) return;
+
+    const bool isNew  = (selectedResidentId < 0);
+    const QString name = editName->text().trimmed();
+    const bool active  = (editStatus->currentText() == QStringLiteral("재원"));
+
+    dlgAvatar->setText(name.isEmpty() ? QStringLiteral("＋") : name.left(1));
+    dlgAvatar->setStyleSheet(QString(
+        "background:%1; color:#fff; border-radius:26px;"
+        " font-size:22px; font-weight:800;").arg(active && !isNew ? kAccent : kTextSub));
+
+    dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
+                              : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));
+
+    const QString room = editRoom->text().trimmed();
+    const QString bed  = editBed->text().trimmed();
+    const QString cam  = editCameraId->text().trimmed();
+    QStringList parts;
+    if (!room.isEmpty() || !bed.isEmpty()) parts << QStringLiteral("%1-%2").arg(room, bed);
+    if (!cam.isEmpty()) parts << QStringLiteral("채널 %1").arg(cam);
+    dlgSubMeta->setText(parts.join(QStringLiteral(" · ")));
+
+    auto styleBadge = [](QLabel* b, const QString& text, const char* color) {
+        b->setText(text);
+        b->setStyleSheet(QString(
+            "color:%1; border:1px solid %1; border-radius:11px;"
+            " padding:3px 12px; font-size:12px; font-weight:800; background:transparent;")
+            .arg(color));
+    };
+    const QString risk = editRiskLevel->currentText();
+    const char* riskColor = risk == QStringLiteral("상") ? kCritical
+                          : risk == QStringLiteral("중") ? kWarn : kNormal;
+    styleBadge(dlgRiskBadge, QStringLiteral("위험 %1").arg(risk), riskColor);
+    styleBadge(dlgStatusBadge, active ? QStringLiteral("재원") : QStringLiteral("퇴원"),
+               active ? kNormal : kTextSub);
+    dlgRiskBadge->setVisible(!isNew);
+    dlgStatusBadge->setVisible(!isNew);
+
+    // 신규는 퇴원/재입원 불가 → 버튼 숨김. 기존은 상태에 따라 라벨 토글.
+    dlgDischargeBtn->setVisible(!isNew);
+    dlgDischargeBtn->setText(active ? QStringLiteral("퇴원 처리")
+                                    : QStringLiteral("재입원"));
+}
+
+// 카드 클릭/신규 버튼 → 폼을 채우고 편집 다이얼로그를 연다.
+void MainWindow::openResidentEditor(int residentId)
+{
+    ensureResidentDialog();
+    if (residentId < 0) onNewResident();
+    else                loadResidentIntoForm(residentId);
+    refreshResidentDialogHeader();
+    residentDialog->show();
+    residentDialog->raise();
+    residentDialog->activateWindow();
 }
 
 QWidget* MainWindow::buildAdmissionHistory()
@@ -1486,6 +1722,36 @@ QLabel {
     color: %(text);
 }
 
+/* 검색창 */
+#searchEdit { background: %(card); color: %(text); border: 1px solid %(border);
+              border-radius: 17px; padding: 4px 14px; font-size: 13px; }
+#searchEdit:focus { border-color: %(accent); }
+
+/* 주요 액션 버튼(신규 등록·저장) */
+#primaryButton { background: %(accent); color: #fff; border: none;
+                 border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
+#primaryButton:hover { background: %(accent); opacity: 0.9; }
+#dangerButton { background: transparent; color: %(critical); border: 1px solid %(critical);
+                border-radius: 8px; padding: 6px 16px; font-size: 13px; font-weight: 700; }
+#dangerButton:hover { background: %(critical); color: #fff; }
+#iconButton { background: %(card); color: %(text); border: 1px solid %(border);
+              border-radius: 8px; font-size: 16px; font-weight: 700; }
+#iconButton:hover { border-color: %(accent); color: %(accent); }
+
+/* 입소자 카드 그리드 */
+#cardHost { background: transparent; }
+#resCard { background: %(card); border: 1px solid %(border); border-radius: 12px;
+           text-align: left; }
+#resCard:hover { border: 1px solid %(accent); background: %(panel); }
+#resCard[inactive="true"] { background: %(bgDeep); }
+#resName { color: %(text); font-size: 15px; font-weight: 800; }
+#resMeta { color: %(sub); font-size: 12px; }
+
+/* 편집 다이얼로그 헤더 */
+#dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+#dlgName { color: %(text); font-size: 19px; font-weight: 800; }
+#dlgSub  { color: %(sub); font-size: 13px; }
+
 QGroupBox#formGroup {
     color: %(text);
     border: 1px solid %(border);
@@ -1601,6 +1867,8 @@ void MainWindow::toggleTheme()
         if (sockets[i]->state() != QAbstractSocket::ConnectedState) connected = false;
     setConnectionState(connected, statusText->text());
     updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
+    // 카드의 아바타/칩은 인라인 색이라 QSS 재적용만으론 안 바뀐다 → 다시 그린다.
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
 }
 
 void MainWindow::setConnectionState(bool connected, const QString& text)
@@ -2804,71 +3072,16 @@ void MainWindow::refreshPatientLabels()
     }
 }
 
-// ═══════════════════════════════════════════════════════════
-//  TAB3 슬롯 — 자리표시자 (DB 쿼리 연동 전)
-// ═══════════════════════════════════════════════════════════
-void MainWindow::refreshResidentTable(const QString& nameFilter)
-{
-    if (!residentTable) return;
-    residentTable->setRowCount(0);
-
-    // 검색어 유무로 쿼리 분기 (main.cpp에서 열어둔 기본 연결 QMARIADB 사용):
-    //  - 비어 있으면 재원자만 (평상시 목록 — 퇴원자는 숨김)
-    //  - 있으면 이름 LIKE 검색 (재원·퇴원 전부 — 퇴원자 과거 기록 조회용)
-    const QString trimmed = nameFilter.trimmed();
-    const bool searching = !trimmed.isEmpty();
-
-    QSqlQuery q;
-    if (searching) {
-        q.prepare(QStringLiteral(
-            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
-            "risk_level, status FROM residents "
-            "WHERE name LIKE ? ORDER BY resident_id"));
-        q.addBindValue(QStringLiteral("%%1%").arg(trimmed));   // 부분 일치
-    } else {
-        q.prepare(QStringLiteral(
-            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
-            "risk_level, status FROM residents "
-            "WHERE status = ? ORDER BY resident_id"));
-        q.addBindValue(QStringLiteral("재원"));
-    }
-
-    if (!q.exec()) {
-        qDebug() << "입소자 목록 조회 실패:" << q.lastError().text();
-        return;
-    }
-
-    while (q.next()) {
-        const int row = residentTable->rowCount();
-        residentTable->insertRow(row);
-        for (int col = 0; col < 8; ++col) {
-            const QVariant v = q.value(col);
-            // col 4 = camera_id: DB(0~3)를 목록에도 1~4로 표시(폼과 통일).
-            QString text = v.isNull() ? QStringLiteral("-") : v.toString();
-            if (col == 4 && !v.isNull())
-                text = QString::number(v.toInt() + 1);
-            residentTable->setItem(row, col, new QTableWidgetItem(text));
-        }
-    }
-
-    qDebug() << (searching ? "이름 검색" : "재원자 목록")
-             << "—" << residentTable->rowCount() << "명 로드";
-}
-
 void MainWindow::onResidentSearch()
 {
-    // 검색창 텍스트로 필터. 비어 있으면 refreshResidentTable이 재원자 목록으로 복귀.
-    refreshResidentTable(residentSearchEdit ? residentSearchEdit->text()
+    // 검색창 텍스트로 필터. 비어 있으면 재원자 카드만 다시 그린다.
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text()
                                             : QString());
 }
 
-void MainWindow::onResidentSelected(int row, int /*column*/)
+// 선택한 입소자를 편집 폼 필드에 채운다(다이얼로그 열기 전 호출).
+void MainWindow::loadResidentIntoForm(int id)
 {
-    if (!residentTable || row < 0) return;
-    auto* idItem = residentTable->item(row, 0);
-    if (!idItem) return;
-    const int id = idItem->text().toInt();
-
     QSqlQuery q;
     q.prepare(QStringLiteral(
         "SELECT name, room, bed, camera_id, wearable_id, risk_level, "
@@ -3147,8 +3360,9 @@ void MainWindow::onSaveResident()
         qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
     }
 
-    refreshResidentTable();
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
     refreshAdmissionTable(selectedResidentId);
+    refreshResidentDialogHeader();   // 편집 다이얼로그 상단 프로필도 갱신
     // 채널↔환자 매핑을 DB 기준으로 다시 읽어 영상/바이탈 이름을 갱신한다.
     // (채널 재배정·이름 변경·camera_id 해제 등 모든 경우를 한 번에 반영)
     loadPatientsFromDb();
@@ -3198,7 +3412,8 @@ void MainWindow::onDischargeResident()
     const int i = editStatus->findText(QStringLiteral("퇴원"));
     if (i >= 0) editStatus->setCurrentIndex(i);
 
-    refreshResidentTable();
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
+    refreshResidentDialogHeader();
     loadPatientsFromDb();    // 퇴원 → 그 채널을 "미배정"으로 되돌린다
     refreshPatientLabels();
     QMessageBox::information(this, QStringLiteral("퇴원 처리"),
@@ -3245,8 +3460,9 @@ void MainWindow::onReadmitResident()
     const int i = editStatus->findText(QStringLiteral("재원"));
     if (i >= 0) editStatus->setCurrentIndex(i);
     editAdmittedAt->setDate(QDate::currentDate());
-    refreshResidentTable();
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
     refreshAdmissionTable(selectedResidentId);
+    refreshResidentDialogHeader();
     loadPatientsFromDb();    // 재입원 → 그 채널에 이름 복원
     refreshPatientLabels();
 }
