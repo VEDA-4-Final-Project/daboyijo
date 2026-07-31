@@ -3253,19 +3253,22 @@ void MainWindow::onSaveResident()
         // caregiver_id는 요양사 테이블 연동 전이라 제외(기본 NULL)
         q.prepare(QStringLiteral(
             "INSERT INTO residents "
-            "(name, camera_id, wearable_id, risk_level, admitted_at, "
+            "(name, room, bed, camera_id, wearable_id, risk_level, admitted_at, "
             " discharge_due, status, guardian_name, guardian_phone, "
             " guardian_relation, notes) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)"));
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"));
     } else {
         q.prepare(QStringLiteral(
-            "UPDATE residents SET name=?, camera_id=?, "
+            "UPDATE residents SET name=?, room=?, bed=?, camera_id=?, "
             " wearable_id=?, risk_level=?, admitted_at=?, discharge_due=?, "
             " status=?, guardian_name=?, guardian_phone=?, guardian_relation=?, "
             " notes=? WHERE resident_id=?"));
     }
 
     q.addBindValue(editName->text().trimmed());
+    // 병실/침대는 UI에서 제거했지만 컬럼이 NOT NULL이라 빈 값으로 채운다(위치는 채널로 표기).
+    q.addBindValue(QString());
+    q.addBindValue(QString());
     q.addBindValue(channelOrNull(editCameraId->text()));
     q.addBindValue(textOrNull(editWearableId->text()));
     q.addBindValue(editRiskLevel->currentText());
@@ -3291,8 +3294,8 @@ void MainWindow::onSaveResident()
         QSqlQuery a;
         a.prepare(QStringLiteral(
             "INSERT INTO admissions "
-            "(resident_id, admitted_at, discharge_due, status) "
-            "VALUES (?,?,?,'재원')"));
+            "(resident_id, admitted_at, discharge_due, status, room, bed) "
+            "VALUES (?,?,?,'재원','','')"));
         a.addBindValue(selectedResidentId);
         a.addBindValue(editAdmittedAt->date());
         a.addBindValue(editDischargeDue->date());
@@ -3418,8 +3421,8 @@ void MainWindow::onReadmitResident()
 
     QSqlQuery a;
     a.prepare(QStringLiteral(
-        "INSERT INTO admissions (resident_id, admitted_at, status) "
-        "VALUES (?, CURDATE(), '재원')"));
+        "INSERT INTO admissions (resident_id, admitted_at, status, room, bed) "
+        "VALUES (?, CURDATE(), '재원', '', '')"));
     a.addBindValue(selectedResidentId);
     if (!a.exec()) {
         QMessageBox::critical(this, QStringLiteral("재입원 실패"), a.lastError().text());
