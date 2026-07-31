@@ -3266,9 +3266,10 @@ void MainWindow::onSaveResident()
     }
 
     q.addBindValue(editName->text().trimmed());
-    // 병실/침대는 UI에서 제거했지만 컬럼이 NOT NULL이라 빈 값으로 채운다(위치는 채널로 표기).
-    q.addBindValue(QString());
-    q.addBindValue(QString());
+    // 병실/침대는 UI에서 제거했지만 컬럼이 NOT NULL이라 빈 문자열로 채운다(위치는 채널로 표기).
+    // 주의: QString()은 SQL NULL로 들어가 NOT NULL 위반 → 반드시 non-null 빈 문자열.
+    q.addBindValue(QStringLiteral(""));
+    q.addBindValue(QStringLiteral(""));
     q.addBindValue(channelOrNull(editCameraId->text()));
     q.addBindValue(textOrNull(editWearableId->text()));
     q.addBindValue(editRiskLevel->currentText());
