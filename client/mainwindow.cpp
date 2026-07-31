@@ -990,6 +990,35 @@ QWidget* MainWindow::buildResidentSection()
     listTitle->setObjectName("panelTitle");
     leftCol->addWidget(listTitle);
 
+    // ── 이름 검색 행 (검색 시 재원+퇴원 전체 조회, 평상시엔 재원자만) ──
+    auto* searchRow = new QHBoxLayout();
+    searchRow->setSpacing(6);
+
+    residentSearchEdit = new QLineEdit();
+    residentSearchEdit->setObjectName("formEdit");
+    residentSearchEdit->setPlaceholderText(QStringLiteral("이름 검색 (재원·퇴원 전체)"));
+    connect(residentSearchEdit, &QLineEdit::returnPressed,   // 엔터로도 검색
+            this, &MainWindow::onResidentSearch);
+
+    auto* searchBtn = new QPushButton(QStringLiteral("검색"));
+    searchBtn->setObjectName("roiButton");
+    searchBtn->setCursor(Qt::PointingHandCursor);
+    connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onResidentSearch);
+
+    auto* showAllBtn = new QPushButton(QStringLiteral("전체"));
+    showAllBtn->setObjectName("roiButton");
+    showAllBtn->setCursor(Qt::PointingHandCursor);
+    // "전체"는 검색창을 비우고 재원자 목록으로 복귀
+    connect(showAllBtn, &QPushButton::clicked, this, [this] {
+        residentSearchEdit->clear();
+        refreshResidentTable();   // 인자 없음 → 재원자만
+    });
+
+    searchRow->addWidget(residentSearchEdit, 1);
+    searchRow->addWidget(searchBtn);
+    searchRow->addWidget(showAllBtn);
+    leftCol->addLayout(searchRow);
+
     residentTable = new QTableWidget(0, 8);
 
     residentTable->setObjectName("logTable");
@@ -2627,18 +2656,33 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
 // ═══════════════════════════════════════════════════════════
 //  TAB3 슬롯 — 자리표시자 (DB 쿼리 연동 전)
 // ═══════════════════════════════════════════════════════════
-void MainWindow::refreshResidentTable()
+void MainWindow::refreshResidentTable(const QString& nameFilter)
 {
     if (!residentTable) return;
     residentTable->setRowCount(0);
 
-    // main.cpp에서 열어둔 기본 연결(QMARIADB) 사용
-    // 퇴원자는 목록에서 제외 (status가 NULL이면 재원으로 간주해 노출)
-    QSqlQuery q(QStringLiteral(
-        "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
-        "risk_level, status FROM residents "
-        "WHERE COALESCE(status, '') <> '퇴원' ORDER BY resident_id"));
-    if (q.lastError().isValid()) {
+    // 검색어 유무로 쿼리 분기 (main.cpp에서 열어둔 기본 연결 QMARIADB 사용):
+    //  - 비어 있으면 재원자만 (평상시 목록 — 퇴원자는 숨김)
+    //  - 있으면 이름 LIKE 검색 (재원·퇴원 전부 — 퇴원자 과거 기록 조회용)
+    const QString trimmed = nameFilter.trimmed();
+    const bool searching = !trimmed.isEmpty();
+
+    QSqlQuery q;
+    if (searching) {
+        q.prepare(QStringLiteral(
+            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+            "risk_level, status FROM residents "
+            "WHERE name LIKE ? ORDER BY resident_id"));
+        q.addBindValue(QStringLiteral("%%1%").arg(trimmed));   // 부분 일치
+    } else {
+        q.prepare(QStringLiteral(
+            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+            "risk_level, status FROM residents "
+            "WHERE status = ? ORDER BY resident_id"));
+        q.addBindValue(QStringLiteral("재원"));
+    }
+
+    if (!q.exec()) {
         qDebug() << "입소자 목록 조회 실패:" << q.lastError().text();
         return;
     }
@@ -2653,7 +2697,16 @@ void MainWindow::refreshResidentTable()
             residentTable->setItem(row, col, item);
         }
     }
-    qDebug() << "입소자 목록 새로고침 —" << residentTable->rowCount() << "명 로드";
+
+    qDebug() << (searching ? "이름 검색" : "재원자 목록")
+             << "—" << residentTable->rowCount() << "명 로드";
+}
+
+void MainWindow::onResidentSearch()
+{
+    // 검색창 텍스트로 필터. 비어 있으면 refreshResidentTable이 재원자 목록으로 복귀.
+    refreshResidentTable(residentSearchEdit ? residentSearchEdit->text()
+                                            : QString());
 }
 
 void MainWindow::onResidentSelected(int row, int /*column*/)

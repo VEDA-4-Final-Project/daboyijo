@@ -133,6 +133,7 @@ private slots:
 
     // TAB3: DB 관리
     void onResidentSelected(int row, int column);
+    void onResidentSearch();   // 이름으로 입소자 검색(재원·퇴원 전체)
     void onNewResident();
     void onSaveResident();
     void onDischargeResident();
@@ -209,6 +210,7 @@ private:
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록 (residents = 현재 상태, 사람당 1행)
     QTableWidget* residentTable = nullptr;
+    QLineEdit*    residentSearchEdit = nullptr;  // 이름 검색창(재원·퇴원 전체 조회)
 
     // 입원 이력 (admissions = 입원 에피소드, 입원할 때마다 1행)
     //   행 = 한 번의 입원, 더블클릭 → 그 기간의 변경 내역 팝업
@@ -270,7 +272,8 @@ private:
     QWidget* buildAdmissionHistory();   // 입원 이력 표 + 안내 문구
 
     // TAB3 데이터 갱신
-    void refreshResidentTable();
+    // nameFilter 비어 있으면 재원자만, 있으면 이름 LIKE 검색(재원·퇴원 전체)
+    void refreshResidentTable(const QString& nameFilter = QString());
     void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
     void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
 
