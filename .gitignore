@@ -37,8 +37,8 @@ Makefile*
 # ===== STM32CubeIDE / Eclipse =====
 .metadata/
 .settings/
-.cproject
-.mxproject
+#.cproject
+#.mxproject
 *.launch
 
 # ===== IDE / 에디터 =====
