@@ -71,6 +71,13 @@ volatile uint8_t  g_fall_flag = 0;
 volatile uint32_t g_fall_flag_ms = 0;
 #define HM10_FALL_HOLD_MS   5000   /* 낙상 플래그 유지 시간(ms) — 카메라 교차검증 윈도우 확보 */
 #define HM10_VITAL_PERIOD_MS 1000  /* 바이탈 주기 송신 간격(ms) */
+
+/* 센서 사용 가능 여부. 초기화에 실패해도 멈추지 않고 해당 센서만 끈 채로 계속 돈다.
+ * 한쪽이 죽어도 나머지 기능과 HM-10 송신은 살아있어야 하기 때문. */
+static uint8_t g_bmi270_ok = 0;
+static uint8_t g_max30102_ok = 0;
+#define SENSOR_INIT_RETRY   3      /* 초기화 재시도 횟수 */
+#define SENSOR_RETRY_WAIT_MS 200   /* 재시도 간격(ms) */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -80,6 +87,7 @@ void SPI2_DMA_Reset_Unlock(void);
 static void Process_IMU_Data(void);
 static void Process_PPG_Data(void);
 static void HM10_Send_Now(void);
+static void Blink_Error_Code(uint8_t count);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -127,29 +135,43 @@ int main(void)
 
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
-  /* 1. 하드웨어 및 센서 초기화 */
-  if (BMI270_Init() != HAL_OK) {
-      printf(">> [ERROR] BMI270 Init Failed!\r\n");
-      while(1) {
-          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-          HAL_Delay(100);
+  /* 1. 하드웨어 및 센서 초기화
+   *    실패해도 멈추지 않는다. 재시도 후 해당 센서만 끄고 진행한다.
+   *    여기서 갇히면 웨어러블이 조용히 죽어버리고 서버는 이유를 알 수 없다. */
+  for (int i = 0; i < SENSOR_INIT_RETRY && !g_bmi270_ok; i++) {
+      if (BMI270_Init() == HAL_OK) {
+          g_bmi270_ok = 1;
+      } else {
+          printf(">> [WARNING] BMI270 Init Failed! (%d/%d)\r\n", i + 1, SENSOR_INIT_RETRY);
+          HAL_Delay(SENSOR_RETRY_WAIT_MS);
       }
   }
 
-  if (MAX30102_Init() != HAL_OK) {
-      printf(">> [ERROR] MAX30102 Init Failed!\r\n");
-      while(1) {
-          HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-          HAL_Delay(50);
+  for (int i = 0; i < SENSOR_INIT_RETRY && !g_max30102_ok; i++) {
+      if (MAX30102_Init() == HAL_OK) {
+          g_max30102_ok = 1;
+      } else {
+          printf(">> [WARNING] MAX30102 Init Failed! (%d/%d)\r\n", i + 1, SENSOR_INIT_RETRY);
+          HAL_Delay(SENSOR_RETRY_WAIT_MS);
       }
+  }
+
+  /* 최종 실패한 센서는 LED 깜빡임 횟수로 알린다 (USB 미연결 시 유일한 단서) */
+  if (!g_bmi270_ok) {
+      printf(">> [ERROR] BMI270 disabled — 낙상 감지 사용 불가\r\n");
+      Blink_Error_Code(2);
+  }
+  if (!g_max30102_ok) {
+      printf(">> [ERROR] MAX30102 disabled — 심박/SpO2 사용 불가\r\n");
+      Blink_Error_Code(3);
   }
 
   /* 2. 알고리즘 초기화 및 센서 캘리브레이션 */
-  if (BMI270_Calibrate_Gyro(&gyroBias) != HAL_OK) {
+  if (g_bmi270_ok && BMI270_Calibrate_Gyro(&gyroBias) != HAL_OK) {
       printf("[WARNING] Gyro Calibration Failed! Using default zero bias.\r\n");
   }
 
-  FallDetection_Init(gyroBias);
+  FallDetection_Init(gyroBias);   /* BMI270 실패 시 gyroBias 는 0 초기값 그대로 */
   HeartRateCalc_Init();
 
   /* 3. 통신 라인 안전 초기화 */
@@ -162,7 +184,8 @@ int main(void)
   if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK) {
       printf(">> [ERROR] Failed to start Timer3 IT!\r\n");
   }
-  printf(">> Realtime Monitoring Start\r\n\r\n");
+  printf(">> Realtime Monitoring Start (IMU:%s PPG:%s)\r\n\r\n",
+         g_bmi270_ok ? "ok" : "OFF", g_max30102_ok ? "ok" : "OFF");
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -176,7 +199,11 @@ int main(void)
 	  {
 		  g_timer_fired = 0;
 
-		  if (hspi2.State == HAL_SPI_STATE_READY)
+		  if (!g_bmi270_ok)
+		  {
+			  /* IMU 비활성 — SPI 폴링 건너뛴다 */
+		  }
+		  else if (hspi2.State == HAL_SPI_STATE_READY)
 		  {
 			  memset(spi_tx_buf, 0, sizeof(spi_tx_buf));
 			  spi_tx_buf[0] = 0x0C | 0x80; // Register 0x0C read 명령
@@ -323,6 +350,21 @@ void Send_Fall_Alert_Hardware(void)
     HM10_Send_Now();   // 다음 주기(1s) 기다리지 않고 즉시 반영
 }
 
+// 부팅 시 센서 실패를 LED 깜빡임 횟수로 알린다 (USB 미연결 시 유일한 단서)
+//   2회 = BMI270 실패, 3회 = MAX30102 실패
+// 부팅 때 한 번만 도는 유한 루프다. 여기서 갇히면 안 된다.
+static void Blink_Error_Code(uint8_t count)
+{
+    for (uint8_t i = 0; i < count; i++)
+    {
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+        HAL_Delay(200);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+        HAL_Delay(200);
+    }
+    HAL_Delay(600);   // 다음 코드와 구분되게 쉬어간다
+}
+
 // SPI 데드락 탈출
 void SPI2_DMA_Reset_Unlock(void)
 {
@@ -346,7 +388,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
     if (GPIO_Pin == GPIO_PIN_0)
     {
-    	if(g_i2c_ready == 0)
+    	if(g_i2c_ready == 0 && g_max30102_ok)
     	{
     		HAL_I2C_Mem_Read_DMA(&hi2c1, MAX30102_I2C_ADDR, MAX30102_REG_FIFO_DATA,
     				I2C_MEMADD_SIZE_8BIT, i2c_raw_buf, 6);
