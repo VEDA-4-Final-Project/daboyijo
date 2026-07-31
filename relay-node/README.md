@@ -47,12 +47,18 @@ STM32 ──UART(9600)──> HM-10 ──BLE──> RPi4 (relay_node) ──MQT
 ## 빌드·실행
 
 ```bash
-sudo apt install -y g++ cmake libmosquitto-dev nlohmann-json3-dev
-# SimpleBLE 는 소스 빌드 후 install
-
+./install_deps.sh                      # 최초 1회
 cmake -S . -B build && cmake --build build
 ./build/relay_node
 ```
+
+`RELAY_DEBUG_HEX=1` 을 붙이면 BLE 로 들어온 원시 바이트를 hex 로 찍는다.
+값이 이상할 때 파싱 전 단계를 확인하는 용도.
+
+의존성은 `libmosquitto`, `nlohmann_json`, `SimpleBLE` 세 가지다. 앞의 둘은
+apt 로 받고, SimpleBLE 는 apt 패키지가 없어서 `install_deps.sh` 가 소스에서
+빌드해 `/usr/local` 에 설치한다. CMake 는 `find_package(simpleble)` 로 찾으므로
+설치 후에는 소스 트리가 필요 없다.
 
 `src/cfg` 네임스페이스에 HM-10 MAC(`TARGET_ADDR`), 브로커 주소, 토픽이 하드코딩돼
 있다. 기기가 바뀌면 여기를 고친다.

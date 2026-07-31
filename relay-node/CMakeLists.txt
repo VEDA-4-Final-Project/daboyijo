@@ -1,3 +1,4 @@
+# 의존성 설치는 ./install_deps.sh 참고
 cmake_minimum_required(VERSION 3.10)
 project(VedaRelayNode VERSION 1.0)
 
