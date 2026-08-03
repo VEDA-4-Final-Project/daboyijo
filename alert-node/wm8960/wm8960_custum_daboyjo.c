@@ -12,7 +12,7 @@
 #define WM8960_ROUT1V	        0x03
 #define WM8960_CLOKING          0x04
 #define WM8960_ADC_DAC_CTR1     0x05
-
+#define WM8960_AUDIO_INTERFACE  0x07
 #define WM8960_L2MO             0x26
 #define WM8960_R2MO             0x27
 #define WM8960_LSPKV			0x28
@@ -45,6 +45,13 @@ static int veda_wm8960_write(struct i2c_client *client, uint8_t addr, uint8_t da
         dev_info(&client->dev, "wm8960 %s fail\n",messge);
         return check;
     }
+}
+
+static int veda_wm8960_starup(struct snd_pcm_substream *substream,struct snd_soc_dai *dai) {
+    struct snd_pcm_runtime *runtime = substream->runtime;
+
+    runtime->hw.info |= SNDRV_PCM_INFO_PAUSE;
+    return 0;
 }
 
 static int veda_wm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params,struct snd_soc_dai *dai)
@@ -119,8 +126,37 @@ static int veda_wm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm
     return 0;
 }
 
+static int veda_wm8960_trigger(struct snd_pcm_substream *substream, int cmd, struct snd_soc_dai *dai)
+{
+    struct snd_soc_component  *component = dai->component;
+
+    switch(cmd) {
+        //case SNDRV_PCM_TRIGGER_
+        case SNDRV_PCM_TRIGGER_START:
+        case SNDRV_PCM_TRIGGER_RESUME:
+        case SNDRV_PCM_TRIGGER_PAUSE_RELEASE: // pause 해제 -> 소리출력 레지스터 제어 넣기  
+            return 0;
+            
+
+            break;
+        
+        case SNDRV_PCM_TRIGGER_STOP:
+        case SNDRV_PCM_TRIGGER_SUSPEND:
+        case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+            return 0;
+
+            break;
+
+        default:
+            return -EINVAL;
+    }
+    return 0;
+}
+
 static const struct snd_soc_dai_ops veda_wm8960_dai_ops = {
+    .startup   = veda_wm8960_starup,
     .hw_params = veda_wm_hw_params,
+    .trigger   = veda_wm8960_trigger,
 };
 
 
@@ -187,6 +223,8 @@ static const struct reg_default wm8960_reg_defaults[] = {
     {WM8960_R2MO, 0x000 },
     {WM8960_LSPKV, 0x179 },
     {WM8960_RSPKV, 0x179 },
+    {WM8960_LOUTMIX, 0x1D0},
+    {WM8960_ROUTMIX, 0x1D0},
 };
     
 
