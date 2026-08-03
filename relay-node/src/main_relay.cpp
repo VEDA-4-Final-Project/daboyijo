@@ -8,6 +8,7 @@
 #include <simpleble/SimpleBLE.h>
 #include <nlohmann/json.hpp>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -29,7 +30,7 @@ const int SCAN_MS        = 8000;
 const int RECONNECT_MS   = 3000;
 
 static std::atomic<bool> g_running{true};
-static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용. BLE 콜백에서만 접근
+static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용. notify 등록 전 초기화 후 BLE 콜백에서만 접근
 static bool g_debug_hex = false;  // RELAY_DEBUG_HEX=1 이면 원시 바이트 덤프
 
 void onSigint(int) { g_running = false; }
@@ -111,6 +112,10 @@ std::optional<SimpleBLE::Peripheral> findDevice(SimpleBLE::Adapter& adapter) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if(adapter.scan_is_active()) adapter.scan_stop();
+
+    // 위 콜백은 지역변수 found 를 참조로 붙잡고 있는데 어댑터에는 계속 등록된 채로 남는다.
+    // 해제하지 않으면 다음 스캔까지의 사이에 콜백이 늦게 불릴 때 죽은 스택을 건드린다.
+    adapter.set_callback_on_scan_found([](SimpleBLE::Peripheral){});
 
     return found;
 }
