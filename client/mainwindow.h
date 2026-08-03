@@ -236,6 +236,8 @@ private:
     //   행 = 한 번의 입원, 더블클릭 → 그 기간의 변경 내역 팝업
     QTableWidget* admissionTable = nullptr;
     QLabel* admissionInfo = nullptr;     // "입원 N건" 안내 문구
+    QWidget* admissionBox = nullptr;   // 입원 이력 패널(신규 등록 시 숨김)
+
 
     // 상세/편집 폼 — 기본정보 (병실/침대는 제거, 위치는 카메라 채널로 표기)
     QLineEdit* editName       = nullptr;
@@ -282,6 +284,9 @@ private:
     void buildBlackboxDialog();   // 블랙박스 재생 팝업 생성(1회)
     QWidget* buildCareTimeDashboard();
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
+    void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
+    void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
+
 
     // TAB3 빌드 헬퍼
     QWidget* buildDbTab();
