@@ -60,15 +60,22 @@ apt 로 받고, SimpleBLE 는 apt 패키지가 없어서 `install_deps.sh` 가 �
 빌드해 `/usr/local` 에 설치한다. CMake 는 `find_package(simpleble)` 로 찾으므로
 설치 후에는 소스 트리가 필요 없다.
 
-`src/cfg` 네임스페이스에 HM-10 MAC(`TARGET_ADDR`), 브로커 주소, 토픽이 하드코딩돼
-있다. 기기가 바뀌면 여기를 고친다.
+HM-10 MAC(`TARGET_ADDR`), 브로커 주소, 토픽은 `src/main_relay.cpp` 상단에 상수로
+하드코딩돼 있다. 기기가 바뀌면 여기를 고친다.
+
+## MQTT 클라이언트
+
+`MqttClient_veda` 는 이 디렉토리에 사본을 두지 않고 프로젝트 공용 구현인
+`MQTT/MQTT_prod/` 를 CMake 에서 직접 참조한다. 따라서 `relay-node/` 만 따로
+떼어내면 빌드되지 않고, 저장소 전체가 있어야 한다.
+
+`WearableData` 는 전 노드가 공유하는 구조체다. 필드를 바꾸면 master/alarm/qt
+노드의 JSON 계약이 함께 바뀌므로 `MQTT/MQTT_dev/src/common/` 쪽도 같이 맞춰야 한다.
 
 ## 알려진 제약
 
 - **`temperature` 가 항상 0** — 펌웨어 `HM10_Send_Now()` 에서 `temp = 0` 더미로
   보낸다. `App/Algorithms/temperature_calc.c` 구현 후 연결해야 한다.
-- **`WearableData` 사본** — `src/MqttClient_veda.*` 는
-  `server/MQTT_dev/src/common/` 의 사본이고 `spo2` 필드가 추가돼 있다.
-  서버 쪽 구조체엔 아직 `spo2` 가 없지만 nlohmann 이 모르는 키를 무시하므로
-  master_node 파싱은 깨지지 않는다. 추후 구조체를 `protocol/` 로 옮겨
-  공용화하면 이 사본은 삭제할 것.
+- **심박은 범위 검증을 하지 않는다** — 5바이트 패킷에 체크섬이 없어 필드 범위로
+  헤더 오정렬을 걸러내는데, 심박은 0~255 전체가 유효값이라 검사할 수 없다.
+  SpO2·체온·낙상 세 필드로만 판정한다.
