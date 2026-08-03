@@ -10,8 +10,11 @@ find_package(nlohmann_json REQUIRED)
 find_package(simpleble REQUIRED)
 find_library(MOSQUITTO_LIB mosquitto REQUIRED)
 
-include_directories(${CMAKE_SOURCE_DIR}/src)
+# MQTT 클라이언트는 프로젝트 공용 구현(MQTT/MQTT_prod)을 그대로 사용한다.
+set(MQTT_COMMON_DIR ${CMAKE_SOURCE_DIR}/../MQTT/MQTT_prod)
 
-add_executable(relay_node src/main_relay.cpp src/MqttClient_veda.cpp)
+include_directories(${CMAKE_SOURCE_DIR}/src ${MQTT_COMMON_DIR})
+
+add_executable(relay_node src/main_relay.cpp ${MQTT_COMMON_DIR}/MqttClient_veda.cpp)
 
 target_link_libraries(relay_node PRIVATE ${MOSQUITTO_LIB} Threads::Threads nlohmann_json::nlohmann_json simpleble::simpleble)
