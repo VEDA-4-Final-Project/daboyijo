@@ -15,8 +15,9 @@
 namespace {
 
 // 어깨-엉덩이 벡터가 수직에서 이만큼(도) 이상 기울면 "누움"으로 본다.
-// 서 있으면 거의 0도(수직), 완전히 누우면 90도에 가깝다. 잠정값 — 실측 캡처로 튜닝.
-constexpr float kLyingAngleDeg = 55.0f;
+// 서 있으면 거의 0도(수직), 완전히 누우면 90도에 가깝다.
+// 55°는 책상에 숙인 자세도 걸려 오탐이 많아 65°로 상향(더 확실히 수평일 때만).
+constexpr float kLyingAngleDeg = 65.0f;
 // 하체(엉덩이→무릎/발목) 벡터가 수직에서 이 각도 미만이면 "다리는 서 있음".
 // 허리만 숙이면 몸통은 기울어도(신호1 발화) 하체는 수직에 가깝다 — 반면 실제로
 // 누우면 몸통·하체가 함께 수평이 된다. 이 값 미만이면 신호1을 거부(허리 숙임으로
@@ -270,9 +271,14 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     // 수직(dy) 기준 기울기 각도. 0도=수직(서 있음), 90도=수평(누움). 방향 무관.
     // 옆으로 눕는 낙상을 잡는다. 단, fabs(dy)라 상하 반전은 여기 안 보인다 —
     // 그건 신호 2가 담당. 하체가 서 있으면(허리 숙임) 거부한다.
+    // ★ 다리(무릎/발목)가 안 보이면 신호1 발화 금지 — 책상 밑으로 다리가 가려진 채
+    //   상체만 숙인 자세(사무실 오탐의 주범)를 낙상으로 오판하지 않게 한다.
+    //   다리가 실제로 수평이어야만(=누움) 인정.
+    const bool legs_seen = has_ankle || has_knee;
     const float angle_from_vertical =
         std::atan2(std::fabs(dx), std::fabs(dy)) * 180.0f / kPi;
-    const bool by_angle = angle_from_vertical >= kLyingAngleDeg && !legs_upright;
+    const bool by_angle =
+        angle_from_vertical >= kLyingAngleDeg && legs_seen && !legs_upright;
 
     // ── 신호 2: 상하 반전 ──
     // y는 화면 아래로 증가. 서 있으면 항상 dy > 0 (엉덩이가 어깨 아래).

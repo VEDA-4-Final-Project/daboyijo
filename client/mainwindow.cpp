@@ -2,6 +2,8 @@
 #include "./ui_mainwindow.h"
 #include "theme.h"
 #include "videoview.h"
+#include "wintheme.h"
+#include "sparkline.h"
 #include <QHostAddress>
 #include <QPixmap>
 #include <QDateTime>
@@ -22,7 +24,6 @@
 #include <QDateEdit>
 #include <QSlider>
 #include <QStyle>
-#include <QSplitter>
 #include <QGroupBox>
 #include <QFormLayout>
 #include <QMediaPlayer>
@@ -45,10 +46,78 @@
 #include <QLineEdit>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QUdpSocket>
+#include <QUuid>
+#include <QXmlStreamReader>
+#include <QTimer>
+#include <QSet>
+#include <QRegularExpression>
+#include <QAbstractItemView>
+#include <QNetworkInterface>
+#include <QProcess>
+#include <QLayout>
 #include <algorithm>
 
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
 namespace {
+
+// 폭에 맞춰 자식 위젯을 좌→우로 채우고 넘치면 다음 줄로 접는 레이아웃.
+// 입소자 카드 그리드가 창 크기에 따라 열 수를 자동 조절하도록 쓴다(Qt 공식 예제 기반).
+class FlowLayout : public QLayout {
+public:
+    explicit FlowLayout(QWidget* parent, int margin = 0, int hs = 14, int vs = 14)
+        : QLayout(parent), hSpace_(hs), vSpace_(vs) {
+        setContentsMargins(margin, margin, margin, margin);
+    }
+    ~FlowLayout() override { QLayoutItem* it; while ((it = takeAt(0))) delete it; }
+
+    void addItem(QLayoutItem* item) override { items_.append(item); }
+    int count() const override { return items_.size(); }
+    QLayoutItem* itemAt(int i) const override { return items_.value(i); }
+    QLayoutItem* takeAt(int i) override {
+        return (i >= 0 && i < items_.size()) ? items_.takeAt(i) : nullptr;
+    }
+    Qt::Orientations expandingDirections() const override { return {}; }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int w) const override { return doLayout(QRect(0, 0, w, 0), true); }
+    void setGeometry(const QRect& r) override { QLayout::setGeometry(r); doLayout(r, false); }
+    QSize sizeHint() const override { return minimumSize(); }
+    QSize minimumSize() const override {
+        QSize s;
+        for (QLayoutItem* it : items_) s = s.expandedTo(it->minimumSize());
+        const QMargins m = contentsMargins();
+        return s + QSize(m.left() + m.right(), m.top() + m.bottom());
+    }
+private:
+    int doLayout(const QRect& rect, bool test) const {
+        const QMargins m = contentsMargins();
+        const QRect eff = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom());
+        int x = eff.x(), y = eff.y(), lineH = 0;
+        for (QLayoutItem* it : items_) {
+            const QSize sz = it->sizeHint();
+            int nextX = x + sz.width() + hSpace_;
+            if (nextX - hSpace_ > eff.right() && lineH > 0) {
+                x = eff.x(); y += lineH + vSpace_; nextX = x + sz.width() + hSpace_; lineH = 0;
+            }
+            if (!test) it->setGeometry(QRect(QPoint(x, y), sz));
+            x = nextX; lineH = qMax(lineH, sz.height());
+        }
+        return y + lineH - rect.y() + m.bottom();
+    }
+    QList<QLayoutItem*> items_;
+    int hSpace_, vSpace_;
+};
+
+// 변경 로그에 남길 필드 (라벨, residents 컬럼) — 이 배열만 고치면 로그 대상이 바뀐다.
+struct LoggedField { const char* label; const char* column; };
+const LoggedField kLoggedFields[] = {
+    {"이름", "name"},               {"카메라 채널", "camera_id"},
+    {"웨어러블 ID", "wearable_id"}, {"위험도", "risk_level"},
+    {"입원일", "admitted_at"},      {"퇴원 예정일", "discharge_due"},
+    {"상태", "status"},             {"보호자 이름", "guardian_name"},
+    {"보호자 전화", "guardian_phone"}, {"보호자 관계", "guardian_relation"},
+    {"특이사항", "notes"},
+    };
 
 // 상태 색상: 정상/주의/위험 판정
 QString vitalColor(double temp, int hr) {
@@ -82,8 +151,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.35.202";
-const char* kDefaultHostB  = "172.20.35.201";
+const char* kDefaultHostA  = "172.20.32.105";
+const char* kDefaultHostB  = "172.20.32.90";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -177,17 +246,25 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
 {
     ui->setupUi(this);
 
-    // 병상별 환자 정보 (실제 환자 DB 연동 지점)
-    patients[0] = { QStringLiteral("전승현"), QStringLiteral("201호-1") };
-    patients[1] = { QStringLiteral("박민용"), QStringLiteral("201호-2") };
-    patients[2] = { QStringLiteral("이교민"), QStringLiteral("201호-3") };
-    patients[3] = { QStringLiteral("김예훈"), QStringLiteral("201호-4") };
+    // 채널별 환자 정보는 DB(residents)에서 채운다 — 하드코딩하지 않는다.
+    // camera_id로 채널에 매핑되므로, 입소자를 등록해야 해당 채널에 이름이 뜬다.
+    // (main.cpp에서 DB 연결을 이미 열어둬 buildUi 전에 조회 가능)
+    loadPatientsFromDb();
 
     buildUi();
+    applyPalette(darkMode ? kDark : kLight);  // 기본 다크 팔레트로 시작
     applyTheme();
+    if (themeToggleButton)
+        themeToggleButton->setText(darkMode ? QStringLiteral("☀")
+                                            : QStringLiteral("🌙"));
+    enableDarkTitleBar(this);  // Windows 네이티브 타이틀바를 다크로
 
-    // DB 입소자 목록 초기 로드 (main.cpp에서 연결을 이미 열어둠)
-    refreshResidentTable();
+    // DB 입소자 목록(카드) 초기 로드 (main.cpp에서 연결을 이미 열어둠)
+    refreshResidentCards();
+
+    // 이전 세션에서 연결해 둔 카메라 채널을 복원한다. 서버는 Qt 재시작과 무관하게
+    // 스트리밍을 유지하므로, URL이 없어도 활성 채널을 알면 "해제"가 정상 동작한다.
+    restoreCameraActive();
 
     // 2. 서버별 소켓 생성 및 시그널 연결 (2-Pi: 소켓 kNumServers개)
     //    수신 슬롯 onReadyRead는 sender()로 어느 소켓이 신호를 냈는지 구분한다.
@@ -212,6 +289,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // 케어 타임 대시보드: 10초마다 care_logs를 재조회해 채널별 케어시간 갱신.
+    connect(&careTimeTimer, &QTimer::timeout, this, &MainWindow::updateCareTime);
+    careTimeTimer.start(10000);
+    updateCareTime();
 
     // 🚀 [블랙박스 복구] 각 Pi의 HTTP 서버(/list)에서 과거 클립 목록을 받아 병합한다.
     //    2-Pi: 서버마다 자기 채널 클립만 갖고 있으므로 양쪽에서 받아 테이블에 누적한다.
@@ -311,8 +393,8 @@ void MainWindow::buildUi()
     // ── TAB 2: 비상 로그 조회 및 블랙박스 ──
     tabWidget->addTab(buildLogArchiveTab(), QStringLiteral("비상 로그 조회 및 블랙박스"));
 
-    // ── TAB 3: DB 관리 ──
-    tabWidget->addTab(buildDbTab(), QStringLiteral("DB 관리"));
+    // ── TAB 3: 입소자 관리 ──
+    tabWidget->addTab(buildDbTab(), QStringLiteral("입소자 관리"));
 
     root->addWidget(tabWidget, 1);
 
@@ -446,47 +528,7 @@ QWidget* MainWindow::buildVideoWall()
     titleRow->addWidget(title);
     titleRow->addStretch();
 
-    // ── ROI 도구: 성격이 같은 3형제를 하나의 세그먼트 그룹으로 묶는다 ──
-    auto* roiGroup = new QFrame();
-    roiGroup->setObjectName("segGroup");
-    auto* roiGroupLay = new QHBoxLayout(roiGroup);
-    roiGroupLay->setContentsMargins(9, 3, 3, 3);
-    roiGroupLay->setSpacing(2);
-
-    auto* roiCaption = new QLabel(QStringLiteral("ROI"));
-    roiCaption->setObjectName("segCaption");
-    roiGroupLay->addWidget(roiCaption);
-
-    roiButton = new QPushButton(QStringLiteral("지정"));
-    roiButton->setObjectName("segBtn");
-    roiButton->setCursor(Qt::PointingHandCursor);
-    connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
-    roiGroupLay->addWidget(roiButton);
-
-    roiClearButton = new QPushButton(QStringLiteral("제거"));
-    roiClearButton->setObjectName("segBtnDanger");
-    roiClearButton->setCursor(Qt::PointingHandCursor);
-    connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
-    roiGroupLay->addWidget(roiClearButton);
-
-    roiToggleButton = new QPushButton(QStringLiteral("표시"));
-    roiToggleButton->setObjectName("segBtnToggle");
-    roiToggleButton->setCheckable(true);
-    roiToggleButton->setChecked(true);
-    roiToggleButton->setCursor(Qt::PointingHandCursor);
-    connect(roiToggleButton, &QPushButton::toggled, this,
-            &MainWindow::onRoiVisibilityToggled);
-    roiGroupLay->addWidget(roiToggleButton);
-
-    titleRow->addWidget(roiGroup);
-
-    // ROI 도구와 실시간 액션 사이 구분선
-    auto* toolSep = new QFrame();
-    toolSep->setFrameShape(QFrame::VLine);
-    toolSep->setObjectName("toolSep");
-    toolSep->setFixedHeight(22);
-    titleRow->addWidget(toolSep);
-
+    // ── 실시간 액션: 방송 / 경보해제만 노출. 나머지(카메라·ROI)는 "설정" 팝업으로 ──
     // 🎤 원격 방송(인터콤)
     micButton = new QPushButton(QStringLiteral("🎤 방송"));
     micButton->setObjectName("micButton");
@@ -503,18 +545,24 @@ QWidget* MainWindow::buildVideoWall()
             &MainWindow::onAlarmClearClicked);
     titleRow->addWidget(alarmClearButton);
 
-    // 📷 카메라 연결 — CCTV IP를 입력받아 서버로 전송(서버가 그 IP로 RTSP를 연다)
-    addCameraButton = new QPushButton(QStringLiteral("📷 카메라 연결"));
-    addCameraButton->setObjectName("roiButton");
-    addCameraButton->setCursor(Qt::PointingHandCursor);
-    connect(addCameraButton, &QPushButton::clicked, this,
-            &MainWindow::onAddCameraClicked);
-    titleRow->addWidget(addCameraButton);
+    // 액션과 설정 사이 구분선
+    auto* toolSep = new QFrame();
+    toolSep->setFrameShape(QFrame::VLine);
+    toolSep->setObjectName("toolSep");
+    toolSep->setFixedHeight(22);
+    titleRow->addWidget(toolSep);
+
+    // ⚙️ 카메라 설정 — 카메라(연결/검색/해제)·ROI(지정/제거/표시) 탭 팝업을 연다
+    settingsButton = new QPushButton(QStringLiteral("⚙️ 카메라 설정"));
+    settingsButton->setObjectName("roiButton");
+    settingsButton->setCursor(Qt::PointingHandCursor);
+    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::onSettingsClicked);
+    titleRow->addWidget(settingsButton);
 
     outer->addLayout(titleRow);
 
     auto* grid = new QGridLayout();
-    grid->setSpacing(12);
+    grid->setSpacing(6);   // 촘촘한 관제 매트릭스 느낌
     grid->addWidget(buildVideoCard(0), 0, 0);
     grid->addWidget(buildVideoCard(1), 0, 1);
     grid->addWidget(buildVideoCard(2), 1, 0);
@@ -531,44 +579,15 @@ QWidget* MainWindow::buildVideoCard(int channel)
     card->setMinimumSize(420, 280);
 
     auto* lay = new QVBoxLayout(card);
-    card->setContentsMargins(0, 0, 0, 0);
+    lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
-    // 상단 오버레이 바: 병상/환자 + LIVE
-    auto* bar = new QFrame();
-    bar->setObjectName("videoBar");
-    bar->setFixedHeight(27);
-    auto* barLay = new QHBoxLayout(bar);
-    barLay->setContentsMargins(8, 0, 8, 0);
-    barLay->setSpacing(6);
-
-    auto* bed = new QLabel(patients[channel].bed);
-    bed->setObjectName("bedBadge");
-    auto* name = new QLabel(patients[channel].name);
-    name->setObjectName("bedName");
-    barLay->addWidget(bed);
-    barLay->addWidget(name);
-    barLay->addStretch();
-
-    auto* livePill = new QFrame();
-    livePill->setObjectName("livePill");
-    auto* lpLay = new QHBoxLayout(livePill);
-    lpLay->setContentsMargins(7, 1, 8, 1);
-    lpLay->setSpacing(5);
-    liveDots[channel] = new QLabel();
-    liveDots[channel]->setObjectName("liveDotOff");
-    liveDots[channel]->setFixedSize(6, 6);
-    auto* liveTxt = new QLabel(QStringLiteral("LIVE"));
-    liveTxt->setObjectName("liveText");
-    lpLay->addWidget(liveDots[channel]);
-    lpLay->addWidget(liveTxt);
-    barLay->addWidget(livePill);
-
-    lay->addWidget(bar);
-
-    // 영상 영역 — VideoView가 프레임 표시 + ROI 오버레이/그리기를 담당
+    // 영상 영역 — VideoView가 프레임 + NVR 오버레이(채널/이름/LIVE) + ROI를 담당.
+    // 별도 상단 바 없이 정보는 영상 위에 직접 얹는다(관제 콘솔 느낌).
     auto* video = new VideoView(channel);
     video->setObjectName("video");
+    video->setOverlayInfo(QStringLiteral("%1 · %2")
+                              .arg(patients[channel].bed, patients[channel].name));
     channelViews[channel] = video;
     connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
     connect(video, &VideoView::drawModeChanged, this,
@@ -577,6 +596,8 @@ QWidget* MainWindow::buildVideoCard(int channel)
                 if (roiButton)
                     roiButton->setText(on ? QStringLiteral("취소")
                                           : QStringLiteral("지정"));
+                // 그리기 시작 시 설정 팝업을 숨겨 영상을 가리지 않게 한다.
+                if (on && cameraSettingsDialog) cameraSettingsDialog->hide();
             });
     lay->addWidget(video, 1);
 
@@ -608,10 +629,10 @@ QWidget* MainWindow::buildVitalsPanel()
     auto* inner = new QWidget();
     auto* list = new QVBoxLayout(inner);
     list->setContentsMargins(0, 0, 6, 0);
-    list->setSpacing(12);
+    list->setSpacing(10);
+    // 카드마다 stretch 1 → 세로 공간을 균등하게 나눠 채운다(하단 빈공간 제거).
     for (int i = 0; i < 4; ++i)
-        list->addWidget(buildVitalCard(i));
-    list->addStretch();
+        list->addWidget(buildVitalCard(i), 1);
 
     scroll->setWidget(inner);
     outer->addWidget(scroll, 1);
@@ -625,56 +646,82 @@ QWidget* MainWindow::buildVitalCard(int channel)
     card->setObjectName("vitalCard");
 
     auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(14, 12, 14, 12);
-    lay->setSpacing(10);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(0);
 
-    // 헤더: 상태등 + 이름 + 병상 + 상태 배지
-    auto* head = new QHBoxLayout();
-    head->setSpacing(8);
+    // ── 헤더 바: 상태등 + 이름 + 병상 + 상태 배지 ──
+    auto* head = new QFrame();
+    head->setObjectName("vitalHead");
+    auto* hl = new QHBoxLayout(head);
+    hl->setContentsMargins(14, 7, 12, 7);
+    hl->setSpacing(8);
     vitalStatusDots[channel] = new QLabel();
     vitalStatusDots[channel]->setObjectName("vitalDot");
     vitalStatusDots[channel]->setFixedSize(9, 9);
     auto* name = new QLabel(patients[channel].name);
     name->setObjectName("vitalName");
+    vitalNameLabels[channel] = name;
     auto* bed = new QLabel(patients[channel].bed);
     bed->setObjectName("vitalBed");
+    vitalBedLabels[channel] = bed;
     vitalStatusBadges[channel] = new QLabel(QStringLiteral("대기"));
     vitalStatusBadges[channel]->setObjectName("vitalBadge");
     vitalStatusBadges[channel]->setAlignment(Qt::AlignCenter);
-    head->addWidget(vitalStatusDots[channel]);
-    head->addWidget(name);
-    head->addWidget(bed);
-    head->addStretch();
-    head->addWidget(vitalStatusBadges[channel]);
-    lay->addLayout(head);
+    hl->addWidget(vitalStatusDots[channel]);
+    hl->addWidget(name);
+    hl->addWidget(bed);
+    hl->addStretch();
+    hl->addWidget(vitalStatusBadges[channel]);
+    lay->addWidget(head);
 
-    // 바이탈 값: 체온 / 심박수
-    auto* stats = new QHBoxLayout();
-    stats->setSpacing(10);
+    // ── 본문: 큰 판독값 2개 (체온 / 심박) — 환자 모니터 느낌 ──
+    auto* body = new QHBoxLayout();
+    body->setContentsMargins(14, 9, 14, 6);
+    body->setSpacing(10);
 
-    auto makeStat = [&](const QString& icon, const QString& caption, QLabel*& valueRef) {
+    auto makeStat = [&](const QString& icon, const QString& caption,
+                        const QString& unit, QLabel*& valueRef) {
         auto* box = new QFrame();
         box->setObjectName("statBox");
         auto* bl = new QVBoxLayout(box);
-        bl->setContentsMargins(12, 10, 12, 10);
+        bl->setContentsMargins(12, 7, 12, 7);
         bl->setSpacing(2);
         auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
         cap->setObjectName("statCaption");
         valueRef = new QLabel(QStringLiteral("--"));
         valueRef->setObjectName("statValue");
+        auto* unitLbl = new QLabel(unit);
+        unitLbl->setObjectName("statUnit");
+        auto* valRow = new QHBoxLayout();
+        valRow->setContentsMargins(0, 0, 0, 0);
+        valRow->setSpacing(4);
+        valRow->addWidget(valueRef);
+        valRow->addWidget(unitLbl, 0, Qt::AlignBottom);
+        valRow->addStretch();
         bl->addWidget(cap);
-        bl->addWidget(valueRef);
+        bl->addLayout(valRow);
         return box;
     };
 
-    stats->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"), tempValues[channel]));
-    stats->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박수"), hrValues[channel]));
-    lay->addLayout(stats);
+    body->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"),
+                             QStringLiteral("℃"), tempValues[channel]));
+    body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
+                             QStringLiteral("bpm"), hrValues[channel]));
+    lay->addLayout(body);
 
-    // 갱신 시각
-    vitalUpdated[channel] = new QLabel(QStringLiteral("웨어러블 연결 대기"));
-    vitalUpdated[channel]->setObjectName("vitalUpdated");
-    lay->addWidget(vitalUpdated[channel]);
+    // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
+    auto* sparkRow = new QHBoxLayout();
+    sparkRow->setContentsMargins(14, 0, 14, 10);
+    hrSpark[channel] = new Sparkline();
+    hrSpark[channel]->setRange(40, 140);
+    hrSpark[channel]->setGuides({
+        {110.0, QColor(QString::fromLatin1(kCritical))},  // 고 위험
+        {100.0, QColor(QString::fromLatin1(kWarn))},      // 고 주의
+        { 55.0, QColor(QString::fromLatin1(kWarn))},      // 저 주의
+        { 45.0, QColor(QString::fromLatin1(kCritical))},  // 저 위험
+    });
+    sparkRow->addWidget(hrSpark[channel]);
+    lay->addLayout(sparkRow);
 
     return card;
 }
@@ -751,9 +798,11 @@ QWidget* MainWindow::buildLogTable()
     logTable = new QTableWidget(0, 4);
     logTable->setObjectName("logTable");
     logTable->setHorizontalHeaderLabels(
-        {QStringLiteral("날짜/시간"), QStringLiteral("병실"),
+        {QStringLiteral("날짜/시간"), QStringLiteral("채널"),
          QStringLiteral("이벤트"), QStringLiteral("상태")});
     logTable->horizontalHeader()->setStretchLastSection(true);
+    // 날짜/시간(0열)은 "yyyy-MM-dd HH:mm:ss"가 잘리지 않도록 내용 폭에 맞춘다.
+    logTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     connect(logTable, &QTableWidget::cellDoubleClicked,
@@ -940,9 +989,33 @@ QWidget* MainWindow::buildCareTimeDashboard()
 
     careTimeList = new QVBoxLayout();
     careTimeList->setSpacing(6);
+    for (int ch = 0; ch < 4; ++ch)
+        careTimeList->addWidget(buildCareTimeCard(ch));
     lay->addLayout(careTimeList);
     lay->addStretch();
     return card;
+}
+
+// 케어 타임 카드 1개(채널당) — 이름/통계 라벨만 멤버로 잡아두고, updateCareTime()이
+// 텍스트를 갱신한다. 실제 케어시간은 서버가 care_logs에 쌓는 값을 그대로 읽는다.
+QWidget* MainWindow::buildCareTimeCard(int channel)
+{
+    auto* row = new QFrame();
+    row->setObjectName("vitalHead");   // 바이탈 헤더와 동일한 카드 톤 재사용
+    auto* v = new QVBoxLayout(row);
+    v->setContentsMargins(14, 8, 14, 8);
+    v->setSpacing(2);
+
+    careNameLabels[channel] = new QLabel(
+        QStringLiteral("채널 %1 · —").arg(channel + 1));
+    careNameLabels[channel]->setObjectName("vitalName");
+
+    careStatLabels[channel] = new QLabel(QStringLiteral("오늘 0분 · 0회 · —"));
+    careStatLabels[channel]->setObjectName("segCaption");
+
+    v->addWidget(careNameLabels[channel]);
+    v->addWidget(careStatLabels[channel]);
+    return row;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -954,11 +1027,13 @@ QWidget* MainWindow::buildDbTab()
     panel->setObjectName("panel");
 
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(16, 14, 16, 16);
-    outer->setSpacing(16);
+    outer->setContentsMargins(18, 16, 18, 16);
+    outer->setSpacing(14);
 
-    // DB 연결 상태 표시 (멤버 변수에 할당 — 나중에 동적 갱신 가능)
-    auto* statusBar = new QHBoxLayout();
+    // ── 상단 툴바: DB 상태 · 검색 · 신규등록 · 새로고침 ──
+    auto* toolbar = new QHBoxLayout();
+    toolbar->setSpacing(10);
+
     dbStatusDot = new QLabel();
     dbStatusDot->setObjectName("statusDot");
     dbStatusDot->setFixedSize(10, 10);
@@ -966,78 +1041,182 @@ QWidget* MainWindow::buildDbTab()
     dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
     dbStatusText->setObjectName("statusText");
 
-    auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
-    refreshBtn->setObjectName("roiButton");
+    residentSearchEdit = new QLineEdit();
+    residentSearchEdit->setObjectName("searchEdit");
+    residentSearchEdit->setPlaceholderText(QStringLiteral("🔍  이름 검색 (재원·퇴원 전체)"));
+    residentSearchEdit->setClearButtonEnabled(true);
+    residentSearchEdit->setMinimumWidth(240);
+    residentSearchEdit->setFixedHeight(34);
+    // 타이핑하는 즉시 필터(빈 값이면 재원자만). 엔터도 같은 동작.
+    connect(residentSearchEdit, &QLineEdit::textChanged, this,
+            [this](const QString& t) { refreshResidentCards(t); });
+
+    auto* newBtn = new QPushButton(QStringLiteral("＋ 신규 등록"));
+    newBtn->setObjectName("primaryButton");
+    newBtn->setCursor(Qt::PointingHandCursor);
+    newBtn->setFixedHeight(34);
+    connect(newBtn, &QPushButton::clicked, this, [this] { openResidentEditor(-1); });
+
+    auto* refreshBtn = new QPushButton(QStringLiteral("↻"));
+    refreshBtn->setObjectName("iconButton");
     refreshBtn->setCursor(Qt::PointingHandCursor);
-    connect(refreshBtn, &QPushButton::clicked, this, [this]() {
-        refreshResidentTable();
-        refreshCaregiverTable();
-    });
+    refreshBtn->setFixedSize(34, 34);
+    refreshBtn->setToolTip(QStringLiteral("새로고침"));
+    connect(refreshBtn, &QPushButton::clicked, this,
+            [this] { refreshResidentCards(residentSearchEdit->text()); });
 
-    statusBar->addWidget(dbStatusDot);
-    statusBar->addWidget(dbStatusText);
-    statusBar->addStretch();
-    statusBar->addWidget(refreshBtn);
-    outer->addLayout(statusBar);
+    toolbar->addWidget(dbStatusDot);
+    toolbar->addWidget(dbStatusText);
+    toolbar->addSpacing(8);
+    toolbar->addStretch();
+    toolbar->addWidget(residentSearchEdit);
+    toolbar->addWidget(newBtn);
+    toolbar->addWidget(refreshBtn);
+    outer->addLayout(toolbar);
 
-    // 입소자 섹션 + 요양사 섹션 상하 분할
-    auto* splitter = new QSplitter(Qt::Vertical);
-    splitter->addWidget(buildResidentSection());
-    splitter->addWidget(buildCaregiverSection());
-    splitter->setStretchFactor(0, 7);
-    splitter->setStretchFactor(1, 3);
-    outer->addWidget(splitter, 1);
+    // ── 결과 개수 캡션 ──
+    residentCountLabel = new QLabel(QStringLiteral("입소자 목록"));
+    residentCountLabel->setObjectName("segCaption");
+    outer->addWidget(residentCountLabel);
+
+    // ── 카드 그리드(스크롤 + FlowLayout으로 폭 따라 자동 줄바꿈) ──
+    auto* scroll = new QScrollArea();
+    scroll->setObjectName("vitalScroll");
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+
+    residentCardHost = new QWidget();
+    residentCardHost->setObjectName("cardHost");
+    new FlowLayout(residentCardHost, 2, 14, 14);   // host가 소유(부모 지정)
+    scroll->setWidget(residentCardHost);
+    outer->addWidget(scroll, 1);
 
     return panel;
 }
 
-QWidget* MainWindow::buildResidentSection()
+// 위험도/상태 텍스트를 색상 칩으로 만드는 헬퍼(파일 로컬).
+namespace {
+QLabel* makeChip(const QString& text, const char* color) {
+    auto* chip = new QLabel(text);
+    chip->setAttribute(Qt::WA_TransparentForMouseEvents);
+    chip->setStyleSheet(QString(
+        "color:%1; border:1px solid %1; border-radius:9px;"
+        " padding:1px 9px; font-size:11px; font-weight:800; background:transparent;")
+        .arg(color));
+    return chip;
+}
+}  // namespace
+
+// 카드 그리드를 DB에서 다시 채운다. nameFilter가 있으면 이름 LIKE(재원·퇴원 전체),
+// 없으면 재원자만. 각 카드 클릭 → 편집 다이얼로그.
+void MainWindow::refreshResidentCards(const QString& nameFilter)
 {
-    auto* card = new QFrame();
-    card->setObjectName("vitalCard");
+    if (!residentCardHost || !residentCardHost->layout()) return;
+    QLayout* fl = residentCardHost->layout();
 
-    auto* lay = new QHBoxLayout(card);
-    lay->setContentsMargins(12, 12, 12, 12);
-    lay->setSpacing(16);
+    // 기존 카드 제거
+    QLayoutItem* old;
+    while ((old = fl->takeAt(0))) {
+        if (old->widget()) old->widget()->deleteLater();
+        delete old;
+    }
 
-    // ── 좌측: 입소자 목록 ──
-    auto* leftCol = new QVBoxLayout();
-    auto* listTitle = new QLabel(QStringLiteral("입소자 목록"));
-    listTitle->setObjectName("panelTitle");
-    leftCol->addWidget(listTitle);
+    const QString trimmed = nameFilter.trimmed();
+    const bool searching = !trimmed.isEmpty();
 
-    residentTable = new QTableWidget(0, 8);
-    residentTable->setObjectName("logTable");
-    residentTable->setHorizontalHeaderLabels({
-        QStringLiteral("ID"), QStringLiteral("이름"),
-        QStringLiteral("병실"), QStringLiteral("침대"),
-        QStringLiteral("채널"), QStringLiteral("웨어러블"),
-        QStringLiteral("위험도"), QStringLiteral("상태")
-    });
-    residentTable->horizontalHeader()->setStretchLastSection(true);
-    residentTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    residentTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    residentTable->setMinimumWidth(420);
-    connect(residentTable, &QTableWidget::cellClicked,
-            this, &MainWindow::onResidentSelected);
-    leftCol->addWidget(residentTable, 1);
+    QSqlQuery q;
+    if (searching) {
+        q.prepare(QStringLiteral(
+            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+            "risk_level, status FROM residents "
+            "WHERE name LIKE ? ORDER BY status DESC, resident_id"));
+        q.addBindValue(QStringLiteral("%%1%").arg(trimmed));
+    } else {
+        q.prepare(QStringLiteral(
+            "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
+            "risk_level, status FROM residents "
+            "WHERE status = ? ORDER BY camera_id, resident_id"));
+        q.addBindValue(QStringLiteral("재원"));
+    }
 
-    auto* leftWrap = new QWidget();
-    leftWrap->setLayout(leftCol);
-    lay->addWidget(leftWrap, 5);
+    if (!q.exec()) {
+        qDebug() << "입소자 카드 조회 실패:" << q.lastError().text();
+        return;
+    }
 
-    // ── 우측: 상세/편집 폼 ──
-    lay->addWidget(buildResidentForm(), 5);
+    int n = 0;
+    while (q.next()) {
+        const int     id      = q.value(0).toInt();
+        const QString name    = q.value(1).toString();
+        const QVariant camVar = q.value(4);
+        const QString risk    = q.value(6).toString();
+        const QString status  = q.value(7).toString();
+        const bool    active  = (status == QStringLiteral("재원"));
 
-    return card;
+        auto* card = new QPushButton();
+        card->setObjectName("resCard");
+        card->setProperty("inactive", !active);   // 퇴원 카드는 흐리게(QSS)
+        card->setCursor(Qt::PointingHandCursor);
+        card->setFixedSize(212, 120);
+        connect(card, &QPushButton::clicked, this, [this, id] { openResidentEditor(id); });
+
+        auto* cv = new QVBoxLayout(card);
+        cv->setContentsMargins(14, 12, 14, 12);
+        cv->setSpacing(8);
+
+        // 상단: 아바타 + 이름/병상
+        auto* top = new QHBoxLayout();
+        top->setSpacing(10);
+        auto* avatar = new QLabel(name.left(1));
+        avatar->setAttribute(Qt::WA_TransparentForMouseEvents);
+        avatar->setAlignment(Qt::AlignCenter);
+        avatar->setFixedSize(38, 38);
+        avatar->setStyleSheet(QString(
+            "background:%1; color:#fff; border-radius:19px;"
+            " font-size:16px; font-weight:800;").arg(active ? kAccent : kTextSub));
+
+        auto* nameCol = new QVBoxLayout();
+        nameCol->setSpacing(1);
+        auto* nameLbl = new QLabel(name.isEmpty() ? QStringLiteral("(이름 없음)") : name);
+        nameLbl->setObjectName("resName");
+        nameLbl->setAttribute(Qt::WA_TransparentForMouseEvents);
+        const QString chStr = camVar.isNull()
+            ? QStringLiteral("채널 미지정")
+            : QStringLiteral("채널 %1").arg(camVar.toInt() + 1);
+        auto* metaLbl = new QLabel(chStr);
+        metaLbl->setObjectName("resMeta");
+        metaLbl->setAttribute(Qt::WA_TransparentForMouseEvents);
+        nameCol->addWidget(nameLbl);
+        nameCol->addWidget(metaLbl);
+
+        top->addWidget(avatar);
+        top->addLayout(nameCol, 1);
+        cv->addLayout(top);
+
+        // 하단: 위험도 칩 + 상태 칩
+        auto* chips = new QHBoxLayout();
+        chips->setSpacing(6);
+        const char* riskColor = risk == QStringLiteral("상") ? kCritical
+                              : risk == QStringLiteral("중") ? kWarn : kNormal;
+        chips->addWidget(makeChip(QStringLiteral("위험 %1").arg(risk.isEmpty() ? QStringLiteral("-") : risk), riskColor));
+        chips->addWidget(makeChip(status.isEmpty() ? QStringLiteral("-") : status,
+                                  active ? kNormal : kTextSub));
+        chips->addStretch();
+        cv->addLayout(chips);
+
+        fl->addWidget(card);
+        ++n;
+    }
+
+    if (residentCountLabel)
+        residentCountLabel->setText(searching
+            ? QStringLiteral("검색 결과 %1명").arg(n)
+            : QStringLiteral("재원 중 %1명 · 카드를 클릭하면 상세/편집").arg(n));
 }
 
-QWidget* MainWindow::buildResidentForm()
+// 편집 다이얼로그에 들어갈 폼(그룹들) — 버튼/스크롤은 다이얼로그 쪽에서 감싼다.
+QWidget* MainWindow::buildResidentFormBody()
 {
-    auto* scroll = new QScrollArea();
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-
     auto* inner = new QWidget();
     auto* lay = new QVBoxLayout(inner);
     lay->setSpacing(12);
@@ -1048,7 +1227,6 @@ QWidget* MainWindow::buildResidentForm()
         g->setObjectName("formGroup");
         return g;
     };
-
     auto makeField = [](const QString& placeholder, QLineEdit*& ref) {
         ref = new QLineEdit();
         ref->setObjectName("formEdit");
@@ -1063,9 +1241,7 @@ QWidget* MainWindow::buildResidentForm()
     basicForm->setLabelAlignment(Qt::AlignLeft);
     basicForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     basicForm->addRow(QStringLiteral("이름"),        makeField("홍길동", editName));
-    basicForm->addRow(QStringLiteral("병실"),        makeField("201", editRoom));
-    basicForm->addRow(QStringLiteral("침대"),        makeField("A", editBed));
-    basicForm->addRow(QStringLiteral("카메라 채널"), makeField("0~3", editCameraId));
+    basicForm->addRow(QStringLiteral("카메라 채널"), makeField("1~4", editCameraId));
     basicForm->addRow(QStringLiteral("웨어러블 ID"), makeField("기기 번호", editWearableId));
     lay->addWidget(basicGroup);
 
@@ -1099,7 +1275,8 @@ QWidget* MainWindow::buildResidentForm()
 
     editStatus = new QComboBox();
     editStatus->setObjectName("formEdit");
-    editStatus->addItems({QStringLiteral("퇴원"), QStringLiteral("재원")});
+    // 재원을 먼저 둬서 신규 등록 시 기본값이 재원이 되도록 한다.
+    editStatus->addItems({QStringLiteral("재원"), QStringLiteral("퇴원")});
     careForm->addRow(QStringLiteral("상태"), editStatus);
     lay->addWidget(careGroup);
 
@@ -1123,62 +1300,305 @@ QWidget* MainWindow::buildResidentForm()
     editNotes->setMaximumHeight(80);
     notesLay->addWidget(editNotes);
     lay->addWidget(notesGroup);
-
-    // ── 버튼 ──
-    auto* btnRow = new QHBoxLayout();
-    auto* newBtn = new QPushButton(QStringLiteral("신규 등록"));
-    newBtn->setObjectName("roiButton");
-    newBtn->setCursor(Qt::PointingHandCursor);
-    connect(newBtn, &QPushButton::clicked, this, &MainWindow::onNewResident);
-
-    auto* saveBtn = new QPushButton(QStringLiteral("수정 저장"));
-    saveBtn->setObjectName("roiButton");
-    saveBtn->setCursor(Qt::PointingHandCursor);
-    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveResident);
-
-    auto* dischargeBtn = new QPushButton(QStringLiteral("퇴원 처리"));
-    dischargeBtn->setObjectName("alarmButton");
-    dischargeBtn->setCursor(Qt::PointingHandCursor);
-    connect(dischargeBtn, &QPushButton::clicked, this, &MainWindow::onDischargeResident);
-
-    btnRow->addWidget(newBtn);
-    btnRow->addWidget(saveBtn);
-    btnRow->addStretch();
-    btnRow->addWidget(dischargeBtn);
-    lay->addLayout(btnRow);
     lay->addStretch();
 
-    scroll->setWidget(inner);
-    return scroll;
+    return inner;
 }
 
-QWidget* MainWindow::buildCaregiverSection()
+// 편집 다이얼로그 1회 생성: 상단 프로필 헤더 + (폼 | 입원이력) 본문 + 하단 액션바.
+void MainWindow::ensureResidentDialog()
 {
-    auto* card = new QFrame();
-    card->setObjectName("vitalCard");
+    if (residentDialog) return;
 
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(12, 12, 12, 12);
-    lay->setSpacing(8);
+    residentDialog = new QDialog(this);
+    residentDialog->setObjectName("editDialog");   // QDialog 기본 배경(패널색) 사용
+    residentDialog->setWindowTitle(QStringLiteral("입소자 관리"));
+    residentDialog->resize(920, 640);
+    enableDarkTitleBar(residentDialog);
 
-    auto* title = new QLabel(QStringLiteral("요양사 관리"));
-    title->setObjectName("panelTitle");
-    lay->addWidget(title);
+    auto* root = new QVBoxLayout(residentDialog);
+    root->setContentsMargins(18, 16, 18, 16);
+    root->setSpacing(14);
 
-    caregiverTable = new QTableWidget(0, 5);
-    caregiverTable->setObjectName("logTable");
-    caregiverTable->setHorizontalHeaderLabels({
-        QStringLiteral("ID"), QStringLiteral("이름"),
-        QStringLiteral("연락처"), QStringLiteral("근무조"),
-        QStringLiteral("상태")
+    // ── 상단 프로필 헤더 ──
+    auto* header = new QFrame();
+    header->setObjectName("dlgHeader");
+    auto* hl = new QHBoxLayout(header);
+    hl->setContentsMargins(16, 12, 16, 12);
+    hl->setSpacing(14);
+
+    dlgAvatar = new QLabel();
+    dlgAvatar->setFixedSize(52, 52);
+    dlgAvatar->setAlignment(Qt::AlignCenter);
+
+    auto* nameCol = new QVBoxLayout();
+    nameCol->setSpacing(2);
+    dlgNameBig = new QLabel(QStringLiteral("신규 입소자"));
+    dlgNameBig->setObjectName("dlgName");
+    dlgSubMeta = new QLabel(QString());
+    dlgSubMeta->setObjectName("dlgSub");
+    nameCol->addWidget(dlgNameBig);
+    nameCol->addWidget(dlgSubMeta);
+
+    dlgRiskBadge = new QLabel();
+    dlgStatusBadge = new QLabel();
+
+    hl->addWidget(dlgAvatar);
+    hl->addLayout(nameCol);
+    hl->addStretch();
+    hl->addWidget(dlgRiskBadge);
+    hl->addWidget(dlgStatusBadge);
+    root->addWidget(header);
+
+    // ── 본문: 좌 폼(스크롤) | 우 입원이력 ──
+    auto* body = new QHBoxLayout();
+    body->setSpacing(16);
+
+    auto* formScroll = new QScrollArea();
+    formScroll->setObjectName("vitalScroll");
+    formScroll->setWidgetResizable(true);
+    formScroll->setFrameShape(QFrame::NoFrame);
+    formScroll->setWidget(buildResidentFormBody());
+    body->addWidget(formScroll, 3);
+    body->addWidget(buildAdmissionHistory(), 2);
+    root->addLayout(body, 1);
+
+    // ── 하단 액션바 ──
+    auto* footer = new QHBoxLayout();
+    footer->setSpacing(8);
+
+    auto* saveBtn = new QPushButton(QStringLiteral("저장"));
+    saveBtn->setObjectName("primaryButton");
+    saveBtn->setCursor(Qt::PointingHandCursor);
+    saveBtn->setMinimumWidth(96);
+    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveResident);
+
+    dlgDischargeBtn = new QPushButton(QStringLiteral("퇴원 처리"));
+    dlgDischargeBtn->setObjectName("dangerButton");
+    dlgDischargeBtn->setCursor(Qt::PointingHandCursor);
+    // 현재 상태에 따라 퇴원↔재입원. 처리 후 헤더/카드 갱신은 각 핸들러가 담당.
+    connect(dlgDischargeBtn, &QPushButton::clicked, this, [this] {
+        if (editStatus->currentText() == QStringLiteral("재원")) onDischargeResident();
+        else                                                     onReadmitResident();
     });
-    caregiverTable->horizontalHeader()->setStretchLastSection(true);
-    caregiverTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    caregiverTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    lay->addWidget(caregiverTable, 1);
 
-    return card;
+    auto* closeBtn = new QPushButton(QStringLiteral("닫기"));
+    closeBtn->setObjectName("roiButton");
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    connect(closeBtn, &QPushButton::clicked, residentDialog, &QDialog::close);
+
+    footer->addWidget(saveBtn);
+    footer->addStretch();
+    footer->addWidget(dlgDischargeBtn);
+    footer->addWidget(closeBtn);
+    root->addLayout(footer);
 }
+
+// 다이얼로그 상단 프로필(아바타·이름·병상·배지·퇴원버튼)을 폼 현재값 기준으로 갱신.
+void MainWindow::refreshResidentDialogHeader()
+{
+    if (!residentDialog) return;
+
+    const bool isNew  = (selectedResidentId < 0);
+    const QString name = editName->text().trimmed();
+    const bool active  = (editStatus->currentText() == QStringLiteral("재원"));
+
+    dlgAvatar->setText(name.isEmpty() ? QStringLiteral("＋") : name.left(1));
+    dlgAvatar->setStyleSheet(QString(
+        "background:%1; color:#fff; border-radius:26px;"
+        " font-size:22px; font-weight:800;").arg(active && !isNew ? kAccent : kTextSub));
+
+    dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
+                              : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));
+
+    const QString cam = editCameraId->text().trimmed();
+    dlgSubMeta->setText(cam.isEmpty() ? QStringLiteral("채널 미지정")
+                                      : QStringLiteral("채널 %1").arg(cam));
+
+    auto styleBadge = [](QLabel* b, const QString& text, const char* color) {
+        b->setText(text);
+        b->setStyleSheet(QString(
+            "color:%1; border:1px solid %1; border-radius:11px;"
+            " padding:3px 12px; font-size:12px; font-weight:800; background:transparent;")
+            .arg(color));
+    };
+    const QString risk = editRiskLevel->currentText();
+    const char* riskColor = risk == QStringLiteral("상") ? kCritical
+                          : risk == QStringLiteral("중") ? kWarn : kNormal;
+    styleBadge(dlgRiskBadge, QStringLiteral("위험 %1").arg(risk), riskColor);
+    styleBadge(dlgStatusBadge, active ? QStringLiteral("재원") : QStringLiteral("퇴원"),
+               active ? kNormal : kTextSub);
+    dlgRiskBadge->setVisible(!isNew);
+    dlgStatusBadge->setVisible(!isNew);
+
+    // 신규는 퇴원/재입원 불가 → 버튼 숨김. 기존은 상태에 따라 라벨 토글.
+    dlgDischargeBtn->setVisible(!isNew);
+    dlgDischargeBtn->setText(active ? QStringLiteral("퇴원 처리")
+                                    : QStringLiteral("재입원"));
+}
+
+// 카드 클릭/신규 버튼 → 폼을 채우고 편집 다이얼로그를 연다.
+void MainWindow::openResidentEditor(int residentId)
+{
+    ensureResidentDialog();
+    if (residentId < 0) onNewResident();
+    else                loadResidentIntoForm(residentId);
+    refreshResidentDialogHeader();
+    residentDialog->show();
+    residentDialog->raise();
+    residentDialog->activateWindow();
+}
+
+QWidget* MainWindow::buildAdmissionHistory()
+{
+    auto* box = new QGroupBox(QStringLiteral("입원 이력"));
+    box->setObjectName("formGroup");
+    auto* lay = new QVBoxLayout(box);
+    lay->setSpacing(6);
+
+    admissionInfo = new QLabel(
+        QStringLiteral("입소자를 선택하면 입원 이력이 표시됩니다. "
+                       "행을 더블클릭하면 그 기간의 변경 내역이 열립니다."));
+    admissionInfo->setObjectName("segCaption");
+    admissionInfo->setWordWrap(true);
+    lay->addWidget(admissionInfo);
+
+    admissionTable = new QTableWidget(0, 4);
+    admissionTable->setObjectName("logTable");
+    admissionTable->setHorizontalHeaderLabels(
+        {QStringLiteral("입원일"), QStringLiteral("퇴원일"),
+         QStringLiteral("상태"),   QStringLiteral("변경")});
+    admissionTable->horizontalHeader()->setStretchLastSection(true);
+    admissionTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    admissionTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    admissionTable->verticalHeader()->setVisible(false);
+    connect(admissionTable, &QTableWidget::cellDoubleClicked,
+            this, &MainWindow::onAdmissionRowActivated);
+    lay->addWidget(admissionTable, 1);
+    return box;
+}
+
+void MainWindow::refreshAdmissionTable(int residentId)
+{
+    if (!admissionTable) return;
+    admissionTable->setRowCount(0);
+    if (residentId < 0) {
+        admissionInfo->setText(QStringLiteral("입소자를 선택하세요."));
+        return;
+    }
+
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT a.admission_id, a.admitted_at, a.discharged_at, a.status, "
+        " (SELECT COUNT(*) FROM resident_changes c "
+        "   WHERE c.admission_id = a.admission_id) AS chg "
+        "FROM admissions a WHERE a.resident_id=? "
+        "ORDER BY a.admitted_at DESC, a.admission_id DESC"));
+    q.addBindValue(residentId);
+    if (!q.exec()) {
+        qDebug() << "입원 이력 조회 실패:" << q.lastError().text();
+        return;
+    }
+
+    while (q.next()) {
+        const int row = admissionTable->rowCount();
+        admissionTable->insertRow(row);
+
+        auto* inItem = new QTableWidgetItem(q.value(1).toDate().toString("yyyy-MM-dd"));
+        inItem->setData(Qt::UserRole, q.value(0).toInt());   // admission_id 숨겨둠
+        admissionTable->setItem(row, 0, inItem);
+
+        const QVariant out = q.value(2);
+        admissionTable->setItem(row, 1, new QTableWidgetItem(
+                                            out.isNull() ? QStringLiteral("—") : out.toDate().toString("yyyy-MM-dd")));
+        admissionTable->setItem(row, 2, new QTableWidgetItem(q.value(3).toString()));
+        admissionTable->setItem(row, 3, new QTableWidgetItem(
+                                            QStringLiteral("%1건").arg(q.value(4).toInt())));
+    }
+
+    admissionInfo->setText(QStringLiteral("입원 %1건 — 행 더블클릭 시 변경 내역")
+                               .arg(admissionTable->rowCount()));
+}
+
+void MainWindow::onAdmissionRowActivated(int row, int /*column*/)
+{
+    auto* item = admissionTable ? admissionTable->item(row, 0) : nullptr;
+    if (!item) return;
+    showChangeLogDialog(item->data(Qt::UserRole).toInt());
+}
+
+// 선택한 입원 에피소드의 변경 내역만 팝업으로 — [수정 전] → [수정 후] 형식.
+void MainWindow::showChangeLogDialog(int admissionId)
+{
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT changed_at, change_type, field_label, old_value, new_value, changed_by "
+        "FROM resident_changes WHERE admission_id=? "
+        "ORDER BY changed_at DESC, change_id DESC"));
+    q.addBindValue(admissionId);
+    if (!q.exec()) {
+        QMessageBox::critical(this, QStringLiteral("조회 실패"), q.lastError().text());
+        return;
+    }
+
+    auto* dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);   // 닫으면 자동 정리
+    dlg->setObjectName("panel");
+    dlg->setWindowTitle(QStringLiteral("변경 내역"));
+    dlg->resize(820, 480);
+    enableDarkTitleBar(dlg);
+
+    auto* lay = new QVBoxLayout(dlg);
+    lay->setContentsMargins(16, 16, 16, 16);
+    lay->setSpacing(10);
+
+    auto* tbl = new QTableWidget(0, 5);
+    tbl->setObjectName("logTable");
+    tbl->setHorizontalHeaderLabels(
+        {QStringLiteral("시각"), QStringLiteral("구분"), QStringLiteral("항목"),
+         QStringLiteral("변경 내용"), QStringLiteral("작업자")});
+    tbl->horizontalHeader()->setStretchLastSection(false);
+    tbl->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    tbl->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tbl->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tbl->verticalHeader()->setVisible(false);
+
+    auto shown = [](const QString& s) {
+        return s.isEmpty() ? QStringLiteral("(없음)") : s;
+    };
+
+    while (q.next()) {
+        const int row = tbl->rowCount();
+        tbl->insertRow(row);
+        tbl->setItem(row, 0, new QTableWidgetItem(
+                                 q.value(0).toDateTime().toString("yyyy-MM-dd HH:mm:ss")));
+        tbl->setItem(row, 1, new QTableWidgetItem(q.value(1).toString()));
+        tbl->setItem(row, 2, new QTableWidgetItem(q.value(2).toString()));
+        tbl->setItem(row, 3, new QTableWidgetItem(
+                                 QStringLiteral("[수정 전] %1   →   [수정 후] %2")
+                                     .arg(shown(q.value(3).toString()), shown(q.value(4).toString()))));
+        tbl->setItem(row, 4, new QTableWidgetItem(q.value(5).toString()));
+    }
+    tbl->resizeColumnsToContents();
+    tbl->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+
+    if (tbl->rowCount() == 0) {
+        auto* empty = new QLabel(QStringLiteral("이 입원 기간에 기록된 변경 내역이 없습니다."));
+        empty->setObjectName("segCaption");
+        lay->addWidget(empty);
+    }
+    lay->addWidget(tbl, 1);
+
+    auto* closeBox = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    closeBox->button(QDialogButtonBox::Close)->setText(QStringLiteral("닫기"));
+    closeBox->button(QDialogButtonBox::Close)->setObjectName(QStringLiteral("roiButton"));
+    connect(closeBox, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    lay->addWidget(closeBox);
+
+    dlg->show();
+}
+
+
 
 // ═══════════════════════════════════════════════════════════
 //  스타일 (QSS)
@@ -1246,26 +1666,22 @@ void MainWindow::applyTheme()
                        border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; }
         #alarmButton:hover { background: #ff6b62; }
 
-        #videoCard { background: #0B0F14; border: 1px solid %(border); border-radius: 10px; }
-        #videoBar { background: %(panel); border-bottom: 1px solid %(border);
-                    border-top-left-radius: 10px; border-top-right-radius: 10px; }
-        #bedBadge { background: %(accent); color: #fff; font-size: 10px; font-weight: 800;
-                    padding: 1px 6px; border-radius: 5px; letter-spacing: 0.5px; }
-        #bedName { color: %(text); font-size: 12px; font-weight: 600; }
-        /* LIVE pill 배지 */
-        #livePill { background: %(card); border: 1px solid %(border); border-radius: 9px; }
-        #liveText { color: %(sub); font-size: 9px; font-weight: 800; letter-spacing: 1.5px; }
-        #video { color: #9AA7B2; font-size: 13px; background: #0B0F14;
-                 border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+        /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
+        #videoCard { background: #000000; border: 1px solid %(border); border-radius: 4px; }
+        #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 4px; }
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
         #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 10px; }
-        #vitalName { color: %(text); font-size: 15px; font-weight: 700; }
+        #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
+                     border-top-left-radius: 10px; border-top-right-radius: 10px; }
+        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
         #vitalBed { color: %(sub); font-size: 12px; }
-        #statBox { background: %(panel); border: 1px solid %(border); border-radius: 8px; }
-        #statCaption { color: %(sub); font-size: 11px; }
-        #statValue { font-size: 22px; font-weight: 800; }
+        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 8px; }
+        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        #statValue { font-family: "Consolas", "D2Coding", monospace;
+                     font-size: 25px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 4px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
@@ -1297,6 +1713,36 @@ void MainWindow::applyTheme()
 QLabel {
     color: %(text);
 }
+
+/* 검색창 */
+#searchEdit { background: %(card); color: %(text); border: 1px solid %(border);
+              border-radius: 17px; padding: 4px 14px; font-size: 13px; }
+#searchEdit:focus { border-color: %(accent); }
+
+/* 주요 액션 버튼(신규 등록·저장) */
+#primaryButton { background: %(accent); color: #fff; border: none;
+                 border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
+#primaryButton:hover { background: %(accent); opacity: 0.9; }
+#dangerButton { background: transparent; color: %(critical); border: 1px solid %(critical);
+                border-radius: 8px; padding: 6px 16px; font-size: 13px; font-weight: 700; }
+#dangerButton:hover { background: %(critical); color: #fff; }
+#iconButton { background: %(card); color: %(text); border: 1px solid %(border);
+              border-radius: 8px; font-size: 16px; font-weight: 700; }
+#iconButton:hover { border-color: %(accent); color: %(accent); }
+
+/* 입소자 카드 그리드 */
+#cardHost { background: transparent; }
+#resCard { background: %(card); border: 1px solid %(border); border-radius: 12px;
+           text-align: left; }
+#resCard:hover { border: 1px solid %(accent); background: %(panel); }
+#resCard[inactive="true"] { background: %(bgDeep); }
+#resName { color: %(text); font-size: 15px; font-weight: 800; }
+#resMeta { color: %(sub); font-size: 12px; }
+
+/* 편집 다이얼로그 헤더 */
+#dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+#dlgName { color: %(text); font-size: 19px; font-weight: 800; }
+#dlgSub  { color: %(sub); font-size: 13px; }
 
 QGroupBox#formGroup {
     color: %(text);
@@ -1348,7 +1794,6 @@ QTextEdit#formEdit:focus {
             border-left: 4px solid transparent; border-right: 4px solid transparent;
             border-top: 5px solid %(sub); margin-right: 8px; }
 
-        QSplitter::handle { background: %(border); }
 
         /* ── 캘린더 팝업 (QDateEdit) ── */
         QCalendarWidget QWidget { background: %(panel); color: %(text); }
@@ -1364,6 +1809,21 @@ QTextEdit#formEdit:focus {
         QCalendarWidget QSpinBox {
             background: %(bgDeep); color: %(text); border: 1px solid %(border); }
         QCalendarWidget QAbstractItemView:disabled { color: %(sub); }
+
+        /* ── 공용 다이얼로그·메시지박스·메뉴 ──
+           기본 스타일이 흰 배경으로 떠서 밝은 글씨가 안 보이는 것 방지 */
+        QMessageBox, QInputDialog, QDialog { background: %(panel); }
+        QMessageBox QLabel, QInputDialog QLabel { color: %(text); }
+        QMessageBox QPushButton, QInputDialog QPushButton {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 6px; padding: 5px 16px; font-size: 12px; font-weight: 600;
+            min-width: 60px; }
+        QMessageBox QPushButton:hover, QInputDialog QPushButton:hover { border-color: %(accent); }
+        QMessageBox QPushButton:default, QInputDialog QPushButton:default {
+            background: %(accent); color: #fff; border-color: %(accent); }
+        QMenu { background: %(panel); color: %(text); border: 1px solid %(border); }
+        QMenu::item:selected { background: %(accent); color: #fff; }
+        QToolTip { background: %(card); color: %(text); border: 1px solid %(border); }
     )")
                             .replace("%(bgDeep)", kBgDeep)
                             .replace("%(panel)", kPanel)
@@ -1379,7 +1839,6 @@ QTextEdit#formEdit:focus {
     // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
     statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
     for (int i = 0; i < 4; ++i) {
-        liveDots[i]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
         vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kTextSub));
     }
 }
@@ -1400,6 +1859,8 @@ void MainWindow::toggleTheme()
         if (sockets[i]->state() != QAbstractSocket::ConnectedState) connected = false;
     setConnectionState(connected, statusText->text());
     updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
+    // 카드의 아바타/칩은 인라인 색이라 QSS 재적용만으론 안 바뀐다 → 다시 그린다.
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
 }
 
 void MainWindow::setConnectionState(bool connected, const QString& text)
@@ -1451,8 +1912,18 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 
     // 담당 Pi가 끊긴 채널의 LIVE 표시등 소등
     for (int ch = 0; ch < 4; ++ch) {
-        if (sockets[serverForChannel(ch)]->state() != QAbstractSocket::ConnectedState)
-            liveDots[ch]->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kTextSub));
+        if (channelViews[ch] &&
+            sockets[serverForChannel(ch)]->state() != QAbstractSocket::ConnectedState)
+            channelViews[ch]->setLive(false);
+    }
+
+    // Pi가 새로 연결됨(false→true)을 감지 → 저장된 카메라를 자동 재전송.
+    // (서버는 재접속 후 카메라를 모르므로, 사용자가 다시 누르지 않아도 복구된다.)
+    for (int i = 0; i < kNumServers; ++i) {
+        const bool now = sockets[i]->state() == QAbstractSocket::ConnectedState;
+        if (now && !serverConnected_[i])
+            resendCamerasForServer(i);
+        serverConnected_[i] = now;
     }
 
     // 끊긴 소켓이 하나라도 있으면 재접속 예약
@@ -1466,18 +1937,26 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 void MainWindow::updateVitals()
 {
     auto* rng = QRandomGenerator::global();
-    const QString now = QDateTime::currentDateTime().toString("HH:mm:ss");
 
     for (int i = 0; i < 4; ++i) {
-        // 36.0~38.2℃ / 55~112bpm 범위로 자연스럽게 변동
-        double temp = 36.0 + rng->bounded(220) / 100.0;
-        int hr = 55 + rng->bounded(58);
+        // 목업: 기본은 정상 범위 (36.3~37.0℃ / 64~88bpm)
+        double temp = 36.3 + rng->bounded(70) / 100.0;
+        int hr = 64 + rng->bounded(24);
+
+        // 전승현(채널 0)만 테스트로 급등/급락을 섞어 그래프가 임계선을 넘는 걸 보여준다.
+        if (i == 0) {
+            const int roll = rng->bounded(100);
+            if      (roll < 15) hr = 112 + rng->bounded(28);  // 급등 112~139 (위험)
+            else if (roll < 25) hr = 40  + rng->bounded(9);   // 급락 40~48  (위험)
+            else if (roll < 42) hr = 96  + rng->bounded(13);  // 상승 96~108 (주의)
+            // 나머지는 정상 유지
+        }
 
         const QString color = vitalColor(temp, hr);
 
-        tempValues[i]->setText(QString::number(temp, 'f', 1) + QStringLiteral(" ℃"));
+        tempValues[i]->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
         tempValues[i]->setStyleSheet(QString("color:%1;").arg(color));
-        hrValues[i]->setText(QString::number(hr) + QStringLiteral(" bpm"));
+        hrValues[i]->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
         hrValues[i]->setStyleSheet(QString("color:%1;").arg(color));
 
         vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
@@ -1489,7 +1968,55 @@ void MainWindow::updateVitals()
             " padding:1px 10px; font-size:11px; font-weight:800;")
             .arg(color, blendHex(color, kCard, 0.18)));
 
-        vitalUpdated[i]->setText(QStringLiteral("웨어러블 · 마지막 갱신 ") + now);
+        if (hrSpark[i]) {
+            hrSpark[i]->setLineColor(QColor(color));
+            hrSpark[i]->addValue(hr);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  케어 타임 대시보드 — 서버가 care_logs에 쌓는 실데이터를 채널별로 집계해 표시.
+//  (요양사 감지 → CareTimer 세션 종료 → insertCareLog가 채널·케어시간 기록)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::updateCareTime()
+{
+    // 채널별 오늘(00:00~) 케어시간 합계·세션수·최근 종료시각.
+    int totalSec[4] = {};
+    int sessions[4] = {};
+    QString lastSeen[4];
+
+    QSqlQuery q;
+    if (q.exec(QStringLiteral(
+            "SELECT camera_id, COALESCE(SUM(duration_sec),0), COUNT(*), MAX(end_time) "
+            "FROM care_logs WHERE DATE(end_time)=CURDATE() GROUP BY camera_id"))) {
+        while (q.next()) {
+            const int ch = q.value(0).toInt();
+            if (ch < 0 || ch >= 4) continue;   // 4채널 밖 기록은 무시
+            totalSec[ch] = q.value(1).toInt();
+            sessions[ch] = q.value(2).toInt();
+            const QDateTime end = q.value(3).toDateTime();
+            if (end.isValid()) lastSeen[ch] = end.toString(QStringLiteral("HH:mm"));
+        }
+    } else {
+        qDebug() << "케어로그 조회 실패:" << q.lastError().text();
+    }
+
+    for (int ch = 0; ch < 4; ++ch) {
+        if (careNameLabels[ch])
+            careNameLabels[ch]->setText(QStringLiteral("채널 %1 · %2")
+                                            .arg(ch + 1).arg(patients[ch].name));
+        if (!careStatLabels[ch]) continue;
+
+        // 1분 미만 세션도 "0분"으로 묻히지 않게 60초 미만은 초로 표기.
+        const int total = totalSec[ch];
+        const QString dur = total >= 60 ? QStringLiteral("%1분").arg(total / 60)
+                                        : QStringLiteral("%1초").arg(total);
+        careStatLabels[ch]->setText(
+            QStringLiteral("오늘 %1 · %2회 · 최근 %3")
+                .arg(dur)
+                .arg(sessions[ch])
+                .arg(lastSeen[ch].isEmpty() ? QStringLiteral("—") : lastSeen[ch]));
     }
 }
 
@@ -1536,7 +2063,9 @@ void MainWindow::onReadyRead()
 
             if (evt.channel < 4) {
                 if (evt.type == kEvtFall) {
-                    handleFallEvent(evt.channel, evt.timestamp_ms);
+                    handleFallEvent(evt.channel, evt.timestamp_ms,
+                                    evt.x / float(kRoiCoordScale),
+                                    evt.y / float(kRoiCoordScale));
                 }
                 else if (evt.type == kEvtBedEgress) {
                     handleBedEgressEvent(evt.channel, evt.timestamp_ms);
@@ -1593,6 +2122,9 @@ void MainWindow::onReadyRead()
     for (int ch = 0; ch < 4; ++ch) {
         if (!hasFrame[ch])
             continue;
+        // 해제한 채널은 서버가 잠깐 더 보내는 프레임을 무시 → 검은 미연결 화면 유지
+        if (videoSuppressed_[ch])
+            continue;
 
         QImage image = QImage::fromData(
             reinterpret_cast<const uchar*>(latestJpeg[ch].constData()),
@@ -1608,22 +2140,28 @@ void MainWindow::onReadyRead()
             QDateTime::currentMSecsSinceEpoch() - static_cast<qint64>(latestTs[ch]);
         //qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
 
-        channelViews[ch]->setFrame(QPixmap::fromImage(image));
-        liveDots[ch]->setStyleSheet(
-            QString("background:%1; border-radius:3px;").arg(kCritical));
+        const QPixmap pix = QPixmap::fromImage(image);
+        channelViews[ch]->setFrame(pix);
+        channelViews[ch]->setLive(true);   // 프레임 도착 → LIVE 표시등 점등
+        // ROI 편집기가 이 채널을 보고 있으면 팝업 영상도 실시간 갱신.
+        if (roiEditorView && roiEditChannel == ch &&
+            cameraSettingsDialog && cameraSettingsDialog->isVisible())
+            roiEditorView->setFrame(pix);
     }
 }
 
 // ═══════════════════════════════════════════════════════════
 //  낙상 이벤트 — 빨간색 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
-void MainWindow::handleFallEvent(int channel, quint64 timestampMs)
+void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, float ny)
 {
     // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
         fallActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"));
+            // 서버가 보낸 낙상 발생 위치(정규화 0~1)에 십자 조준점 표시
+            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"),
+                                            QPointF(nx, ny));
         }
         qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
@@ -1700,81 +2238,47 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onRoiButtonClicked()
 {
-    // 이미 그리는 중이면 이 버튼은 "취소"로 동작
-    if (roiDrawing) {
-        for (auto* v : channelViews)
-            if (v && v->drawMode()) v->cancelDraft();
+    if (!roiEditorView) return;
+    // 그리는 중이면 이 버튼은 "취소"로 동작
+    if (roiEditorView->drawMode()) {
+        roiEditorView->cancelDraft();
         return;
     }
-
-    // 4채널 중 하나 선택 (병상/환자 이름으로 표기)
-    QStringList items;
-    for (int i = 0; i < 4; ++i)
-        items << QStringLiteral("채널 %1  ·  %2 (%3)")
-                     .arg(i + 1).arg(patients[i].name, patients[i].bed);
-
-    bool ok = false;
-    const QString choice = QInputDialog::getItem(
-        this, QStringLiteral("ROI 지정"),
-        QStringLiteral("침대 ROI를 그릴 채널을 선택하세요:"), items, 0, false, &ok);
-    if (!ok) return;
-
-    const int channel = items.indexOf(choice);
-    if (channel < 0 || channel >= 4) return;
-
-    channelViews[channel]->setDrawMode(true);  // 그리기 시작 (좌클릭=점, 더블클릭=완료)
+    // 팝업 편집기(현재 선택 채널)에 바로 그리기 시작 (좌클릭=점, 더블클릭=완료)
+    roiEditorView->setDrawMode(true);
 }
 
 void MainWindow::onRoiClearClicked()
 {
-    // 그리는 중이면 먼저 그 작업을 취소해야 헷갈리지 않는다
-    if (roiDrawing) {
-        for (auto* v : channelViews)
-            if (v && v->drawMode()) v->cancelDraft();
-    }
+    const int ch = roiEditChannel;
+    if (roiEditorView && roiEditorView->drawMode()) roiEditorView->cancelDraft();
 
-    // ROI가 실제로 설정된 채널만 후보로 제시
-    QStringList items;
-    QList<int> channels;
-    for (int i = 0; i < 4; ++i) {
-        if (channelViews[i] && !channelViews[i]->roi().isEmpty()) {
-            items << QStringLiteral("채널 %1  ·  %2 (%3)")
-                         .arg(i + 1).arg(patients[i].name, patients[i].bed);
-            channels << i;
-        }
-    }
-
-    if (items.isEmpty()) {
+    const bool hasRoi =
+        (channelViews[ch] && !channelViews[ch]->roi().isEmpty()) ||
+        (roiEditorView && !roiEditorView->roi().isEmpty());
+    if (!hasRoi) {
         QMessageBox::information(this, QStringLiteral("ROI 제거"),
-                                QStringLiteral("제거할 ROI가 설정된 채널이 없습니다."));
+                                 QStringLiteral("채널 %1에 제거할 ROI가 없습니다.").arg(ch + 1));
         return;
     }
-
-    bool ok = false;
-    const QString choice = QInputDialog::getItem(
-        this, QStringLiteral("ROI 제거"),
-        QStringLiteral("ROI를 제거할 채널을 선택하세요:"), items, 0, false, &ok);
-    if (!ok) return;
-
-    const int idx = items.indexOf(choice);
-    if (idx < 0) return;
-    const int channel = channels[idx];
 
     if (QMessageBox::question(
             this, QStringLiteral("ROI 제거"),
-            QStringLiteral("채널 %1의 침대 ROI를 제거할까요?").arg(channel + 1))
+            QStringLiteral("채널 %1의 침대 ROI를 제거할까요?").arg(ch + 1))
         != QMessageBox::Yes)
         return;
 
-    sendRoi(channel, QPolygonF(), true);   // 서버에 삭제 통보
-    channelViews[channel]->clearRoi();      // 로컬 오버레이 제거
-    qDebug() << "ROI 제거: ch" << channel;
+    sendRoi(ch, QPolygonF(), true);            // 서버에 삭제 통보
+    if (channelViews[ch]) channelViews[ch]->clearRoi();  // 메인 4분할 오버레이 제거
+    if (roiEditorView) roiEditorView->clearRoi();         // 편집기 오버레이 제거
+    qDebug() << "ROI 제거: ch" << ch;
 }
 
 void MainWindow::onRoiVisibilityToggled(bool on)
 {
     for (auto* v : channelViews)
         if (v) v->setRoiVisible(on);
+    if (roiEditorView) roiEditorView->setRoiVisible(on);
     if (roiToggleButton)
         roiToggleButton->setText(on ? QStringLiteral("표시")
                                     : QStringLiteral("숨김"));
@@ -1783,6 +2287,9 @@ void MainWindow::onRoiVisibilityToggled(bool on)
 void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
 {
     sendRoi(channel, normPts);
+    // 팝업 편집기에서 그린 ROI를 메인 4분할 화면에도 반영한다.
+    if (channel >= 0 && channel < 4 && channelViews[channel])
+        channelViews[channel]->setRoi(normPts);
     // 방금 그린 걸 볼 수 있도록 표시 토글이 꺼져 있으면 켠다
     if (roiToggleButton && !roiToggleButton->isChecked())
         roiToggleButton->setChecked(true);
@@ -1826,6 +2333,97 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
 //  카메라 연결 — CCTV IP를 서버로 전송하면, 서버가 그 IP로 RTSP를 연다.
 //  (Qt는 실제 CCTV에 직접 붙지 않는다. 붙는 대상은 항상 Pi 서버.)
 // ═══════════════════════════════════════════════════════════
+
+// ── ONVIF WS-Discovery 헬퍼 (같은 망 카메라 자동 탐색) ──────────
+namespace {
+
+// 발견한 ONVIF 장비 1건.
+struct DiscoveredCam {
+    QString ip;
+    QString model;
+    QString mac;   // UUID에서 유도(대부분 카메라가 UUID에 MAC을 심음). 못 구하면 uuid.
+    QString uuid;  // EndpointReference — 중복 제거 키
+};
+
+// WS-Discovery Probe SOAP 메시지 (Types=NetworkVideoTransmitter → 카메라 대상).
+QByteArray buildWsDiscoveryProbe() {
+    const QString msgId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    return QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\""
+        " xmlns:w=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\""
+        " xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\""
+        " xmlns:dn=\"http://www.onvif.org/ver10/network/wsdl\">"
+        "<e:Header>"
+        "<w:MessageID>uuid:%1</w:MessageID>"
+        "<w:To e:mustUnderstand=\"true\">"
+        "urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To>"
+        "<w:Action e:mustUnderstand=\"true\">"
+        "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action>"
+        "</e:Header>"
+        // Types를 비워 모든 ONVIF 장비가 응답하게 한다(카메라만 걸러 못 뜨는 경우 방지).
+        "<e:Body><d:Probe/></e:Body></e:Envelope>").arg(msgId).toUtf8();
+}
+
+// Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조, 그래도 없으면 모델형 토큰).
+QString modelFromScopes(const QString& scopes) {
+    QString name, hardware;
+    const QStringList toks =
+        scopes.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    for (const QString& t : toks) {
+        int i;
+        if ((i = t.indexOf(QStringLiteral("/name/"), 0, Qt::CaseInsensitive)) >= 0)
+            name = QUrl::fromPercentEncoding(t.mid(i + 6).toUtf8());
+        else if ((i = t.indexOf(QStringLiteral("/hardware/"), 0, Qt::CaseInsensitive)) >= 0)
+            hardware = QUrl::fromPercentEncoding(t.mid(i + 10).toUtf8());
+    }
+    if (!name.isEmpty() && !hardware.isEmpty())
+        return name == hardware ? name
+                                : name + QStringLiteral(" (") + hardware + QStringLiteral(")");
+    if (!name.isEmpty()) return name;
+    if (!hardware.isEmpty()) return hardware;
+
+    // 폴백: name/hardware 스코프가 없는 장비 — 스코프 마지막 세그먼트 중 "모델처럼"
+    // 생긴 토큰(대문자+숫자, 예: PNO-A9081R, XND-6080)을 찾아 표시한다.
+    static const QRegularExpression modelLike(
+        QStringLiteral("^[A-Z][A-Z0-9]*-?[A-Z0-9]{3,}$"));
+    for (const QString& t : toks) {
+        const QString seg =
+            QUrl::fromPercentEncoding(t.mid(t.lastIndexOf('/') + 1).toUtf8());
+        if (seg.contains(QRegularExpression(QStringLiteral("[0-9]"))) &&
+            modelLike.match(seg).hasMatch())
+            return seg;
+    }
+    return QStringLiteral("ONVIF 카메라");
+}
+
+// (MAC은 readyRead에서 arp를 비동기로 돌려 채운다 — 동기 조회는 응답 유실을 유발했다.)
+
+// ProbeMatch 응답 1개 파싱 → DiscoveredCam.
+DiscoveredCam parseProbeMatch(const QByteArray& datagram) {
+    DiscoveredCam cam;
+    QString xaddrs, scopes;
+    QXmlStreamReader xml(datagram);
+    while (!xml.atEnd()) {
+        if (xml.readNext() == QXmlStreamReader::StartElement) {
+            const QString name = xml.name().toString();  // 네임스페이스 접두어 제외 로컬명
+            if (name == QStringLiteral("XAddrs"))       xaddrs = xml.readElementText();
+            else if (name == QStringLiteral("Scopes"))  scopes = xml.readElementText();
+            else if (name == QStringLiteral("Address") && cam.uuid.isEmpty())
+                cam.uuid = xml.readElementText().trimmed();
+        }
+    }
+    if (!xaddrs.isEmpty()) {
+        const QString first =
+            xaddrs.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).value(0);
+        cam.ip = QUrl(first).host();
+    }
+    cam.model = modelFromScopes(scopes);
+    // MAC은 호출부(readyRead)에서 ARP로 실제값을 채운다 — 여기선 uuid만 보관.
+    return cam;
+}
+
+}  // namespace
 
 // 단일 CCTV IP → 채널별 RTSP URL. PNM-C16083RVQ(4센서 1대)는 IP 하나에 서브채널
 // 0~3이 붙는다: rtsp://<계정>:<pw>@<IP>:<port>/<채널>/<profile>/media.smp
@@ -1885,85 +2483,310 @@ void MainWindow::sendCameraClear(int channel)
     sock->flush();
 }
 
+// "카메라 설정" 팝업을 최초 1회 구성 — 카메라·ROI 작업을 팝업 안에서 직접 한다.
+//   · 카메라 탭: 접속 정보 + [검색] → 결과표(팝업 내부에 채워짐) + [연결]/[해제]
+//   · ROI 탭:   채널 선택 → 그 채널 영상을 팝업에 표시 → 그 위에 직접 ROI 그림
+void MainWindow::buildCameraSettingsDialog()
+{
+    if (cameraSettingsDialog) return;
+
+    cameraSettingsDialog = new QDialog(this);
+    cameraSettingsDialog->setObjectName("panel");
+    cameraSettingsDialog->setWindowTitle(QStringLiteral("카메라 설정"));
+    cameraSettingsDialog->resize(960, 680);
+    enableDarkTitleBar(cameraSettingsDialog);  // 팝업 타이틀바도 다크로
+    auto* v = new QVBoxLayout(cameraSettingsDialog);
+    v->setContentsMargins(16, 16, 16, 16);
+    v->setSpacing(12);
+
+    auto* tabs = new QTabWidget(cameraSettingsDialog);
+
+    // ══════════ 탭 1: 카메라 ══════════
+    auto* camTab = new QWidget();
+    auto* camV = new QVBoxLayout(camTab);
+    camV->setSpacing(10);
+
+    // 접속 정보 폼 (마지막 값 복원)
+    QSettings s;
+    auto* form = new QFormLayout();
+    camIpEdit = new QLineEdit(s.value(QStringLiteral("camera/ip")).toString());
+    camIpEdit->setPlaceholderText(
+        QStringLiteral("예: 172.20.35.140  (아래 검색 결과를 클릭하면 자동 입력)"));
+    camUserEdit = new QLineEdit(
+        s.value(QStringLiteral("camera/user"), QStringLiteral("admin")).toString());
+    camPwEdit = new QLineEdit();
+    camPwEdit->setEchoMode(QLineEdit::Password);
+    camPwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
+    // 포트(554)·프로파일(profile2)은 고정 — 입력받지 않는다.
+    // 다크 스타일 적용 — 스타일시트가 objectName "formEdit"인 입력칸만 칠한다.
+    for (QLineEdit* e : {camIpEdit, camUserEdit, camPwEdit})
+        e->setObjectName(QStringLiteral("formEdit"));
+    form->addRow(QStringLiteral("CCTV IP"), camIpEdit);
+    form->addRow(QStringLiteral("계정"), camUserEdit);
+    form->addRow(QStringLiteral("비밀번호"), camPwEdit);
+    camV->addLayout(form);
+
+    // 액션 버튼 줄: 검색 / 연결 / 해제
+    auto* btnRow = new QHBoxLayout();
+    searchCameraButton = new QPushButton(QStringLiteral("🔍 같은 망 카메라 검색"));
+    searchCameraButton->setObjectName("roiButton");
+    searchCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(searchCameraButton, &QPushButton::clicked, this, &MainWindow::onSearchCameraClicked);
+    addCameraButton = new QPushButton(QStringLiteral("📷 연결"));
+    addCameraButton->setObjectName("roiButton");
+    addCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(addCameraButton, &QPushButton::clicked, this, &MainWindow::onAddCameraClicked);
+    clearCameraButton = new QPushButton(QStringLiteral("해제"));
+    clearCameraButton->setObjectName("roiClear");
+    clearCameraButton->setCursor(Qt::PointingHandCursor);
+    connect(clearCameraButton, &QPushButton::clicked, this, &MainWindow::onCameraClearClicked);
+    btnRow->addWidget(searchCameraButton);
+    btnRow->addStretch();
+    btnRow->addWidget(addCameraButton);
+    btnRow->addWidget(clearCameraButton);
+    camV->addLayout(btnRow);
+
+    // 검색 결과 표 (팝업 내부에 인라인으로 채워진다 — 별도 창 안 띄움)
+    discoveryStatus = new QLabel(
+        QStringLiteral("‘검색’을 누르면 같은 망의 카메라가 아래에 나타납니다. 행을 클릭하면 IP가 채워져요."));
+    discoveryStatus->setObjectName("segCaption");
+    discoveryStatus->setWordWrap(true);
+    camV->addWidget(discoveryStatus);
+
+    discoveryTable = new QTableWidget(0, 3);
+    discoveryTable->setObjectName(QStringLiteral("logTable"));  // 다크 표 스타일 재사용
+    discoveryTable->setHorizontalHeaderLabels(
+        {QStringLiteral("모델"), QStringLiteral("IP"), QStringLiteral("MAC / ID")});
+    discoveryTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    discoveryTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    discoveryTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    discoveryTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    discoveryTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    discoveryTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    discoveryTable->verticalHeader()->setVisible(false);
+    // 행 클릭/더블클릭 → IP 입력칸에 채워준다.
+    auto fillIpFromRow = [this](int r, int) {
+        if (discoveryTable->item(r, 1)) camIpEdit->setText(discoveryTable->item(r, 1)->text());
+        // 다른 카메라를 고르면 이전 카메라의 계정·비번은 남기지 않고 초기화.
+        camUserEdit->setText(QStringLiteral("admin"));
+        camPwEdit->clear();
+    };
+    connect(discoveryTable, &QTableWidget::cellClicked, this, fillIpFromRow);
+    connect(discoveryTable, &QTableWidget::cellDoubleClicked, this, fillIpFromRow);
+    camV->addWidget(discoveryTable, 1);
+
+    // 검색용 UDP 소켓 (1회 생성·재사용). 응답이 오면 표에 인라인으로 추가.
+    // 임의 포트에 바인드 → 카메라는 우리가 보낸 소스 포트로 유니캐스트 ProbeMatch를
+    // 돌려준다. (3702 공유 바인드는 Windows에서 유니캐스트 응답을 다른 프로세스가
+    // 가로채 오히려 아무것도 못 받으므로 쓰지 않는다.)
+    discoverySocket = new QUdpSocket(cameraSettingsDialog);
+    discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress);
+    connect(discoverySocket, &QUdpSocket::readyRead, this, [this]() {
+        while (discoverySocket->hasPendingDatagrams()) {
+            QByteArray dg;
+            dg.resize(static_cast<int>(discoverySocket->pendingDatagramSize()));
+            QHostAddress from;
+            discoverySocket->readDatagram(dg.data(), dg.size(), &from);
+            const DiscoveredCam cam = parseProbeMatch(dg);
+            if (cam.ip.isEmpty()) continue;
+
+            // 같은 카메라가 응답을 여러 번(모델 있는 것 + scopes 빈 것) 보낸다 →
+            // IP 기준 한 행만 유지. 이미 있으면 "더 나은 모델명"이 왔을 때만 갱신.
+            const bool realModel = (cam.model != QStringLiteral("ONVIF 카메라"));
+            if (discoverySeen.contains(cam.ip)) {
+                if (realModel) {
+                    for (int r = 0; r < discoveryTable->rowCount(); ++r) {
+                        auto* ipItem = discoveryTable->item(r, 1);
+                        auto* mdItem = discoveryTable->item(r, 0);
+                        if (ipItem && ipItem->text() == cam.ip && mdItem &&
+                            mdItem->text() == QStringLiteral("ONVIF 카메라"))
+                            mdItem->setText(cam.model);  // 플레이스홀더 → 실제 모델
+                    }
+                }
+                continue;
+            }
+            discoverySeen.insert(cam.ip);
+            const int r = discoveryTable->rowCount();
+            discoveryTable->insertRow(r);
+            discoveryTable->setItem(r, 0, new QTableWidgetItem(cam.model));
+            discoveryTable->setItem(r, 1, new QTableWidgetItem(cam.ip));
+            discoveryTable->setItem(r, 2, new QTableWidgetItem(QStringLiteral("…")));
+
+            // MAC 조회는 비동기로 — 여기서 arp를 동기(1.5초 블로킹)로 돌리면 그 사이
+            // 몰려오는 다른 카메라 응답이 유실된다(첫 검색에서 1대만 잡히던 원인).
+            const QString ip = cam.ip;
+            auto* arp = new QProcess(this);
+            connect(arp, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                    this, [this, arp, ip](int, QProcess::ExitStatus) {
+                        const QString out =
+                            QString::fromLocal8Bit(arp->readAllStandardOutput());
+                        arp->deleteLater();
+                        static const QRegularExpression re(
+                            QStringLiteral("([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}"));
+                        const auto m = re.match(out);
+                        const QString mac = m.hasMatch()
+                            ? m.captured(0).toUpper().replace('-', ':') : QStringLiteral("-");
+                        for (int rr = 0; rr < discoveryTable->rowCount(); ++rr) {
+                            auto* ipIt = discoveryTable->item(rr, 1);
+                            auto* mcIt = discoveryTable->item(rr, 2);
+                            if (ipIt && ipIt->text() == ip && mcIt) mcIt->setText(mac);
+                        }
+                    });
+            arp->start(QStringLiteral("arp"), {QStringLiteral("-a"), ip});
+        }
+    });
+
+    tabs->addTab(camTab, QStringLiteral("카메라"));
+
+    // ══════════ 탭 2: ROI ══════════
+    auto* roiTab = new QWidget();
+    auto* roiV = new QVBoxLayout(roiTab);
+    roiV->setSpacing(10);
+
+    // 채널 선택 버튼 (1~4)
+    auto* chRow = new QHBoxLayout();
+    auto* chLabel = new QLabel(QStringLiteral("채널 선택:"));
+    chLabel->setObjectName("segCaption");
+    chRow->addWidget(chLabel);
+    for (int i = 0; i < 4; ++i) {
+        roiChannelButtons[i] =
+            new QPushButton(QStringLiteral("채널 %1").arg(i + 1));
+        roiChannelButtons[i]->setObjectName("roiToggle");
+        roiChannelButtons[i]->setCheckable(true);
+        roiChannelButtons[i]->setCursor(Qt::PointingHandCursor);
+        const int ch = i;
+        connect(roiChannelButtons[i], &QPushButton::clicked, this,
+                [this, ch]() { selectRoiChannel(ch); });
+        chRow->addWidget(roiChannelButtons[i]);
+    }
+    chRow->addStretch();
+    roiV->addLayout(chRow);
+
+    roiEditInfo = new QLabel(
+        QStringLiteral("채널을 고르면 아래에 그 채널 영상이 표시됩니다. ‘지정’을 누른 뒤 "
+                       "영상 위를 클릭해 침대 영역을 그리고, 더블클릭(또는 우클릭)으로 완료하세요."));
+    roiEditInfo->setObjectName("segCaption");
+    roiEditInfo->setWordWrap(true);
+    roiV->addWidget(roiEditInfo);
+
+    // 팝업 내부 편집용 영상 뷰 (한 위젯을 채널 전환하며 재사용)
+    roiEditorView = new VideoView(roiEditChannel);
+    roiEditorView->setObjectName("video");
+    roiEditorView->setMinimumHeight(380);
+    connect(roiEditorView, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    connect(roiEditorView, &VideoView::drawModeChanged, this, [this](int, bool on) {
+        roiDrawing = on;
+        if (roiButton)
+            roiButton->setText(on ? QStringLiteral("취소") : QStringLiteral("지정"));
+    });
+    roiV->addWidget(roiEditorView, 1);
+
+    // ROI 액션: 지정 / 제거 / 표시
+    auto* roiBtnRow = new QHBoxLayout();
+    roiButton = new QPushButton(QStringLiteral("지정"));
+    roiButton->setObjectName("roiButton");
+    roiButton->setCursor(Qt::PointingHandCursor);
+    connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
+    roiClearButton = new QPushButton(QStringLiteral("제거"));
+    roiClearButton->setObjectName("roiClear");
+    roiClearButton->setCursor(Qt::PointingHandCursor);
+    connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
+    roiToggleButton = new QPushButton(QStringLiteral("표시"));
+    roiToggleButton->setObjectName("roiToggle");
+    roiToggleButton->setCheckable(true);
+    roiToggleButton->setChecked(true);
+    roiToggleButton->setCursor(Qt::PointingHandCursor);
+    connect(roiToggleButton, &QPushButton::toggled, this, &MainWindow::onRoiVisibilityToggled);
+    roiBtnRow->addWidget(roiButton);
+    roiBtnRow->addWidget(roiClearButton);
+    roiBtnRow->addWidget(roiToggleButton);
+    roiBtnRow->addStretch();
+    roiV->addLayout(roiBtnRow);
+
+    tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
+
+    v->addWidget(tabs, 1);
+
+    auto* closeBox = new QDialogButtonBox(QDialogButtonBox::Close, cameraSettingsDialog);
+    closeBox->button(QDialogButtonBox::Close)->setText(QStringLiteral("닫기"));
+    closeBox->button(QDialogButtonBox::Close)->setObjectName(QStringLiteral("roiButton"));
+    connect(closeBox, &QDialogButtonBox::rejected, cameraSettingsDialog, &QDialog::hide);
+    v->addWidget(closeBox);
+
+    selectRoiChannel(0);  // 초기 편집 채널
+}
+
+// ROI 편집 채널 전환 — 그 채널 영상/기존 ROI를 편집기에 로드하고 버튼을 강조.
+void MainWindow::selectRoiChannel(int ch)
+{
+    if (ch < 0 || ch >= 4) return;
+    roiEditChannel = ch;
+    for (int i = 0; i < 4; ++i)
+        if (roiChannelButtons[i]) roiChannelButtons[i]->setChecked(i == ch);
+    if (!roiEditorView) return;
+
+    if (roiEditorView->drawMode()) roiEditorView->cancelDraft();
+    roiEditorView->setChannel(ch);
+    if (channelViews[ch]) {
+        roiEditorView->setCameraConnected(channelViews[ch]->cameraConnected());
+        roiEditorView->setRoi(channelViews[ch]->roi());  // 기존 ROI 로드
+    }
+    roiEditorView->setRoiVisible(!roiToggleButton || roiToggleButton->isChecked());
+    // 다음 프레임부터 onReadyRead가 이 편집기에 실시간 영상을 계속 넣어준다.
+}
+
+void MainWindow::onSettingsClicked()
+{
+    buildCameraSettingsDialog();   // 최초 1회만 실제로 생성
+    cameraSettingsDialog->show();  // 비모달 — 영상 클릭(ROI 그리기)이 가능하게
+    cameraSettingsDialog->raise();
+    cameraSettingsDialog->activateWindow();
+}
+
+// "연결" — 카메라 탭의 IP/계정/비번으로 바로 연결. 포트·프로파일은 고정값.
 void MainWindow::onAddCameraClicked()
 {
-    // 마지막 입력값을 QSettings에서 복원 (관제 PC 로컬).
-    QSettings s;
-    const QString lastIp      = s.value(QStringLiteral("camera/ip")).toString();
-    const QString lastUser    = s.value(QStringLiteral("camera/user"),
-                                        QStringLiteral("admin")).toString();
-    const int     lastPort    = s.value(QStringLiteral("camera/port"), 554).toInt();
-    const QString lastProfile = s.value(QStringLiteral("camera/profile"),
-                                        QStringLiteral("profile2")).toString();
+    if (!camIpEdit) return;   // 팝업 미구성(정상 흐름에선 발생 안 함)
 
-    // ── 입력 다이얼로그 ──────────────────────────────────────
-    QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("카메라 연결"));
-    auto* form = new QFormLayout(&dlg);
-
-    auto* ipEdit = new QLineEdit(lastIp, &dlg);
-    ipEdit->setPlaceholderText(QStringLiteral("예: 172.20.35.140"));
-    auto* userEdit = new QLineEdit(lastUser, &dlg);
-    auto* pwEdit = new QLineEdit(&dlg);
-    pwEdit->setEchoMode(QLineEdit::Password);
-    pwEdit->setPlaceholderText(QStringLiteral("CCTV 비밀번호"));
-    auto* portEdit = new QLineEdit(QString::number(lastPort), &dlg);
-    auto* profileEdit = new QLineEdit(lastProfile, &dlg);
-
-    form->addRow(QStringLiteral("CCTV IP"), ipEdit);
-    form->addRow(QStringLiteral("계정"), userEdit);
-    form->addRow(QStringLiteral("비밀번호"), pwEdit);
-    form->addRow(QStringLiteral("포트"), portEdit);
-    form->addRow(QStringLiteral("프로파일"), profileEdit);
-
-    auto* hint = new QLabel(
-        QStringLiteral("IP 하나로 4채널(센서)을 모두 연결합니다.\n"
-                       "ch0·1은 Pi A, ch2·3은 Pi B로 전송됩니다."), &dlg);
-    hint->setObjectName("segCaption");
-    form->addRow(hint);
-
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("연결"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("취소"));
-    form->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    if (dlg.exec() != QDialog::Accepted) return;
-
-    const QString ip = ipEdit->text().trimmed();
+    const QString ip = camIpEdit->text().trimmed();
     if (ip.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("입력 오류"),
-                             QStringLiteral("CCTV IP를 입력하세요."));
+                             QStringLiteral("CCTV IP를 입력하거나 검색 목록에서 선택하세요."));
         return;
     }
-    const QString user = userEdit->text().trimmed();
-    const QString pw = pwEdit->text();
-    bool portOk = false;
-    const int port = portEdit->text().trimmed().toInt(&portOk);
-    if (!portOk || port <= 0 || port > 65535) {
-        QMessageBox::warning(this, QStringLiteral("입력 오류"),
-                             QStringLiteral("포트 번호가 올바르지 않습니다."));
-        return;
-    }
-    const QString profile = profileEdit->text().trimmed().isEmpty()
-                                ? QStringLiteral("profile2")
-                                : profileEdit->text().trimmed();
+    // 포트(554)·프로파일(profile2)은 카메라 규약상 고정.
+    connectCameraWith(ip, camUserEdit->text().trimmed(), camPwEdit->text(),
+                      554, QStringLiteral("profile2"));
+}
+
+// 수동 입력/검색 두 경로가 공유하는 실제 연결 처리.
+void MainWindow::connectCameraWith(const QString& ip, const QString& user,
+                                   const QString& password, int port,
+                                   const QString& profile)
+{
+    const QString prof = profile.trimmed().isEmpty()
+                             ? QStringLiteral("profile2") : profile.trimmed();
 
     // 입력값 저장(폼 복원용). 비밀번호는 평문 저장을 피해 담지 않는다 — 다음
     // 연결 때 다시 입력한다(서버로는 v1 평문 TCP로 나가며, 추후 TLS 적용 예정).
+    QSettings s;
     s.setValue(QStringLiteral("camera/ip"), ip);
     s.setValue(QStringLiteral("camera/user"), user);
     s.setValue(QStringLiteral("camera/port"), port);
-    s.setValue(QStringLiteral("camera/profile"), profile);
+    s.setValue(QStringLiteral("camera/profile"), prof);
 
     // IP 하나 → 4채널 URL 생성 → 채널별 담당 Pi로 전송(socketForChannel이 라우팅).
     int sent = 0;
     for (int ch = 0; ch < 4; ++ch) {
-        const QString url = buildRtspUrl(ip, user, pw, port, profile, ch);
+        const QString url = buildRtspUrl(ip, user, password, port, prof, ch);
+        lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
+        cameraActive_[ch] = true;   // 연결됨(재시작 후에도 해제 가능하도록 지속 저장)
+        videoSuppressed_[ch] = false;  // 프레임 표시 재개
+        if (channelViews[ch])
+            channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
         if (sendCamera(ch, url)) ++sent;
     }
+    persistCameraActive();
 
     if (sent == 0) {
         QMessageBox::warning(
@@ -1980,6 +2803,126 @@ void MainWindow::onAddCameraClicked()
             this, QStringLiteral("카메라 연결 요청"),
             QStringLiteral("4채널 연결 요청을 서버로 보냈습니다.\n"
                            "서버가 카메라를 여는 동안 잠시 후 영상이 표시됩니다."));
+    }
+}
+
+// "검색" — 팝업 안(카메라 탭)의 discoveryTable에 인라인으로 결과를 채운다.
+// 별도 창을 띄우지 않는다. 응답 파싱·표 추가는 build 시 연결한 readyRead 람다가 처리.
+void MainWindow::onSearchCameraClicked()
+{
+    if (!discoverySocket || !discoveryTable) return;
+    discoveryTable->setRowCount(0);
+    discoverySeen.clear();
+    if (discoveryStatus)
+        discoveryStatus->setText(QStringLiteral("같은 망의 ONVIF 카메라를 검색 중…"));
+
+    const QByteArray probe = buildWsDiscoveryProbe();
+    const QHostAddress mcast(QStringLiteral("239.255.255.250"));
+    QUdpSocket* sock = discoverySocket;
+
+    // 기본 멀티캐스트 인터페이스가 가상 어댑터로 잡히면 카메라가 Probe를 못 받는다
+    // → IPv4·멀티캐스트 가능한 모든 인터페이스로 각각 쏜다.
+    auto sendProbes = [sock, probe, mcast]() {
+        int sentOn = 0;
+        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+            const auto f = iface.flags();
+            if (!f.testFlag(QNetworkInterface::IsUp) ||
+                !f.testFlag(QNetworkInterface::IsRunning) ||
+                f.testFlag(QNetworkInterface::IsLoopBack) ||
+                !f.testFlag(QNetworkInterface::CanMulticast))
+                continue;
+            bool hasV4 = false;
+            for (const auto& e : iface.addressEntries())
+                if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) { hasV4 = true; break; }
+            if (!hasV4) continue;
+            sock->setMulticastInterface(iface);
+            if (sock->writeDatagram(probe, mcast, 3702) > 0) ++sentOn;
+        }
+        if (sentOn == 0) sock->writeDatagram(probe, mcast, 3702);  // 폴백
+    };
+
+    sendProbes();                                  // UDP 유실·타이밍 대비 여러 번 재전송
+    QTimer::singleShot(700, this, sendProbes);
+    QTimer::singleShot(1600, this, sendProbes);
+    QTimer::singleShot(3000, this, sendProbes);
+    QTimer::singleShot(6500, this, [this]() {
+        if (discoveryStatus && discoveryTable)
+            discoveryStatus->setText(
+                QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)")
+                    .arg(discoveryTable->rowCount()));
+    });
+}
+
+void MainWindow::onCameraClearClicked()
+{
+    bool any = false;
+    for (int ch = 0; ch < 4; ++ch)
+        if (cameraActive_[ch]) any = true;   // Qt 재시작 후엔 URL이 비어도 이 플래그로 판단
+    if (!any) {
+        QMessageBox::information(this, QStringLiteral("카메라 해제"),
+                                 QStringLiteral("연결된 카메라가 없습니다."));
+        return;
+    }
+
+    if (QMessageBox::question(
+            this, QStringLiteral("카메라 해제"),
+            QStringLiteral("모든 채널의 카메라 연결을 해제할까요?\n"
+                           "서버가 RTSP 연결을 끊고 대기 상태로 돌아갑니다."))
+        != QMessageBox::Yes) {
+        return;
+    }
+
+    for (int ch = 0; ch < 4; ++ch) {
+        sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
+        lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
+        cameraActive_[ch] = false;      // 미연결로 표시(지속 저장 반영)
+        videoSuppressed_[ch] = true;    // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
+        if (channelViews[ch]) {
+            channelViews[ch]->setLive(false);
+            channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
+        }
+    }
+    persistCameraActive();
+}
+
+// 활성 채널 집합을 QSettings에 비트마스크로 저장/복원한다. URL(비밀번호)은 담지 않는다.
+void MainWindow::persistCameraActive()
+{
+    int mask = 0;
+    for (int ch = 0; ch < 4; ++ch)
+        if (cameraActive_[ch]) mask |= (1 << ch);
+    QSettings s;
+    s.setValue(QStringLiteral("camera/active_mask"), mask);
+}
+
+// 시작 시 호출 — 서버가 아직 스트리밍 중인 채널을 "연결됨"으로 복원해 해제를 가능케 한다.
+// 프레임이 오면 setLive(true)로 실제 영상이 뜨고, 그전까지는 "신호 대기 중…"을 보여준다.
+void MainWindow::restoreCameraActive()
+{
+    QSettings s;
+    const int mask = s.value(QStringLiteral("camera/active_mask"), 0).toInt();
+    for (int ch = 0; ch < 4; ++ch) {
+        cameraActive_[ch] = (mask & (1 << ch)) != 0;
+        if (cameraActive_[ch]) {
+            videoSuppressed_[ch] = false;
+            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
+        }
+    }
+}
+
+// Pi가 (재)연결되면, 그 Pi 담당 채널의 마지막 카메라 URL을 자동으로 다시 보낸다.
+// 서버는 재부팅/재접속 후 카메라를 모르는 상태이므로, 사용자가 다시 누르지 않아도
+// 세션 중 지정해 둔 카메라가 자동 복구된다.
+void MainWindow::resendCamerasForServer(int serverIdx)
+{
+    for (int ch = 0; ch < 4; ++ch) {
+        if (serverForChannel(ch) != serverIdx) continue;
+        if (lastCameraUrl_[ch].isEmpty()) continue;
+        if (sendCamera(ch, lastCameraUrl_[ch])) {
+            videoSuppressed_[ch] = false;  // 프레임 표시 재개
+            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
+            qDebug() << "Pi" << serverIdx << "재접속 → ch" << ch << "카메라 자동 재전송";
+        }
     }
 }
 
@@ -2078,49 +3021,58 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
     playBlackboxClip(url);
 }
 
-// ═══════════════════════════════════════════════════════════
-//  TAB3 슬롯 — 자리표시자 (DB 쿼리 연동 전)
-// ═══════════════════════════════════════════════════════════
-void MainWindow::refreshResidentTable()
+// residents(재원)를 camera_id로 채널(0~3)에 매핑해 patients[]를 채운다.
+// 채널에 등록된 입소자가 없으면 "미배정"으로 둔다(하드코딩 이름 없음).
+// 한 채널에 2명이 배정된 경우 병상 순으로 먼저 나오는 1명을 대표로 표시한다.
+void MainWindow::loadPatientsFromDb()
 {
-    if (!residentTable) return;
-    residentTable->setRowCount(0);
+    for (int ch = 0; ch < 4; ++ch)
+        patients[ch] = { QStringLiteral("미배정"),
+                         QStringLiteral("채널 %1").arg(ch + 1) };
 
-    // main.cpp에서 열어둔 기본 연결(QMARIADB) 사용
-    QSqlQuery q(QStringLiteral(
-        "SELECT resident_id, name, room, bed, camera_id, wearable_id, "
-        "risk_level, status FROM residents ORDER BY resident_id"));
-    if (q.lastError().isValid()) {
-        qDebug() << "입소자 목록 조회 실패:" << q.lastError().text();
+    QSqlQuery q;
+    if (!q.exec(QStringLiteral(
+            "SELECT camera_id, name FROM residents "
+            "WHERE status='재원' AND camera_id BETWEEN 0 AND 3 "
+            "ORDER BY camera_id, resident_id"))) {
+        qDebug() << "채널 환자 매핑 조회 실패:" << q.lastError().text();
         return;
     }
 
+    bool assigned[4] = {};
     while (q.next()) {
-        const int row = residentTable->rowCount();
-        residentTable->insertRow(row);
-        for (int col = 0; col < 8; ++col) {
-            const QVariant v = q.value(col);
-            auto* item = new QTableWidgetItem(
-                v.isNull() ? QStringLiteral("-") : v.toString());
-            residentTable->setItem(row, col, item);
-        }
+        const int ch = q.value(0).toInt();
+        if (ch < 0 || ch >= 4 || assigned[ch]) continue;   // 채널당 대표 1명만
+        assigned[ch] = true;
+        patients[ch].name = q.value(1).toString();
+        // 위치는 채널로만 표기(bed 필드에 "채널 N"). 기본값과 동일 형식.
+        patients[ch].bed  = QStringLiteral("채널 %1").arg(ch + 1);
     }
-    qDebug() << "입소자 목록 새로고침 —" << residentTable->rowCount() << "명 로드";
 }
 
-void MainWindow::refreshCaregiverTable()
+// patients[]를 실제 화면 요소(영상 오버레이 + 바이탈 카드 이름/병상)에 다시 반영한다.
+// 케어 타임 대시보드는 updateCareTime()에서 patients[]를 직접 읽으므로 여기선 제외.
+void MainWindow::refreshPatientLabels()
 {
-    caregiverTable->setRowCount(0);
-    qDebug() << "요양사 목록 새로고침 (DB 연동 전)";
+    for (int ch = 0; ch < 4; ++ch) {
+        if (channelViews[ch])
+            channelViews[ch]->setOverlayInfo(
+                QStringLiteral("%1 · %2").arg(patients[ch].bed, patients[ch].name));
+        if (vitalNameLabels[ch]) vitalNameLabels[ch]->setText(patients[ch].name);
+        if (vitalBedLabels[ch])  vitalBedLabels[ch]->setText(patients[ch].bed);
+    }
 }
 
-void MainWindow::onResidentSelected(int row, int /*column*/)
+void MainWindow::onResidentSearch()
 {
-    if (!residentTable || row < 0) return;
-    auto* idItem = residentTable->item(row, 0);
-    if (!idItem) return;
-    const int id = idItem->text().toInt();
+    // 검색창 텍스트로 필터. 비어 있으면 재원자 카드만 다시 그린다.
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text()
+                                            : QString());
+}
 
+// 선택한 입소자를 편집 폼 필드에 채운다(다이얼로그 열기 전 호출).
+void MainWindow::loadResidentIntoForm(int id)
+{
     QSqlQuery q;
     q.prepare(QStringLiteral(
         "SELECT name, room, bed, camera_id, wearable_id, risk_level, "
@@ -2141,9 +3093,10 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     };
 
     editName->setText(q.value(0).toString());
-    editRoom->setText(q.value(1).toString());
-    editBed->setText(q.value(2).toString());
-    editCameraId->setText(q.value(3).isNull() ? QString() : q.value(3).toString());
+    // value(1)=room, value(2)=bed 는 병실/침대 제거로 폼에 반영하지 않는다.
+    // DB는 0~3으로 저장, 화면엔 1~4로 보여준다(사람이 읽기 쉬운 채널 번호).
+    editCameraId->setText(q.value(3).isNull() ? QString()
+                                              : QString::number(q.value(3).toInt() + 1));
     editWearableId->setText(q.value(4).isNull() ? QString() : q.value(4).toString());
     setCombo(editRiskLevel, q.value(5).toString());
     if (q.value(6).toDate().isValid())  editAdmittedAt->setDate(q.value(6).toDate());
@@ -2154,6 +3107,8 @@ void MainWindow::onResidentSelected(int row, int /*column*/)
     editGuardianRelation->setText(q.value(11).toString());
     editNotes->setPlainText(q.value(12).toString());
 
+    refreshAdmissionTable(selectedResidentId);
+
     qDebug() << "입소자 선택 — ID:" << selectedResidentId;
 }
 
@@ -2161,19 +3116,99 @@ void MainWindow::onNewResident()
 {
     selectedResidentId = -1;
     editName->clear();
-    editRoom->clear();
-    editBed->clear();
     editCameraId->clear();
     editWearableId->clear();
     editGuardianName->clear();
     editGuardianPhone->clear();
     editGuardianRelation->clear();
     editNotes->clear();
-    editRiskLevel->setCurrentIndex(1);
-    editStatus->setCurrentIndex(1);
+    editRiskLevel->setCurrentIndex(1);   // 위험도 기본 '중'
+    editStatus->setCurrentText(QStringLiteral("재원"));  // 신규는 항상 재원으로 시작
     editAdmittedAt->setDate(QDate::currentDate());
     editDischargeDue->setDate(QDate::currentDate().addMonths(1));
+    refreshAdmissionTable(-1);   // 아직 저장 안 된 신규 → 이력 없음
     editName->setFocus();
+}
+
+// 저장 직전 DB의 값 — 라벨→문자열 맵. (변경 "전" 스냅샷)
+QMap<QString, QString> MainWindow::snapshotResident(int id)
+{
+    QMap<QString, QString> m;
+    QStringList cols;
+    for (const auto& f : kLoggedFields) cols << QLatin1String(f.column);
+
+    QSqlQuery q;
+    q.prepare(QStringLiteral("SELECT %1 FROM residents WHERE resident_id=?")
+                  .arg(cols.join(QLatin1Char(','))));
+    q.addBindValue(id);
+    if (!q.exec() || !q.next()) return m;
+
+    int i = 0;
+    for (const auto& f : kLoggedFields) {
+        const QVariant v = q.value(i++);
+        QString text = v.isNull() ? QString() : v.toString();
+        // camera_id는 DB(0~3) → 표시(1~4)로 맞춰 폼 스냅샷과 같은 기준으로 비교/기록.
+        if (!v.isNull() && QLatin1String(f.column) == QLatin1String("camera_id"))
+            text = QString::number(v.toInt() + 1);
+        m.insert(QString::fromUtf8(f.label), text);
+    }
+    return m;
+}
+
+// 현재 폼에 입력된 값 — 위와 같은 라벨 체계로 (변경 "후" 스냅샷)
+QMap<QString, QString> MainWindow::formSnapshot() const
+{
+    QMap<QString, QString> m;
+    m[QStringLiteral("이름")]        = editName->text().trimmed();
+    m[QStringLiteral("카메라 채널")] = editCameraId->text().trimmed();
+    m[QStringLiteral("웨어러블 ID")] = editWearableId->text().trimmed();
+    m[QStringLiteral("위험도")]      = editRiskLevel->currentText();
+    m[QStringLiteral("입원일")]      = editAdmittedAt->date().toString(Qt::ISODate);
+    m[QStringLiteral("퇴원 예정일")] = editDischargeDue->date().toString(Qt::ISODate);
+    m[QStringLiteral("상태")]        = editStatus->currentText();
+    m[QStringLiteral("보호자 이름")] = editGuardianName->text().trimmed();
+    m[QStringLiteral("보호자 전화")] = editGuardianPhone->text().trimmed();
+    m[QStringLiteral("보호자 관계")] = editGuardianRelation->text().trimmed();
+    m[QStringLiteral("특이사항")]    = editNotes->toPlainText();
+    return m;
+}
+
+// 그 입소자의 "가장 최근" 입원 에피소드 id (없으면 -1)
+int MainWindow::currentAdmissionId(int residentId)
+{
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT admission_id FROM admissions WHERE resident_id=? "
+        "ORDER BY admitted_at DESC, admission_id DESC LIMIT 1"));
+    q.addBindValue(residentId);
+    return (q.exec() && q.next()) ? q.value(0).toInt() : -1;
+}
+
+// before↔after를 비교해 달라진 필드만 resident_changes에 남긴다.
+void MainWindow::logChanges(int residentId, int admissionId,
+                            const QMap<QString, QString>& before,
+                            const QMap<QString, QString>& after,
+                            const QString& changeType)
+{
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "INSERT INTO resident_changes "
+        "(resident_id, admission_id, field_label, old_value, new_value, "
+        " change_type, changed_by) VALUES (?,?,?,?,?,?,?)"));
+
+    for (auto it = after.constBegin(); it != after.constEnd(); ++it) {
+        const QString oldV = before.value(it.key());
+        if (oldV == it.value()) continue;      // 안 바뀐 건 로그 남기지 않음
+        q.bindValue(0, residentId);
+        q.bindValue(1, admissionId > 0 ? QVariant(admissionId) : QVariant());
+        q.bindValue(2, it.key());
+        q.bindValue(3, oldV);
+        q.bindValue(4, it.value());
+        q.bindValue(5, changeType);
+        q.bindValue(6, currentUser.name);      // 로그인 사용자 = 작업자
+        if (!q.exec())
+            qDebug() << "변경 로그 기록 실패:" << q.lastError().text();
+    }
 }
 
 void MainWindow::onSaveResident()
@@ -2184,10 +3219,23 @@ void MainWindow::onSaveResident()
         return;
     }
 
-    // 빈 칸은 NULL로 저장 (camera_id는 정수, wearable_id는 문자열)
-    auto intOrNull = [](const QString& s) -> QVariant {
+    // 카메라 채널은 화면에서 1~4로 입력받되 DB엔 0~3으로 저장한다.
+    const QString camText = editCameraId->text().trimmed();
+    if (!camText.isEmpty()) {
+        bool ok = false;
+        const int camNo = camText.toInt(&ok);
+        if (!ok || camNo < 1 || camNo > 4) {
+            QMessageBox::warning(this, QStringLiteral("입력 오류"),
+                                 QStringLiteral("카메라 채널은 1~4 사이로 입력해주세요."));
+            return;
+        }
+    }
+
+    // 빈 칸은 NULL로 저장 (wearable_id는 문자열)
+    // 화면 채널(1~4) → DB 채널(0~3). 빈 칸은 NULL.
+    auto channelOrNull = [](const QString& s) -> QVariant {
         const QString t = s.trimmed();
-        return t.isEmpty() ? QVariant() : QVariant(t.toInt());
+        return t.isEmpty() ? QVariant() : QVariant(t.toInt() - 1);
     };
     auto textOrNull = [](const QString& s) -> QVariant {
         const QString t = s.trimmed();
@@ -2195,6 +3243,10 @@ void MainWindow::onSaveResident()
     };
 
     const bool isNew = (selectedResidentId < 0);
+
+    // 변경 전 값은 UPDATE 실행 전에 읽어둬야 한다 (실행 후엔 이미 덮어써짐).
+    const QMap<QString, QString> before =
+        isNew ? QMap<QString, QString>() : snapshotResident(selectedResidentId);
 
     QSqlQuery q;
     if (isNew) {
@@ -2214,9 +3266,11 @@ void MainWindow::onSaveResident()
     }
 
     q.addBindValue(editName->text().trimmed());
-    q.addBindValue(editRoom->text().trimmed());
-    q.addBindValue(editBed->text().trimmed());
-    q.addBindValue(intOrNull(editCameraId->text()));
+    // 병실/침대는 UI에서 제거했지만 컬럼이 NOT NULL이라 빈 문자열로 채운다(위치는 채널로 표기).
+    // 주의: QString()은 SQL NULL로 들어가 NOT NULL 위반 → 반드시 non-null 빈 문자열.
+    q.addBindValue(QStringLiteral(""));
+    q.addBindValue(QStringLiteral(""));
+    q.addBindValue(channelOrNull(editCameraId->text()));
     q.addBindValue(textOrNull(editWearableId->text()));
     q.addBindValue(editRiskLevel->currentText());
     q.addBindValue(editAdmittedAt->date());
@@ -2235,14 +3289,35 @@ void MainWindow::onSaveResident()
         return;
     }
 
-    if (isNew)
+    if (isNew) {
         selectedResidentId = q.lastInsertId().toInt();
-    int cameraId = editCameraId->text().trimmed().toInt();
-    
+        // 신규 등록이면 첫 입원 에피소드를 만든다.
+        QSqlQuery a;
+        a.prepare(QStringLiteral(
+            "INSERT INTO admissions "
+            "(resident_id, admitted_at, discharge_due, status, room, bed) "
+            "VALUES (?,?,?,'재원','','')"));
+        a.addBindValue(selectedResidentId);
+        a.addBindValue(editAdmittedAt->date());
+        a.addBindValue(editDischargeDue->date());
+        if (!a.exec()) qDebug() << "입원 에피소드 생성 실패:" << a.lastError().text();
+    }
+
+    const int admId = currentAdmissionId(selectedResidentId);
+    logChanges(selectedResidentId, admId, before, formSnapshot(),
+               isNew ? QStringLiteral("등록") : QStringLiteral("수정"));
+
+
+
+
+    // 화면 채널(1~4) → 내부 채널(0~3). 빈 칸이면 -1이 되어 전송 조건에서 걸러진다.
+    // camText는 함수 앞부분(입력 검증)에서 이미 editCameraId 값으로 잡아둠.
+    int cameraId = camText.isEmpty() ? -1 : camText.toInt() - 1;
+
     // 4채널 중 올바른 채널이고, 서버 소켓이 정상 연결된 상태일 때만 전송
     QTcpSocket* riskSock =
         (cameraId >= 0 && cameraId < 4) ? socketForChannel(cameraId) : nullptr;
-    if (editCameraId->text().trimmed().length() > 0 && cameraId >= 0 && cameraId < 4 &&
+    if (cameraId >= 0 && cameraId < 4 &&
         riskSock && riskSock->state() == QAbstractSocket::ConnectedState)
     {
         // 1. 위험도 텍스트를 서버가 이해하는 숫자 코드로 매칭 (하:1, 중:2, 상:3)
@@ -2269,13 +3344,15 @@ void MainWindow::onSaveResident()
         riskSock->write(pkt);
         riskSock->flush();
         qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
-        
-        // 5. 로컬 GUI용 환자 정보 메모리 어레이(patients)도 즉시 동기화
-        patients[cameraId].name = editName->text().trimmed();
-        patients[cameraId].bed = editRoom->text().trimmed() + QStringLiteral("-") + editBed->text().trimmed();
     }
 
-    refreshResidentTable();
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
+    refreshAdmissionTable(selectedResidentId);
+    refreshResidentDialogHeader();   // 편집 다이얼로그 상단 프로필도 갱신
+    // 채널↔환자 매핑을 DB 기준으로 다시 읽어 영상/바이탈 이름을 갱신한다.
+    // (채널 재배정·이름 변경·camera_id 해제 등 모든 경우를 한 번에 반영)
+    loadPatientsFromDb();
+    refreshPatientLabels();
     QMessageBox::information(this, QStringLiteral("저장"),
                              isNew ? QStringLiteral("신규 입소자가 등록되었습니다.")
                                    : QStringLiteral("수정 내용이 저장되었습니다."));
@@ -2303,12 +3380,75 @@ void MainWindow::onDischargeResident()
         return;
     }
 
+    // 에피소드도 닫는다 — 이 날짜가 이력 테이블의 "퇴원일"로 표시된다.
+    const int admId = currentAdmissionId(selectedResidentId);
+    QSqlQuery a;
+    a.prepare(QStringLiteral("UPDATE admissions SET discharged_at=CURDATE(), "
+                             "status='퇴원' WHERE admission_id=?"));
+    a.addBindValue(admId);
+    a.exec();
+
+    logChanges(selectedResidentId, admId,
+               {{QStringLiteral("상태"), QStringLiteral("재원")}},
+               {{QStringLiteral("상태"), QStringLiteral("퇴원")}},
+               QStringLiteral("퇴원"));
+    refreshAdmissionTable(selectedResidentId);
+
     // 폼의 상태 콤보도 '퇴원'으로 반영
     const int i = editStatus->findText(QStringLiteral("퇴원"));
     if (i >= 0) editStatus->setCurrentIndex(i);
 
-    refreshResidentTable();
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
+    refreshResidentDialogHeader();
+    loadPatientsFromDb();    // 퇴원 → 그 채널을 "미배정"으로 되돌린다
+    refreshPatientLabels();
     QMessageBox::information(this, QStringLiteral("퇴원 처리"),
                              QStringLiteral("퇴원 처리되었습니다."));
     qDebug() << "퇴원 처리 완료 — ID:" << selectedResidentId;
 }
+
+void MainWindow::onReadmitResident()
+{
+    if (selectedResidentId < 0) {
+        QMessageBox::warning(this, QStringLiteral("선택 없음"),
+                             QStringLiteral("재입원 처리할 입소자를 먼저 선택해주세요."));
+        return;
+    }
+    if (QMessageBox::question(
+            this, QStringLiteral("재입원 처리"),
+            QStringLiteral("새 입원 기록을 만들까요?\n(이전 입원 이력은 그대로 보존됩니다)"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
+
+    QSqlQuery a;
+    a.prepare(QStringLiteral(
+        "INSERT INTO admissions (resident_id, admitted_at, status, room, bed) "
+        "VALUES (?, CURDATE(), '재원', '', '')"));
+    a.addBindValue(selectedResidentId);
+    if (!a.exec()) {
+        QMessageBox::critical(this, QStringLiteral("재입원 실패"), a.lastError().text());
+        return;
+    }
+
+    QSqlQuery r;
+    r.prepare(QStringLiteral("UPDATE residents SET status='재원', admitted_at=CURDATE() "
+                             "WHERE resident_id=?"));
+    r.addBindValue(selectedResidentId);
+    r.exec();
+
+    logChanges(selectedResidentId, currentAdmissionId(selectedResidentId),
+               {{QStringLiteral("상태"), QStringLiteral("퇴원")}},
+               {{QStringLiteral("상태"), QStringLiteral("재원")}},
+               QStringLiteral("재입원"));
+
+    const int i = editStatus->findText(QStringLiteral("재원"));
+    if (i >= 0) editStatus->setCurrentIndex(i);
+    editAdmittedAt->setDate(QDate::currentDate());
+    refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
+    refreshAdmissionTable(selectedResidentId);
+    refreshResidentDialogHeader();
+    loadPatientsFromDb();    // 재입원 → 그 채널에 이름 복원
+    refreshPatientLabels();
+}
+
+

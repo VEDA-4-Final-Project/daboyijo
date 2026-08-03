@@ -11,6 +11,8 @@
 #include <QString>
 #include <QLineEdit>
 #include <QTextEdit>
+#include <QSet>
+#include <QMap>
 
 #include "auth.h"
 
@@ -31,10 +33,10 @@ struct dbj_vs_header_t {
 struct dbj_ctrl_header_t {
     uint16_t magic;         // 2B (0xDB4C)
     uint8_t version;        // 1B (0x01)
-    uint8_t type;           // 1B (1=ROI_SET, 2=ROI_CLEAR, 3=FALL_CONFIRM)
+    uint8_t type;           // 1B (아래 kCtrl* 상수 참조)
     uint8_t channel;        // 1B (0~3)
-    uint8_t point_count;    // 1B (이어지는 점 개수)
-    uint16_t reserved;      // 2B (0)
+    uint8_t point_count;    // 1B (이어지는 점 개수 / 위험도 값)
+    uint16_t reserved;      // 2B (0, CAMERA_SET에선 URL 바이트 길이)
 };
 struct dbj_roi_point_t {
     uint16_t x;             // 정규화 x × 10000 (0~10000)
@@ -70,6 +72,7 @@ static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
+class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
 class QTabWidget;
@@ -81,6 +84,7 @@ class QVBoxLayout;
 class QStackedWidget;
 class QMediaPlayer;
 class QVideoWidget;
+class QUdpSocket;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -89,7 +93,7 @@ QT_END_NAMESPACE
 // 채널(=병상)별 환자 / 웨어러블 정보 묶음
 struct PatientInfo {
     QString name;   // 환자 이름
-    QString bed;    // 병상 표기 (예: 201호-1)
+    QString bed;    // 위치 표기 — 병실/침대 제거 후 "채널 N"을 담는다(오버레이/바이탈 공용)
 };
 
 class MainWindow : public QMainWindow
@@ -111,6 +115,7 @@ private slots:
     void connectToServer();      // 영상 서버 접속/재접속
     void updateClock();          // 상단 실시간 시계
     void updateVitals();         // 웨어러블 바이탈 갱신(현재는 시뮬레이션)
+    void updateCareTime();       // 케어 타임 대시보드 갱신(care_logs 재조회)
     void onRoiButtonClicked();   // "ROI 지정" — 채널 선택 후 그리기 시작
     void onRoiClearClicked();    // "ROI 제거" — 로컬 + 서버 판정 영역 삭제
     void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
@@ -119,20 +124,21 @@ private slots:
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
-
+    void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
+    void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
+    void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
 
     // TAB2: 비상 로그 조회 및 블랙박스
     void onSearchClicked();
     void onLogRowActivated(int row, int column);
 
-
     // TAB3: DB 관리
-    void onResidentSelected(int row, int column);
+    void onResidentSearch();   // 이름으로 입소자 검색(재원·퇴원 전체)
     void onNewResident();
     void onSaveResident();
     void onDischargeResident();
-
-
+    void onReadmitResident();                          // 퇴원자 → 새 입원 에피소드 생성
+    void onAdmissionRowActivated(int row, int column);  // 이력 행 더블클릭 → 변경 내역 팝업
 
 private:
     Ui::MainWindow *ui;
@@ -144,6 +150,14 @@ private:
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
+    // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
+    // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
+    QString lastCameraUrl_[4];
+    // 채널별 카메라 연결 여부(QSettings 지속) — 서버는 Qt를 껐다 켜도 스트리밍을
+    // 유지하므로, 재시작 후 URL이 없어도 이 플래그로 "해제" 대상을 안다. 비어 있으면 미연결.
+    bool cameraActive_[4] = {};
+    bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
+    bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
@@ -160,19 +174,21 @@ private:
     QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
     QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
 
-    bool darkMode = false;             // 현재 다크모드 여부
+    bool darkMode = true;              // 현재 다크모드 여부 (기본 다크 관제 톤)
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구
-    QLabel* liveDots[4];               // 채널별 LIVE 표시등
-    QLabel* tempValues[4];             // 채널별 체온 값
-    QLabel* hrValues[4];               // 채널별 심박수 값
-    QLabel* vitalStatusDots[4];        // 채널별 바이탈 상태등
-    QLabel* vitalStatusBadges[4];      // 채널별 상태 배지(정상/주의/위험)
-    QLabel* vitalUpdated[4];           // 채널별 마지막 갱신 시각
+    QLabel* tempValues[4] = {};        // 채널별 체온 값
+    QLabel* hrValues[4] = {};          // 채널별 심박수 값
+    QLabel* vitalStatusDots[4] = {};   // 채널별 바이탈 상태등
+    QLabel* vitalStatusBadges[4] = {}; // 채널별 상태 배지(정상/주의/위험)
+    QLabel* vitalNameLabels[4] = {};   // 채널별 환자 이름(DB 매핑 반영)
+    QLabel* vitalBedLabels[4] = {};    // 채널별 병상 표기(DB 매핑 반영)
+    Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
 
     QTimer clockTimer;
     QTimer vitalsTimer;
+    QTimer careTimeTimer;        // 케어 타임 대시보드 주기 갱신(care_logs 재조회)
     QTimer reconnectTimer;       // 영상 서버 자동 재접속
 
     // ── TAB 구조 ──────────────────────────────────────────
@@ -196,15 +212,33 @@ private:
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
     QVBoxLayout* careTimeList = nullptr;
+    // 케어 타임 대시보드 카드(채널당 1개) — 매 갱신마다 라벨 텍스트만 바꾼다(카드는 1회 생성).
+    QLabel* careNameLabels[4] = {};  // "채널 N · 방-병상 이름"
+    QLabel* careStatLabels[4] = {};  // "오늘 N분 · M회 · 최근 HH:MM"
+    QWidget* buildCareTimeCard(int channel);
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
-    // 입소자 목록
-    QTableWidget* residentTable = nullptr;
+    // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
+    QWidget*   residentCardHost = nullptr;   // FlowLayout이 붙는 카드 컨테이너
+    QLabel*    residentCountLabel = nullptr; // "재원 N명 / 검색 결과 N명"
+    QLineEdit* residentSearchEdit = nullptr; // 이름 검색창(재원·퇴원 전체 조회)
 
-    // 상세/편집 폼 — 기본정보
+    // 입소자 편집 다이얼로그(1회 생성 후 재사용) + 헤더 요소
+    QDialog* residentDialog   = nullptr;
+    QLabel*  dlgAvatar        = nullptr;  // 이름 이니셜 원형 배지
+    QLabel*  dlgNameBig       = nullptr;  // 큰 이름
+    QLabel*  dlgSubMeta       = nullptr;  // "201호-2 · 채널 2" 등
+    QLabel*  dlgStatusBadge   = nullptr;  // 재원/퇴원
+    QLabel*  dlgRiskBadge     = nullptr;  // 위험도 상/중/하
+    QPushButton* dlgDischargeBtn = nullptr;  // 상태에 따라 퇴원↔재입원 토글
+
+    // 입원 이력 (admissions = 입원 에피소드, 입원할 때마다 1행)
+    //   행 = 한 번의 입원, 더블클릭 → 그 기간의 변경 내역 팝업
+    QTableWidget* admissionTable = nullptr;
+    QLabel* admissionInfo = nullptr;     // "입원 N건" 안내 문구
+
+    // 상세/편집 폼 — 기본정보 (병실/침대는 제거, 위치는 카메라 채널로 표기)
     QLineEdit* editName       = nullptr;
-    QLineEdit* editRoom       = nullptr;
-    QLineEdit* editBed        = nullptr;
     QLineEdit* editCameraId   = nullptr;
     QLineEdit* editWearableId = nullptr;
 
@@ -222,9 +256,6 @@ private:
 
     // 특이사항
     QTextEdit* editNotes = nullptr;
-
-    // 요양사 목록
-    QTableWidget* caregiverTable = nullptr;
 
     // 현재 선택된 resident_id (-1이면 신규 등록 모드)
     int selectedResidentId = -1;
@@ -254,16 +285,35 @@ private:
 
     // TAB3 빌드 헬퍼
     QWidget* buildDbTab();
-    QWidget* buildResidentSection();
-    QWidget* buildResidentForm();
-    QWidget* buildCaregiverSection();
+    QWidget* buildResidentFormBody();   // 편집 다이얼로그에 들어갈 폼(그룹들)만
+    QWidget* buildAdmissionHistory();   // 입원 이력 표 + 안내 문구
+    void ensureResidentDialog();        // 편집 다이얼로그 1회 생성
+    void openResidentEditor(int residentId);  // id<0이면 신규, 아니면 로드 후 다이얼로그 표시
+    void loadResidentIntoForm(int residentId);// residents → 폼 필드 채우기
+    void refreshResidentDialogHeader();       // 다이얼로그 상단 아바타/배지 갱신
 
     // TAB3 데이터 갱신
-    void refreshResidentTable();
-    void refreshCaregiverTable();
+    // nameFilter 비어 있으면 재원자만, 있으면 이름 LIKE 검색(재원·퇴원 전체)
+    void refreshResidentCards(const QString& nameFilter = QString());
+    void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
+    // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
+    void loadPatientsFromDb();
+    // patients[]를 영상 오버레이·바이탈 카드 라벨에 다시 반영(등록/수정/퇴원 후 호출).
+    void refreshPatientLabels();
+    void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
+
+    // ── 변경 로그(resident_changes) 기록 ──
+    // snapshotResident와 formSnapshot은 같은 "라벨 → 값" 체계를 쓴다(키가 같아야 비교 성립).
+    QMap<QString, QString> snapshotResident(int id);   // UPDATE 전 DB 값 = 수정 전
+    QMap<QString, QString> formSnapshot() const;       // 폼 입력 값 = 수정 후
+    int  currentAdmissionId(int residentId);           // 가장 최근 입원 에피소드 id
+    void logChanges(int residentId, int admissionId,
+                    const QMap<QString, QString>& before,
+                    const QMap<QString, QString>& after,
+                    const QString& changeType);        // 달라진 필드만 INSERT
 
     // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
-    void handleFallEvent(int channel, quint64 timestampMs);
+    void handleFallEvent(int channel, quint64 timestampMs, float nx, float ny);
 
     // 침상 이탈 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
     void handleBedEgressEvent(int channel, quint64 timestampMs);
@@ -275,10 +325,22 @@ private:
     // sendCamera는 해당 채널 담당 Pi로 RTSP URL을 보낸다. 성공 시 true.
     bool sendCamera(int channel, const QString& rtspUrl);
     void sendCameraClear(int channel);
+    // Pi 재접속 시, 그 Pi 담당 채널의 마지막 카메라 URL을 자동 재전송한다.
+    void resendCamerasForServer(int serverIdx);
+    // 어느 채널에 카메라가 붙어 있는지를 QSettings에 비트마스크로 남기고 복원한다.
+    // URL(비밀번호 포함)은 저장하지 않되, 채널 번호만 있으면 해제(CAMERA_CLEAR)는
+    // 가능하므로 Qt 재시작 후에도 "해제"가 동작하도록 활성 채널만 보존한다.
+    void persistCameraActive();
+    void restoreCameraActive();
     // 단일 CCTV IP → 채널별 RTSP URL 생성 (PNM-C16083RVQ 4센서 규약).
     static QString buildRtspUrl(const QString& ip, const QString& user,
                                 const QString& password, int port,
                                 const QString& profile, int channel);
+    // 주어진 접속 정보로 4채널 카메라를 연결(수동 입력/검색 두 경로가 공유).
+    // 4채널 URL 생성 → 담당 Pi로 전송 → 상태 반영 → QSettings 저장(비번 제외).
+    void connectCameraWith(const QString& ip, const QString& user,
+                           const QString& password, int port,
+                           const QString& profile);
 
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
@@ -286,6 +348,30 @@ private:
     QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
+    QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
+    QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
+
+    // "카메라 설정" 팝업 — 카메라·ROI 작업을 팝업 안에서 직접 수행(탭 전환).
+    // 비모달로 띄워 ROI 그리기(영상 클릭)가 가능하게 한다. 1회만 생성(멤버 재사용).
+    QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
+    QDialog* cameraSettingsDialog = nullptr;
+    void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
+
+    // ── 카메라 탭(인라인) 위젯 ──
+    QLineEdit* camIpEdit = nullptr;
+    QLineEdit* camUserEdit = nullptr;
+    QLineEdit* camPwEdit = nullptr;
+    QTableWidget* discoveryTable = nullptr;    // 검색 결과(모델/IP/MAC)
+    QLabel* discoveryStatus = nullptr;
+    QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
+    QSet<QString> discoverySeen;               // 중복 응답 제거
+
+    // ── ROI 탭(인라인 편집기) 위젯 ──
+    VideoView* roiEditorView = nullptr;        // 선택 채널 영상을 팝업에 표시 + ROI 그림
+    int roiEditChannel = 0;                    // 현재 편집 중인 채널(0~3)
+    QPushButton* roiChannelButtons[4] = {};    // 채널 선택 버튼(1~4)
+    QLabel* roiEditInfo = nullptr;
+    void selectRoiChannel(int ch);             // 편집 채널 전환 → 영상/ROI 로드
 };
 
 #endif // MAINWINDOW_H

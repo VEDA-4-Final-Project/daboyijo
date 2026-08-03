@@ -37,8 +37,8 @@ Makefile*
 # ===== STM32CubeIDE / Eclipse =====
 .metadata/
 .settings/
-.cproject
-.mxproject
+#.cproject
+#.mxproject
 *.launch
 
 # ===== IDE / 에디터 =====
@@ -63,3 +63,9 @@ server/blackbox_clips/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+server/daboijo_dump.sql
+server/daboijo_dump_fixed.sql
+*.user
+*.user
+*.tmp
+*.TMP
