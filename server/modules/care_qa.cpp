@@ -126,9 +126,13 @@ void CareQaModule::reportFall(int channel) {
             auto blurred = snapA->recentKeyframes(channel, kKeyframes, kSpanSec);
             if (!blurred.empty()) {
                 const std::string q =
-                    "방금 이 어르신에게 낙상이 감지되었습니다. 사진 속 현재 자세와 "
-                    "상황을 보호자에게 알리듯 두세 문장으로 설명해 주세요. 의학적 진단이나 "
-                    "부상 여부 단정은 하지 말고, 보이는 상황만 차분히 전해 주세요.";
+                    "요양원 실내 CCTV에서 낙상 감지 시스템이 방금 낙상을 감지한 직후의 "
+                    "사진들입니다(촬영 순서, 사생활 보호로 얼굴은 블러 처리됨). 화면 속 "
+                    "어르신이 바닥이나 매트 위에 누워·엎드려·주저앉아 계시면, 이는 침상에서의 "
+                    "휴식이 아니라 넘어져 쓰러진 '낙상' 상황입니다. 어르신의 현재 자세(옆으로 "
+                    "누움/엎드림/뒤로 넘어짐 등)와 움직임 여부, 손·다리 위치를 보호자에게 "
+                    "알리듯 두세 문장으로 차분하고 다정하게 전해 주세요. 의학적 진단이나 부상 "
+                    "여부는 단정하지 말고, 보이는 상황만 설명하세요.";
                 std::string answer = vlm->describe(blurred, q);
                 if (!answer.empty()) {
                     tg->sendMessage(chat_id, "🚨 낙상 감지 — 현재 상황\n" + answer);
