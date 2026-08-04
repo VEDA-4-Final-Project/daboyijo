@@ -30,7 +30,7 @@ struct AlarmCommand {
     std::string room;           // 호실
 
     // 이벤트
-    std::string type;           // FALL | BED_EXIT | VITAL | CONTROL
+    std::string type;           // FALL | EGRESS | VITAL_ABNORMAL | CONTROL
     std::string message;
     
     // 오디오
