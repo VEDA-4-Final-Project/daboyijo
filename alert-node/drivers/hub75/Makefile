@@ -15,6 +15,8 @@
 obj-m += hub75.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
+# PWD 는 셸이 물려준 환경변수라 make -C 로 들어와도 안 바뀐다.
+# 상위 Makefile 에서 부를 때 M= 이 엉뚱한 곳을 가리키므로 CURDIR 을 쓴다.
 DTS  := hub75-overlay.dts
 DTBO := hub75.dtbo
 
@@ -23,7 +25,7 @@ DTBO := hub75.dtbo
 all: module overlay
 
 module:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 
 overlay: $(DTBO)
 
@@ -51,5 +53,5 @@ unload: fbcon-unbind
 	 else echo "hub75: 로드되어 있지 않음"; fi
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
 	rm -f $(DTBO)

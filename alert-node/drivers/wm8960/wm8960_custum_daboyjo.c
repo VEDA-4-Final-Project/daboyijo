@@ -128,20 +128,21 @@ static int veda_wm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm
 
 static int veda_wm8960_trigger(struct snd_pcm_substream *substream, int cmd, struct snd_soc_dai *dai)
 {
-    struct snd_soc_component  *component = dai->component;
-    unsigned int val;
-    val = snd_soc_component_read(component, WM8960_ADC_DAC_CTR1);
+    //struct snd_soc_component  *component = dai->component;
+    //unsigned int val;
+    //val = snd_soc_component_read(component, WM8960_ADC_DAC_CTR1);
+    //int ret;
 
     switch(cmd) {
         //case SNDRV_PCM_TRIGGER_
         case SNDRV_PCM_TRIGGER_START:
         case SNDRV_PCM_TRIGGER_RESUME:
         case SNDRV_PCM_TRIGGER_PAUSE_RELEASE: // pause 해제 -> 소리출력 레지스터 제어 넣기  
-            val = val & ~(1<<3);
-            ret = snd_soc_component_write(component, WM8960_ADC_DAC_CTR1, val);
+            //val = val & ~(1<<3);
+            //ret = snd_soc_component_write(component, WM8960_ADC_DAC_CTR1, val);
             //ret = veda_wm8960_write(client,WM8960_ADC_DAC_CTR1,(((val>>8)==1) ? 1:0),val,"mute");
             // 레지맵 캐시에 적용을 위해 커널 함수 사용 
-            if(ret<0) return ret;
+            //if(ret<0) return ret;
             
             return 0;
             break;
@@ -149,11 +150,11 @@ static int veda_wm8960_trigger(struct snd_pcm_substream *substream, int cmd, str
         case SNDRV_PCM_TRIGGER_STOP:
         case SNDRV_PCM_TRIGGER_SUSPEND:
         case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-            val = val | (1<<3);
+            //val = val | (1<<3);
             //ret = veda_wm8960_write(client,WM8960_ADC_DAC_CTR1,(((val>>8)==1) ? 1:0),val,"mute");
-            ret = snd_soc_component_write(component, WM8960_ADC_DAC_CTR1, val);
+            //ret = snd_soc_component_write(component, WM8960_ADC_DAC_CTR1, val);
             // 레지맵 캐시에 적용을 위해 커널 함수 사용 
-            if(ret<0) return ret;
+            //if(ret<0) return ret;
 
             return 0;
             break;
