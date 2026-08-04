@@ -18,7 +18,9 @@ const cv::Size kViewSize(kViewWidth, kViewHeight);
 const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 65};
 // 프레임 레이트 방어선(폭주 방지). 판정은 벽시계가 아니라 촬영시각(PTS)으로 한다
 // (아래 runChannel 참조) — 디코딩이 버스티하게 뭉쳐 나와도 촬영 간격이 정상이면 통과.
-// ★ 운영: 2-Pi 2+2 분할. Pi당 2채널이라 여유가 생겨 카메라 fps를 15→30까지 올려봄.
+// ★ 운영: 단일 Pi 4채널. 한 대가 4채널 디코딩+블러+인코딩+연산을 모두 지므로
+//   카메라는 서브프로파일(H.264 1280x720 이하 / 10~15fps)로 맞춘다(cameras.conf 참고).
+//   캡(아래 kMainProcessInterval)은 폭주 차단용이라 입력 fps보다 넉넉히 위면 된다.
 //   ★★ 캡은 반드시 입력보다 "넉넉히" 위여야 한다 — 입력과 같으면(예: 입력 30fps=33.3ms,
 //   캡 30fps=33.3ms) 경계선이라 PTS 미세지터로 프레임이 버려져 실효 fps가 주저앉는다
 //   (실측: 30fps 입력인데 캡이 1/30이라 out 17.6까지 하락). 40fps로 올려 30fps를 통과.

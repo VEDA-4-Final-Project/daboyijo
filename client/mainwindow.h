@@ -142,10 +142,11 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
-    // 2-Pi 분할: 채널을 두 라즈베리에 2+2로 나눠 받는다. 서버마다 소켓·수신버퍼 1쌍.
-    //   ch0·ch1 → Pi A(sockets[0]) / ch2·ch3 → Pi B(sockets[1]).
-    static constexpr int kNumServers = 2;
-    static int serverForChannel(int ch) { return ch < 2 ? 0 : 1; }
+    // 단일 Pi 4채널: 한 라즈베리가 4채널을 모두 수신·처리·송출한다. 소켓·수신버퍼 1쌍.
+    //   ch0~3 → Pi(sockets[0]).  (2-Pi 분할로 되돌리려면 kNumServers=2,
+    //   serverForChannel을 ch<2?0:1로 되돌리면 나머지 로직은 그대로 동작한다.)
+    static constexpr int kNumServers = 1;
+    static int serverForChannel(int /*ch*/) { return 0; }
     QTcpSocket *sockets[kNumServers] = {};
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
