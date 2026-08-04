@@ -128,8 +128,8 @@ static int veda_wm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm
 
 static int veda_wm8960_trigger(struct snd_pcm_substream *substream, int cmd, struct snd_soc_dai *dai)
 {
-    struct snd_soc_component  *component = dai->component;
-    unsigned int val;
+    //struct snd_soc_component  *component = dai->component;
+    //unsigned int val;
     //val = snd_soc_component_read(component, WM8960_ADC_DAC_CTR1);
     //int ret;
 
