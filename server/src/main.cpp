@@ -43,6 +43,7 @@
 #include "snapshot_buffer.hpp"
 #include "gemini_client.hpp"
 #include "care_qa.hpp"
+#include "MqttMasterManager.hpp"
 
 namespace {
 
@@ -95,6 +96,8 @@ int main(int argc, char* argv[]) {
     BlackboxModule blackbox;        // [블랙박스]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
+    MqttMasterManager mqtt;
+    mqtt.init("localhost",1883);
 
     // [케어봇] 실시간 상황 질의응답: 보호자 질문 → 스냅샷 + VLM → 답변
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
@@ -147,6 +150,7 @@ int main(int argc, char* argv[]) {
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
         telegram.notifyFall(ch);      // 즉시 기본 알림
         care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
+        mqtt.sendAlarmCommand("FALL",ch+1);
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
@@ -154,6 +158,13 @@ int main(int argc, char* argv[]) {
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
+        mqtt.sendAlarmCommand("EGRESS",ch+1);
+    });
+    // MQTT로 웨어러블 낙상 신후 수신시 처리
+    mqtt.setAlarmCallback([&](bool is_fall){
+        is(is_fall){
+            // 여기다가 다른 모듈배선로 신호 전달 작성하면됩니다.
+        }
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
     ai_worker.addProcessor([&](const AiJob& job) { caregiver.processFrame(job); });
