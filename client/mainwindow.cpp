@@ -142,27 +142,27 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
                   int(a.blue()  * f + b.blue()  * (1 - f))).name();
 }
 
-// 영상 서버 접속 정보 (RPi 주소) — 단일 Pi 4채널: 한 라즈베리가 4채널을 모두 서빙.
-//   ch0~3 모두 이 Pi(서버 0)에서 받는다(MainWindow::serverForChannel).
+// 영상 서버 접속 정보 (RPi 주소) — 2-Pi 분할: 채널을 두 라즈베리에 2+2로 나눠 서빙.
+//   Pi A = ch0·ch1, Pi B = ch2·ch3. 각 Pi의 cameras.conf 채널 번호가 아래 인덱스와
+//   일치해야 하고(MainWindow::serverForChannel), Qt는 두 IP에 각각 붙는다.
 // 하드코딩 대신 QSettings(관제 PC 로컬)에 저장 — 기본값은 아래 상수이며, 관제
 // PC마다 다른 Pi를 볼 수 있게 설정에서 바꿀 수 있다. (CCTV IP와는 별개: 이건 Qt가
 // "붙는 서버" 주소이고, CCTV는 서버가 여는 카메라 주소다.)
-// (2-Pi로 되돌릴 때를 대비해 hostB 상수는 남겨둔다 — serverHost가 참조.)
 namespace {
-const char* kSettingsHostA = "server/hostA";     // 서버 0 (ch0~3)
-const char* kSettingsHostB = "server/hostB";     // (2-Pi 복귀용, 현재 미사용)
+const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
+const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
 const char* kDefaultHostA  = "172.23.131.8";
 const char* kDefaultHostB  = "172.23.131.8";
 
-// 서버 인덱스 → 저장된 호스트(없으면 기본값). 단일 Pi에선 idx는 항상 0.
+// 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
     QSettings s;
     return idx == 0 ? s.value(kSettingsHostA, kDefaultHostA).toString()
                     : s.value(kSettingsHostB, kDefaultHostB).toString();
 }
 // 채널(0~3) → 담당 Pi의 호스트 (블랙박스 클립 URL 등 host가 필요한 곳용).
-// 단일 Pi: 모든 채널이 서버 0. (MainWindow::serverForChannel과 동일하게 유지할 것.)
-QString hostForChannel(int /*ch*/) { return serverHost(0); }
+// 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
+QString hostForChannel(int ch) { return serverHost(ch < 2 ? 0 : 1); }
 }  // namespace
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
