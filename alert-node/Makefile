@@ -8,7 +8,7 @@
 # 빌드 후 모듈 적재는 scripts/load.sh 참고.
 
 DRIVERS := drivers/wm8960 drivers/hub75
-APPS    := app/matrix
+APPS    := app/matrix app/AudioPlayer
 
 .PHONY: all drivers apps clean $(DRIVERS) $(APPS)
 
