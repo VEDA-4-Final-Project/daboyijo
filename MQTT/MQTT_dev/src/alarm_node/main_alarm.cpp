@@ -14,7 +14,7 @@ void onAlarmCommandReceived(const std::string& topic, const std::string& payload
         if(cmd.target_device == TEST_DEVICE_ID){
             if(cmd.audio_action == "PLAY") {
                 std::cout << "[Alarm node] Play sound: "<< cmd.audio_file << std::endl;
-                VedaAudioPlayer player("plughw:2");
+                VedaAudioPlayer player();
                 int ret = player.playWav(cmd.audio_file);
                 if(ret <0) {
                     std::cerr<< "[Alarm node] sound error" << std::endl;

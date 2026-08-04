@@ -35,6 +35,7 @@ Makefile*
 !server/Makefile
 !alert-node/wm8960/Makefile
 !alert-node/hub75/Makefile
+!alert-node/matrix/Makefile
 
 # ===== STM32CubeIDE / Eclipse =====
 .metadata/
