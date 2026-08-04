@@ -51,9 +51,9 @@ void StatsReporter::maybeReport() {
         }
 
         char buf[112];
-        std::snprintf(buf, sizeof(buf), "[ch%d] %s in %.1f out %.1ffps 사람%d  ",
-                      id + 1, clients_[i]->connected() ? "OK" : "끊김", in_fps,
-                      out_fps, humans);
+        // std::snprintf(buf, sizeof(buf), "[ch%d] %s in %.1f out %.1ffps 사람%d  ",
+        //               id + 1, clients_[i]->connected() ? "OK" : "끊김", in_fps,
+        //               out_fps, humans);
         status << buf;
         last_counts_[i] = count;
         stats_[id] = ChannelStats{};
@@ -78,6 +78,6 @@ void StatsReporter::maybeReport() {
     prep_ms_total_ = 0;
     encode_ms_total_ = 0;
     encode_count_ = 0;
-    std::printf("%s\n", status.str().c_str());
+    // std::printf("%s\n", status.str().c_str());
     last_report_ = now;
 }

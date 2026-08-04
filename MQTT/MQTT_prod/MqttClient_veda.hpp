@@ -18,10 +18,11 @@ struct WearableData {
     bool is_fall_detected;
     double temperature;
     int heart_rate;
+    int spo2;
     long long timestamp;
 };
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WearableData, device_id, is_fall_detected, temperature,heart_rate, timestamp)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WearableData, device_id, is_fall_detected, temperature,heart_rate, spo2, timestamp)
 
 struct AlarmCommand {
     std::string target_device;

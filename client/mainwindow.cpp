@@ -151,8 +151,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.105";
-const char* kDefaultHostB  = "172.20.32.90";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -355,6 +355,7 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
             // 채우기 후 정렬 활성화 → 전체(양쪽 Pi) 최신순 재정렬 (0열 시간 문자열)
             logTable->setSortingEnabled(true);
             logTable->sortItems(0, Qt::DescendingOrder);
+            applyLogFilters();   // 현재 필터 조건을 새로 들어온 행에도 적용
             qDebug() << "✅ 블랙박스 복원 (" << host << "총" << fileList.size() << "개)";
         });
     }
@@ -773,7 +774,10 @@ QWidget* MainWindow::buildSearchFilters()
 
     filterEventType = new QComboBox();
     filterEventType->addItems({QStringLiteral("전체 이벤트"), QStringLiteral("낙상"),
-                               QStringLiteral("침상이탈"), QStringLiteral("보호사 진입")});
+                               QStringLiteral("침상이탈")});
+    // 드롭다운에서 항목을 고르는 즉시 표에 필터 적용
+    connect(filterEventType, &QComboBox::currentTextChanged,
+            this, [this](const QString&) { applyLogFilters(); });
 
     auto* searchBtn = new QPushButton(QStringLiteral("검색"));
     searchBtn->setObjectName("roiButton");
@@ -1435,6 +1439,8 @@ void MainWindow::refreshResidentDialogHeader()
     dlgDischargeBtn->setVisible(!isNew);
     dlgDischargeBtn->setText(active ? QStringLiteral("퇴원 처리")
                                     : QStringLiteral("재입원"));
+    // 신규 등록은 이력이 있을 수 없으므로 패널 자체를 숨겨 폼이 전체 폭을 쓰게 한다.
+    if (admissionBox) admissionBox->setVisible(!isNew);
 }
 
 // 카드 클릭/신규 버튼 → 폼을 채우고 편집 다이얼로그를 연다.
@@ -1475,6 +1481,7 @@ QWidget* MainWindow::buildAdmissionHistory()
     connect(admissionTable, &QTableWidget::cellDoubleClicked,
             this, &MainWindow::onAdmissionRowActivated);
     lay->addWidget(admissionTable, 1);
+    admissionBox = box;   // 신규 등록 시 숨기기 위해 보관
     return box;
 }
 
@@ -2189,6 +2196,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, flo
 
         logTable->setSortingEnabled(true);
         logTable->sortItems(0, Qt::DescendingOrder);   // 최신 이벤트가 위로
+        applyLogFilters();   // 현재 필터 조건을 새로 들어온 행에도 적용
     }
 }
 
@@ -3001,6 +3009,8 @@ void MainWindow::onSearchClicked()
              << filterDateFrom->date().toString("yyyy-MM-dd") << "~"
              << filterDateTo->date().toString("yyyy-MM-dd")
              << filterRoom->currentText() << filterEventType->currentText();
+    // 검색 버튼은 날짜 범위까지 포함해 적용. 이벤트 드롭다운은 고르는 즉시 반영됨.
+    applyLogFilters(true);
 }
 
 void MainWindow::onLogRowActivated(int row, int /*column*/)
@@ -3012,6 +3022,10 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
         qDebug() << "블랙박스 재생 요청 — row" << row << "(클립 URL 없음, DB 연동 전 로그로 추정)";
         return;
     }
+
+    // 영상을 열었으므로 이 이벤트는 '확인' 처리
+    markLogConfirmed(row);
+
     qDebug() << "블랙박스 재생 요청 —" << url;
     if (blackboxDialog) {
         blackboxDialog->show();
@@ -3020,6 +3034,61 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
     }
     playBlackboxClip(url);
 }
+
+// 상태 컬럼(3번)을 '미확인' → '확인'으로 바꾸고 초록색으로 표시.
+void MainWindow::markLogConfirmed(int row)
+{
+    if (!logTable || row < 0 || row >= logTable->rowCount()) return;
+
+    auto* statusItem = logTable->item(row, 3);
+    if (!statusItem) return;
+    if (statusItem->text() == QStringLiteral("확인")) return;   // 이미 확인됨
+
+    // 텍스트 변경 중 자동 재정렬로 행이 움직여 엉뚱한 셀을 건드리는 것 방지
+    const bool wasSorting = logTable->isSortingEnabled();
+    logTable->setSortingEnabled(false);
+
+    statusItem->setText(QStringLiteral("확인"));
+    statusItem->setForeground(QColor(QString::fromLatin1(kNormal)));   // 정상=초록
+
+    logTable->setSortingEnabled(wasSorting);
+}
+
+// 이벤트 드롭다운(+검색 버튼일 땐 날짜 범위까지) 조건에 맞는 행만 표시.
+// 행을 지우지 않고 숨김 처리라 조건을 바꾸면 즉시 원복된다.
+void MainWindow::applyLogFilters(bool withDates)
+{
+    if (!logTable) return;
+
+    const QString evtSel = filterEventType ? filterEventType->currentText() : QString();
+    const bool evtAll = evtSel.isEmpty() || evtSel == QStringLiteral("전체 이벤트");
+    // 콤보는 "침상이탈", 로그 행은 "침상 이탈" — 띄어쓰기 차이를 흡수해 비교
+    const QString evtKey = QString(evtSel).remove(QLatin1Char(' '));
+
+    for (int row = 0; row < logTable->rowCount(); ++row) {
+        bool show = true;
+
+        // 이벤트 종류
+        if (!evtAll) {
+            auto* evtItem = logTable->item(row, 2);
+            const QString evt =
+                evtItem ? QString(evtItem->text()).remove(QLatin1Char(' ')) : QString();
+            show = (evt == evtKey);
+        }
+
+        // 날짜 범위 — 0열 "yyyy-MM-dd HH:mm:ss"의 앞 10글자만 파싱
+        if (show && withDates && filterDateFrom && filterDateTo) {
+            auto* dtItem = logTable->item(row, 0);
+            const QDate d = dtItem
+                                ? QDate::fromString(dtItem->text().left(10), QStringLiteral("yyyy-MM-dd"))
+                                : QDate();
+            show = d.isValid() && d >= filterDateFrom->date() && d <= filterDateTo->date();
+        }
+
+        logTable->setRowHidden(row, !show);
+    }
+}
+
 
 // residents(재원)를 camera_id로 채널(0~3)에 매핑해 patients[]를 채운다.
 // 채널에 등록된 입소자가 없으면 "미배정"으로 둔다(하드코딩 이름 없음).
@@ -3450,5 +3519,3 @@ void MainWindow::onReadmitResident()
     loadPatientsFromDb();    // 재입원 → 그 채널에 이름 복원
     refreshPatientLabels();
 }
-
-
