@@ -149,7 +149,7 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 // PC마다 다른 Pi를 볼 수 있게 설정에서 바꿀 수 있다. (CCTV IP와는 별개: 이건 Qt가
 // "붙는 서버" 주소이고, CCTV는 서버가 여는 카메라 주소다.)
 namespace {
-const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1)
+const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
 const char* kDefaultHostA  = "172.23.131.8";
 const char* kDefaultHostB  = "172.23.131.8";
