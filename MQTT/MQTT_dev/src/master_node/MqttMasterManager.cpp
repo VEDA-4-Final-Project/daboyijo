@@ -38,10 +38,15 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
         out_cmd.volume = 90;
         out_cmd.loop = true;
 
-        out_cmd.status = "낙상"; // 프로토콜 정해지면 넣을께요 
+        out_cmd.type = "FALL";
+        out_cmd.room = "";      // TODO: device_id -> 호실 매핑 붙일 것
         out_cmd.message = "낙상 감지";
         out_cmd.audio_action = "PLAY";
         out_cmd.audio_file = "/home/mayoina/study_veda/daboyijo/server/MQTT_dev/build/alarm_node/fall_alert.wav";
+
+        out_cmd.matrix_action = "SHOW";
+        out_cmd.matrix_passes = 3;
+        out_cmd.brightness = 128;
         return true;
     }
     return false;
