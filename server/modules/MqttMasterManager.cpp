@@ -1,6 +1,7 @@
 #include "MqttMasterManager.hpp"
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <chrono>
 
 MqttMasterManager::MqttMasterManager() {
         mqtt_client_ = std::make_unique<MqttClient_veda>("Main_Master_Module");
@@ -48,7 +49,35 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
 }
 
 
-void MqttMasterManager::sendAlarmCommand(const AlarmCommand& cmd) {
+void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_id ) {
+
+    AlarmCommand cmd;
+
+    if(event_type == AlarmEventType::FALL){
+        cmd.status = "FALL";
+        cmd.message = "ch" + std::to_string(channel_id + 1) + " channel FALL";
+        cmd.audio_file = "fall_alert.wav";
+    }else if(event_type == AlarmEventType::EGRESS){
+        cmd.status = "EGRESS";
+        cmd.message = "ch" + std::to_string(channel_id + 1) + " channel EGRESS";
+        cmd.audio_file = "egress_alert.wav";
+    }else if(event_type == AlarmEventType::VITAL_ABNORMAL){
+        cmd.status = "VITAL_ABNORMAL";
+        cmd.message = "id "+ std::to_string(channel_id) + "VITAL_ABNORMAL";
+        cmd.audio_file = "vital_alert.wav";
+    }
+
+
+    cmd.target_device = "alarm_rpi_01";
+    //cmd.timestamp = data.timestamp;
+    // chrono를 이용하여 시스템 타임 스탬프 대입 
+    auto now = std::chrono::system_clock::now();
+    cmd.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count();
+    cmd.volume = 90;
+    cmd.loop = true;
+    cmd.audio_action = "PLAY";
+
     nlohmann::json j = cmd;
     std::string payload = j.dump();
 
