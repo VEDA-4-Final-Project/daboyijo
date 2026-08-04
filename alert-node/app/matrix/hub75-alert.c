@@ -31,6 +31,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/fb.h>			/* FBIO_WAITFORVSYNC */
+#include "alert-event.h"
 #include "hub75-font16.h"
 
 #define FPS_US		30000		/* 프레임 간격 (약 33fps) - 프레임당 1px 이동 */
@@ -42,13 +43,6 @@ static void on_signal(int sig)
 	(void)sig;
 	running = 0;
 }
-
-/* 경보 등급 - 색과 깜빡임을 정한다 */
-enum severity {
-	SEV_INFO,	/* 정상 감시중 - 차분한 초록 */
-	SEV_WARN,	/* 웨어러블 이상(체온/심박/산소) - 주황 */
-	SEV_CRIT,	/* 낙상/침상 이탈 - 빨강, 테두리 깜빡임 */
-};
 
 /* 등급별 대표색 (밝게) */
 static void sev_color(enum severity s, uint8_t *r, uint8_t *g, uint8_t *b)
@@ -251,7 +245,7 @@ static int find_hub75_fb(struct fb_var_screeninfo *var,
 	return -1;
 }
 
-/* --- 이벤트 시뮬레이션 --- */
+/* --- 이벤트 소스: 난수 데모 (하드웨어 없이 시연용) --- */
 
 enum ev_kind {
 	EV_FALL,	/* 낙상 감지 */
@@ -266,44 +260,47 @@ static const int rooms[] = { 301, 302, 303, 305, 308, 311, 315 };
 #define NUM_ROOMS (sizeof(rooms) / sizeof(rooms[0]))
 
 /*
- * 이벤트 하나를 만들어 문구(out)와 등급(*sev)을 채운다
+ * alert_source_fn 구현 - 이벤트 하나를 지어내 ev 를 채우고 1 을 반환한다
  *
- * === 실제 연동 지점 ===
- *   지금은 rand() 로 이벤트를 지어내지만, 실제로는 여기서
- *   낙상 감지기 / 침상 매트 센서 / 웨어러블(체온·심박·산소) 게이트웨이가
- *   올려준 이벤트(예: MQTT 구독, 소켓 수신, JSON 파싱)를 읽어
- *   병실 번호·측정값·등급으로 바꿔 넣으면 된다
+ * MQTT 연동은 이 함수를 대체하는 소스를 하나 더 만들어 main 의
+ * next_event 에 꽂으면 된다. 게이트웨이가 올려준 호실·타입·측정값을
+ * 문구와 등급으로 바꾸는 일은 그 소스 안에서 끝낸다.
  */
-static void gen_event(char *out, size_t n, enum severity *sev)
+static int demo_next_event(struct alert_event *ev)
 {
 	int room = rooms[rand() % NUM_ROOMS];
 	enum ev_kind kind = rand() % EV_KIND_COUNT;
+	size_t n = sizeof(ev->msg);
 
 	switch (kind) {
 	case EV_FALL:
-		*sev = SEV_CRIT;
-		snprintf(out, n, "긴급 %d호 낙상 발생 즉시 확인 요망", room);
+		ev->sev = SEV_CRIT;
+		snprintf(ev->msg, n, "긴급 %d호 낙상 발생 즉시 확인 요망", room);
 		break;
 	case EV_BEDEXIT:
-		*sev = SEV_CRIT;
-		snprintf(out, n, "긴급 %d호 침상 이탈 감지", room);
+		ev->sev = SEV_CRIT;
+		snprintf(ev->msg, n, "긴급 %d호 침상 이탈 감지", room);
 		break;
 	case EV_FEVER:
-		*sev = SEV_WARN;
-		snprintf(out, n, "주의 %d호 고열 체온 %d.%d도",
+		ev->sev = SEV_WARN;
+		snprintf(ev->msg, n, "주의 %d호 고열 체온 %d.%d도",
 			 room, 38 + rand() % 2, rand() % 10);
 		break;
 	case EV_HR:
-		*sev = SEV_WARN;
-		snprintf(out, n, "주의 %d호 심박 이상 분당 %d회",
+		ev->sev = SEV_WARN;
+		snprintf(ev->msg, n, "주의 %d호 심박 이상 분당 %d회",
 			 room, 120 + rand() % 40);
 		break;
 	default: /* EV_SPO2 */
-		*sev = SEV_WARN;
-		snprintf(out, n, "주의 %d호 산소포화도 %d%%",
+		ev->sev = SEV_WARN;
+		snprintf(ev->msg, n, "주의 %d호 산소포화도 %d%%",
 			 room, 85 + rand() % 5);
 		break;
 	}
+
+	/* 긴급은 한 번 더 반복해 확실히 알린다 */
+	ev->passes = (ev->sev == SEV_CRIT) ? 3 : 2;
+	return 1;
 }
 
 int main(void)
@@ -314,6 +311,7 @@ int main(void)
 	size_t map_size, frame_bytes;
 	uint8_t *fb, *scratch;
 	int fbfd;
+	alert_source_fn next_event = demo_next_event;	/* MQTT 연동 시 교체 */
 
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);
@@ -353,20 +351,17 @@ int main(void)
 	printf("요양원 알림 데모 시작 - Ctrl-C 로 종료\n");
 
 	while (running) {
-		char msg[128];
-		enum severity sev;
+		struct alert_event ev;
 
 		/* 이벤트 사이 평상시: 차분한 초록으로 감시중 표시 (1회 스크롤) */
 		show_alert(fb, scratch, cols, rows, stride, fbfd,
 			   "정상 감시 중", SEV_INFO, 1);
-		if (!running)
-			break;
+		if (!running || !next_event(&ev))
+			continue;
 
-		/* 새 이벤트 발생 -> 등급에 따라 여러 번 반복해 확실히 알린다 */
-		gen_event(msg, sizeof(msg), &sev);
-		printf("[이벤트] %s\n", msg);
-		show_alert(fb, scratch, cols, rows, stride, fbfd, msg, sev,
-			   sev == SEV_CRIT ? 3 : 2);
+		printf("[이벤트] %s\n", ev.msg);
+		show_alert(fb, scratch, cols, rows, stride, fbfd, ev.msg,
+			   ev.sev, ev.passes);
 	}
 
 	memset(fb, 0, frame_bytes);		/* 나갈 때 화면을 지운다 */

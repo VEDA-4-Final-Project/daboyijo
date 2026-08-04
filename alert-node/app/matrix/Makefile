@@ -18,7 +18,7 @@ all: $(APPS)
 	$(CC) $(CFLAGS) -o $@ $<
 
 # 한글 비트맵 헤더에 의존 (hub75-driver 의 genfont.py 로 생성된 파일)
-hub75-alert: hub75-font16.h
+hub75-alert: hub75-font16.h alert-event.h
 
 clean:
 	rm -f $(APPS)
