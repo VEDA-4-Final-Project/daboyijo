@@ -32,9 +32,10 @@ daboyijo/
  ├─ server/          # 중앙 서버 (RPi 4)
  │   ├─ video/       #   RTSP 4채널 수신·디코딩, ONVIF, OpenCV 영상처리
  │   └─ core/        #   교차 검증 룰엔진, DB/로그, OpenSSL 통신
+ ├─ MQTT/            # MQTT 공용 구현 (MQTT_prod) 및 노드별 개발 트리 (MQTT_dev)
  ├─ client/          # Qt 관제 클라이언트 (Windows/Linux)
  ├─ firmware/        # STM32 웨어러블 펌웨어
- ├─ relay-node/      # 중계 노드 (RPi 4) — UART 수신·버퍼링·서버 송신
+ ├─ relay-node/      # 중계 노드 (RPi 4) — BLE 수신·버퍼링·MQTT 발행
  ├─ alert-node/      # 알림 노드 (RPi 4) — MQTT 구독, 오디오/LED 드라이버
  ├─ protocol/        # ★ 전 모듈 공통 패킷 구조체·메시지 타입 정의
  └─ docs/            # 기획서, 설계서, 프로토콜 명세

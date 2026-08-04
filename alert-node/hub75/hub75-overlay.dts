@@ -1,0 +1,45 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    /* RPi 4(bcm2711)에서만 적용 */
+    compatible = "brcm,bcm2711";
+
+    /* fragment@0 : 드라이버가 돌기 전, 핀을 "출력, 풀 없음"으로 미리 세팅 */
+    fragment@0 {
+        target = <&gpio>;
+        __overlay__ {
+            hub75_pins: hub75_pins {
+                brcm,pins = <5 6 7 8 9 10 11 12 17 23 24 25 27>;
+                brcm,function = <1>; // 출력
+                brcm,pull = <0>; // 풀 없음
+            };
+        };
+    };
+
+    /* fragment@1 : 패널 장치 노드 */
+    fragment@1 {
+        target-path = "/";
+        __overlay__ {
+            hub75: hub75 {
+                compatible = "smg,hub75-matrix";
+                pinctrl-names = "default";
+                pinctrl-0 = <&hub75_pins>;
+
+                clk-gpios  = <&gpio 17 0>;  // CLK
+                lat-gpios  = <&gpio  6 0>;  // LAT(STROBE)
+                oe-gpios   = <&gpio 12 1>;  // OE- active-low 라 플래그 1
+
+                addr-gpios = <&gpio  5 0>, <&gpio 23 0>,    // A B
+                             <&gpio 24 0>, <&gpio 25 0>;    // C D
+
+                data-gpios = <&gpio 11 0>, <&gpio 27 0>, <&gpio  7 0>,  // R1 G1 B1
+                             <&gpio  8 0>, <&gpio  9 0>, <&gpio 10 0>;  // R2 G2 B2
+
+                matrix-rows = <32>; // 세로 픽셀
+                matrix-cols = <64>; // 가로 픽셀
+                scan = <16>;        // 1/16 스캔
+            };
+        };
+    };
+};
