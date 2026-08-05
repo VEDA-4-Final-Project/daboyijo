@@ -251,8 +251,9 @@ static void hub75_pwm_off(struct hub75 *h)
 	writel(CM_PASSWD | CM_KILL, h->cm_regs + CM_PWMCTL);
 }
 
-/* 테스트 패턴: 왼쪽 어두움 -> 오른쪽 밝음 회색 그라데이션 */
-static void hub75_fill_test(struct hub75 *h)
+/* 테스트 패턴: 왼쪽 어두움 -> 오른쪽 밝음 회색 그라데이션
+ * probe 에서 부르지 않는다 - 패널 점검할 때만 호출해서 쓴다 */
+static void __maybe_unused hub75_fill_test(struct hub75 *h)
 {
 	int row, col;
 
@@ -624,7 +625,6 @@ static int hub75_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err_pwm;	// 여기부터는 OE 가 ALT0(PWM) 이라 하드웨어 복원이 필요
 	}
-	hub75_fill_test(h);
 	hub75_update_lut(h);	// 첫 프레임부터 유효한 조회표로
 
 	mutex_init(&h->write_lock);
