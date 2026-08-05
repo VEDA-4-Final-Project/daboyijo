@@ -1,7 +1,6 @@
 #include "fall_module.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstdio>
 #include <string>
 
@@ -96,37 +95,10 @@ void FallModule::processFrame(const AiJob& job) {
 
         // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다.
         // (저조도 보정은 PoseEstimator가 모델 입력 단계에서 처리 — pose_estimator.cpp)
-        // isLyingDown() 대신 estimate()+isLyingPose()로 나눠, 같은 추론 1회에서
-        // keypoint까지 얻어 Qt 시각화(on_pose_)에 재사용한다.
-        std::array<PoseEstimator::Keypoint, PoseEstimator::kNumKeypoints> kp;
-        if (!ch.estimator.estimate(job.raw_frame(roi), kp)) {
-            // 추론 실패 — 기존 isLyingDown()과 동일하게 "누움 아님"으로 보고(스트릭 리셋).
-            std::lock_guard<std::mutex> lock(mutex_);
-            fall_detector_.reportPose(job.channel, t.object_id, false);
-            continue;
-        }
-        bool lying = ch.estimator.isLyingPose(kp);
+        bool lying = ch.estimator.isLyingDown(job.raw_frame(roi));
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                      job.channel + 1, t.object_id, lying ? "누움" : "서있음",
                      roi.width, roi.height);
-
-        // [자세 시각화] keypoint(레터박스 정사각 기준)를 크롭 기준 → 프레임 전체
-        // 기준 정규화 0~1로 변환해 Qt로 내려보낸다. isLyingPose가 쓴 kp는 그대로 둔다.
-        if (on_pose_) {
-            std::array<PoseEstimator::Keypoint, PoseEstimator::kNumKeypoints> frame_kp;
-            const float fw = static_cast<float>(job.raw_frame.cols);
-            const float fh = static_cast<float>(job.raw_frame.rows);
-            for (int i = 0; i < PoseEstimator::kNumKeypoints; ++i) {
-                // ① 레터박스 제거 → 크롭 기준 0~1
-                PoseEstimator::Keypoint c =
-                    ch.estimator.toCropNormalized(kp[i], roi.width, roi.height);
-                // ② 크롭 → 프레임 전체 기준 0~1 (roi는 원본 프레임 픽셀)
-                frame_kp[i].x = (roi.x + c.x * roi.width) / fw;
-                frame_kp[i].y = (roi.y + c.y * roi.height) / fh;
-                frame_kp[i].score = c.score;
-            }
-            on_pose_(job.channel, t.object_id, frame_kp);
-        }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);

@@ -152,15 +152,6 @@ int main(int argc, char* argv[]) {
         telegram.notifyFall(ch);      // 즉시 기본 알림
         care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
     });
-    // [자세 시각화] MoveNet 관절 17개 → Qt 스켈레톤 오버레이 (낙상 판정과 별개).
-    fall.setPoseCallback([&](int ch, int object_id,
-                             const std::array<PoseEstimator::Keypoint,
-                                               PoseEstimator::kNumKeypoints>& pts) {
-        std::vector<StreamServer::PosePoint> pp;
-        pp.reserve(pts.size());
-        for (const auto& k : pts) pp.push_back({k.x, k.y, k.score});
-        stream_server.broadcastPose(ch, object_id, pp);
-    });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
         std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch + 1, obj_id);

@@ -1,13 +1,11 @@
 #ifndef VIDEOVIEW_H
 #define VIDEOVIEW_H
 
-#include <QHash>
 #include <QPixmap>
 #include <QPointF>
 #include <QPolygonF>
 #include <QString>
 #include <QTimer>
-#include <QVector>
 #include <QWidget>
 
 // 영상 1채널을 표시하고, 그 위에 침대 ROI를 그리거나 보여주는 위젯.
@@ -46,14 +44,6 @@ public:
     bool drawMode() const { return drawMode_; }
     void cancelDraft();                       // 그리던 것 버리고 그리기 종료
     void setRoiVisible(bool on);              // 모니터링 오버레이 표시 토글
-
-    // 낙상감지 MoveNet 스켈레톤 오버레이 (정규화 0~1, 프레임 전체 기준).
-    // objectId별로 최신값을 유지하고, 일정 시간 갱신 없으면 자동으로 사라진다.
-    // normPts·scores는 각각 관절 17개(부족하면 그만큼만).
-    void setPose(int objectId, const QVector<QPointF>& normPts,
-                 const QVector<float>& scores);
-    void clearPoses();                        // 모든 스켈레톤 제거 (채널 전환 등)
-    void setPoseVisible(bool on);             // 스켈레톤 표시 토글
     // 낙상/침상이탈 경보 — 빨간 테두리 점멸 + 상단 배너(label).
     // normPt(0~1) 주면 발생 위치에 마커 표시.
     void setAlert(bool on, const QString& label = QStringLiteral("🚨 낙상 감지"),
@@ -95,16 +85,6 @@ private:
     QString alertLabel_ = QStringLiteral("🚨 낙상 감지");  // 상단 배너 문구
     QPointF alertPt_{-1, -1};     // 발생 위치(정규화 0~1), 음수면 미표시
     QTimer* alertTimer_ = nullptr;
-
-    // 스켈레톤 오버레이 — objectId → 관절 좌표/신뢰도 + 마지막 갱신 시각.
-    struct PoseSkeleton {
-        QVector<QPointF> pts;     // 정규화 0~1 (프레임 전체 기준)
-        QVector<float> scores;    // 관절 신뢰도 0~1
-        qint64 updatedMs = 0;     // 마지막 수신 시각 (만료 판정용)
-    };
-    QHash<int, PoseSkeleton> poses_;   // object_id → 스켈레톤
-    bool poseVisible_ = true;          // 스켈레톤 표시 여부
-    void drawPoses(QPainter& p);       // paintEvent에서 스켈레톤 렌더
 };
 
 #endif  // VIDEOVIEW_H

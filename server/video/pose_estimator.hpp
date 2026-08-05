@@ -44,18 +44,8 @@ public:
 
     // 크롭 이미지(BGR, 임의 크기)에서 관절 17개를 추정한다.
     // 실패(모델 미준비·빈 이미지·추론 오류) 시 false, out은 건드리지 않음.
-    // out의 (x,y)는 모델 입력(레터박스 정사각) 기준 정규화 0~1 — 이 좌표계는
-    // 좌우/상하가 같은 스케일이라 몸통 각도·비율이 왜곡되지 않아 isLyingPose()가
-    // 그대로 쓴다. 화면 오버레이용으로 크롭 기준이 필요하면 toCropNormalized() 참조.
     bool estimate(const cv::Mat& personCropBgr,
                   std::array<Keypoint, kNumKeypoints>& out) const;
-
-    // estimate()가 준 keypoint(레터박스 정사각 기준)를 "원본 크롭(cropW×cropH)
-    // 기준" 정규화 0~1로 변환한다 — 화면에 스켈레톤을 그리기 위한 좌표. 전처리에서
-    // 넣은 레터박스 여백/스케일을 걷어낸다. 판정엔 쓰지 말 것(크롭이 정사각이 아니면
-    // x·y가 독립적으로 늘어나 각도가 왜곡됨 — 그래서 estimate()는 정사각 기준 유지).
-    // cropW/cropH가 0 이하면 입력 그대로 반환.
-    Keypoint toCropNormalized(const Keypoint& kp, int cropW, int cropH) const;
 
     // estimate() 결과로 "누운 자세"인지 판정한다. 세 신호의 OR — 하나라도
     // 걸리면 누움 (임계값은 pose_estimator.cpp 상단, 실측 전 잠정값):

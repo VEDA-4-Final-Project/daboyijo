@@ -1,7 +1,6 @@
 #include "videoview.h"
 
 #include <QColor>
-#include <QDateTime>
 #include <QFont>
 #include <QFontMetrics>
 #include <QMouseEvent>
@@ -16,23 +15,6 @@ const QColor kDraftLine(224, 148, 43);        // 그리는 중(주황)
 const QColor kVertex(245, 247, 245);          // 꼭짓점 마커
 constexpr double kDupEps = 0.006;             // 더블클릭 중복 꼭짓점 제거 임계
 constexpr int kMaxPoints = 32;                // 프로토콜 DBJ_ROI_MAX_POINTS와 동일
-
-// ── 스켈레톤 오버레이 ──────────────────────────────────────────
-const QColor kSkelLine(0, 200, 255);          // 관절 연결선(시안 — ROI 초록/경보 빨강과 구분)
-const QColor kSkelJoint(255, 255, 255);       // 관절 점(흰색)
-constexpr float kSkelMinScore = 0.20f;        // 이 신뢰도 미만 관절은 안 그림
-// 자세 추론은 객체당 ~2fps라, 이 시간 넘게 갱신 없으면 스켈레톤을 지운다(잔상 방지).
-constexpr qint64 kPoseExpireMs = 2500;
-// MoveNet(COCO) 17관절 연결(뼈대). 인덱스는 pose_estimator.hpp의 관절 순서와 동일:
-// 0코 1좌눈 2우눈 3좌귀 4우귀 5좌어깨 6우어깨 7좌팔꿈 8우팔꿈 9좌손목 10우손목
-// 11좌엉덩 12우엉덩 13좌무릎 14우무릎 15좌발목 16우발목
-const int kSkelEdges[][2] = {
-    {0, 1}, {0, 2}, {1, 3}, {2, 4},            // 얼굴
-    {5, 6},                                    // 어깨
-    {5, 7}, {7, 9}, {6, 8}, {8, 10},           // 팔
-    {5, 11}, {6, 12}, {11, 12},                // 몸통
-    {11, 13}, {13, 15}, {12, 14}, {14, 16},    // 다리
-};
 }  // namespace
 
 VideoView::VideoView(int channel, QWidget* parent)
@@ -53,7 +35,6 @@ void VideoView::setChannel(int ch) {
     draft_.clear();
     hasHover_ = false;
     drawMode_ = false;
-    poses_.clear();  // 이전 채널 스켈레톤 잔상 제거
     setCursor(Qt::ArrowCursor);
     update();  // roi_·frame_는 호출부(선택 슬롯)가 새 채널 값으로 채운다
 }
@@ -111,27 +92,6 @@ void VideoView::cancelDraft() {
 
 void VideoView::setRoiVisible(bool on) {
     roiVisible_ = on;
-    update();
-}
-
-void VideoView::setPose(int objectId, const QVector<QPointF>& normPts,
-                        const QVector<float>& scores) {
-    PoseSkeleton& s = poses_[objectId];
-    s.pts = normPts;
-    s.scores = scores;
-    s.updatedMs = QDateTime::currentMSecsSinceEpoch();
-    update();
-}
-
-void VideoView::clearPoses() {
-    if (poses_.isEmpty()) return;
-    poses_.clear();
-    update();
-}
-
-void VideoView::setPoseVisible(bool on) {
-    if (poseVisible_ == on) return;
-    poseVisible_ = on;
     update();
 }
 
@@ -214,9 +174,6 @@ void VideoView::paintEvent(QPaintEvent*) {
         p.setPen(QPen(kRoiLine, 2));
         p.drawPolygon(poly);
     }
-
-    // 스켈레톤(자세) 오버레이 — ROI 위, 경보 마커 아래
-    if (poseVisible_ && !frame_.isNull() && !poses_.isEmpty()) drawPoses(p);
 
     // 그리는 중인 다각형
     if (drawMode_ && !draft_.empty()) {
@@ -322,40 +279,6 @@ void VideoView::paintEvent(QPaintEvent*) {
             p.setPen(Qt::white);
             p.drawText(badge, Qt::AlignCenter, alertLabel_);
         }
-    }
-}
-
-// 스켈레톤 렌더 — 만료된 건 지우고, 신뢰도 높은 관절/뼈대만 그린다.
-void VideoView::drawPoses(QPainter& p) {
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-
-    for (auto it = poses_.begin(); it != poses_.end();) {
-        PoseSkeleton& s = it.value();
-        if (now - s.updatedMs > kPoseExpireMs) {
-            it = poses_.erase(it);  // 오래 갱신 안 된 스켈레톤 제거(잔상 방지)
-            continue;
-        }
-
-        const int n = s.pts.size();
-        auto ok = [&](int i) {
-            return i < n && i < s.scores.size() && s.scores[i] >= kSkelMinScore;
-        };
-
-        // 뼈대(연결선) — 양 끝 관절이 모두 신뢰될 때만
-        p.setPen(QPen(kSkelLine, 2));
-        for (const auto& e : kSkelEdges) {
-            if (ok(e[0]) && ok(e[1]))
-                p.drawLine(toWidget(s.pts[e[0]]), toWidget(s.pts[e[1]]));
-        }
-
-        // 관절 점
-        p.setPen(Qt::NoPen);
-        p.setBrush(kSkelJoint);
-        for (int i = 0; i < n; ++i) {
-            if (ok(i)) p.drawEllipse(toWidget(s.pts[i]), 3, 3);
-        }
-
-        ++it;
     }
 }
 

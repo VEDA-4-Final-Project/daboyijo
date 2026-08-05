@@ -55,24 +55,6 @@ struct dbj_evt_header_t {
     uint16_t y;             // 2B (발생 위치 정규화 y ×10000)
     uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
 };                          // 18B
-
-// 서버→클라 스켈레톤(자세) — 낙상감지 MoveNet 관절 17개. magic=0xDB4E.
-// 헤더(16B) 뒤에 point_count개의 dbj_pose_point_t가 온다. 좌표는 프레임 전체
-// 기준 정규화 ×10000. (서버 protocol/video_stream.h와 동일하게 유지)
-struct dbj_pose_header_t {
-    uint16_t magic;         // 2B (0xDB4E)
-    uint8_t  version;       // 1B (0x01)
-    uint8_t  channel;       // 1B (0~3)
-    uint16_t object_id;     // 2B (WiseAI ObjectId — 사람 구분)
-    uint8_t  point_count;   // 1B (관절 개수, MoveNet=17)
-    uint8_t  reserved;      // 1B (0)
-    uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
-};                          // 16B
-struct dbj_pose_point_t {
-    uint16_t x;             // 정규화 x × 10000 (프레임 전체 기준)
-    uint16_t y;             // 정규화 y × 10000
-    uint8_t  score;         // 신뢰도 0~255
-};                          // 5B
 #pragma pack(pop)
 
 // 제어 메시지 상수 (서버와 합의된 값 — protocol/video_stream.h와 동일하게 유지)
@@ -88,10 +70,6 @@ static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 static constexpr uint16_t kEvtMagic = 0xDB4D;
 static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
-
-// 스켈레톤(자세) 메시지 상수 (서버 스펙)
-static constexpr uint16_t kPoseMagic = 0xDB4E;
-static constexpr int kPoseMaxPoints = 17;       // MoveNet(COCO) 관절 수
 
 class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)

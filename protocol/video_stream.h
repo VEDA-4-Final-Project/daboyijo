@@ -52,19 +52,6 @@ extern "C" {
 #define DBJ_EVT_FALL        0x01    /* 낙상 확정 (x,y = 발생 위치) */
 #define DBJ_EVT_EGRESS      0x02    /* 침상 이탈 확정 (x,y = 발생 위치) */
 
-/* ── 서버 → 클라이언트 스켈레톤(자세) 메시지 ──────────────────
- * 낙상감지용 MoveNet이 뽑은 관절 17개(keypoint)를 Qt에서 눈으로 볼 수 있게
- * 내려보낸다(디버깅·자세 시각화용). 영상·이벤트와 같은 TCP 스트림에 섞이며
- * magic(0xDB4E)으로 구분한다. 서버가 자세 추론을 돌릴 때마다(객체당 ~2fps)
- * 1개씩 보낸다 — 오버레이 보조 데이터라, 느린 클라 대기열이 차면 영상 프레임과
- * 함께 드롭돼도 된다(이벤트처럼 반드시 보존하지는 않음).
- *  - 헤더 뒤에 point_count개의 dbj_pose_point_t가 온다(MoveNet=17).
- *  - 좌표는 "프레임 전체" 기준 정규화(0~1)를 DBJ_ROI_COORD_SCALE배한 값 —
- *    Detection.cx/cy·ROI와 같은 좌표계라 Qt가 그대로 화면에 매핑한다.
- *    (서버가 레터박스·크롭 오프셋을 걷어내고 프레임 기준으로 변환해 보냄) */
-#define DBJ_POSE_MAGIC      0xDB4E  /* 스켈레톤 메시지 시작 식별자 */
-#define DBJ_POSE_MAX_POINTS 17      /* MoveNet(COCO) 관절 수 */
-
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
 #define DBJ_CTRL_ROI_SET    0x01    /* 채널 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
 #define DBJ_CTRL_ROI_CLEAR  0x02    /* 채널 ROI 삭제 — 점 배열 없음 */
@@ -124,22 +111,6 @@ typedef struct {
     uint16_t y;            /* 발생 위치 정규화 y × DBJ_ROI_COORD_SCALE (없으면 0) */
     uint64_t timestamp_ms; /* 서버 Unix time (밀리초) */
 } dbj_evt_header_t;        /* 18바이트, 페이로드 없음 */
-
-typedef struct {
-    uint16_t x;            /* 관절 정규화 x × DBJ_ROI_COORD_SCALE (프레임 전체 기준) */
-    uint16_t y;            /* 관절 정규화 y × DBJ_ROI_COORD_SCALE (프레임 전체 기준) */
-    uint8_t  score;        /* 관절 신뢰도 0~255 (원본 0~1 × 255) */
-} dbj_pose_point_t;        /* 5바이트 */
-
-typedef struct {
-    uint16_t magic;        /* DBJ_POSE_MAGIC */
-    uint8_t  version;      /* DBJ_VS_VERSION */
-    uint8_t  channel;      /* 발생 채널 0~3 */
-    uint16_t object_id;    /* WiseAI ObjectId — 채널 내 사람 구분(오버레이 그룹 키) */
-    uint8_t  point_count;  /* 이어지는 관절 개수 (MoveNet=17, ≤DBJ_POSE_MAX_POINTS) */
-    uint8_t  reserved;     /* 0 */
-    uint64_t timestamp_ms; /* 서버 Unix time (밀리초) */
-} dbj_pose_header_t;       /* 16바이트, 이어서 point_count개의 dbj_pose_point_t */
 
 #pragma pack(pop)
 

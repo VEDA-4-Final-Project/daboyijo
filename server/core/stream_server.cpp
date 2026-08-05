@@ -317,41 +317,6 @@ void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y,
     enqueueAll(std::move(packet));
 }
 
-void StreamServer::broadcastPose(int channel, int object_id,
-                                 const std::vector<PosePoint>& points) {
-    const size_t n = std::min(points.size(),
-                              static_cast<size_t>(DBJ_POSE_MAX_POINTS));
-
-    dbj_pose_header_t hdr{};
-    hdr.magic = DBJ_POSE_MAGIC;
-    hdr.version = DBJ_VS_VERSION;
-    hdr.channel = static_cast<uint8_t>(channel);
-    hdr.object_id = static_cast<uint16_t>(object_id);
-    hdr.point_count = static_cast<uint8_t>(n);
-    hdr.timestamp_ms = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
-
-    auto packet = std::make_shared<std::vector<unsigned char>>(
-        sizeof(hdr) + n * sizeof(dbj_pose_point_t));
-    std::memcpy(packet->data(), &hdr, sizeof(hdr));
-
-    auto* dst = reinterpret_cast<dbj_pose_point_t*>(packet->data() + sizeof(hdr));
-    for (size_t i = 0; i < n; ++i) {
-        // 정규화 좌표를 고정소수(×10000)로. 프레임 밖으로 삐져나온 관절도 있을 수
-        // 있어 0~1로 클램프해 uint16 오버플로우/음수 래핑을 막는다.
-        const float cx = std::min(1.0f, std::max(0.0f, points[i].x));
-        const float cy = std::min(1.0f, std::max(0.0f, points[i].y));
-        const float cs = std::min(1.0f, std::max(0.0f, points[i].score));
-        dst[i].x = static_cast<uint16_t>(cx * DBJ_ROI_COORD_SCALE);
-        dst[i].y = static_cast<uint16_t>(cy * DBJ_ROI_COORD_SCALE);
-        dst[i].score = static_cast<uint8_t>(cs * 255.0f);
-    }
-
-    enqueueAll(std::move(packet));
-}
-
 void StreamServer::enqueueAll(Packet packet) {
     std::lock_guard<std::mutex> lock(clients_mutex_);
     for (auto it = clients_.begin(); it != clients_.end();) {

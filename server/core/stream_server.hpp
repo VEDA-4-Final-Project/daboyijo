@@ -70,17 +70,6 @@ public:
     void broadcastEvent(int channel, uint8_t type, float x, float y,
                         int64_t timestampMsOverride = 0);
 
-    // 관절 1개 — 프레임 전체 기준 정규화 0~1 좌표 + 신뢰도 0~1.
-    struct PosePoint {
-        float x = 0, y = 0, score = 0;
-    };
-    // 접속한 모든 클라이언트에 스켈레톤(자세) 1건 전송 (dbj_pose_header_t + 점들).
-    // 낙상감지 MoveNet 결과를 Qt에서 시각화하기 위한 오버레이 보조 데이터.
-    // 오래된 프레임처럼 드롭 가능(이벤트와 달리 outbox가 차면 버려질 수 있음).
-    // 아무 스레드에서나 호출 가능 (AI 워커 스레드에서 온다).
-    void broadcastPose(int channel, int object_id,
-                       const std::vector<PosePoint>& points);
-
     size_t clientCount();
 
 private:
