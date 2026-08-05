@@ -4,16 +4,17 @@
 #include <QObject> 
 #include <QString> 
 #include <memory>
+#include <nlohmann/json.hpp>
 #include "MqttClient_veda.hpp" 
 
-class MqttQtManager : QObject {
+class MqttQtManager : public QObject {
     Q_OBJECT
 public:
     explicit MqttQtManager(QObject* parent = nullptr);
     ~MqttQtManager();
     
     //Mqtt 브로커 연결 
-    bool init(const Qstring& broker_ip, int port = 1883, const QString& client_id= "");
+    bool init(const QString& broker_ip, int port = 1883, const QString& client_id= "");
     void disconnectFromBroker();
 
     // 명령 전송  
@@ -22,10 +23,12 @@ public:
 signals:
     void connected();
     void disconnected();
-    void connectionError(const Qstring& errorMsg);
-    void alarmCommandReceived(const AlarmCommand& cmd);
+    void connectionError(const QString& errorMsg);
+
+    void wearableDataReceived(const WearableData& data);
 
 private:
+    void handleIncomingMessage(const std::string& topic, const std::string& payload);
     std::unique_ptr<MqttClient_veda> m_client;
     bool m_isConnected{false};
 
