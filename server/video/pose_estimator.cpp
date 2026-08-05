@@ -304,7 +304,13 @@ bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) c
     // ── 신호 2: 상하 반전 ──
     // y는 화면 아래로 증가. 서 있으면 항상 dy > 0 (엉덩이가 어깨 아래).
     // 카메라 쪽으로 머리부터 넘어지면 어깨가 엉덩이 밑으로 내려가 dy < 0.
-    const bool inverted = dy < -kInvertMarginNorm;
+    // ★ 다리 veto (신호1과 동일 설계) — 발끝 만지기·신발끈 묶기·물건 줍기 등
+    //   허리를 숙이면 어깨가 엉덩이 밑으로 내려가 반전과 기하학적으로 똑같지만,
+    //   그때 다리는 수직으로 서 있다. 다리가 안 보이거나(legs_seen=false) 서 있으면
+    //   (legs_upright) 반전을 낙상으로 보지 않는다 — 진짜 머리부터 고꾸라진 낙상은
+    //   다리까지 무너져 legs_upright가 false가 되므로 그대로 잡힌다.
+    const bool inverted =
+        dy < -kInvertMarginNorm && legs_seen && !legs_upright;
 
     // ── 신호 3: 원근 단축 (카메라 축 방향 낙상) ──
     // 몸이 카메라를 향해 누우면 세로 방향 길이는 투영에서 뭉개지지만,
