@@ -1,6 +1,6 @@
 # alert-node 전체 빌드 - 커널 모듈 2개 + 유저 앱
 #
-#   make            # drivers/*.ko, *.dtbo, app/matrix/hub75-alert 전부
+#   make            # drivers/*.ko, *.dtbo, app/matrix/alert-demo 전부
 #   make drivers    # 커널 모듈만
 #   make apps       # 유저 앱만
 #   make clean

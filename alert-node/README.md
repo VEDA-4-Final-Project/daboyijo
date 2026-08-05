@@ -2,7 +2,7 @@
 
 담당: 김예훈, 이교민, 전승현
 
-- MQTT 구독(`dbj/alert/+/cmd`) → 낙상 확정 시 오디오 사이렌 + LED 플래싱
+- MQTT 구독(`veda/alarm/control`) → 낙상 확정 시 오디오 사이렌 + LED 경보
 - 오디오/LED 디바이스 드라이버 직접 구현 (프로젝트 필수 요구사항)
 - 클라이언트發 해제 신호 처리
 
@@ -12,19 +12,82 @@
 ```
 drivers/wm8960    오디오 코덱 드라이버 (커널 모듈 + 오버레이)
 drivers/hub75     64x32 LED 패널 드라이버 (커널 모듈 + 오버레이)
+app/main.cpp      알림 노드 본체 (MQTT → 오디오 + 패널)
 app/AudioPlayer   ALSA 재생 (VedaAudioPlayer)
-app/matrix        패널 알림 앱
+app/matrix        패널 렌더러 (AlertDisplay) + 데모
+app/sounds        경보 음원
 scripts/          모듈 적재/해제
 ```
 
-최상위에서 한 번에 빌드하고 올릴 수 있습니다. 아래 각 절은 개별로 다룰 때
-참고합니다.
+빌드 의존성은 `raspberrypi-kernel-headers`, `libasound2-dev`,
+`libmosquitto-dev`, `nlohmann-json3-dev` 입니다.
 
 ```
 make                      # .ko 2개 + .dtbo 2개 + 유저 앱
 
 sudo ./scripts/load.sh    # 오버레이 + 모듈 적재
 sudo ./scripts/unload.sh  # 해제 (fbcon 언바인드 포함)
+
+sudo ./app/alert-node     # 본체 실행 (Ctrl-C 로 종료)
+```
+
+아래 각 절은 개별로 다룰 때 참고합니다.
+
+
+알림 노드 본체
+
+`app/alert-node.conf` 를 실행 파일과 같은 디렉터리에서 읽습니다. `-c 경로` 로
+다른 파일을 지정할 수 있습니다. 설정이 없으면 기본값으로 뜨고 그 사실을
+출력합니다.
+
+```
+broker_host = localhost        # 배치할 때 서버 IP 로
+node_id     = alarm_rpi_01     # AlarmCommand.target_device 와 비교
+topic       = veda/alarm/control
+audio_dir   = sounds           # 서버가 파일명만 보낼 때 찾는 곳
+idle_text   = 감시 중          # 평상시 표시 (64px 를 넘으면 잘림)
+```
+
+`AlarmCommand` 의 각 필드가 이렇게 대응됩니다.
+
+```
+type           FALL / EGRESS → 빨강, VITAL_ABNORMAL → 주황, 그 외 초록
+room           있으면 노드가 문구를 조립, 비면 message 를 그대로 표시
+audio_action   PLAY / STOP        audio_file  파일명 또는 절대 경로
+volume, loop   음량과 반복 재생    matrix_action  SHOW / CLEAR
+matrix_passes  스크롤 횟수 (1~10 으로 잘림)      brightness  0~255
+```
+
+스크롤 도중 새 명령이 오면 즉시 끊고 최신 경보로 넘어갑니다.
+
+로그를 파일이나 파이프로 넘길 때는 `stdbuf -oL` 을 붙이세요. 안 붙이면
+출력이 버퍼에 갇혀 실시간으로 안 보입니다.
+
+```
+sudo stdbuf -oL ./app/alert-node | tee /tmp/alert.log
+```
+
+
+pulseaudio 회피 (기기당 한 번)
+
+데스크톱 세션이 뜬 파이에는 pulseaudio 가 사운드카드를 잡습니다. 모듈을
+리로드하면 5~10초 동안 PCM 을 붙들고 있어서 그 사이 재생이
+`Device or resource busy` 로 실패합니다. lightdm 과 사용자 세션이 각각
+띄우므로 두 번 겹치면 10초까지 갑니다.
+
+udev 규칙으로 이 카드만 제외합니다. HDMI 오디오는 그대로 둡니다.
+
+```
+# /etc/udev/rules.d/91-pulseaudio-ignore-wm8960.rules
+SUBSYSTEM!="sound", GOTO="pa_end"
+KERNEL!="card*", GOTO="pa_end"
+ATTRS{id}=="WM8960CustomSou", ENV{PULSE_IGNORE}="1"
+LABEL="pa_end"
+```
+
+```
+sudo udevadm control --reload-rules
+sudo ./scripts/unload.sh && sudo ./scripts/load.sh
 ```
 
 
@@ -118,14 +181,15 @@ cd app/matrix
 
 make
 
-sudo ./hub75-alert      # Ctrl-C 로 종료
+sudo ./alert-demo      # Ctrl-C 로 종료
 ```
 
 픽셀과 vsync 를 모두 `/dev/fbN` 하나로 처리합니다 (`FBIO_WAITFORVSYNC`).
 프레임은 오프스크린에 완성한 뒤 프레임 경계에서 한 번에 복사합니다. 단일
 버퍼라 이 순서를 깨고 fb 에 직접 그리면 스크롤이 찢어집니다.
 
-이벤트는 아직 `gen_event()` 에서 난수로 만듭니다. MQTT 연동은 그 함수에
-붙이면 됩니다.
+이벤트는 아직 `alert-demo.cpp` 가 난수로 만듭니다. 렌더링은 `AlertDisplay`
+(`alert-display.hpp`) 로 분리되어 있어, MQTT 연동은 이벤트 소스만 갈아끼우면
+됩니다.
 
 
