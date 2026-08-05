@@ -207,6 +207,27 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
     return true;
 }
 
+PoseEstimator::Keypoint PoseEstimator::toCropNormalized(const Keypoint& kp,
+                                                        int cropW, int cropH) const {
+    Keypoint out = kp;  // score는 그대로 유지
+    if (!isReady() || cropW <= 0 || cropH <= 0) return out;
+
+    // estimate()의 resize_with_pad 전처리를 역산한다(pose_estimator.cpp:147~157과 동일).
+    // 입력 정사각 안에서 실제 크롭이 차지한 영역(offset~size)만 [0,1]로 다시 편다.
+    const float in_w = static_cast<float>(impl_->input_w);
+    const float in_h = static_cast<float>(impl_->input_h);
+    const float scale = std::min(in_w / cropW, in_h / cropH);
+    const float new_w = std::max(1.0f, std::round(cropW * scale));
+    const float new_h = std::max(1.0f, std::round(cropH * scale));
+    const float off_x = (in_w - new_w) / 2.0f;
+    const float off_y = (in_h - new_h) / 2.0f;
+
+    // kp.(x,y)는 입력 정사각 기준 0~1 → 픽셀로 → 여백 제거 → 크롭 기준 0~1.
+    out.x = (kp.x * in_w - off_x) / new_w;
+    out.y = (kp.y * in_h - off_y) / new_h;
+    return out;
+}
+
 bool PoseEstimator::isLyingPose(const std::array<Keypoint, kNumKeypoints>& kp) const {
     const auto& ls = kp[kLeftShoulder];
     const auto& rs = kp[kRightShoulder];

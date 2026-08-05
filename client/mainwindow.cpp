@@ -6,6 +6,7 @@
 #include "sparkline.h"
 #include <QHostAddress>
 #include <QPixmap>
+#include <QVector>
 #include <QDateTime>
 #include <QDebug>
 #include <QVBoxLayout>
@@ -2078,6 +2079,35 @@ void MainWindow::onReadyRead()
                     handleBedEgressEvent(evt.channel, evt.timestamp_ms);
                 }
             }
+            continue;
+        }
+
+        // ── 스켈레톤(자세) 패킷 — 헤더+관절점. 스킵 금지, 즉시 처리 ──
+        if (magic == kPoseMagic) {
+            if (buffer.size() < (int)sizeof(dbj_pose_header_t))
+                break;  // 헤더가 덜 옴 — 다음 readyRead 대기
+            dbj_pose_header_t ph;
+            memcpy(&ph, buffer.constData(), sizeof(ph));
+            // point_count는 스트림 전진용(실제 바이트), nPts는 파싱용(상한 클램프).
+            const qint64 poseTotal = (qint64)sizeof(ph) +
+                (qint64)ph.point_count * (qint64)sizeof(dbj_pose_point_t);
+            if (buffer.size() < poseTotal)
+                break;  // 관절 데이터가 덜 옴
+            const int nPts = qMin<int>(ph.point_count, kPoseMaxPoints);
+            if (ph.channel < 4 && channelViews[ph.channel]) {
+                QVector<QPointF> pts;   pts.reserve(nPts);
+                QVector<float>   scores; scores.reserve(nPts);
+                const char* pbase = buffer.constData() + sizeof(ph);
+                for (int i = 0; i < nPts; ++i) {
+                    dbj_pose_point_t pp;
+                    memcpy(&pp, pbase + i * sizeof(pp), sizeof(pp));
+                    pts.append(QPointF(pp.x / float(kRoiCoordScale),
+                                       pp.y / float(kRoiCoordScale)));
+                    scores.append(pp.score / 255.0f);
+                }
+                channelViews[ph.channel]->setPose(ph.object_id, pts, scores);
+            }
+            buffer.remove(0, (int)poseTotal);
             continue;
         }
 

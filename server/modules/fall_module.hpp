@@ -29,8 +29,18 @@ class FallModule {
 public:
     using FallCallback = std::function<void(int channel, const Detection& at)>;
 
+    // 자세 추론 1회마다(객체당 ~2fps) 호출 — 관절 17개를 "프레임 전체 기준"
+    // 정규화 0~1 좌표로 넘긴다. main.cpp가 StreamServer::broadcastPose로 배선해
+    // Qt에서 스켈레톤을 그린다(낙상 판정과 무관한 시각화용). 누움/서있음 모두 보고.
+    using PoseCallback = std::function<void(
+        int channel, int object_id,
+        const std::array<PoseEstimator::Keypoint, PoseEstimator::kNumKeypoints>& framePts)>;
+
     // 낙상 확정 시 1회 호출될 콜백 (main.cpp에서 블러 해제·블랙박스·경보로 배선)
     void setFallCallback(FallCallback cb);
+
+    // 자세 시각화 콜백 등록 (선택 — 미등록이면 스켈레톤 송출 안 함).
+    void setPoseCallback(PoseCallback cb) { on_pose_ = std::move(cb); }
 
     // 채널 등록 — 채널 전용 MoveNet 인스턴스를 로드한다.
     // AiWorker start 전, 카메라 루프에서 호출할 것.
@@ -61,6 +71,7 @@ private:
     std::mutex mutex_;
     FallDetector fall_detector_;
     std::map<int, std::vector<std::pair<float, float>>> rois_;
+    PoseCallback on_pose_;  // 자세 시각화 콜백 (선택)
 
     // 채널 → 자세 추정 상태. addChannel은 메인 스레드에서 AI 워커 시작 전에만
     // 호출되고, 이후 각 항목은 그 채널의 워커 스레드 전용이라 락 불필요.
