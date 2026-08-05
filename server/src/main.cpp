@@ -96,15 +96,19 @@ int main(int argc, char* argv[]) {
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
-    // [케어봇] 실시간 상황 질의응답: 보호자 질문 → 스냅샷 + VLM → 답변
+    // [케어봇] 버튼 메뉴 기반 상호작용: 보호자가 아무 메시지나 보내면 버튼 메뉴를
+    // 띄우고(handleMessage), 버튼 클릭(handleCallback)으로 상황 조회·연락처·알림 토글.
+    // ※ 낙상 확인(블러 원복)은 텔레그램에서 빼고 Qt 관제 화면(setConfirmCallback)만 담당.
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
-    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, [&](int ch) {
-        privacy_masker.clearFall(ch);  // 봇 "/확인" → 낙상 블러 원상복구
-        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch + 1);
-    });
+    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram);
+    care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
                                    const std::string& text) {
         care_qa.handleMessage(ch, chat_id, text);
+    });
+    telegram.setCallbackHandler([&](int ch, const std::string& chat_id,
+                                    const std::string& data) {
+        care_qa.handleCallback(ch, chat_id, data);
     });
 
     // ── 모듈 간 배선 ─────────────────────────────────────────────
