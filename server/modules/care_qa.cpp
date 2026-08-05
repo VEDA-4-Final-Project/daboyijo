@@ -79,12 +79,14 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             contact_manager_.empty() ? "미등록" : contact_manager_;
         telegram_.sendMessage(chat_id,
             "📞 연락처\n· 요양사: " + caregiver + "\n· 관리자: " + manager);
+        sendMenu(channel, chat_id);  // 대답 후 메뉴 다시 표시
         return;
     }
 
     // ── ℹ️ 도움말 ──
     if (data == "help") {
         telegram_.sendMessage(chat_id, kHelp);
+        sendMenu(channel, chat_id);  // 대답 후 메뉴 다시 표시
         return;
     }
 
@@ -94,6 +96,7 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             telegram_.sendMessage(chat_id,
                 "보호자 계정에 방(채널)이 연결돼 있지 않아 알림 설정을 바꿀 수 "
                 "없어요. 관리자에게 telegram_chat_id_<채널번호> 설정을 요청해 주세요.");
+            sendMenu(channel, chat_id);
             return;
         }
         const bool now_muted = telegram_.toggleMute(channel);
@@ -101,6 +104,7 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             now_muted ? "🔕 오늘 이 방 침상 이탈 알림을 껐어요. 자정에 자동으로 다시 "
                         "켜집니다.\n(낙상 알림은 안전상 항상 전송됩니다.)"
                       : "🔔 이 방 침상 이탈 알림을 다시 켰어요.");
+        sendMenu(channel, chat_id);  // 토글 후 메뉴 재표시(🔕/🔔 라벨도 갱신됨)
         return;
     }
 
@@ -110,32 +114,35 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             telegram_.sendMessage(chat_id,
                 "보호자 계정에 방(채널)이 연결돼 있지 않아요. 관리자에게 "
                 "telegram_chat_id_<채널번호> 설정을 요청해 주세요.");
+            sendMenu(channel, chat_id);
             return;
         }
         if (!vlm_.available()) {
             telegram_.sendMessage(chat_id,
                 "지금은 상황 확인 기능이 설정돼 있지 않아요. (관리자 설정 필요)");
+            sendMenu(channel, chat_id);
             return;
         }
         // 수 초 걸리는 VLM 왕복은 폴링 루프를 막지 않도록 별도 스레드에서.
-        SnapshotBuffer* snap = &snapshots_;
-        VlmClient* vlm = &vlm_;
-        TelegramModule* tg = &telegram_;
-        std::thread([snap, vlm, tg, channel, chat_id]() {
-            auto frames = snap->recentKeyframes(channel, kKeyframes, kSpanSec);
+        // VLM 답변 전송이 끝난 뒤 메뉴를 다시 띄우려면 this가 필요하다(sendMenu).
+        std::thread([this, channel, chat_id]() {
+            auto frames = snapshots_.recentKeyframes(channel, kKeyframes, kSpanSec);
             if (frames.empty()) {
-                tg->sendMessage(chat_id,
+                telegram_.sendMessage(chat_id,
                     "지금 영상이 들어오지 않아 상황을 확인하기 어려워요.");
+                sendMenu(channel, chat_id);
                 return;
             }
-            std::string answer = vlm->describe(frames, kNowQuestion);
+            std::string answer = vlm_.describe(frames, kNowQuestion);
             if (answer.empty()) {
-                tg->sendMessage(chat_id,
+                telegram_.sendMessage(chat_id,
                     "일시적으로 상황을 확인하기 어려워요. 잠시 후 다시 시도해 주세요.");
+                sendMenu(channel, chat_id);
                 return;
             }
-            tg->sendMessage(chat_id, answer);
-            tg->sendPhoto(chat_id, frames.back(), "지금 상황 📷");
+            telegram_.sendMessage(chat_id, answer);
+            telegram_.sendPhoto(chat_id, frames.back(), "지금 상황 📷");
+            sendMenu(channel, chat_id);  // 상황 설명·사진 전송 후 메뉴 다시 표시
         }).detach();
         return;
     }
