@@ -269,11 +269,23 @@ void TelegramModule::pollLoop() {
                     if (cq.contains("id")) {
                         answerCallbackQuery(cq.at("id").get<std::string>());
                     }
-                    if (!cq.contains("data") || !cq.contains("from")) continue;
-                    std::string chat_id =
-                        std::to_string(cq.at("from").at("id").get<int64_t>());
+                    if (!cq.contains("data")) continue;
+                    // 회신은 버튼이 눌린 채팅으로 — 그룹에서 쓰려면 from.id(누른
+                    // 사람 개인)가 아니라 message.chat.id(그 그룹)를 써야 알림·회신이
+                    // 등록된 그룹 채팅으로 간다. 메시지가 너무 오래돼 message가 빠진
+                    // 경우에만 from.id로 폴백.
+                    std::string chat_id;
+                    if (cq.contains("message") &&
+                        cq.at("message").contains("chat")) {
+                        chat_id = std::to_string(
+                            cq.at("message").at("chat").at("id").get<int64_t>());
+                    } else if (cq.contains("from")) {
+                        chat_id = std::to_string(
+                            cq.at("from").at("id").get<int64_t>());
+                    }
+                    if (chat_id.empty()) continue;
                     std::string data = cq.at("data").get<std::string>();
-                    if (!isAuthorized(chat_id)) continue;  // 미등록 사용자는 무시
+                    if (!isAuthorized(chat_id)) continue;  // 미등록 채팅은 무시
                     if (on_callback_) {
                         on_callback_(resolveChannel(chat_id), chat_id, data);
                     }
