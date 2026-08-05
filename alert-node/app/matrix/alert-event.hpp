@@ -1,5 +1,5 @@
 /*
- * alert-event.h - 이벤트 소스와 패널 렌더링 사이의 경계
+ * alert-event.hpp - 이벤트 소스와 패널 렌더링 사이의 경계
  *
  * 패널이 그리는 데 필요한 건 문구와 등급뿐이다. 그래서 MQTT JSON 스키마가
  * 확정되기 전에도 이 경계는 바뀌지 않는다.
@@ -8,8 +8,8 @@
  * 시그니처로 소스를 하나 더 만들어 main 에서 갈아끼우면 된다. 호실·타입·
  * 측정값을 문구로 조립하는 일은 그 소스 안에서 끝낸다.
  */
-#ifndef ALERT_EVENT_H
-#define ALERT_EVENT_H
+#ifndef ALERT_EVENT_HPP
+#define ALERT_EVENT_HPP
 
 /* 경보 등급 - 색과 깜빡임을 정한다 */
 enum severity {
@@ -32,4 +32,4 @@ struct alert_event {
  */
 typedef int (*alert_source_fn)(struct alert_event *ev);
 
-#endif /* ALERT_EVENT_H */
+#endif /* ALERT_EVENT_HPP */

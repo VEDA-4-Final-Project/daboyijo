@@ -118,14 +118,15 @@ cd app/matrix
 
 make
 
-sudo ./hub75-alert      # Ctrl-C 로 종료
+sudo ./alert-demo      # Ctrl-C 로 종료
 ```
 
 픽셀과 vsync 를 모두 `/dev/fbN` 하나로 처리합니다 (`FBIO_WAITFORVSYNC`).
 프레임은 오프스크린에 완성한 뒤 프레임 경계에서 한 번에 복사합니다. 단일
 버퍼라 이 순서를 깨고 fb 에 직접 그리면 스크롤이 찢어집니다.
 
-이벤트는 아직 `gen_event()` 에서 난수로 만듭니다. MQTT 연동은 그 함수에
-붙이면 됩니다.
+이벤트는 아직 `alert-demo.cpp` 가 난수로 만듭니다. 렌더링은 `AlertDisplay`
+(`alert-display.hpp`) 로 분리되어 있어, MQTT 연동은 이벤트 소스만 갈아끼우면
+됩니다.
 
 
