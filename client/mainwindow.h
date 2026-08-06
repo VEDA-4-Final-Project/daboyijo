@@ -44,13 +44,12 @@ struct dbj_roi_point_t {
     uint16_t x;             // 정규화 x × 10000 (0~10000)
     uint16_t y;             // 정규화 y × 10000 (0~10000)
 };
-// 카메라 이미지 파라미터 (밝기/대비/노출/채도) — IMAGE_SET 헤더 뒤 1개. 0~100.
+// 카메라 이미지 파라미터 (밝기/대비/채도) — IMAGE_SET 헤더 뒤 1개. 0~100.
 struct dbj_image_params_t {
     uint8_t brightness;     // 0~100 (서버가 카메라 실제 범위로 매핑)
     uint8_t contrast;       // 0~100
-    uint8_t exposure;       // 0~100
     uint8_t saturation;     // 0~100
-};                          // 4B
+};                          // 3B
 
 // 역방향(서버→클라) 이벤트 알림 — 낙상. magic=0xDB4D. 페이로드 없이 헤더(18B)만.
 // 영상 프레임(0xDB4B)과 같은 소켓(5500)으로 섞여 들어오며, magic으로 구분한다.
@@ -372,15 +371,14 @@ private:
     QDialog* cameraSettingsDialog = nullptr;
     void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
 
-    // ── 카메라 이미지 조절 (밝기/대비/노출/채도) ──────────────────
+    // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
     // "카메라 설정" 팝업의 "이미지" 탭. 슬라이더 값을 IMAGE_SET 제어 메시지로
-    // 서버에 보내면, 서버가 ONVIF/SUNAPI로 실제 카메라에 적용한다.
+    // 서버에 보내면, 서버가 ONVIF Imaging으로 실제 카메라에 적용한다.
     QWidget* buildImageTab();                          // 이미지 탭 구성(1회)
-    void     sendImageParams(int channel, int b, int c, int e, int s);
+    void     sendImageParams(int channel, int b, int c, int s);
     QComboBox*   imgChannel = nullptr;                 // 대상 채널 선택
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
-    ClickSlider* imgExposure = nullptr;
     ClickSlider* imgSaturation = nullptr;
     QLabel*  imgBefore = nullptr;                      // 적용 전 스냅샷
     QLabel*  imgAfter = nullptr;                       // 실시간(적용 후)

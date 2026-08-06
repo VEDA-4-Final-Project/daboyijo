@@ -157,10 +157,10 @@ int main(int argc, char* argv[]) {
         }
         client_by_channel[ch]->disconnect();
     });
-    // Qt의 "이미지 조절"(밝기/대비/노출/채도) 신호 → 해당 채널 카메라에 ONVIF 적용.
+    // Qt의 "이미지 조절"(밝기/대비/채도) 신호 → 해당 채널 카메라에 ONVIF 적용.
     // ONVIF는 블로킹 HTTP라 수신 스레드를 막지 않도록 분리 스레드에서 처리한다.
     stream_server.setImageSetCallback(
-        [&](int ch, int b, int c, int e, int s) {
+        [&](int ch, int b, int c, int s) {
             if (ch < 0 || ch >= 4) return;
             std::string url;
             {
@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
                 return;
             }
             OnvifImageParams p;
-            p.brightness = b; p.contrast = c; p.exposure = e; p.saturation = s;
+            p.brightness = b; p.contrast = c; p.saturation = s;
             std::thread([ch, url, p]() {
                 std::string err;
                 if (applyOnvifImaging(url, p, &err))

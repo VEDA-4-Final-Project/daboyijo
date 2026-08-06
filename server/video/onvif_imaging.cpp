@@ -342,9 +342,6 @@ bool applyOnvifImaging(const std::string& rtsp_url, const OnvifImageParams& p,
                     "</tt:Contrast>";
         ++applied;
     }
-    // 노출(exposure)은 ONVIF Exposure 구조체(Mode/ExposureTime)라 v1 미적용 — 실측 후 별도.
-    if (p.exposure >= 0)
-        std::fprintf(stderr, "[onvif] 노출은 아직 미지원(v1) — 무시. (요청값=%d)\n", p.exposure);
 
     if (applied == 0)
         return fail("적용할 항목 없음 (카메라가 해당 옵션을 지원하지 않거나 값 미지정)");
