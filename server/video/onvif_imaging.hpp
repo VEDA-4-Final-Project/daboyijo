@@ -18,12 +18,10 @@
 // (Qt가 CAMERA_SET으로 보내는 rtsp://user:pw@ip:554/... 형식).
 
 // 슬라이더 값(0~100). 음수(-1)는 "이 항목은 건드리지 않음".
-// 노출(exposure)은 ONVIF에서 Mode/ExposureTime 구조체라 v1에선 적용 대상 아님
-// (필드는 받아두되 무시 — 실측 검증 후 별도 착수).
+// (노출은 ONVIF에서 수동모드 전환이 필요해 야간감지에 위험 → 대상에서 제외)
 struct OnvifImageParams {
     int brightness = -1;
     int contrast = -1;
-    int exposure = -1;
     int saturation = -1;
 };
 

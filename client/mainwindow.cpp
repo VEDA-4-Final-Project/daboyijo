@@ -2497,7 +2497,7 @@ void MainWindow::sendCameraClear(int channel)
 //  담당 Pi 서버에 보낸다. 실제 카메라 적용(ONVIF/SUNAPI)은 서버가 수행한다.
 //  (sendCamera와 동일한 패턴 — 헤더 뒤에 4바이트 dbj_image_params_t를 붙임)
 // ═══════════════════════════════════════════════════════════
-void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
+void MainWindow::sendImageParams(int channel, int b, int c, int s)
 {
     QTcpSocket* sock = socketForChannel(channel);   // 이 채널 담당 Pi 소켓
     if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
@@ -2512,12 +2512,11 @@ void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
     h.type = kCtrlImageSet;
     h.channel = static_cast<uint8_t>(channel);
     h.point_count = 0;
-    h.reserved = sizeof(dbj_image_params_t);   // 이어지는 파라미터 바이트 수(4)
+    h.reserved = sizeof(dbj_image_params_t);   // 이어지는 파라미터 바이트 수
 
     dbj_image_params_t ip;
     ip.brightness = static_cast<uint8_t>(qBound(0, b, 100));
     ip.contrast   = static_cast<uint8_t>(qBound(0, c, 100));
-    ip.exposure   = static_cast<uint8_t>(qBound(0, e, 100));
     ip.saturation = static_cast<uint8_t>(qBound(0, s, 100));
 
     QByteArray pkt;
@@ -2527,9 +2526,10 @@ void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
     sock->flush();
 }
 
-// "카메라 설정" 팝업의 "이미지" 탭 — 밝기/대비/노출/채도 슬라이더 + Before/After
+// "카메라 설정" 팝업의 "이미지" 탭 — 밝기/대비/채도 슬라이더 + Before/After
 // 프리뷰. 채널 선택 후 [적용]을 누르면 값을 서버로 보내고(카메라에 실제 반영),
 // 실시간(After) 뷰가 바뀌어 적용 전(Before) 스냅샷과 비교된다.
+// (노출은 ONVIF에서 수동모드 전환이 필요해 야간감지에 위험 → 제외)
 QWidget* MainWindow::buildImageTab()
 {
     auto* tab = new QWidget();
@@ -2547,16 +2547,14 @@ QWidget* MainWindow::buildImageTab()
     chRow->addStretch();
     col->addLayout(chRow);
 
-    // 슬라이더 4종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
+    // 슬라이더 3종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
     imgBright     = new ClickSlider();
     imgContrast   = new ClickSlider();
-    imgExposure   = new ClickSlider();
     imgSaturation = new ClickSlider();
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignLeft);
     form->addRow(QStringLiteral("밝기"),   imgBright);
     form->addRow(QStringLiteral("대비"),   imgContrast);
-    form->addRow(QStringLiteral("노출"),   imgExposure);
     form->addRow(QStringLiteral("채도"),   imgSaturation);
     col->addLayout(form);
 
@@ -2599,10 +2597,10 @@ QWidget* MainWindow::buildImageTab()
             imgBefore->setPixmap(lastFramePix_[ch].scaled(
                 imgBefore->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
         sendImageParams(ch, imgBright->value(), imgContrast->value(),
-                        imgExposure->value(), imgSaturation->value());
+                        imgSaturation->value());
     });
     connect(reset, &QPushButton::clicked, this, [this]() {
-        for (ClickSlider* s : {imgBright, imgContrast, imgExposure, imgSaturation})
+        for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
             s->setValue(50);
     });
 
@@ -2619,7 +2617,7 @@ QWidget* MainWindow::buildImageTab()
     });
     t->start(200);
 
-    for (ClickSlider* s : {imgBright, imgContrast, imgExposure, imgSaturation})
+    for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
         s->setValue(50);   // 중앙값에서 시작
     return tab;
 }
@@ -2846,7 +2844,7 @@ void MainWindow::buildCameraSettingsDialog()
 
     tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
 
-    // ══════════ 탭 3: 이미지 (밝기/대비/노출/채도) ══════════
+    // ══════════ 탭 3: 이미지 (밝기/대비/채도) ══════════
     tabs->addTab(buildImageTab(), QStringLiteral("이미지"));
 
     v->addWidget(tabs, 1);

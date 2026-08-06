@@ -268,7 +268,7 @@ void StreamServer::receiverLoop(Client& client) {
                             std::memcpy(&ip, buf.data() + off + sizeof(dbj_ctrl_header_t),
                                         sizeof(ip));
                             on_image_set_(h.channel, ip.brightness, ip.contrast,
-                                          ip.exposure, ip.saturation);
+                                          ip.saturation);
                         }
                         break;
                     }
