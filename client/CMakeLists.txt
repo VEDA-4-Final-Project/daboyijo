@@ -15,6 +15,8 @@ qt_add_executable(daboyijo
     wintheme.h
     sparkline.cpp
     sparkline.h
+    clickslider.cpp
+    clickslider.h
     auth.cpp
     auth.h
     logindialog.cpp
