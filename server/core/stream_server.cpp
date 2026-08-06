@@ -197,7 +197,9 @@ void StreamServer::receiverLoop(Client& client) {
             } else if (h.type == DBJ_CTRL_CAMERA_SET) {
                 need += h.reserved;  // 헤더 뒤에 URL 문자열(reserved 바이트)이 옴
             } else if (h.type == DBJ_CTRL_IMAGE_SET) {
-                need += sizeof(dbj_image_params_t);  // 헤더 뒤에 4바이트 파라미터
+                need += sizeof(dbj_image_params_t);  // 헤더 뒤에 이미지 파라미터
+            } else if (h.type == DBJ_CTRL_FOCUS_SET) {
+                need += sizeof(dbj_focus_t);         // 헤더 뒤에 포커스 파라미터
             }
             if (buf.size() - off < need) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
@@ -269,6 +271,18 @@ void StreamServer::receiverLoop(Client& client) {
                                         sizeof(ip));
                             on_image_set_(h.channel, ip.brightness, ip.contrast,
                                           ip.saturation);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_FOCUS_SET: {
+                        if (on_focus_) {
+                            dbj_focus_t f;
+                            std::memcpy(&f, buf.data() + off + sizeof(dbj_ctrl_header_t),
+                                        sizeof(f));
+                            on_focus_(h.channel, f.mode == DBJ_FOCUS_AREA,
+                                      static_cast<float>(f.x) / DBJ_ROI_COORD_SCALE,
+                                      static_cast<float>(f.y) / DBJ_ROI_COORD_SCALE);
                         }
                         break;
                     }

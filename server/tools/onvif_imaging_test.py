@@ -40,6 +40,7 @@ NS_S    = "http://www.w3.org/2003/05/soap-envelope"
 NS_TDS  = "http://www.onvif.org/ver10/device/wsdl"
 NS_TRT  = "http://www.onvif.org/ver10/media/wsdl"
 NS_TIMG = "http://www.onvif.org/ver20/imaging/wsdl"
+NS_TPTZ = "http://www.onvif.org/ver20/ptz/wsdl"
 NS_TT   = "http://www.onvif.org/ver10/schema"
 
 # ImagingSettings 자식 요소는 스키마상 "정해진 순서"로 보내야 카메라가 안 튕긴다.
@@ -63,6 +64,16 @@ def find_first(root, name):
         if localname(el.tag) == name:
             return el
     return None
+
+
+def dump_tree(el, depth=0):
+    """요소 트리를 네임스페이스 접두사 없이 들여쓰기로 출력(값·속성 포함)."""
+    txt = (el.text or "").strip()
+    attrs = " ".join(f'{localname(k)}="{v}"' for k, v in el.attrib.items())
+    head = localname(el.tag) + (f"  [{attrs}]" if attrs else "")
+    print("    " + "  " * depth + head + (f" = {txt}" if txt else ""))
+    for c in el:
+        dump_tree(c, depth + 1)
 
 
 def post(url, body, timeout=8):
@@ -105,7 +116,7 @@ def envelope(body_inner, user=None, pw=None, created=None):
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         f'<s:Envelope xmlns:s="{NS_S}" xmlns:tds="{NS_TDS}" xmlns:trt="{NS_TRT}" '
-        f'xmlns:timg="{NS_TIMG}" xmlns:tt="{NS_TT}">'
+        f'xmlns:timg="{NS_TIMG}" xmlns:tptz="{NS_TPTZ}" xmlns:tt="{NS_TT}">'
         f"{header}<s:Body>{body_inner}</s:Body></s:Envelope>")
 
 
@@ -158,6 +169,8 @@ def main():
     ap.add_argument("--sharpness", type=float)
     ap.add_argument("--absolute", action="store_true",
                     help="값을 0~100 정규화가 아니라 카메라 실제 단위로 그대로 사용")
+    ap.add_argument("--raw", action="store_true",
+                    help="전체 옵션의 원본 XML까지 그대로 출력")
     args = ap.parse_args()
 
     base = f"http://{args.ip}:{args.port}" if args.port != 80 else f"http://{args.ip}"
@@ -168,29 +181,34 @@ def main():
     created = get_camera_created(dev_url)
     print(f"[시각] 카메라 UTC = {created or '읽기 실패(로컬 시각 사용)'}")
 
-    def call(url, inner, step):
+    def call(url, inner, step, return_raw=False):
         st, resp = post(url, envelope(inner, args.user, args.pw, created))
         if st != 200:
             print(f"[실패] {step} (HTTP {st}): {fault_text(resp)}")
             if st in (400, 401):
                 print("       → 계정/비번 확인. 반복되면 PC·카메라 시각 동기화 확인.")
             sys.exit(1)
-        return ET.fromstring(resp)
+        root = ET.fromstring(resp)
+        return (root, resp) if return_raw else root
 
     # ① 서비스 주소 찾기
     root = call(dev_url, "<tds:GetCapabilities><tds:Category>All</tds:Category>"
                          "</tds:GetCapabilities>", "GetCapabilities")
-    media_url = imaging_url = None
+    media_url = imaging_url = ptz_url = None
     for el in root.iter():
         ln = localname(el.tag)
         if ln == "Media":
             x = find_first(el, "XAddr");  media_url = x.text if x is not None else media_url
         elif ln == "Imaging":
             x = find_first(el, "XAddr");  imaging_url = x.text if x is not None else imaging_url
+        elif ln == "PTZ":
+            x = find_first(el, "XAddr");  ptz_url = x.text if x is not None else ptz_url
     media_url = fix_host(media_url, args.ip, args.port) or dev_url
     imaging_url = fix_host(imaging_url, args.ip, args.port) or dev_url
+    ptz_url = fix_host(ptz_url, args.ip, args.port) if ptz_url else None
     print(f"[주소] Media   = {media_url}")
     print(f"[주소] Imaging = {imaging_url}")
+    print(f"[주소] PTZ     = {ptz_url or '(없음)'}")
 
     # ② VideoSource 토큰
     root = call(media_url, "<trt:GetVideoSources/>", "GetVideoSources")
@@ -206,16 +224,35 @@ def main():
     print(f"[토큰] VideoSourceToken = {token}")
 
     # ③ 범위 + 현재값
-    opt_root = call(imaging_url,
+    opt_root, opt_raw = call(imaging_url,
                     f"<timg:GetOptions><timg:VideoSourceToken>{token}"
-                    f"</timg:VideoSourceToken></timg:GetOptions>", "GetOptions")
+                    f"</timg:VideoSourceToken></timg:GetOptions>", "GetOptions",
+                    return_raw=True)
     cur_root = call(imaging_url,
                     f"<timg:GetImagingSettings><timg:VideoSourceToken>{token}"
                     f"</timg:VideoSourceToken></timg:GetImagingSettings>",
                     "GetImagingSettings")
 
+    # ── 카메라가 지원하는 "전체" 옵션 (우리가 쓰는 4개 말고 전부) ──
+    opts_el = find_first(opt_root, "ImagingOptions")
+    if opts_el is None:  # 일부 카메라는 ImagingOptions20 이름을 쓸 수 있음
+        opts_el = find_first(opt_root, "GetOptionsResponse")
+    print("\n[전체 지원 옵션 — 카메라가 돌려준 것 전부]")
+    if opts_el is not None:
+        top = [localname(c.tag) for c in opts_el]
+        print("  ▸ 지원 항목:", ", ".join(top) if top else "(없음)")
+        print("  ▸ 상세(값/범위):")
+        for c in opts_el:
+            dump_tree(c, 0)
+    else:
+        print("  ImagingOptions 를 못 찾음 — --raw 로 원본 XML 확인")
+
+    if args.raw:
+        print("\n[원본 XML — GetOptions 응답]")
+        print(opt_raw)
+
     ranges = {}
-    print("\n[현재 설정 / 지원 범위]")
+    print("\n[우리가 쓰는 항목: 현재값 / 지원 범위]")
     for name in SCHEMA_ORDER:
         opt_el = find_first(opt_root, name)
         rng = "미지원"
@@ -227,6 +264,53 @@ def main():
         cur_el = find_first(cur_root, name)
         cur_v = cur_el.text if cur_el is not None else "-"
         print(f"  {name:16s} 현재={str(cur_v):>8}   범위={rng}")
+
+    # ── 초점(Focus) 조절 가능 여부 (GetMoveOptions) ──
+    # 초점은 '설정값'이 아니라 렌즈 모터 이동(Move)이라 별도 명령으로 확인한다.
+    # 고정초점 렌즈 카메라는 여기서 Fault 또는 빈 MoveOptions를 돌려준다.
+    print("\n[초점(Focus) 원격 조절 가능 여부]")
+    fst, fresp = post(imaging_url,
+        envelope(f"<timg:GetMoveOptions><timg:VideoSourceToken>{token}"
+                 f"</timg:VideoSourceToken></timg:GetMoveOptions>",
+                 args.user, args.pw, created))
+    if fst != 200:
+        print(f"  ❌ 불가 — GetMoveOptions HTTP {fst}: {fault_text(fresp)}")
+        print("     → 고정초점 렌즈이거나 초점 원격제어 미지원")
+    else:
+        mv = find_first(ET.fromstring(fresp), "MoveOptions")
+        modes = [localname(c.tag) for c in mv] if mv is not None else []
+        if modes:
+            print(f"  ✅ 가능! 지원 방식: {', '.join(modes)}")
+            for c in mv:
+                dump_tree(c, 0)
+            if args.raw:
+                print("\n[원본 XML — GetMoveOptions 응답]")
+                print(fresp)
+        else:
+            print("  ❌ 불가 — MoveOptions 비어 있음 (고정초점 렌즈)")
+
+    # ── 확대/축소(Zoom) 가능 여부 (PTZ 서비스) ──
+    # 줌은 Imaging이 아니라 PTZ 서비스 소관. PTZ 노드의 SupportedPTZSpaces에
+    # "Zoom" 공간이 있으면 확대/축소 가능. 고정형 카메라는 PTZ 서비스 자체가 없다.
+    print("\n[확대/축소(Zoom) — PTZ 지원 여부]")
+    if not ptz_url:
+        print("  ❌ PTZ 서비스 없음 — 확대/축소 불가 (고정형 카메라)")
+    else:
+        zst, zresp = post(ptz_url, envelope("<tptz:GetNodes/>",
+                                            args.user, args.pw, created))
+        if zst != 200:
+            print(f"  ❌ PTZ 조회 실패 (HTTP {zst}: {fault_text(zresp)})")
+        else:
+            zroot = ET.fromstring(zresp)
+            zoom_spaces = sorted({localname(el.tag) for el in zroot.iter()
+                                  if "Zoom" in localname(el.tag)})
+            if zoom_spaces:
+                print(f"  ✅ 확대/축소 가능! 지원 공간: {', '.join(zoom_spaces)}")
+            else:
+                print("  ❌ PTZ는 있으나 Zoom 미지원 (팬/틸트 전용이거나 줌 없음)")
+            if args.raw:
+                print("\n[원본 XML — GetNodes 응답]")
+                print(zresp)
 
     # ④ 적용값 계산
     wanted = {"Brightness": args.brightness, "Contrast": args.contrast,

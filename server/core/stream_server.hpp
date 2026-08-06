@@ -42,6 +42,11 @@ public:
     // (ONVIF HTTP 호출은 별도 스레드로 넘겨 처리).
     using ImageSetCallback =
         std::function<void(int channel, int brightness, int contrast, int saturation)>;
+    // Qt가 카메라 초점을 조절할 때 호출. area=false면 전체 자동초점(nx,ny 무시),
+    // area=true면 클릭 지점(정규화 0~1) 영역 초점. 수신 스레드에서 호출되므로
+    // 콜백 구현은 스레드 안전 + 블로킹 금지(SUNAPI HTTP는 별도 스레드로).
+    using FocusCallback =
+        std::function<void(int channel, bool area, float nx, float ny)>;
 
     explicit StreamServer(int port);
     ~StreamServer();
@@ -60,6 +65,8 @@ public:
     void setCameraClearCallback(CameraClearCallback cb) { on_camera_clear_ = std::move(cb); }
     // 카메라 이미지 파라미터 수신 콜백. start() 전 등록
     void setImageSetCallback(ImageSetCallback cb) { on_image_set_ = std::move(cb); }
+    // 카메라 초점 수신 콜백. start() 전 등록
+    void setFocusCallback(FocusCallback cb) { on_focus_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -112,4 +119,5 @@ private:
     CameraSetCallback on_camera_set_;
     CameraClearCallback on_camera_clear_;
     ImageSetCallback on_image_set_;
+    FocusCallback on_focus_;
 };

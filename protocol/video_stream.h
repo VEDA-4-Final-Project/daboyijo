@@ -71,6 +71,12 @@ extern "C" {
  * 적용한다. 값은 0~100 정규화 — 서버가
  * 카메라 모델별 실제 범위로 매핑한다(클라는 카메라 스펙을 몰라도 된다). */
 #define DBJ_CTRL_IMAGE_SET    0x07  /* 채널 카메라 이미지 파라미터 — 헤더 뒤 dbj_image_params_t */
+/* 카메라 포커스(초점) — 헤더 뒤에 dbj_focus_t 1개. 서버는 한화 SUNAPI SimpleFocus
+ * (image.cgi?msubmenu=focus&action=control&Mode=SimpleFocus[&FocusAreaCoordinate=..])
+ * 로 적용한다. mode=AREA면 클릭 중심 정규화 좌표를 카메라 픽셀좌표로 환산해 영역 초점.*/
+#define DBJ_CTRL_FOCUS_SET    0x08  /* 채널 카메라 포커스 — 헤더 뒤 dbj_focus_t */
+#define DBJ_FOCUS_WHOLE       0     /* 전체 자동초점 (좌표 무시) */
+#define DBJ_FOCUS_AREA        1     /* 클릭 지점 영역 초점 */
 
 #define DBJ_CAMERA_URL_MAX  512     /* CAMERA_SET URL 문자열 길이 상한 */
 
@@ -111,6 +117,13 @@ typedef struct {
     uint8_t contrast;      /* 0~100 */
     uint8_t saturation;    /* 0~100 */
 } dbj_image_params_t;      /* 3바이트, IMAGE_SET 시 헤더 뒤에 1개 */
+
+typedef struct {
+    uint8_t  mode;         /* DBJ_FOCUS_WHOLE | DBJ_FOCUS_AREA */
+    uint8_t  reserved;     /* 0 */
+    uint16_t x;            /* AREA 초점 시 클릭 중심 정규화 x × DBJ_ROI_COORD_SCALE */
+    uint16_t y;            /* 정규화 y × DBJ_ROI_COORD_SCALE */
+} dbj_focus_t;             /* 6바이트, FOCUS_SET 시 헤더 뒤에 1개 */
 
 typedef struct {
     uint16_t magic;        /* DBJ_EVT_MAGIC */

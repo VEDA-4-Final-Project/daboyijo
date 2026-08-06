@@ -37,6 +37,7 @@
 #include "privacy_masker.hpp"
 #include "protocol/video_stream.h"
 #include "onvif_imaging.hpp"
+#include "sunapi_focus.hpp"
 #include "rtsp_av_client.hpp"
 #include "stats_reporter.hpp"
 #include "stream_server.hpp"
@@ -179,6 +180,30 @@ int main(int argc, char* argv[]) {
                     std::fprintf(stderr, "[image] ch%d 이미지 적용 성공\n", ch + 1);
                 else
                     std::fprintf(stderr, "[image] ch%d 이미지 적용 실패: %s\n",
+                                 ch + 1, err.c_str());
+            }).detach();
+        });
+    // Qt의 "포커스" 신호 → 해당 채널 카메라에 SUNAPI SimpleFocus 적용.
+    // area=false 전체 자동초점, area=true 클릭 지점(정규화 좌표) 영역 초점.
+    stream_server.setFocusCallback(
+        [&](int ch, bool area, float nx, float ny) {
+            if (ch < 0 || ch >= 4) return;
+            std::string url;
+            {
+                std::lock_guard<std::mutex> lk(cam_url_mutex);
+                url = cam_url_by_channel[ch];
+            }
+            if (url.empty()) {
+                std::fprintf(stderr, "[focus] ch%d 카메라 미연결 — 초점 무시\n", ch + 1);
+                return;
+            }
+            std::thread([ch, url, area, nx, ny]() {
+                std::string err;
+                if (sunapiFocus(url, ch, area, nx, ny, &err))
+                    std::fprintf(stderr, "[focus] ch%d 초점 적용 성공%s\n", ch + 1,
+                                 area ? " (영역)" : " (전체)");
+                else
+                    std::fprintf(stderr, "[focus] ch%d 초점 적용 실패: %s\n",
                                  ch + 1, err.c_str());
             }).detach();
         });
