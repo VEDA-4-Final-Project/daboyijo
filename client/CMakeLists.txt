@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.19)
 project(daboyijo LANGUAGES CXX)
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Sql Multimedia MultimediaWidgets LinguistTools)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Sql Multimedia MultimediaWidgets LinguistTools Mqtt)
+
+# 알림 노드 원격 제어(MQTT).
+# 라즈베리파이 노드들은 libmosquitto 를 쓰지만 이 앱은 윈도우에서 돌기 때문에
+# Qt MQTT(Qt::Mqtt)로 붙는다. 라이브러리가 달라도 주고받는 JSON 은 같아야 하므로
+# 구조체 정의(veda_messages.hpp)만 노드 쪽과 공유한다.
+# nlohmann 은 저장소에 들어있는 단일 헤더를 쓰므로 윈도우에 따로 설치할 게 없다.
+set(VEDA_MSG_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../MQTT/MQTT_prod)
+set(VEDA_THIRDPARTY ${CMAKE_CURRENT_SOURCE_DIR}/../server/third_party)
+
 qt_standard_project_setup()
 qt_add_executable(daboyijo
     WIN32 MACOSX_BUNDLE
@@ -23,7 +32,12 @@ qt_add_executable(daboyijo
     logindialog.h
     signupdialog.cpp
     signupdialog.h
+    mqttqtmanager.cpp
+    mqttqtmanager.h
 )
+
+# veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치
+target_include_directories(daboyijo PRIVATE ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY})
 qt_add_translations(
     TARGETS daboyijo
     TS_FILES daboyijo_ko_KR.ts
@@ -36,6 +50,7 @@ target_link_libraries(daboyijo
         Qt::Sql
         Qt::Multimedia
         Qt::MultimediaWidgets
+        Qt::Mqtt
 )
 if(WIN32)
     target_link_libraries(daboyijo PRIVATE dwmapi)  # 네이티브 다크 타이틀바
