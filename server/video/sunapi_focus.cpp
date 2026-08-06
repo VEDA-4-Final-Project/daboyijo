@@ -98,9 +98,14 @@ bool sunapiFocus(const std::string& rtsp_url, int channel, bool area,
         return fail(std::string("전송 실패: ") + curl_easy_strerror(rc));
     if (code != 200)
         return fail("HTTP " + std::to_string(code) + ": " + resp.substr(0, 120));
-    // SUNAPI 성공 응답: {"Response":"Success"}
-    if (resp.find("Success") == std::string::npos)
-        return fail("카메라 응답 비정상: " + resp.substr(0, 120));
+    // SUNAPI 성공 응답은 형식이 제각각 — 평문 "OK", {"Response":"Success"} 등.
+    // 요청 Accept 헤더에 따라 달라지므로, 200이면 성공으로 보되 본문에 에러
+    // 표시가 있으면 실패로 처리한다.
+    if (resp.find("Error") != std::string::npos ||
+        resp.find("error") != std::string::npos ||
+        resp.find("Fail")  != std::string::npos ||
+        resp.find("fail")  != std::string::npos)
+        return fail("카메라 응답: " + resp.substr(0, 120));
 
     if (err) err->clear();
     return true;
