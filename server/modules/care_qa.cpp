@@ -99,33 +99,44 @@ void CareQaModule::reportFall(int channel) {
     VlmClient* vlm = &vlm_;
     TelegramModule* tg = &telegram_;
     std::thread([snapA, snapB, vlm, tg, channel, chat_id]() {
-        // ── Gemini 상황 설명(있으면) ── 반드시 전원 블러본(버퍼 A)만 외부로.
+        // ── 1) 낙상 시점 사진 먼저 확보·전송 ──
+        // 사진 fetch가 Gemini 왕복(최대 20초) 뒤에 있으면 "낙상 한참 뒤" 장면이
+        // 날아간다. 그래서 설명보다 먼저, 낙상 직후 프레임을 붙잡아 보낸다.
+        // 선택본(버퍼 B)은 privacy_masker.reportFall 직후부터 채워지므로 낙상
+        // 확정 순간엔 아직 비어 있을 수 있다 — 짧게(최대 ~1.5초) 폴링해 "첫
+        // 선택본"(=낙상 시점 프레임)을 잡고, 그래도 없으면 전원 블러본으로 폴백.
+        SnapshotBuffer::Jpeg shot;
+        for (int i = 0; i < 15; ++i) {
+            auto s = snapB->recentKeyframes(channel, 1, kSpanSec);
+            if (!s.empty()) {
+                shot = std::move(s.back());
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (shot.empty()) {  // 선택본이 안 잡히면 전원 블러본 최신 1장으로 폴백
+            auto b = snapA->recentKeyframes(channel, 1, kSpanSec);
+            if (!b.empty()) shot = std::move(b.back());
+        }
+        if (!shot.empty()) tg->sendPhoto(chat_id, shot, "낙상 감지 시점 📷");
+
+        // ── 2) Gemini 상황 설명 ── 반드시 전원 블러본(버퍼 A)만 외부로.
+        // 사진은 이미 나갔으므로, 이 왕복이 느려도 사진 타이밍엔 영향 없다.
         if (vlm->available()) {
             auto blurred = snapA->recentKeyframes(channel, kKeyframes, kSpanSec);
             if (!blurred.empty()) {
                 const std::string q =
-                    "방금 이 어르신에게 낙상이 감지되었습니다. 사진 속 현재 자세와 "
-                    "상황을 보호자에게 알리듯 두세 문장으로 설명해 주세요. 의학적 진단이나 "
-                    "부상 여부 단정은 하지 말고, 보이는 상황만 차분히 전해 주세요.";
+                    "요양원 실내 CCTV에서 낙상 감지 시스템이 방금 낙상을 감지한 직후의 "
+                    "사진들입니다(촬영 순서, 사생활 보호로 얼굴은 블러 처리됨). 화면 속 "
+                    "어르신이 바닥이나 매트 위에 누워·엎드려·주저앉아 계시면, 이는 침상에서의 "
+                    "휴식이 아니라 넘어져 쓰러진 '낙상' 상황입니다. 어르신의 현재 자세(옆으로 "
+                    "누움/엎드림/뒤로 넘어짐 등)와 움직임 여부, 손·다리 위치를 보호자에게 "
+                    "알리듯 두세 문장으로 차분하고 다정하게 전해 주세요. 의학적 진단이나 부상 "
+                    "여부는 단정하지 말고, 보이는 상황만 설명하세요.";
                 std::string answer = vlm->describe(blurred, q);
                 if (!answer.empty()) {
                     tg->sendMessage(chat_id, "🚨 낙상 감지 — 현재 상황\n" + answer);
                 }
-            }
-        } else {
-            // VLM 미설정이면 선택본이 버퍼 B에 쌓일 시간을 잠깐 준다
-            // (VLM 왕복이 없어서 곧바로 사진을 꺼내면 B가 아직 비어 있을 수 있음).
-            std::this_thread::sleep_for(std::chrono::milliseconds(800));
-        }
-
-        // ── 보호자 사진 ── 낙상자만 노출한 선택본(버퍼 B) 우선, 없으면 전원 블러본.
-        auto fall_shot = snapB->recentKeyframes(channel, 1, kSpanSec);
-        if (!fall_shot.empty()) {
-            tg->sendPhoto(chat_id, fall_shot.back(), "낙상 감지 시점 📷");
-        } else {
-            auto blurred = snapA->recentKeyframes(channel, 1, kSpanSec);
-            if (!blurred.empty()) {
-                tg->sendPhoto(chat_id, blurred.back(), "낙상 감지 시점 📷");
             }
         }
     }).detach();

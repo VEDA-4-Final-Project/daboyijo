@@ -15,7 +15,7 @@ namespace {
 // 축소는 디코딩 스레드의 sws_scale이 미리 해 두므로(frame->view), 여기선 그걸
 // 그대로 쓴다. view가 비어 있을 때만 폴백으로 cv::resize.
 const cv::Size kViewSize(kViewWidth, kViewHeight);
-const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 65};
+const std::vector<int> kJpegParams = {cv::IMWRITE_JPEG_QUALITY, 80};
 // 프레임 레이트 방어선(폭주 방지). 판정은 벽시계가 아니라 촬영시각(PTS)으로 한다
 // (아래 runChannel 참조) — 디코딩이 버스티하게 뭉쳐 나와도 촬영 간격이 정상이면 통과.
 // ★ 운영: 2-Pi 2+2 분할. Pi당 2채널이라 여유가 생겨 카메라 fps를 15→30까지 올려봄.

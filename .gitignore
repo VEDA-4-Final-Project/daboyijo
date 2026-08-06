@@ -33,8 +33,12 @@ ui_*.h
 Makefile*
 !protocol/Makefile
 !server/Makefile
-!alert-node/wm8960/Makefile
-!alert-node/hub75/Makefile
+!alert-node/Makefile
+!alert-node/drivers/wm8960/Makefile
+!alert-node/drivers/hub75/Makefile
+!alert-node/app/Makefile
+!alert-node/app/matrix/Makefile
+!alert-node/app/AudioPlayer/Makefile
 
 # ===== STM32CubeIDE / Eclipse =====
 .metadata/
