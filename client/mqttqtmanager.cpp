@@ -61,6 +61,26 @@ MqttQtManager::MqttQtManager(QObject* parent)
     });
 }
 
+MqttQtManager::~MqttQtManager()
+{
+    // 앱을 닫을 때 이런 순서로 일이 벌어진다.
+    //   ~MainWindow 본문 실행  →  MainWindow 부분은 이미 파괴됨
+    //   → ~QObject 가 자식들을 삭제 → 이 객체 삭제
+    //     → QMqttClient 가 끊기면서 stateChanged(Disconnected) 를 쏨
+    //       → onStateChanged → emit disconnected()
+    //         → MainWindow::onMqttDisconnected()  ← 이미 없는 객체! 💥
+    //
+    // Qt 는 이걸 잡아내고 이렇게 죽는다:
+    //   ASSERT: "Called object is not of the correct type
+    //            (class destructor may have already run)"
+    //
+    // 그래서 정리를 시작하기 전에 들어오는 연결과 나가는 시그널을 모두 끊는다.
+    m_userDisconnect = true;              // 남은 재연결 시도를 막는다
+    if (m_retryTimer) m_retryTimer->stop();
+    if (m_client) m_client->disconnect(this);  // QMqttClient → 이 객체로 오는 연결
+    blockSignals(true);                        // 이 객체 → 바깥으로 나가는 시그널
+}
+
 bool MqttQtManager::init(const QString& broker_ip, int port, const QString& client_id)
 {
     if (m_client->state() != QMqttClient::Disconnected) {

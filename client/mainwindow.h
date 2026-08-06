@@ -15,7 +15,17 @@
 #include <QMap>
 #include <QPixmap>
 
+#include <QHash>
+
 #include "auth.h"
+// MqttQtManager 와 WearableData / AlarmCommand.
+//
+// MqttQtManager 는 포인터로만 쓰니 전방 선언으로 충분해 보이지만, 아래 슬롯들이
+// 그 구조체를 인자로 받는다. moc 은 슬롯 인자마다 QMetaTypeId 를 건드리는데,
+// Q_DECLARE_METATYPE 이 그보다 늦게 보이면
+//   specialization of 'QMetaTypeId<WearableData>' after instantiation
+// 으로 컴파일이 깨진다. 선언이 먼저 오도록 통째로 include 한다.
+#include "mqttqtmanager.h"
 #include "clickslider.h"
 
 
@@ -104,6 +114,18 @@ QT_END_NAMESPACE
 struct PatientInfo {
     QString name;   // 환자 이름
     QString bed;    // 위치 표기 — 병실/침대 제거 후 "채널 N"을 담는다(오버레이/바이탈 공용)
+    QString room;   // 호실 — MQTT 알림 명령에 실어 보낸다(알림 노드가 LED에 띄운다)
+};
+
+// 채널별 최신 웨어러블 값. MQTT 로 들어온 것만 담는다.
+// 한 번도 안 들어온 채널은 received=false 로 남아 화면에 "--" 가 뜬다 —
+// 값이 없는데 그럴듯한 숫자를 보여주면 관제사가 오판한다.
+struct VitalSample {
+    bool   received    = false;
+    double temperature = 0.0;
+    int    heartRate   = 0;
+    int    spo2        = 0;
+    qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
 };
 
 class MainWindow : public QMainWindow
@@ -137,6 +159,14 @@ private slots:
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
     void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
+
+    // ── MQTT (웨어러블·알림 노드) ─────────────────────────
+    // 영상 경로(TCP)와 별개로, 브로커를 통해 들어오는 것들을 받는 슬롯.
+    void onWearableData(const WearableData& data);   // 생체·낙상 원본 도착
+    void onMqttAlarm(const AlarmCommand& cmd);       // 알림 노드로 나간 명령을 엿들음
+    void onMqttConnected();
+    void onMqttDisconnected();
+    void onMqttError(const QString& message);
 
     // TAB2: 비상 로그 조회 및 블랙박스
     void onSearchClicked();
@@ -193,6 +223,13 @@ private:
     QLabel* vitalStatusDots[4] = {};   // 채널별 바이탈 상태등
     QLabel* vitalStatusBadges[4] = {}; // 채널별 상태 배지(정상/주의/위험)
     QLabel* vitalNameLabels[4] = {};   // 채널별 환자 이름(DB 매핑 반영)
+
+    // ── MQTT ─────────────────────────────────────────────
+    MqttQtManager* mqtt = nullptr;     // 브로커 연결(웨어러블 수신 + 알림 노드 제어)
+    // 웨어러블 기기 id → 채널(0~3). residents 테이블의 wearable_id·camera_id 로 만든다.
+    // 브로커는 "wear_01" 이라고만 알려주는데 화면은 채널 번호로 돼 있어 다리가 필요하다.
+    QHash<QString, int> wearableToChannel;
+    VitalSample vitals_[4];            // 채널별 최신 생체값 (MQTT 로 받은 것만)
     QLabel* vitalBedLabels[4] = {};    // 채널별 병상 표기(DB 매핑 반영)
     Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
 

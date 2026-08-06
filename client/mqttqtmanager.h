@@ -45,6 +45,10 @@ public:
 
     explicit MqttQtManager(QObject* parent = nullptr);
 
+    // 소멸 중에 나가는 시그널을 막는다. 이게 없으면 앱을 닫을 때 죽는다 —
+    // 자세한 이유는 .cpp 의 소멸자 주석 참고.
+    ~MqttQtManager() override;
+
     // 브로커 접속을 시작한다. 접속은 비동기라서 반환값은 "요청을 걸었다"는
     // 뜻일 뿐이다. 실제로 쓸 수 있게 되는 시점은 connected() 시그널이고,
     // 실패는 connectionError() 로 온다.
