@@ -2148,6 +2148,7 @@ void MainWindow::onReadyRead()
         //qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
 
         const QPixmap pix = QPixmap::fromImage(image);
+        lastFramePix_[ch] = pix;           // 이미지 탭 Before/After 프리뷰용 최신본 보관
         channelViews[ch]->setFrame(pix);
         channelViews[ch]->setLive(true);   // 프레임 도착 → LIVE 표시등 점등
         // ROI 편집기가 이 채널을 보고 있으면 팝업 영상도 실시간 갱신.
@@ -2491,6 +2492,138 @@ void MainWindow::sendCameraClear(int channel)
     sock->flush();
 }
 
+// ═══════════════════════════════════════════════════════════
+//  카메라 이미지 파라미터 전송 — 슬라이더 값(0~100)을 IMAGE_SET 제어 메시지로
+//  담당 Pi 서버에 보낸다. 실제 카메라 적용(ONVIF/SUNAPI)은 서버가 수행한다.
+//  (sendCamera와 동일한 패턴 — 헤더 뒤에 4바이트 dbj_image_params_t를 붙임)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
+{
+    QTcpSocket* sock = socketForChannel(channel);   // 이 채널 담당 Pi 소켓
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        QMessageBox::warning(this, QStringLiteral("전송 실패"),
+                             QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlImageSet;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = sizeof(dbj_image_params_t);   // 이어지는 파라미터 바이트 수(4)
+
+    dbj_image_params_t ip;
+    ip.brightness = static_cast<uint8_t>(qBound(0, b, 100));
+    ip.contrast   = static_cast<uint8_t>(qBound(0, c, 100));
+    ip.exposure   = static_cast<uint8_t>(qBound(0, e, 100));
+    ip.saturation = static_cast<uint8_t>(qBound(0, s, 100));
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h),  sizeof(h));
+    pkt.append(reinterpret_cast<const char*>(&ip), sizeof(ip));
+    sock->write(pkt);
+    sock->flush();
+}
+
+// "카메라 설정" 팝업의 "이미지" 탭 — 밝기/대비/노출/채도 슬라이더 + Before/After
+// 프리뷰. 채널 선택 후 [적용]을 누르면 값을 서버로 보내고(카메라에 실제 반영),
+// 실시간(After) 뷰가 바뀌어 적용 전(Before) 스냅샷과 비교된다.
+QWidget* MainWindow::buildImageTab()
+{
+    auto* tab = new QWidget();
+    auto* col = new QVBoxLayout(tab);
+    col->setContentsMargins(4, 8, 4, 4);
+    col->setSpacing(10);
+
+    // 대상 채널 선택
+    imgChannel = new QComboBox();
+    for (int i = 0; i < 4; ++i)
+        imgChannel->addItem(QStringLiteral("채널 %1").arg(i + 1));
+    auto* chRow = new QHBoxLayout();
+    chRow->addWidget(new QLabel(QStringLiteral("대상 채널")));
+    chRow->addWidget(imgChannel);
+    chRow->addStretch();
+    col->addLayout(chRow);
+
+    // 슬라이더 4종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
+    imgBright     = new ClickSlider();
+    imgContrast   = new ClickSlider();
+    imgExposure   = new ClickSlider();
+    imgSaturation = new ClickSlider();
+    auto* form = new QFormLayout();
+    form->setLabelAlignment(Qt::AlignLeft);
+    form->addRow(QStringLiteral("밝기"),   imgBright);
+    form->addRow(QStringLiteral("대비"),   imgContrast);
+    form->addRow(QStringLiteral("노출"),   imgExposure);
+    form->addRow(QStringLiteral("채도"),   imgSaturation);
+    col->addLayout(form);
+
+    // Before / After 프리뷰 (좌: 적용 전 스냅샷, 우: 실시간)
+    imgBefore = new QLabel(QStringLiteral("적용 전"));
+    imgAfter  = new QLabel(QStringLiteral("실시간"));
+    for (QLabel* p : {imgBefore, imgAfter}) {
+        p->setFixedSize(300, 170);
+        p->setAlignment(Qt::AlignCenter);
+        p->setStyleSheet(QString("background:#000; color:%1; border:1px solid %2;")
+                             .arg(kTextSub).arg(kBorder));
+    }
+    auto* capRow = new QHBoxLayout();
+    capRow->addWidget(new QLabel(QStringLiteral("적용 전")), 0, Qt::AlignHCenter);
+    capRow->addWidget(new QLabel(QStringLiteral("적용 후(실시간)")), 0, Qt::AlignHCenter);
+    auto* pv = new QHBoxLayout();
+    pv->addWidget(imgBefore);
+    pv->addWidget(imgAfter);
+    col->addLayout(capRow);
+    col->addLayout(pv);
+
+    // 적용 / 초기화
+    auto* apply = new QPushButton(QStringLiteral("적용"));
+    apply->setObjectName("roiButton");
+    apply->setCursor(Qt::PointingHandCursor);
+    auto* reset = new QPushButton(QStringLiteral("초기화"));
+    reset->setObjectName("roiClear");
+    reset->setCursor(Qt::PointingHandCursor);
+    auto* br = new QHBoxLayout();
+    br->addStretch();
+    br->addWidget(reset);
+    br->addWidget(apply);
+    col->addLayout(br);
+    col->addStretch();
+
+    connect(apply, &QPushButton::clicked, this, [this]() {
+        const int ch = imgChannel->currentIndex();
+        // 적용 직전 현재 프레임을 Before 스냅샷으로 고정
+        if (!lastFramePix_[ch].isNull())
+            imgBefore->setPixmap(lastFramePix_[ch].scaled(
+                imgBefore->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        sendImageParams(ch, imgBright->value(), imgContrast->value(),
+                        imgExposure->value(), imgSaturation->value());
+    });
+    connect(reset, &QPushButton::clicked, this, [this]() {
+        for (ClickSlider* s : {imgBright, imgContrast, imgExposure, imgSaturation})
+            s->setValue(50);
+    });
+
+    // 실시간(After) 갱신 — 선택 채널의 최신 프레임을 주기적으로 표시.
+    // 팝업이 보일 때만 그린다(불필요한 스케일 부하 방지).
+    auto* t = new QTimer(tab);
+    connect(t, &QTimer::timeout, this, [this]() {
+        if (!imgAfter || !cameraSettingsDialog || !cameraSettingsDialog->isVisible())
+            return;
+        const int ch = imgChannel->currentIndex();
+        if (lastFramePix_[ch].isNull()) return;
+        imgAfter->setPixmap(lastFramePix_[ch].scaled(
+            imgAfter->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
+    t->start(200);
+
+    for (ClickSlider* s : {imgBright, imgContrast, imgExposure, imgSaturation})
+        s->setValue(50);   // 중앙값에서 시작
+    return tab;
+}
+
 // "카메라 설정" 팝업을 최초 1회 구성 — 카메라·ROI 작업을 팝업 안에서 직접 한다.
 //   · 카메라 탭: 접속 정보 + [검색] → 결과표(팝업 내부에 채워짐) + [연결]/[해제]
 //   · ROI 탭:   채널 선택 → 그 채널 영상을 팝업에 표시 → 그 위에 직접 ROI 그림
@@ -2712,6 +2845,9 @@ void MainWindow::buildCameraSettingsDialog()
     roiV->addLayout(roiBtnRow);
 
     tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
+
+    // ══════════ 탭 3: 이미지 (밝기/대비/노출/채도) ══════════
+    tabs->addTab(buildImageTab(), QStringLiteral("이미지"));
 
     v->addWidget(tabs, 1);
 

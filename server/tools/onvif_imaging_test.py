@@ -1,152 +1,276 @@
 #!/usr/bin/env python3
-"""ONVIF Imaging 테스트 — 한화 카메라 밝기/대비/채도/샤프니스 조절 확인용.
+"""ONVIF Imaging 테스트 (의존성 없음 — 파이썬 표준 라이브러리만).
 
-우리 A안(서버가 카메라에 이미지 파라미터를 적용)의 실제 동작을 C++로 옮기기 전에,
-"우리 카메라에 진짜 되는지 / 값 범위가 얼마인지 / 토큰명이 뭔지"를 먼저 확인하는 용도.
+onvif-zeep 라이브러리의 WSDL 패키징 버그를 피하려고, SOAP XML을 직접 만들어
+HTTP로 쏜다. 이 방식이 우리 C++ 서버가 하게 될 것(libcurl + 직접 SOAP)과 동일.
 
-동작 순서(= 서버 핸들러가 하게 될 일과 동일):
-  ① Media.GetVideoSources        → VideoSourceToken 얻기
-  ② Imaging.GetOptions           → 각 항목의 실제 범위(Min~Max) 확인
-  ③ 0~100 정규화 값을 그 범위로 환산
-  ④ Imaging.SetImagingSettings   → 카메라에 적용
-  ⑤ 다시 조회해서 반영됐는지 확인
-
-설치:
-    pip install onvif-zeep
+동작 순서(= 서버 핸들러가 하게 될 일):
+  ⓪ GetSystemDateAndTime  → 카메라 시각을 읽어 인증에 사용(시계 어긋남 회피, 무인증)
+  ① GetCapabilities       → Media/Imaging 서비스 주소(XAddr) 찾기
+  ② GetVideoSources       → VideoSourceToken 얻기
+  ③ GetOptions            → 각 항목의 실제 범위(Min~Max) 확인
+  ④ 0~100 정규화 값을 그 범위로 환산
+  ⑤ SetImagingSettings    → 카메라에 적용 후 재조회
 
 사용 예:
-    # (1) 아무것도 안 바꾸고 현재값·지원범위만 조회
-    python onvif_imaging_test.py --ip 172.20.35.140 --user admin --pw 'PASSWORD'
+    # (1) 조회만 (현재값·범위 확인)
+    python onvif_imaging_test.py --ip 172.20.32.6 --user admin --pw '5hanwha!'
 
-    # (2) 밝기 70%, 채도 40% 로 적용 (값은 0~100 정규화 — 서버가 하듯 자동 환산)
-    python onvif_imaging_test.py --ip 172.20.35.140 --user admin --pw 'PASSWORD' \
+    # (2) 밝기 70%, 채도 40% 적용 (0~100 정규화 — 자동 환산)
+    python onvif_imaging_test.py --ip 172.20.32.6 --user admin --pw '5hanwha!' \
         --brightness 70 --saturation 40
 
-    # (3) 카메라 실제 단위값을 그대로 넣고 싶으면 --absolute
-    python onvif_imaging_test.py --ip 172.20.35.140 --user admin --pw 'PASSWORD' \
+    # (3) 카메라 실제 단위값 그대로 넣기
+    python onvif_imaging_test.py --ip 172.20.32.6 --user admin --pw '5hanwha!' \
         --brightness 200 --absolute
-
-참고:
-  · 인증 실패가 나면 PC와 카메라의 "시각"이 많이 어긋난 경우가 흔함(ONVIF digest는
-    시간에 민감). PC 시계를 맞추거나 NTP 동기화 후 재시도.
-  · 노출(Exposure)은 단순 숫자가 아니라 Mode/ExposureTime 구조체라 이 스크립트엔
-    포함 안 함 — 먼저 이 4개(밝기/대비/채도/샤프니스)가 되는지부터 확인.
 """
 
 import argparse
+import base64
+import datetime
+import hashlib
+import os
 import sys
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from urllib.parse import urlparse, urlunparse
 
-try:
-    from onvif import ONVIFCamera
-except ImportError:
-    sys.exit("onvif-zeep 가 필요합니다:  pip install onvif-zeep")
+NS_S    = "http://www.w3.org/2003/05/soap-envelope"
+NS_TDS  = "http://www.onvif.org/ver10/device/wsdl"
+NS_TRT  = "http://www.onvif.org/ver10/media/wsdl"
+NS_TIMG = "http://www.onvif.org/ver20/imaging/wsdl"
+NS_TT   = "http://www.onvif.org/ver10/schema"
+
+# ImagingSettings 자식 요소는 스키마상 "정해진 순서"로 보내야 카메라가 안 튕긴다.
+# (Brightness, ColorSaturation, Contrast, Sharpness 순 — 우리가 쓰는 4개 기준)
+SCHEMA_ORDER = ["Brightness", "ColorSaturation", "Contrast", "Sharpness"]
+# CLI 인자명 → ONVIF 요소명 매핑
+ARG_TO_ONVIF = {
+    "brightness": "Brightness",
+    "saturation": "ColorSaturation",
+    "contrast":   "Contrast",
+    "sharpness":  "Sharpness",
+}
 
 
-def pct_to_range(pct, opt):
-    """0~100 정규화 값을 카메라 실제 범위(opt.Min~opt.Max)로 환산."""
-    if opt is None or getattr(opt, "Min", None) is None or getattr(opt, "Max", None) is None:
+def localname(tag):
+    return tag.split("}")[-1]
+
+
+def find_first(root, name):
+    for el in root.iter():
+        if localname(el.tag) == name:
+            return el
+    return None
+
+
+def post(url, body, timeout=8):
+    """SOAP 요청 전송. (status, text) 반환. 오류 응답도 본문을 그대로 돌려준다."""
+    req = urllib.request.Request(
+        url, data=body.encode("utf-8"),
+        headers={"Content-Type": "application/soap+xml; charset=utf-8"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+
+
+def envelope(body_inner, user=None, pw=None, created=None):
+    """SOAP 봉투 생성. user/pw 주면 WS-Security UsernameToken(digest) 헤더 추가."""
+    header = ""
+    if user is not None:
+        nonce = os.urandom(16)
+        if created is None:
+            created = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        digest = base64.b64encode(
+            hashlib.sha1(nonce + created.encode() + pw.encode()).digest()).decode()
+        n64 = base64.b64encode(nonce).decode()
+        wsse = ("http://docs.oasis-open.org/wss/2004/01/"
+                "oasis-200401-wss-wssecurity-secext-1.0.xsd")
+        wsu = ("http://docs.oasis-open.org/wss/2004/01/"
+               "oasis-200401-wss-wssecurity-utility-1.0.xsd")
+        pt = ("http://docs.oasis-open.org/wss/2004/01/"
+              "oasis-200401-wss-username-token-profile-1.0#PasswordDigest")
+        enc = ("http://docs.oasis-open.org/wss/2004/01/"
+               "oasis-200401-wss-soap-message-security-1.0#Base64Binary")
+        header = (
+            f'<s:Header><Security s:mustUnderstand="1" xmlns="{wsse}">'
+            f"<UsernameToken><Username>{user}</Username>"
+            f'<Password Type="{pt}">{digest}</Password>'
+            f'<Nonce EncodingType="{enc}">{n64}</Nonce>'
+            f'<Created xmlns="{wsu}">{created}</Created>'
+            f"</UsernameToken></Security></s:Header>")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<s:Envelope xmlns:s="{NS_S}" xmlns:tds="{NS_TDS}" xmlns:trt="{NS_TRT}" '
+        f'xmlns:timg="{NS_TIMG}" xmlns:tt="{NS_TT}">'
+        f"{header}<s:Body>{body_inner}</s:Body></s:Envelope>")
+
+
+def fix_host(xaddr, ip, port):
+    """카메라가 돌려준 XAddr의 host를 우리가 접속한 IP로 교체(내부호스트/0.0.0.0 회피)."""
+    if not xaddr:
         return None
-    lo, hi = float(opt.Min), float(opt.Max)
-    return round(lo + (pct / 100.0) * (hi - lo), 3)
+    p = urlparse(xaddr)
+    netloc = ip if port == 80 else f"{ip}:{port}"
+    return urlunparse((p.scheme or "http", netloc, p.path, "", "", ""))
 
 
-def fmt_range(opt):
-    if opt is None or getattr(opt, "Min", None) is None:
-        return "미지원"
-    return f"{opt.Min} ~ {opt.Max}"
+def get_camera_created(dev_url):
+    """카메라 UTC 시각을 읽어 Created 문자열로. (무인증 요청) 실패 시 None."""
+    st, resp = post(dev_url, envelope("<tds:GetSystemDateAndTime/>"))
+    try:
+        root = ET.fromstring(resp)
+        utc = find_first(root, "UTCDateTime")
+        d, t = find_first(utc, "Date"), find_first(utc, "Time")
+        y = int(find_first(d, "Year").text);  mo = int(find_first(d, "Month").text)
+        da = int(find_first(d, "Day").text);   h = int(find_first(t, "Hour").text)
+        mi = int(find_first(t, "Minute").text); se = int(find_first(t, "Second").text)
+        return f"{y:04d}-{mo:02d}-{da:02d}T{h:02d}:{mi:02d}:{se:02d}Z"
+    except Exception:
+        return None
+
+
+def fault_text(resp):
+    """SOAP Fault 안의 사람이 읽을 사유 텍스트 추출(없으면 응답 앞부분)."""
+    try:
+        root = ET.fromstring(resp)
+        for name in ("Text", "Reason", "faultstring"):
+            el = find_first(root, name)
+            if el is not None and el.text:
+                return el.text.strip()
+    except Exception:
+        pass
+    return resp[:300]
 
 
 def main():
-    ap = argparse.ArgumentParser(description="ONVIF Imaging 조절 테스트")
-    ap.add_argument("--ip", required=True, help="카메라 IP")
-    ap.add_argument("--user", required=True, help="카메라 계정 (보통 admin)")
-    ap.add_argument("--pw", required=True, help="카메라 비밀번호")
-    ap.add_argument("--port", type=int, default=80, help="ONVIF 포트 (기본 80)")
-    ap.add_argument("--brightness", type=float, help="밝기 0~100 (--absolute면 실제단위)")
-    ap.add_argument("--contrast", type=float, help="대비 0~100")
-    ap.add_argument("--saturation", type=float, help="채도 0~100")
-    ap.add_argument("--sharpness", type=float, help="샤프니스 0~100")
+    ap = argparse.ArgumentParser(description="ONVIF Imaging 조절 테스트 (무의존)")
+    ap.add_argument("--ip", required=True)
+    ap.add_argument("--user", required=True)
+    ap.add_argument("--pw", required=True)
+    ap.add_argument("--port", type=int, default=80)
+    ap.add_argument("--brightness", type=float)
+    ap.add_argument("--contrast", type=float)
+    ap.add_argument("--saturation", type=float)
+    ap.add_argument("--sharpness", type=float)
     ap.add_argument("--absolute", action="store_true",
                     help="값을 0~100 정규화가 아니라 카메라 실제 단위로 그대로 사용")
     args = ap.parse_args()
 
-    # ─── 연결 ───
-    print(f"[연결] {args.ip}:{args.port}  (user={args.user})")
-    try:
-        cam = ONVIFCamera(args.ip, args.port, args.user, args.pw)
-        media = cam.create_media_service()
-        imaging = cam.create_imaging_service()
-    except Exception as e:
-        sys.exit(f"[실패] 연결/서비스 생성 오류: {e}\n"
-                 f"       → IP/포트/계정 확인, 그리고 PC·카메라 시각 동기화 확인")
+    base = f"http://{args.ip}:{args.port}" if args.port != 80 else f"http://{args.ip}"
+    dev_url = f"{base}/onvif/device_service"
+    print(f"[연결] {dev_url}  (user={args.user})")
 
-    # ─── ① VideoSource 토큰 ───
-    sources = media.GetVideoSources()
-    if not sources:
-        sys.exit("[실패] VideoSource 를 못 찾음")
-    token = sources[0].token
+    # ⓪ 카메라 시각(인증용)
+    created = get_camera_created(dev_url)
+    print(f"[시각] 카메라 UTC = {created or '읽기 실패(로컬 시각 사용)'}")
+
+    def call(url, inner, step):
+        st, resp = post(url, envelope(inner, args.user, args.pw, created))
+        if st != 200:
+            print(f"[실패] {step} (HTTP {st}): {fault_text(resp)}")
+            if st in (400, 401):
+                print("       → 계정/비번 확인. 반복되면 PC·카메라 시각 동기화 확인.")
+            sys.exit(1)
+        return ET.fromstring(resp)
+
+    # ① 서비스 주소 찾기
+    root = call(dev_url, "<tds:GetCapabilities><tds:Category>All</tds:Category>"
+                         "</tds:GetCapabilities>", "GetCapabilities")
+    media_url = imaging_url = None
+    for el in root.iter():
+        ln = localname(el.tag)
+        if ln == "Media":
+            x = find_first(el, "XAddr");  media_url = x.text if x is not None else media_url
+        elif ln == "Imaging":
+            x = find_first(el, "XAddr");  imaging_url = x.text if x is not None else imaging_url
+    media_url = fix_host(media_url, args.ip, args.port) or dev_url
+    imaging_url = fix_host(imaging_url, args.ip, args.port) or dev_url
+    print(f"[주소] Media   = {media_url}")
+    print(f"[주소] Imaging = {imaging_url}")
+
+    # ② VideoSource 토큰
+    root = call(media_url, "<trt:GetVideoSources/>", "GetVideoSources")
+    token = None
+    for el in root.iter():
+        if localname(el.tag) == "VideoSources" and el.get("token"):
+            token = el.get("token");  break
+    if not token:
+        vs = find_first(root, "VideoSources")
+        token = vs.get("token") if vs is not None else None
+    if not token:
+        sys.exit("[실패] VideoSourceToken 을 못 찾음")
     print(f"[토큰] VideoSourceToken = {token}")
 
-    # ─── ② 범위(Options) + 현재값 ───
-    opts = imaging.GetOptions({"VideoSourceToken": token})
-    cur = imaging.GetImagingSettings({"VideoSourceToken": token})
+    # ③ 범위 + 현재값
+    opt_root = call(imaging_url,
+                    f"<timg:GetOptions><timg:VideoSourceToken>{token}"
+                    f"</timg:VideoSourceToken></timg:GetOptions>", "GetOptions")
+    cur_root = call(imaging_url,
+                    f"<timg:GetImagingSettings><timg:VideoSourceToken>{token}"
+                    f"</timg:VideoSourceToken></timg:GetImagingSettings>",
+                    "GetImagingSettings")
 
-    rows = [
-        ("Brightness",      "brightness", args.brightness),
-        ("Contrast",        "contrast",   args.contrast),
-        ("ColorSaturation", "saturation", args.saturation),
-        ("Sharpness",       "sharpness",  args.sharpness),
-    ]
-
+    ranges = {}
     print("\n[현재 설정 / 지원 범위]")
-    for onvif_name, _, _ in rows:
-        o = getattr(opts, onvif_name, None)
-        c = getattr(cur, onvif_name, None)
-        print(f"  {onvif_name:16s} 현재={str(c):>8}   범위={fmt_range(o)}")
+    for name in SCHEMA_ORDER:
+        opt_el = find_first(opt_root, name)
+        rng = "미지원"
+        if opt_el is not None:
+            mn, mx = find_first(opt_el, "Min"), find_first(opt_el, "Max")
+            if mn is not None and mx is not None:
+                ranges[name] = (float(mn.text), float(mx.text))
+                rng = f"{mn.text} ~ {mx.text}"
+        cur_el = find_first(cur_root, name)
+        cur_v = cur_el.text if cur_el is not None else "-"
+        print(f"  {name:16s} 현재={str(cur_v):>8}   범위={rng}")
 
-    # ─── ③ 적용할 값 계산 ───
+    # ④ 적용값 계산
+    wanted = {"Brightness": args.brightness, "Contrast": args.contrast,
+              "ColorSaturation": args.saturation, "Sharpness": args.sharpness}
     changes = {}
-    for onvif_name, _, val in rows:
-        if val is None:
+    for name in SCHEMA_ORDER:
+        v = wanted.get(name)
+        if v is None:
             continue
-        o = getattr(opts, onvif_name, None)
         if args.absolute:
-            changes[onvif_name] = val
+            changes[name] = v
+        elif name in ranges:
+            lo, hi = ranges[name]
+            changes[name] = round(lo + (v / 100.0) * (hi - lo), 3)
         else:
-            mapped = pct_to_range(val, o)
-            if mapped is None:
-                print(f"  ! {onvif_name} 미지원 — 건너뜀")
-                continue
-            changes[onvif_name] = mapped
+            print(f"  ! {name} 미지원 — 건너뜀")
 
     if not changes:
-        print("\n(적용할 값 없음 — 조회만 했습니다. "
-              "--brightness 70 처럼 값을 주면 실제로 바꿔봅니다.)")
+        print("\n(적용할 값 없음 — 조회만 했습니다. --brightness 70 처럼 주면 실제로 바꿉니다.)")
         return
 
-    # ─── ④ 적용 ───
+    # ⑤ 적용 (스키마 순서대로) + 재조회
     print("\n[적용]")
-    for k, v in changes.items():
-        setattr(cur, k, v)
-        print(f"  {k} → {v}")
+    inner = ""
+    for name in SCHEMA_ORDER:
+        if name in changes:
+            print(f"  {name} → {changes[name]}")
+            inner += f"<tt:{name}>{changes[name]}</tt:{name}>"
+    call(imaging_url,
+         f"<timg:SetImagingSettings><timg:VideoSourceToken>{token}</timg:VideoSourceToken>"
+         f"<timg:ImagingSettings>{inner}</timg:ImagingSettings>"
+         f"<timg:ForcePersistence>true</timg:ForcePersistence></timg:SetImagingSettings>",
+         "SetImagingSettings")
+    print("  ✓ 전송 완료")
 
-    try:
-        req = imaging.create_type("SetImagingSettings")
-        req.VideoSourceToken = token
-        req.ImagingSettings = cur
-        req.ForcePersistence = True
-        imaging.SetImagingSettings(req)
-        print("  ✓ 전송 완료")
-    except Exception as e:
-        sys.exit(f"[실패] SetImagingSettings 오류: {e}")
-
-    # ─── ⑤ 재확인 ───
-    after = imaging.GetImagingSettings({"VideoSourceToken": token})
+    after = call(imaging_url,
+                 f"<timg:GetImagingSettings><timg:VideoSourceToken>{token}"
+                 f"</timg:VideoSourceToken></timg:GetImagingSettings>", "GetImagingSettings(재확인)")
     print("\n[적용 후 재조회]")
-    for k in changes:
-        print(f"  {k:16s} = {getattr(after, k, None)}")
+    for name in changes:
+        el = find_first(after, name)
+        print(f"  {name:16s} = {el.text if el is not None else '-'}")
 
-    print("\n끝. 카메라 화면(RTSP/웹뷰어)에서 실제로 바뀌었는지 눈으로 확인하세요.")
+    print("\n끝. RTSP/웹뷰어에서 실제로 바뀌었는지 눈으로 확인하세요.")
 
 
 if __name__ == "__main__":

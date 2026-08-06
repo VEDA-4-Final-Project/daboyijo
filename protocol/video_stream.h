@@ -66,6 +66,11 @@ extern "C" {
  *  - CAMERA_CLEAR: 문자열 없음. 해당 채널 연결을 끊고 대기 상태로 되돌린다. */
 #define DBJ_CTRL_CAMERA_SET   0x05  /* 채널 카메라 연결 — 헤더 뒤에 RTSP URL 문자열 */
 #define DBJ_CTRL_CAMERA_CLEAR 0x06  /* 채널 카메라 해제 — 문자열 없음 */
+/* 카메라 이미지 파라미터 조절 — 헤더 뒤에 dbj_image_params_t 1개가 온다.
+ * 서버는 해당 채널 카메라에 ONVIF Imaging(SetImagingSettings) 또는 한화 SUNAPI
+ * (image.cgi)로 밝기/대비/노출/채도를 적용한다. 값은 0~100 정규화 — 서버가
+ * 카메라 모델별 실제 범위로 매핑한다(클라는 카메라 스펙을 몰라도 된다). */
+#define DBJ_CTRL_IMAGE_SET    0x07  /* 채널 카메라 이미지 파라미터 — 헤더 뒤 dbj_image_params_t */
 
 #define DBJ_CAMERA_URL_MAX  512     /* CAMERA_SET URL 문자열 길이 상한 */
 
@@ -100,6 +105,13 @@ typedef struct {
     uint16_t x;            /* 정규화 x × DBJ_ROI_COORD_SCALE (0~10000) */
     uint16_t y;            /* 정규화 y × DBJ_ROI_COORD_SCALE (0~10000) */
 } dbj_roi_point_t;         /* 4바이트 */
+
+typedef struct {
+    uint8_t brightness;    /* 0~100 (서버가 카메라 실제 범위로 매핑) */
+    uint8_t contrast;      /* 0~100 */
+    uint8_t exposure;      /* 0~100 */
+    uint8_t saturation;    /* 0~100 */
+} dbj_image_params_t;      /* 4바이트, IMAGE_SET 시 헤더 뒤에 1개 */
 
 typedef struct {
     uint16_t magic;        /* DBJ_EVT_MAGIC */
