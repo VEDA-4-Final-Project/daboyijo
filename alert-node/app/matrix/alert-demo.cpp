@@ -79,7 +79,7 @@ int main()
     printf("요양원 알림 데모 시작 - Ctrl-C 로 종료\n");
 
     alert_source_fn nextEvent = demoNextEvent;
-    auto aborted = [] { return !running; };
+    auto aborted = [](int) { return !running; };
 
     while (running) {
         alert_event ev;

@@ -36,6 +36,7 @@ struct Config {
     std::string topic       = "veda/alarm/control";
     std::string audio_dir   = "sounds";
     std::string idle_text   = "감시 중";      // 평상시 표시 (64px 안에 들어갈 것)
+    int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘린다
 };
 
 /* 실행 파일이 있는 디렉터리. 현재 디렉터리를 쓰면 어디서 실행했느냐에 따라
@@ -90,6 +91,7 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "topic")       c.topic       = v;
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
+        else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
     }
 }
 
@@ -107,9 +109,11 @@ std::string toText(const AlarmCommand& c)
 {
     if (c.room.empty()) return c.message;
 
-    if (c.type == "FALL")           return "긴급 " + c.room + "호 낙상 발생 즉시 확인 요망";
-    if (c.type == "EGRESS")         return "긴급 " + c.room + "호 침상 이탈 감지";
-    if (c.type == "VITAL_ABNORMAL") return "주의 " + c.room + "호 " + c.message;
+    /* 64px 화면을 한 바퀴 흘리는 데 문구 길이만큼 시간이 든다.
+     * 바뀌는 정보(호실)를 맨 앞에 두고 나머지는 최소한으로 줄인다. */
+    if (c.type == "FALL")           return c.room + "호 낙상 발생";
+    if (c.type == "EGRESS")         return c.room + "호 침상 이탈";
+    if (c.type == "VITAL_ABNORMAL") return c.room + "호 " + c.message;
     return c.room + "호 " + c.message;
 }
 
@@ -160,8 +164,14 @@ int main(int argc, char* argv[])
     printf("[알림노드] %s 로 %s 구독 시작 (node_id=%s)\n",
            cfg.broker_host.c_str(), cfg.topic.c_str(), cfg.node_id.c_str());
 
-    /* 스크롤 도중 새 명령이 오면 끊고 최신 것을 띄운다 */
-    auto aborted = [&] { return !running || !queue.empty(); };
+    /* 표시 정책은 노드가 정한다. 서버는 발행 시점에 그 뒤로 무엇이 올지
+     * 모르기 때문이다.
+     *   - 최소 한 바퀴는 끝까지 흘린다. 안 그러면 경보가 연달아 올 때
+     *     앞의 것이 한 프레임만 스치고 사라진다.
+     *   - 그 뒤에 대기 중인 게 있으면 넘어간다. 우선순위는 두지 않는다. */
+    auto aborted = [&](int passesDone) {
+        return !running || (passesDone >= 1 && !queue.empty());
+    };
     bool idleShown = false;
 
     while (running) {
@@ -184,8 +194,13 @@ int main(int argc, char* argv[])
 
         if (cmd.brightness > 0) display.setBrightness(cmd.brightness);
 
-        if (cmd.matrix_action == "SHOW")
-            display.show(toText(cmd), toSeverity(cmd.type), cmd.matrix_passes, aborted);
+        if (cmd.matrix_action == "SHOW") {
+            /* 서버가 지정하면 존중하고, 안 주면 노드 기본값 */
+            int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
+            severity sev = toSeverity(cmd.type);
+            display.blinkCue(sev);              // 새 경보라는 신호
+            display.show(toText(cmd), sev, passes, aborted);
+        }
         else if (cmd.matrix_action == "CLEAR")
             display.clear();
     }
