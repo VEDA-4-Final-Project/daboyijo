@@ -50,6 +50,19 @@ std::string exeDir()
     return p.substr(0, p.find_last_of('/'));
 }
 
+/* 설정 파일은 손으로 고치는 곳이라 오타가 나기 쉽다.
+ * 잘못된 값 하나로 죽지 않고 기본값을 유지한 채 어느 키가 문제인지 알린다. */
+int toInt(const std::string& k, const std::string& v, int fallback)
+{
+    try {
+        return std::stoi(v);
+    } catch (const std::exception&) {
+        fprintf(stderr, "[설정] %s 값이 숫자가 아님: \"%s\" - 기본값 %d 사용\n",
+                k.c_str(), v.c_str(), fallback);
+        return fallback;
+    }
+}
+
 /* "키 = 값" 형식. # 는 주석. 없는 키는 기본값을 그대로 둔다 */
 void loadConfig(const std::string& path, Config& c)
 {
@@ -72,7 +85,7 @@ void loadConfig(const std::string& path, Config& c)
         std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
 
         if      (k == "broker_host") c.broker_host = v;
-        else if (k == "broker_port") c.broker_port = std::stoi(v);
+        else if (k == "broker_port") c.broker_port = toInt(k, v, c.broker_port);
         else if (k == "node_id")     c.node_id     = v;
         else if (k == "topic")       c.topic       = v;
         else if (k == "audio_dir")   c.audio_dir   = v;
