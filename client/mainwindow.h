@@ -50,6 +50,13 @@ struct dbj_image_params_t {
     uint8_t contrast;       // 0~100
     uint8_t saturation;     // 0~100
 };                          // 3B
+// 카메라 포커스 — FOCUS_SET 헤더 뒤 1개.
+struct dbj_focus_t {
+    uint8_t  mode;          // 0=전체 자동초점, 1=클릭 영역 초점
+    uint8_t  reserved;      // 0
+    uint16_t x;             // 클릭 중심 정규화 x × 10000
+    uint16_t y;             // 정규화 y × 10000
+};                          // 6B
 
 // 역방향(서버→클라) 이벤트 알림 — 낙상. magic=0xDB4D. 페이로드 없이 헤더(18B)만.
 // 영상 프레임(0xDB4B)과 같은 소켓(5500)으로 섞여 들어오며, magic으로 구분한다.
@@ -72,6 +79,9 @@ static constexpr uint8_t kCtrlRoiClear = 0x02;
 static constexpr uint8_t kCtrlCameraSet = 0x05;    // 채널 카메라 연결 (헤더 뒤 RTSP URL)
 static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr uint8_t kCtrlImageSet = 0x07;     // 카메라 이미지 파라미터 (헤더 뒤 dbj_image_params_t)
+static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤더 뒤 dbj_focus_t)
+static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
+static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;
 static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 
@@ -376,6 +386,10 @@ private:
     // 서버에 보내면, 서버가 ONVIF Imaging으로 실제 카메라에 적용한다.
     QWidget* buildImageTab();                          // 이미지 탭 구성(1회)
     void     sendImageParams(int channel, int b, int c, int s);
+    // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
+    void     sendFocus(int channel, bool area, float nx, float ny);
+    // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
+    bool     eventFilter(QObject* obj, QEvent* ev) override;
     QComboBox*   imgChannel = nullptr;                 // 대상 채널 선택
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
