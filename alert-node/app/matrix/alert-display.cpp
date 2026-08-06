@@ -20,6 +20,7 @@ namespace {
 
 constexpr int FPS_US = 30000;   /* 프레임 간격 - 프레임당 1px 이동 */
 constexpr int BAND   = 3;       /* 위아래 테두리 두께 */
+constexpr int BLINK_FRAMES = 15; /* 긴급 깜빡임 한 상태의 프레임 수 (약 1Hz) */
 
 /* 등급별 대표색 */
 const uint8_t* sevColor(severity s)
@@ -129,6 +130,39 @@ bool AlertDisplay::setBrightness(int v)
     return ok;
 }
 
+/*
+ * 위아래 테두리를 등급색으로 빠르게 깜빡인다.
+ *
+ * 스크롤 중 긴급 깜빡임(BLINK_FRAMES)의 절반 주기라 평소보다 두 배 빠르다.
+ * 같은 리듬이면 새 경보인지 진행 중인 경보인지 구분이 안 되기 때문이다.
+ * 화면 전체를 채우면 눈이 부시고 그냥 껐다 켜면 잘 안 보여서, 이미 쓰고
+ * 있는 테두리만 쓴다.
+ */
+void AlertDisplay::blinkCue(severity sev, int times)
+{
+    if (!fb_) return;
+
+    const uint8_t* col = sevColor(sev);
+    const int half = BLINK_FRAMES / 2;          // 두 배 속도
+
+    /* show() 와 같은 프레임 간격을 써야 BLINK_FRAMES 의 절반이 실제로
+     * 두 배 속도가 된다. usleep 을 빼면 프레임이 vsync 주기로만 흘러
+     * 훨씬 빨라진다 */
+    for (int t = 0; t < times; t++) {
+        for (int f = 0; f < half; f++) {
+            memset(scratch_.data(), 0, scratch_.size());
+            drawBorder(col, 255);
+            flush();
+            usleep(FPS_US);
+        }
+        for (int f = 0; f < half; f++) {
+            memset(scratch_.data(), 0, scratch_.size());
+            flush();
+            usleep(FPS_US);
+        }
+    }
+}
+
 int AlertDisplay::measureText(const std::string& s) const
 {
     int w = 0;
@@ -207,10 +241,10 @@ void AlertDisplay::show(const std::string& msg, severity sev, int passes,
 
     for (int pass = 0; pass < passes; pass++)
         for (int off = 0; off <= span; off++, frame++) {
-            if (abort && abort()) return;
+            if (abort && abort(pass)) return;
 
             /* 긴급은 약 1Hz 로 테두리 깜빡임 */
-            int scale = (sev == SEV_CRIT && (frame / 15) % 2) ? 40 : 255;
+            int scale = (sev == SEV_CRIT && (frame / BLINK_FRAMES) % 2) ? 40 : 255;
 
             memset(scratch_.data(), 0, scratch_.size());
             drawBorder(col, scale);
