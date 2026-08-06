@@ -63,6 +63,30 @@ std::string exeDir() {
     return p.substr(0, p.find_last_of('/'));
 }
 
+// 설정 파일은 손으로 고치는 곳이라 오타가 나기 쉽다.
+// 잘못된 값 하나로 죽지 않고 기본값을 유지한 채 어느 키가 문제인지 알린다.
+int toInt(const std::string& k, const std::string& v, int fallback) {
+    try {
+        return std::stoi(v);
+    } catch(const std::exception&) {
+        std::cerr << "[설정] " << k << " 값이 숫자가 아님: \"" << v
+                  << "\" - 기본값 " << fallback << " 사용" << std::endl;
+        return fallback;
+    }
+}
+
+// aa:bb:cc:dd:ee:ff 꼴인지만 본다. 틀리면 스캔에 영원히 안 잡히는데
+// "not found" 만 반복돼서 설정 오타인지 기기가 꺼진 건지 구분이 안 된다.
+bool looksLikeMac(const std::string& s) {
+    if(s.size() != 17) return false;
+    for(size_t i = 0; i < s.size(); i++) {
+        bool sep = (i % 3 == 2);
+        if(sep && s[i] != ':') return false;
+        if(!sep && !std::isxdigit((unsigned char)s[i])) return false;
+    }
+    return true;
+}
+
 // "키 = 값" 형식. # 는 주석. 없는 키는 기본값을 그대로 둔다
 void loadConfig(const std::string& path, Config& c) {
     std::ifstream f(path);
@@ -84,13 +108,17 @@ void loadConfig(const std::string& path, Config& c) {
         std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
 
         if     (k == "broker_host")  c.broker_host  = v;
-        else if(k == "broker_port")  c.broker_port  = std::stoi(v);
+        else if(k == "broker_port")  c.broker_port  = toInt(k, v, c.broker_port);
         else if(k == "device_id")    c.device_id    = v;
         else if(k == "topic")        c.topic        = v;
-        else if(k == "hm10_addr")    c.hm10_addr    = toLower(v);
-        else if(k == "scan_ms")      c.scan_ms      = std::stoi(v);
-        else if(k == "reconnect_ms") c.reconnect_ms = std::stoi(v);
+        else if(k == "scan_ms")      c.scan_ms      = toInt(k, v, c.scan_ms);
+        else if(k == "reconnect_ms") c.reconnect_ms = toInt(k, v, c.reconnect_ms);
         else if(k == "debug_hex")    c.debug_hex    = (v != "0");
+        else if(k == "hm10_addr") {
+            if(looksLikeMac(toLower(v))) c.hm10_addr = toLower(v);
+            else std::cerr << "[설정] hm10_addr 이 MAC 형식이 아님: \"" << v
+                           << "\" - 기본값 " << c.hm10_addr << " 사용" << std::endl;
+        }
     }
 }
 
