@@ -26,6 +26,7 @@ bool MqttMasterManager::init(const std::string& broker_ip, int port) {
     mqtt_client_->startLoop();
 
     mqtt_client_->subscribeTopic("veda/wearable/data");
+    std::printf("[MqttMasterManager] Subscribed to 'veda/wearable/data'");
     std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
 
     return true;

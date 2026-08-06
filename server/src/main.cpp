@@ -151,7 +151,7 @@ int main(int argc, char* argv[]) {
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
         telegram.notifyFall(ch);      // 즉시 기본 알림
         care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
-        mqtt.sendAlarmCommand("FALL",ch+1); // mqtt 알림전송 
+        mqtt.sendAlarmCommand(AlarmEventType::FALL,ch+1); // mqtt 알림전송 
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
@@ -159,14 +159,14 @@ int main(int argc, char* argv[]) {
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
-        mqtt.sendAlarmCommand("EGRESS",ch+1);//mqtt 알림전송 
+        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,ch+1);//mqtt 알림전송 
     });
     // MQTT로 웨어러블 낙상 신후 수신시 처리
-    mqtt.setAlarmCallback([&](bool is_fall){
-        is(is_fall){
+    mqtt.setWearableCallback([&](bool is_fall){
+        if(is_fall){
             // 여기다가 다른 모듈배선로 신호 전달 작성하면됩니다.
             std::printf("mqtt 낙상 수신!!!!");// 확인용 printf
-            mqtt.sendAlarmCommand("FALL",ch+1); // test 확인용 mqtt 알림전송 
+            mqtt.sendAlarmCommand(AlarmEventType::FALL,1); // test 확인용 mqtt 알림전송 
         }
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
