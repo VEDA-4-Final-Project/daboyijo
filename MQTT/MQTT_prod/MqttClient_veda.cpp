@@ -139,11 +139,11 @@ void MqttClient_veda::on_connect(struct mosquitto *mosq, void *obj, int rc) {
 void MqttClient_veda::on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message) {
 
     // void* obj포인터를 MqttClient_veda 객체 타입으로 캐스팅 
-    std::cout <<"[debug] on_message 트리거"<< std::endl;
+    //std::cout <<"[debug] on_message 트리거"<< std::endl;
     MqttClient_veda* client = static_cast<MqttClient_veda*>(obj);
 
     if(client && client->m_userCallback && message->payload) {
-        std::cout <<"[debug] 객체 캐스팅성공 "<< std::endl;
+        //std::cout <<"[debug] 객체 캐스팅성공 "<< std::endl;
         std::string topic(message->topic);
         std::string payload(static_cast<char*>(message->payload), message->payloadlen);
 
