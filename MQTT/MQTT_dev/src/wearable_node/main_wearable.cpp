@@ -8,7 +8,7 @@ int main() {
 
     std::cout << "[Wearable Node] Connecting to Mqtt broker..." << std::endl;
 
-    if(!client.connectToBroker("localhost",1883)) {
+    if(!client.connectToBroker("172.20.32.10",1883)) {
         std::cerr <<"[Wearable Node] Mqtt connection failed!" << std::endl;
         return 1;
     }
