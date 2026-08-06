@@ -55,8 +55,9 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_
     AlarmCommand cmd;
 
     if(event_type == AlarmEventType::FALL){
-        cmd.status = "FALL";
-        cmd.message = "ch" + std::to_string(channel_id + 1) + " channel FALL";
+        cmd.type= "FALL";
+        cmd.room= channel_id; 
+        cmd.message = "room" + std::to_string(channel_id) + " FALL";
         cmd.audio_file = "fall_alert.wav";
     }else if(event_type == AlarmEventType::EGRESS){
         cmd.status = "EGRESS";
@@ -79,6 +80,11 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_
     cmd.loop = true;
     cmd.audio_action = "PLAY";
 
+    // led 
+    cmd.matrix_action = "SHOW"
+    cmd.matrix_passes = 3;
+    cmd.brightness = 127;
+    
     nlohmann::json j = cmd;
     std::string payload = j.dump();
 

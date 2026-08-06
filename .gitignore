@@ -75,3 +75,15 @@ server/daboijo_dump_fixed.sql
 *.user
 *.tmp
 *.TMP
+
+
+#===== SSL/TLS 인증서 및 보안 키 파일 전체 제외 ======
+*.key
+*.crt
+*.pem
+*.csr
+*.srl
+
+#===== MQTT certs 내 실체 파일 제외 (README.md 만 남기기)
+MQTT/certs/*
+!MQTT/certs/README.md

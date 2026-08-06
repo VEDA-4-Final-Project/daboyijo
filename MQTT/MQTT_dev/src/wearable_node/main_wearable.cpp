@@ -21,7 +21,7 @@ int main() {
     while(true) {
         // 추후 stm32 블루투스 프로토콜 확정시 수신 및 파싱 로직 적용 예정 
         WearableData sensor_data;
-        sensor_data.device_id = "wearable_rpi_01";
+        sensor_data.device_id = "3";
         sensor_data.temperature = 36.5 + (count % 3) *0.1;
         sensor_data.heart_rate = 75 + (count % 8);
         sensor_data.is_fall_detected = (count % 10 == 0 && count != 0);
