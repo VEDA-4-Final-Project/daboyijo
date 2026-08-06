@@ -5,6 +5,10 @@ project(VedaRelayNode VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 실행 파일을 relay-node/ 에 둔다. 설정 파일을 실행 파일 옆에서 찾는데,
+# build/ 는 지웠다 다시 만드는 곳이라 거기에 두면 매번 사라진다.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 find_package(Threads REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(simpleble REQUIRED)

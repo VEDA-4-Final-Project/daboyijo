@@ -49,19 +49,39 @@ STM32 ──UART(9600)──> HM-10 ──BLE──> RPi4 (relay_node) ──MQT
 ```bash
 ./install_deps.sh                      # 최초 1회
 cmake -S . -B build && cmake --build build
-./build/relay_node
+./relay_node                           # 실행 파일은 relay-node/ 에 생긴다
 ```
 
-`RELAY_DEBUG_HEX=1` 을 붙이면 BLE 로 들어온 원시 바이트를 hex 로 찍는다.
-값이 이상할 때 파싱 전 단계를 확인하는 용도.
+실행 파일을 `build/` 가 아니라 `relay-node/` 에 두는 이유는 설정 파일을 실행
+파일 옆에서 찾기 때문이다. `build/` 는 지웠다 다시 만드는 곳이라 거기에 설정을
+둘 수 없다.
 
 의존성은 `libmosquitto`, `nlohmann_json`, `SimpleBLE` 세 가지다. 앞의 둘은
 apt 로 받고, SimpleBLE 는 apt 패키지가 없어서 `install_deps.sh` 가 소스에서
 빌드해 `/usr/local` 에 설치한다. CMake 는 `find_package(simpleble)` 로 찾으므로
 설치 후에는 소스 트리가 필요 없다.
 
-HM-10 MAC(`TARGET_ADDR`), 브로커 주소, 토픽은 `src/main_relay.cpp` 상단에 상수로
-하드코딩돼 있다. 기기가 바뀌면 여기를 고친다.
+## 설정
+
+`relay-node.conf` 를 실행 파일과 같은 디렉터리에서 읽는다. `-c 경로` 로 다른
+파일을 지정할 수 있다. 없으면 기본값으로 뜨고 그 사실을 출력한다.
+
+```
+broker_host  = localhost       # 배치할 때 서버 IP 로
+broker_port  = 1883
+device_id    = wearable_01     # WearableData.device_id
+topic        = veda/wearable/data
+hm10_addr    = 88:4a:ea:62:0b:03   # 모듈 교체 시 여기만 고친다
+scan_ms      = 8000
+reconnect_ms = 3000
+debug_hex    = 0               # 1 이면 수신 원시 바이트를 hex 로 덤프
+```
+
+`debug_hex` 는 값이 이상할 때 파싱 전 단계를 확인하는 용도다. 예전 환경변수
+`RELAY_DEBUG_HEX` 를 대체한다.
+
+FFE0/FFE1 UUID 와 5바이트 패킷 규격은 설정으로 빼지 않았다. 기기가 바뀌어도
+같은 값이고, 바뀐다면 코드도 같이 바뀌어야 하는 규격이기 때문이다.
 
 ## MQTT 클라이언트
 
