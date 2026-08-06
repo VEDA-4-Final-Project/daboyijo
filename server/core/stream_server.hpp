@@ -37,6 +37,12 @@ public:
     // 수신 스레드에서 호출되므로 콜백 구현은 스레드 안전해야 한다.
     using CameraSetCallback = std::function<void(int channel, const std::string& url)>;
     using CameraClearCallback = std::function<void(int channel)>;
+    // Qt가 카메라 이미지 파라미터(밝기/대비/노출/채도, 각 0~100)를 조절할 때 호출.
+    // 수신 스레드에서 호출되므로 콜백 구현은 스레드 안전 + 오래 블로킹하지 말 것
+    // (ONVIF HTTP 호출은 별도 스레드로 넘겨 처리).
+    using ImageSetCallback =
+        std::function<void(int channel, int brightness, int contrast, int exposure,
+                           int saturation)>;
 
     explicit StreamServer(int port);
     ~StreamServer();
@@ -53,6 +59,8 @@ public:
     // 카메라 연결/해제 수신 콜백. start() 전 등록
     void setCameraSetCallback(CameraSetCallback cb) { on_camera_set_ = std::move(cb); }
     void setCameraClearCallback(CameraClearCallback cb) { on_camera_clear_ = std::move(cb); }
+    // 카메라 이미지 파라미터 수신 콜백. start() 전 등록
+    void setImageSetCallback(ImageSetCallback cb) { on_image_set_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -104,4 +112,5 @@ private:
     RiskLevelCallback on_risk_level_;
     CameraSetCallback on_camera_set_;
     CameraClearCallback on_camera_clear_;
+    ImageSetCallback on_image_set_;
 };

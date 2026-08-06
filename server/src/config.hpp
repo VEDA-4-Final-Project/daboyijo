@@ -26,6 +26,10 @@ struct ServerConfig {
     // gemini-flash-latest = 항상 현재 안정 Flash를 가리키는 별칭(모델 은퇴에 강함).
     std::string gemini_model = "gemini-flash-latest";
 
+    // [케어 봇] 📞 연락처 버튼이 회신할 연락처. 미설정 시 "미등록"으로 표시.
+    std::string care_contact_caregiver;  // 담당 요양사
+    std::string care_contact_manager;    // 시설 관리자
+
     // [DB] MariaDB 호스트. 2-Pi 분할 시 DB를 호스팅하지 않는 Pi는 cameras.conf에
     // db_host=<DB Pi IP> 로 지정한다. 기본은 자기 자신(단일 Pi 또는 DB 호스팅 Pi).
     std::string db_host = "127.0.0.1";
