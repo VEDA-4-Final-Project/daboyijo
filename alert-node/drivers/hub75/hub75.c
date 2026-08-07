@@ -101,6 +101,7 @@ struct hub75 {
 	struct miscdevice 	misc;				// /dev/hub75 문자 장치
 	struct fb_info		*info;				// fbdev /dev/fbN
 	u32					pseudo_palette[16];	// truecolor 콘솔용 16색 팔레트
+	bool				quiesced;			// 소등 절차를 이미 밟았는지 (아래 hub75_quiesce)
 };
 
 /* 감마 2.2 보정 테이블 (11비트 스케일): gamma11_base[v] = round(2047*(v/255)^2.2) */
@@ -679,9 +680,20 @@ err_pwm:
 	return ret;
 }
 
-/* 소등 절차 - remove(rmmod)와 shutdown(재부팅/전원끔)이 공용으로 사용 */
+/*
+ * 소등 절차 - remove(rmmod)와 shutdown(재부팅/전원끔)이 공용으로 사용
+ *
+ * 두 경로가 다 불릴 수 있어서 한 번만 밟게 막는다. kthread_stop 을 이미 멈춘
+ * 스레드에 두 번 부르면 해제된 task_struct 를 건드린다.
+ * (probe 순서상 remove/shutdown 은 둘 다 프로세스 문맥에서 직렬로 불리므로
+ *  이 플래그에 별도 잠금은 필요 없다)
+ */
 static void hub75_quiesce(struct hub75 *h)
 {
+	if (h->quiesced)
+		return;
+	h->quiesced = true;
+
 	kthread_stop(h->thread);	// 스레드 정지 (fb 읽기 중단)
 	hub75_pwm_off(h);			// OE 소등 복원 + PWM/클럭 정지
 }
