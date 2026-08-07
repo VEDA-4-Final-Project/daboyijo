@@ -1,8 +1,12 @@
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 #include "blackbox_recorder.hpp"
 #include "clip_http_server.hpp"
@@ -17,7 +21,11 @@
 // 저장 시간·포트 등 튜닝값은 blackbox_module.cpp 상단에 있다.
 class BlackboxModule {
 public:
-    BlackboxModule();  // 클립 디렉토리 생성까지 수행
+    BlackboxModule();   // 클립 디렉토리 생성 + 저장 감시 스레드 기동
+    ~BlackboxModule();  // 감시 스레드 정리
+
+    BlackboxModule(const BlackboxModule&) = delete;
+    BlackboxModule& operator=(const BlackboxModule&) = delete;
 
     // HTTP 서버 시작. 실패해도 녹화 자체는 계속된다(경고만 출력).
     void startHttp();
@@ -34,6 +42,18 @@ public:
     void flushAll();
 
 private:
+    // 저장 시점이 지난 클립을 주기적으로 확인해 마감한다.
+    // BlackboxRecorder는 압축 패킷이 들어올 때만 마감 시각을 볼 수 있어서,
+    // 트리거 직후 카메라가 끊기면 그 클립이 저장되지 않은 채 남는다.
+    void watchdogLoop();
+
     std::map<int, std::unique_ptr<BlackboxRecorder>> recorders_;
+    std::mutex recorders_mutex_;   // attachChannel(설정) ↔ trigger/감시 스레드
+
+    std::atomic<bool> watchdog_running_{false};
+    std::condition_variable watchdog_cv_;
+    std::mutex watchdog_mutex_;
+    std::thread watchdog_;
+
     ClipHttpServer http_;
 };
