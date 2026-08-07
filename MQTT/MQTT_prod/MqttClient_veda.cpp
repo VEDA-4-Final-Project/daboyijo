@@ -42,7 +42,27 @@ bool MqttClient_veda::connectToBroker(const std::string& host, int port) {
     if(!m_mosq){
         return false;
     }
+    
+    // TLS 설정이 활성화도니 경우 연결 직전에 적용 
+    if(m_use_tls) {
+        if(m_ca_path.empty()) {
+            std::cerr << "[MQTT Client] Error: TLS is enabled but CA path is empty!" << std::endl;
+            return false;
+        }
 
+
+        // CA 루트 인증서 경로 설정 
+        int rc = mosquitto_tls_set(m_mosq, m_ca_path.c_str(), nullptr, nullptr, nullptr, nullptr);
+        if(rc != MOSQ_ERR_SUCCESS) {
+            std::cerr << "[MQTT Client] TLS Set Error: " << mosquitto_strerror(rc) << std::endl;
+            return false;
+        }
+       
+        // IP 변경 대응을 위해 호스트명 검증 비활성화 
+        mosquitto_tls_insecure_set(m_mosq, true);
+        std::cout << "[MQTT Client] TLS Configured (CA: " << m_ca_path << ")" <<std::endl;
+    }
+        
     int rc = mosquitto_connect(m_mosq, host.c_str(), port, 60);
     return (rc == MOSQ_ERR_SUCCESS);
 }
@@ -171,6 +191,8 @@ void MqttClient_veda::setTlsConfig(const std::string& ca_path) {
     m_use_tls = true;
     m_ca_path = ca_path;
 }
+
+
 
 
 
