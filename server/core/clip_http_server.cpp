@@ -6,8 +6,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <sys/time.h>
+
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,31 +38,30 @@ ClipHttpServer::~ClipHttpServer() {
 }
 
 bool ClipHttpServer::start() {
-    listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd_ < 0) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
         std::perror("[clip-http] socket");
         return false;
     }
     int on = 1;
-    ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(static_cast<uint16_t>(port_));
-    if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         std::perror("[clip-http] bind");
-        ::close(listen_fd_);
-        listen_fd_ = -1;
+        ::close(fd);
         return false;
     }
-    if (::listen(listen_fd_, 4) < 0) {
+    if (::listen(fd, 4) < 0) {
         std::perror("[clip-http] listen");
-        ::close(listen_fd_);
-        listen_fd_ = -1;
+        ::close(fd);
         return false;
     }
 
+    listen_fd_.store(fd);
     running_.store(true);
     accept_thread_ = std::thread(&ClipHttpServer::acceptLoop, this);
     std::fprintf(stderr, "[clip-http] %d 포트에서 블랙박스 클립 서빙 (%s)\n", port_,
@@ -68,35 +70,81 @@ bool ClipHttpServer::start() {
 }
 
 void ClipHttpServer::stop() {
-    if (!running_.exchange(false) && listen_fd_ < 0) {
+    const bool was_running = running_.exchange(false);
+    const int fd = listen_fd_.exchange(-1);
+    if (!was_running && fd < 0) {
         return;
     }
-    if (listen_fd_ >= 0) {
-        // accept() 블로킹 해제
-        ::shutdown(listen_fd_, SHUT_RDWR);
-        ::close(listen_fd_);
-        listen_fd_ = -1;
+    if (fd >= 0) {
+        ::shutdown(fd, SHUT_RDWR);   // accept() 블로킹 해제
+        ::close(fd);
     }
     if (accept_thread_.joinable()) {
         accept_thread_.join();
+    }
+
+    // 처리 중인 요청 스레드가 빠져나갈 때까지 기다린다. detach 라 join 이 안 되고,
+    // 안 기다리면 전송 중인 스레드가 파괴된 멤버를 읽는다.
+    // 무한정 기다리지는 않는다 — 클라이언트 하나가 서버 종료를 막으면 곤란하다.
+    // 아래 handleClient 가 소켓에 타임아웃을 걸어두므로 정상적으로는 금방 빠진다.
+    std::unique_lock<std::mutex> lock(inflight_mutex_);
+    if (!inflight_cv_.wait_for(lock, std::chrono::seconds(5),
+                               [this] { return inflight_ == 0; })) {
+        std::fprintf(stderr,
+                     "[clip-http] 경고: 요청 스레드 %d개가 아직 처리 중 (기다리지 않고 진행)\n",
+                     inflight_);
     }
 }
 
 void ClipHttpServer::acceptLoop() {
     while (running_.load()) {
+        const int lfd = listen_fd_.load();
+        if (lfd < 0) break;
+
         sockaddr_in peer{};
         socklen_t len = sizeof(peer);
-        int fd = ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&peer), &len);
+        int fd = ::accept(lfd, reinterpret_cast<sockaddr*>(&peer), &len);
         if (fd < 0) {
-            if (running_.load()) std::perror("[clip-http] accept");
+            if (!running_.load()) break;
+            // 여기서 바로 continue 하면 fd 고갈(EMFILE) 같은 상황에서 perror 를
+            // 뿜는 바쁜 루프가 된다. 잠깐 쉬었다 다시 시도한다.
+            std::perror("[clip-http] accept");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
-        // 요청 하나 처리하고 끝나는 짧은 연결이라 별도 추적 없이 detach.
+
+        {
+            std::lock_guard<std::mutex> lock(inflight_mutex_);
+            ++inflight_;   // 스레드를 띄우기 전에 세야 stop() 이 놓치지 않는다
+        }
         std::thread(&ClipHttpServer::handleClient, this, fd).detach();
     }
 }
 
 void ClipHttpServer::handleClient(int fd) {
+    // detach 된 스레드라 어느 경로로 빠져나가든 카운트를 되돌려야 한다.
+    struct InflightGuard {
+        ClipHttpServer* self;
+        ~InflightGuard() {
+            std::lock_guard<std::mutex> lock(self->inflight_mutex_);
+            if (--self->inflight_ == 0) self->inflight_cv_.notify_all();
+        }
+    } inflight_guard{this};
+
+    // 아무것도 안 보내고 붙어만 있는 클라이언트가 아래 recv 에서 스레드를 영영
+    // 붙잡지 못하게 한다. 종료할 때 stop() 이 이 스레드를 기다리기 때문에
+    // 상한이 없으면 서버 종료가 막힌다.
+    //
+    // 수신은 짧게(3초) — 요청 헤더는 사내망에서 밀리초 안에 다 온다. stop() 의
+    // 대기(5초)보다 짧아야 놀고 있는 연결이 알아서 빠져 종료가 깨끗해진다.
+    // 송신은 길게(10초) — 큰 mp4 를 받는 중인 느린 클라이언트를 끊으면 안 된다.
+    timeval rcv{};
+    rcv.tv_sec = 3;
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof(rcv));
+    timeval snd{};
+    snd.tv_sec = 10;
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &snd, sizeof(snd));
+
     // 요청 헤더 전체(빈 줄까지) 수신 — Range 헤더가 첫 recv 뒤 세그먼트로
     // 나뉘어 도착할 수 있어 \r\n\r\n이 나올 때까지 모은다.
     std::string req;

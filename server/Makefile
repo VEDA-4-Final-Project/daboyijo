@@ -5,7 +5,7 @@ SRCS := $(wildcard src/*.cpp) $(wildcard video/*.cpp) $(wildcard core/*.cpp) $(w
 OBJS := $(SRCS:%.cpp=$(BUILDDIR)/%.o)
 DEPS := $(OBJS:.o=.d)
 
-PKGS     := opencv4 libavformat libavcodec libavutil libswscale libcurl
+PKGS     := opencv4 libavformat libavcodec libavutil libswscale libcurl libcrypto
 
 CXX      ?= g++
 # -MMD -MP: 헤더 의존성(.d) 자동 생성 — .hpp 수정 시 그걸 쓰는 .o 전부 재빌드

@@ -4,6 +4,7 @@
 #include "videoview.h"
 #include "wintheme.h"
 #include "sparkline.h"
+#include "mqttqtmanager.h"
 #include <QHostAddress>
 #include <QPixmap>
 #include <QDateTime>
@@ -13,7 +14,6 @@
 #include <QGridLayout>
 #include <QFrame>
 #include <QScrollArea>
-#include <QRandomGenerator>
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -151,8 +151,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.10";
+const char* kDefaultHostB  = "172.20.32.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -163,6 +163,24 @@ QString serverHost(int idx) {
 // 채널(0~3) → 담당 Pi의 호스트 (블랙박스 클립 URL 등 host가 필요한 곳용).
 // 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
 QString hostForChannel(int ch) { return serverHost(ch < 2 ? 0 : 1); }
+
+// MQTT 브로커 주소. 영상 서버와 같은 라즈베리에 띄우는 경우가 많아 기본값을
+// Pi A 와 같게 뒀지만, 브로커만 따로 두는 구성도 있어 설정으로 분리했다.
+const char* kSettingsBrokerHost = "mqtt/brokerHost";
+const char* kSettingsBrokerPort = "mqtt/brokerPort";
+QString brokerHost() {
+    QSettings s;
+    return s.value(kSettingsBrokerHost, "172.20.32.10").toString();
+}
+int brokerPort() {
+    QSettings s;
+    return s.value(kSettingsBrokerPort, 1883).toInt();
+}
+
+// 이 시간이 지나도록 새 값이 안 오면 화면의 생체값을 "--" 로 되돌린다.
+// 웨어러블이 빠졌거나 중계 노드가 죽은 걸 관제사가 알아야 하는데, 마지막 값이
+// 계속 떠 있으면 멀쩡한 줄 안다.
+constexpr qint64 kVitalStaleMs = 30000;   // 30초
 }  // namespace
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
@@ -289,6 +307,23 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // MQTT 브로커 접속 — 웨어러블 생체·낙상을 받고, 알림 노드에 제어 명령을 보낸다.
+    // 영상 경로(TCP 5500)와는 완전히 별개의 연결이다.
+    // 브로커가 아직 안 떠 있어도 MqttQtManager 가 5초마다 다시 붙으려 시도하므로
+    // 여기서 실패를 따로 처리하지 않는다.
+    mqtt = new MqttQtManager(this);
+    connect(mqtt, &MqttQtManager::wearableDataReceived, this, &MainWindow::onWearableData);
+    connect(mqtt, &MqttQtManager::alarmCommandReceived, this, &MainWindow::onMqttAlarm);
+    connect(mqtt, &MqttQtManager::connected,            this, &MainWindow::onMqttConnected);
+    connect(mqtt, &MqttQtManager::disconnected,         this, &MainWindow::onMqttDisconnected);
+    connect(mqtt, &MqttQtManager::connectionError,      this, &MainWindow::onMqttError);
+    connect(mqtt, &MqttQtManager::payloadRejected, this,
+            [](const QString& topic, const QString& why) {
+                // 다른 노드가 형식을 바꿨을 때 조용히 묻히지 않게 남긴다.
+                qWarning() << "[MQTT] 형식이 맞지 않는 메시지 무시:" << topic << why;
+            });
+    mqtt->init(brokerHost(), brokerPort());
 
     // 케어 타임 대시보드: 10초마다 care_logs를 재조회해 채널별 케어시간 갱신.
     connect(&careTimeTimer, &QTimer::timeout, this, &MainWindow::updateCareTime);
@@ -1939,26 +1974,48 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
 }
 
 // ═══════════════════════════════════════════════════════════
-//  웨어러블 바이탈 (현재는 시뮬레이션 — 실제 데이터 연동 지점)
+//  웨어러블 바이탈 — MQTT(veda/wearable/data)로 들어온 값을 표시한다.
+//
+//  값이 없거나 오래된 채널은 "--" 로 둔다. 그럴듯한 숫자를 대신 띄우면
+//  관제사가 멀쩡한 줄 알기 때문에, 모를 때는 모른다고 표시한다.
+//
+//  이 함수는 "표시만" 담당한다. 값 저장과 그래프 점 추가는 데이터가 실제로
+//  도착한 순간(onWearableData)에 하고, 여기 타이머는 신호가 끊긴 걸 시간이
+//  지나 알아채는 역할이다. (팔레트 전환 때도 색을 다시 입히려고 호출된다)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::updateVitals()
 {
-    auto* rng = QRandomGenerator::global();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     for (int i = 0; i < 4; ++i) {
-        // 목업: 기본은 정상 범위 (36.3~37.0℃ / 64~88bpm)
-        double temp = 36.3 + rng->bounded(70) / 100.0;
-        int hr = 64 + rng->bounded(24);
+        const VitalSample& v = vitals_[i];
+        const bool fresh = v.received && (now - v.arrivedAtMs) <= kVitalStaleMs;
 
-        // 전승현(채널 0)만 테스트로 급등/급락을 섞어 그래프가 임계선을 넘는 걸 보여준다.
-        if (i == 0) {
-            const int roll = rng->bounded(100);
-            if      (roll < 15) hr = 112 + rng->bounded(28);  // 급등 112~139 (위험)
-            else if (roll < 25) hr = 40  + rng->bounded(9);   // 급락 40~48  (위험)
-            else if (roll < 42) hr = 96  + rng->bounded(13);  // 상승 96~108 (주의)
-            // 나머지는 정상 유지
+        if (!fresh) {
+            const QString dim = kTextSub;
+            tempValues[i]->setText(QStringLiteral("--"));
+            tempValues[i]->setStyleSheet(QString("color:%1;").arg(dim));
+            hrValues[i]->setText(QStringLiteral("--"));
+            hrValues[i]->setStyleSheet(QString("color:%1;").arg(dim));
+
+            vitalStatusDots[i]->setStyleSheet(
+                QString("background:%1; border-radius:4px;").arg(dim));
+
+            // 한 번도 못 받은 것과 받다가 끊긴 것을 구분한다 — 대응이 다르다.
+            // (전자는 등록/배선 문제, 후자는 기기가 빠졌거나 중계 노드가 죽은 것)
+            vitalStatusBadges[i]->setText(v.received ? QStringLiteral("신호 끊김")
+                                                     : QStringLiteral("대기"));
+            vitalStatusBadges[i]->setStyleSheet(QString(
+                "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
+                " padding:1px 10px; font-size:11px; font-weight:800;")
+                .arg(dim, blendHex(dim, kCard, 0.18)));
+
+            if (hrSpark[i]) hrSpark[i]->setLineColor(QColor(dim));
+            continue;
         }
 
+        const double temp = v.temperature;
+        const int    hr   = v.heartRate;
         const QString color = vitalColor(temp, hr);
 
         tempValues[i]->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
@@ -1975,11 +2032,77 @@ void MainWindow::updateVitals()
             " padding:1px 10px; font-size:11px; font-weight:800;")
             .arg(color, blendHex(color, kCard, 0.18)));
 
-        if (hrSpark[i]) {
-            hrSpark[i]->setLineColor(QColor(color));
-            hrSpark[i]->addValue(hr);
-        }
+        // 그래프에 점을 찍는 건 여기가 아니라 onWearableData 다. 이 함수는 2초마다
+        // 불리는데 여기서 addValue 를 하면 새 값이 없어도 같은 값이 계속 쌓여
+        // 실제 측정 간격이 그래프에서 사라진다.
+        if (hrSpark[i]) hrSpark[i]->setLineColor(QColor(color));
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MQTT 수신 — 웨어러블 생체·낙상 (veda/wearable/data)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onWearableData(const WearableData& data)
+{
+    // 브로커는 기기 id 로만 알려준다. 화면은 채널(0~3)로 돼 있어 다리를 건넌다.
+    // 등록되지 않은 기기는 어느 채널 것인지 알 수 없어 버린다 — 엉뚱한 채널에
+    // 남의 심박수를 띄우느니 안 띄우는 편이 낫다.
+    const QString id = QString::fromStdString(data.device_id).trimmed();
+    const auto it = wearableToChannel.constFind(id);
+    if (it == wearableToChannel.constEnd()) {
+        qDebug() << "[MQTT] 미등록 웨어러블 무시:" << id
+                 << "(residents.wearable_id 에 등록하면 해당 채널에 표시됩니다)";
+        return;
+    }
+
+    const int ch = it.value();
+    if (ch < 0 || ch >= 4) return;
+
+    VitalSample& v = vitals_[ch];
+    v.received    = true;
+    v.temperature = data.temperature;
+    v.heartRate   = data.heart_rate;
+    v.spo2        = data.spo2;
+    v.arrivedAtMs = QDateTime::currentMSecsSinceEpoch();
+
+    // 그래프 점은 값이 실제로 도착했을 때만 찍는다.
+    if (hrSpark[ch]) hrSpark[ch]->addValue(data.heart_rate);
+
+    // 웨어러블이 낙상을 감지한 경우. 카메라 낙상(TCP 0xDB4D)과는 별개 경로라
+    // 같은 사건이 두 번 들어올 수 있다 — 이미 경보 중인 채널은 다시 울리지 않는다.
+    if (data.is_fall_detected && !fallActive[ch]) {
+        qDebug() << "[MQTT] 웨어러블 낙상 감지 — 채널" << ch << "기기" << id;
+    }
+
+    updateVitals();   // 도착 즉시 화면 반영 (2초 타이머를 기다리지 않는다)
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MQTT 수신 — 알림 노드로 나간 제어 명령 (veda/alarm/control)
+//  우리가 보낸 것도 되돌아오므로, 로그에 쌓을 때는 걸러야 한다.
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onMqttAlarm(const AlarmCommand& cmd)
+{
+    qDebug() << "[MQTT] 알림 명령:"
+             << QString::fromStdString(cmd.type)
+             << QString::fromStdString(cmd.room)
+             << QString::fromStdString(cmd.message);
+}
+
+void MainWindow::onMqttConnected()
+{
+    qInfo() << "[MQTT] 브로커 연결됨 —" << brokerHost() << ":" << brokerPort();
+}
+
+void MainWindow::onMqttDisconnected()
+{
+    // 값이 끊긴 건 updateVitals 가 30초 뒤 "신호 끊김" 으로 알려준다.
+    qWarning() << "[MQTT] 브로커 연결 끊김";
+}
+
+void MainWindow::onMqttError(const QString& message)
+{
+    qWarning() << "[MQTT]" << message;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2148,6 +2271,7 @@ void MainWindow::onReadyRead()
         //qDebug() << "Channel:" << ch << " | Latency:" << latency << "ms";
 
         const QPixmap pix = QPixmap::fromImage(image);
+        lastFramePix_[ch] = pix;           // 이미지 탭 Before/After 프리뷰용 최신본 보관
         channelViews[ch]->setFrame(pix);
         channelViews[ch]->setLive(true);   // 프레임 도착 → LIVE 표시등 점등
         // ROI 편집기가 이 채널을 보고 있으면 팝업 영상도 실시간 갱신.
@@ -2491,6 +2615,213 @@ void MainWindow::sendCameraClear(int channel)
     sock->flush();
 }
 
+// ═══════════════════════════════════════════════════════════
+//  카메라 이미지 파라미터 전송 — 슬라이더 값(0~100)을 IMAGE_SET 제어 메시지로
+//  담당 Pi 서버에 보낸다. 실제 카메라 적용(ONVIF/SUNAPI)은 서버가 수행한다.
+//  (sendCamera와 동일한 패턴 — 헤더 뒤에 4바이트 dbj_image_params_t를 붙임)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::sendImageParams(int channel, int b, int c, int s)
+{
+    QTcpSocket* sock = socketForChannel(channel);   // 이 채널 담당 Pi 소켓
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        QMessageBox::warning(this, QStringLiteral("전송 실패"),
+                             QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlImageSet;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = sizeof(dbj_image_params_t);   // 이어지는 파라미터 바이트 수
+
+    dbj_image_params_t ip;
+    ip.brightness = static_cast<uint8_t>(qBound(0, b, 100));
+    ip.contrast   = static_cast<uint8_t>(qBound(0, c, 100));
+    ip.saturation = static_cast<uint8_t>(qBound(0, s, 100));
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h),  sizeof(h));
+    pkt.append(reinterpret_cast<const char*>(&ip), sizeof(ip));
+    sock->write(pkt);
+    sock->flush();
+}
+
+// 카메라 초점 제어 — FOCUS_SET 제어 메시지로 담당 Pi에 전송. 실제 적용(SUNAPI
+// SimpleFocus)은 서버가 수행. area=false 전체 자동초점, true 클릭 지점 영역 초점.
+void MainWindow::sendFocus(int channel, bool area, float nx, float ny)
+{
+    QTcpSocket* sock = socketForChannel(channel);
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        QMessageBox::warning(this, QStringLiteral("전송 실패"),
+                             QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlFocusSet;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = sizeof(dbj_focus_t);
+
+    dbj_focus_t f;
+    f.mode = area ? kFocusArea : kFocusWhole;
+    f.reserved = 0;
+    f.x = static_cast<uint16_t>(qBound(0, int(nx * kRoiCoordScale), kRoiCoordScale));
+    f.y = static_cast<uint16_t>(qBound(0, int(ny * kRoiCoordScale), kRoiCoordScale));
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    pkt.append(reinterpret_cast<const char*>(&f), sizeof(f));
+    sock->write(pkt);
+    sock->flush();
+}
+
+// imgAfter(실시간 프리뷰) 클릭 → 클릭한 지점에 영역 초점. 레터박스(KeepAspectRatio)
+// 여백을 빼고 실제 표시된 이미지 안에서의 정규화 좌표를 계산한다.
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (obj == imgAfter && ev->type() == QEvent::MouseButtonPress) {
+        const QPixmap pm = imgAfter->pixmap();   // 현재 표시 중인(스케일된) 프레임
+        if (!pm.isNull()) {
+            const QSize ls = imgAfter->size();
+            const QSize ps = pm.size();           // 레터박스 안 실제 이미지 크기
+            const double ox = (ls.width()  - ps.width())  / 2.0;
+            const double oy = (ls.height() - ps.height()) / 2.0;
+            auto* me = static_cast<QMouseEvent*>(ev);
+            const double px = me->position().x() - ox;
+            const double py = me->position().y() - oy;
+            if (px >= 0 && py >= 0 && px < ps.width() && py < ps.height()) {
+                sendFocus(imgChannel->currentIndex(), true,
+                          float(px / ps.width()), float(py / ps.height()));
+            }
+        }
+        return true;   // 이 클릭은 소비
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
+// "카메라 설정" 팝업의 "이미지" 탭 — 밝기/대비/채도 슬라이더 + Before/After
+// 프리뷰. 채널 선택 후 [적용]을 누르면 값을 서버로 보내고(카메라에 실제 반영),
+// 실시간(After) 뷰가 바뀌어 적용 전(Before) 스냅샷과 비교된다.
+// (노출은 ONVIF에서 수동모드 전환이 필요해 야간감지에 위험 → 제외)
+QWidget* MainWindow::buildImageTab()
+{
+    auto* tab = new QWidget();
+    auto* col = new QVBoxLayout(tab);
+    col->setContentsMargins(4, 8, 4, 4);
+    col->setSpacing(10);
+
+    // 대상 채널 선택
+    imgChannel = new QComboBox();
+    for (int i = 0; i < 4; ++i)
+        imgChannel->addItem(QStringLiteral("채널 %1").arg(i + 1));
+    auto* chRow = new QHBoxLayout();
+    chRow->addWidget(new QLabel(QStringLiteral("대상 채널")));
+    chRow->addWidget(imgChannel);
+    chRow->addStretch();
+    col->addLayout(chRow);
+
+    // 슬라이더 3종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
+    imgBright     = new ClickSlider();
+    imgContrast   = new ClickSlider();
+    imgSaturation = new ClickSlider();
+    auto* form = new QFormLayout();
+    form->setLabelAlignment(Qt::AlignLeft);
+    form->addRow(QStringLiteral("밝기"),   imgBright);
+    form->addRow(QStringLiteral("대비"),   imgContrast);
+    form->addRow(QStringLiteral("채도"),   imgSaturation);
+    col->addLayout(form);
+
+    // Before / After 프리뷰 (좌: 적용 전 스냅샷, 우: 실시간)
+    // 고정 크기 대신 남은 공간을 꽉 채우도록 확장(Expanding). 이미지는 KeepAspectRatio라
+    // 검은 배경 위에 레터박스로 얹힌다(왜곡 없음). 실시간 갱신 타이머가 현재 크기에
+    // 맞춰 다시 스케일하므로 창을 키우면 프리뷰도 같이 커진다.
+    imgBefore = new QLabel(QStringLiteral("적용 전"));
+    imgAfter  = new QLabel(QStringLiteral("실시간"));
+    for (QLabel* p : {imgBefore, imgAfter}) {
+        p->setMinimumSize(320, 200);
+        p->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        p->setAlignment(Qt::AlignCenter);
+        p->setStyleSheet(QString("background:#000; color:%1; border:1px solid %2;")
+                             .arg(kTextSub).arg(kBorder));
+    }
+    auto* capRow = new QHBoxLayout();
+    capRow->addWidget(new QLabel(QStringLiteral("적용 전")), 1, Qt::AlignHCenter);
+    capRow->addWidget(new QLabel(QStringLiteral("적용 후(실시간)")), 1, Qt::AlignHCenter);
+    auto* pv = new QHBoxLayout();
+    pv->addWidget(imgBefore, 1);
+    pv->addWidget(imgAfter, 1);
+    col->addLayout(capRow);
+    col->addLayout(pv, 1);   // 세로로 남는 공간을 프리뷰가 전부 차지
+
+    // 적용 / 초기화
+    auto* apply = new QPushButton(QStringLiteral("적용"));
+    apply->setObjectName("roiButton");
+    apply->setCursor(Qt::PointingHandCursor);
+    auto* reset = new QPushButton(QStringLiteral("초기화"));
+    reset->setObjectName("roiClear");
+    reset->setCursor(Qt::PointingHandCursor);
+    auto* br = new QHBoxLayout();
+    br->addStretch();
+    br->addWidget(reset);
+    br->addWidget(apply);
+    col->addLayout(br);
+
+    // 포커스 (SUNAPI SimpleFocus) — 전체 자동초점 버튼 + 클릭-투-포커스 안내.
+    auto* afBtn = new QPushButton(QStringLiteral("전체 자동초점"));
+    afBtn->setObjectName("roiButton");
+    afBtn->setCursor(Qt::PointingHandCursor);
+    auto* focusHint = new QLabel(
+        QStringLiteral("💡 오른쪽 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
+    focusHint->setStyleSheet(QString("color:%1;").arg(kTextSub));
+    auto* fr = new QHBoxLayout();
+    fr->addWidget(afBtn);
+    fr->addWidget(focusHint, 1);
+    col->addLayout(fr);
+    connect(afBtn, &QPushButton::clicked, this, [this]() {
+        sendFocus(imgChannel->currentIndex(), false, 0.0f, 0.0f);
+    });
+    // 실시간 프리뷰 클릭 → 클릭 지점 영역 초점 (eventFilter가 처리)
+    imgAfter->installEventFilter(this);
+    imgAfter->setCursor(Qt::PointingHandCursor);
+
+    connect(apply, &QPushButton::clicked, this, [this]() {
+        const int ch = imgChannel->currentIndex();
+        // 적용 직전 현재 프레임을 Before 스냅샷으로 고정
+        if (!lastFramePix_[ch].isNull())
+            imgBefore->setPixmap(lastFramePix_[ch].scaled(
+                imgBefore->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        sendImageParams(ch, imgBright->value(), imgContrast->value(),
+                        imgSaturation->value());
+    });
+    connect(reset, &QPushButton::clicked, this, [this]() {
+        for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
+            s->setValue(50);
+    });
+
+    // 실시간(After) 갱신 — 선택 채널의 최신 프레임을 주기적으로 표시.
+    // 팝업이 보일 때만 그린다(불필요한 스케일 부하 방지).
+    auto* t = new QTimer(tab);
+    connect(t, &QTimer::timeout, this, [this]() {
+        if (!imgAfter || !cameraSettingsDialog || !cameraSettingsDialog->isVisible())
+            return;
+        const int ch = imgChannel->currentIndex();
+        if (lastFramePix_[ch].isNull()) return;
+        imgAfter->setPixmap(lastFramePix_[ch].scaled(
+            imgAfter->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
+    t->start(200);
+
+    for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
+        s->setValue(50);   // 중앙값에서 시작
+    return tab;
+}
+
 // "카메라 설정" 팝업을 최초 1회 구성 — 카메라·ROI 작업을 팝업 안에서 직접 한다.
 //   · 카메라 탭: 접속 정보 + [검색] → 결과표(팝업 내부에 채워짐) + [연결]/[해제]
 //   · ROI 탭:   채널 선택 → 그 채널 영상을 팝업에 표시 → 그 위에 직접 ROI 그림
@@ -2712,6 +3043,9 @@ void MainWindow::buildCameraSettingsDialog()
     roiV->addLayout(roiBtnRow);
 
     tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
+
+    // ══════════ 탭 3: 이미지 (밝기/대비/채도) ══════════
+    tabs->addTab(buildImageTab(), QStringLiteral("이미지"));
 
     v->addWidget(tabs, 1);
 
@@ -2989,6 +3323,11 @@ void MainWindow::onAlarmClearClicked()
                 packetSent = true;
                 qDebug() << "🔓 [Qt -> 서버] 채널" << channel << "경보 확인 및 모자이크 복구 패킷 전송!";
             }
+
+            // 서버로 보내는 0x03 은 "모자이크를 다시 씌워라"는 뜻이고, 현장의
+            // 사이렌·LED 는 알림 노드가 들고 있어 브로커를 통해 따로 꺼야 한다.
+            // 경로가 달라 TCP 성공 여부와 무관하게 보낸다.
+            if (mqtt) mqtt->sendAlarmClear(patients[channel].room);
         }
     }
 
@@ -3097,11 +3436,13 @@ void MainWindow::loadPatientsFromDb()
 {
     for (int ch = 0; ch < 4; ++ch)
         patients[ch] = { QStringLiteral("미배정"),
-                         QStringLiteral("채널 %1").arg(ch + 1) };
+                         QStringLiteral("채널 %1").arg(ch + 1),
+                         QString() };
+    wearableToChannel.clear();
 
     QSqlQuery q;
     if (!q.exec(QStringLiteral(
-            "SELECT camera_id, name FROM residents "
+            "SELECT camera_id, name, room, wearable_id FROM residents "
             "WHERE status='재원' AND camera_id BETWEEN 0 AND 3 "
             "ORDER BY camera_id, resident_id"))) {
         qDebug() << "채널 환자 매핑 조회 실패:" << q.lastError().text();
@@ -3111,11 +3452,20 @@ void MainWindow::loadPatientsFromDb()
     bool assigned[4] = {};
     while (q.next()) {
         const int ch = q.value(0).toInt();
-        if (ch < 0 || ch >= 4 || assigned[ch]) continue;   // 채널당 대표 1명만
+        if (ch < 0 || ch >= 4) continue;
+
+        // 웨어러블은 대표 1명만이 아니라 그 채널에 있는 모든 입소자 것을 등록한다.
+        // 브로커는 기기 id("wear_01")로만 알려주므로, 여기 등록이 빠지면 그 기기가
+        // 보낸 값은 어느 채널 것인지 몰라 버려진다.
+        const QString wearable = q.value(3).toString().trimmed();
+        if (!wearable.isEmpty()) wearableToChannel.insert(wearable, ch);
+
+        if (assigned[ch]) continue;   // 화면 표시는 기존대로 채널당 대표 1명만
         assigned[ch] = true;
         patients[ch].name = q.value(1).toString();
         // 위치는 채널로만 표기(bed 필드에 "채널 N"). 기본값과 동일 형식.
         patients[ch].bed  = QStringLiteral("채널 %1").arg(ch + 1);
+        patients[ch].room = q.value(2).toString();
     }
 }
 

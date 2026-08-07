@@ -33,4 +33,4 @@ fi
 
 echo "===== 설치 완료 ====="
 echo "빌드: cmake -S . -B build && cmake --build build"
-echo "실행: ./build/relay_node"
+echo "실행: ./relay_node"

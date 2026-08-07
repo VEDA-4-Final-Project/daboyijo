@@ -1,5 +1,6 @@
 #include "blackbox_module.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -14,11 +15,38 @@ constexpr double kBlackboxPreSec = 5.0;
 constexpr double kBlackboxPostSec = 5.0;
 // 저장된 클립을 Qt가 QMediaPlayer로 바로 재생할 수 있게 서빙하는 HTTP 포트.
 constexpr int kClipHttpPort = 5501;
+// 마감 시각이 지난 클립을 확인하는 주기. 사람이 체감할 만큼만 빠르면 되고,
+// 평상시엔 recorders_를 한 번 훑고 끝이라 부담이 없다.
+constexpr auto kWatchdogPeriod = std::chrono::milliseconds(1000);
 
 }  // namespace
 
 BlackboxModule::BlackboxModule() : http_(kClipHttpPort, kBlackboxDir) {
     std::filesystem::create_directories(kBlackboxDir);
+    watchdog_running_.store(true);
+    watchdog_ = std::thread(&BlackboxModule::watchdogLoop, this);
+}
+
+BlackboxModule::~BlackboxModule() {
+    watchdog_running_.store(false);
+    watchdog_cv_.notify_all();
+    if (watchdog_.joinable()) watchdog_.join();
+}
+
+void BlackboxModule::watchdogLoop() {
+    while (watchdog_running_.load()) {
+        {
+            std::unique_lock<std::mutex> lock(watchdog_mutex_);
+            watchdog_cv_.wait_for(lock, kWatchdogPeriod,
+                                  [this] { return !watchdog_running_.load(); });
+        }
+        if (!watchdog_running_.load()) break;
+
+        std::lock_guard<std::mutex> lock(recorders_mutex_);
+        for (auto& entry : recorders_) {
+            entry.second->flushIfDue();
+        }
+    }
 }
 
 void BlackboxModule::startHttp() {
@@ -51,16 +79,20 @@ void BlackboxModule::attachChannel(RtspAvClient& client) {
     client.setPacketCallback([recorder_ptr](const AVPacket* pkt) {
         recorder_ptr->onPacket(pkt);
     });
+
+    std::lock_guard<std::mutex> lock(recorders_mutex_);
     recorders_[ch] = std::move(recorder);
 }
 
 int64_t BlackboxModule::trigger(int channel, const std::string& eventType) {
+    std::lock_guard<std::mutex> lock(recorders_mutex_);
     auto it = recorders_.find(channel);
     if (it == recorders_.end()) return 0;
     return it->second->trigger(eventType);
 }
 
 void BlackboxModule::flushAll() {
+    std::lock_guard<std::mutex> lock(recorders_mutex_);
     for (auto& entry : recorders_) {
         entry.second->flush();
     }

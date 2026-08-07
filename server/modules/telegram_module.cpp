@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <string>
 #include <thread>
 #include <utility>
@@ -20,6 +21,18 @@ size_t collectWrite(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* s = static_cast<std::string*>(userdata);
     s->append(ptr, size * nmemb);
     return size * nmemb;
+}
+
+// 다음 로컬 자정(오늘 23:59:59 다음 순간). "오늘 하루만 무음"의 만료 시각으로 쓴다.
+std::chrono::system_clock::time_point nextLocalMidnight() {
+    std::time_t now = std::time(nullptr);
+    std::tm tm = *std::localtime(&now);
+    tm.tm_hour = 0;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    tm.tm_mday += 1;     // 내일 00:00
+    tm.tm_isdst = -1;    // DST는 mktime이 알아서
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
 }
 
 }  // namespace
@@ -56,16 +69,40 @@ bool TelegramModule::isAuthorized(const std::string& chat_id) const {
 }
 
 void TelegramModule::notifyFall(int channel) {
-    sendAsync(channel, "🚨 [ch" + std::to_string(channel + 1) + "] 낙상이 감지되었습니다. 확인 바랍니다.");
+    // 낙상은 안전상 무음(🔕)이어도 반드시 전송한다.
+    sendAsync(channel, "🚨 [ch" + std::to_string(channel + 1) + "] 낙상이 감지되었습니다. 확인 바랍니다.",
+              /*respect_mute=*/false);
 }
 
 void TelegramModule::notifyEgress(int channel) {
-    sendAsync(channel, "⚠️ [ch" + std::to_string(channel + 1) + "] 침상 이탈이 감지되었습니다.");
+    // 침상 이탈은 무음 대상 — 오늘 알림 끄기(🔕) 중이면 전송 생략.
+    sendAsync(channel, "⚠️ [ch" + std::to_string(channel + 1) + "] 침상 이탈이 감지되었습니다.",
+              /*respect_mute=*/true);
 }
 
-void TelegramModule::sendAsync(int channel, std::string text) const {
+bool TelegramModule::isMuted(int channel) const {
+    std::lock_guard<std::mutex> lock(mute_mutex_);
+    auto it = mute_until_.find(channel);
+    return it != mute_until_.end() &&
+           std::chrono::system_clock::now() < it->second;
+}
+
+bool TelegramModule::toggleMute(int channel) {
+    std::lock_guard<std::mutex> lock(mute_mutex_);
+    auto it = mute_until_.find(channel);
+    if (it != mute_until_.end() &&
+        std::chrono::system_clock::now() < it->second) {
+        mute_until_.erase(it);  // 무음 → 해제
+        return false;
+    }
+    mute_until_[channel] = nextLocalMidnight();  // 오늘 자정까지 무음
+    return true;
+}
+
+void TelegramModule::sendAsync(int channel, std::string text, bool respect_mute) const {
     const std::string& chat_id_ref = resolveChatId(channel);
     if (bot_token_.empty() || chat_id_ref.empty()) return;  // 미설정 시 무시(데모 편의)
+    if (respect_mute && isMuted(channel)) return;  // 🔕 오늘 알림 끄기 — 낙상은 예외(항상 전송)
 
     // RTSP/AI 워커 스레드에서 호출되므로, HTTPS 왕복 지연이 실시간 파이프라인을
     // 막지 않도록 별도 스레드에서 전송하고 결과를 기다리지 않는다.
@@ -94,8 +131,10 @@ void TelegramModule::sendAsync(int channel, std::string text) const {
 }
 
 // ── 봇 응답: 특정 chat_id로 직접 전송 (동기, 호출자 스레드에서 왕복) ──
+// reply_markup(인라인 키보드 JSON)이 있으면 버튼도 함께 붙인다.
 void TelegramModule::sendMessage(const std::string& chat_id,
-                                 const std::string& text) const {
+                                 const std::string& text,
+                                 const std::string& reply_markup) const {
     if (bot_token_.empty() || chat_id.empty()) return;
     CURL* curl = curl_easy_init();
     if (!curl) return;
@@ -105,12 +144,36 @@ void TelegramModule::sendMessage(const std::string& chat_id,
     std::string fields = "chat_id=" + std::string(chat_id_esc) + "&text=" + std::string(text_esc);
     curl_free(chat_id_esc);
     curl_free(text_esc);
+    if (!reply_markup.empty()) {
+        char* rm_esc = curl_easy_escape(curl, reply_markup.c_str(), 0);
+        fields += "&reply_markup=" + std::string(rm_esc);
+        curl_free(rm_esc);
+    }
 
     std::string url = "https://api.telegram.org/bot" + bot_token_ + "/sendMessage";
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fields.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discardWrite);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+}
+
+// ── 버튼 클릭 확인(answerCallbackQuery) — 누른 버튼의 로딩 스피너를 꺼준다 ──
+void TelegramModule::answerCallbackQuery(const std::string& callback_query_id) const {
+    if (bot_token_.empty() || callback_query_id.empty()) return;
+    CURL* curl = curl_easy_init();
+    if (!curl) return;
+
+    char* id_esc = curl_easy_escape(curl, callback_query_id.c_str(), 0);
+    std::string fields = "callback_query_id=" + std::string(id_esc);
+    curl_free(id_esc);
+
+    std::string url = "https://api.telegram.org/bot" + bot_token_ + "/answerCallbackQuery";
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, fields.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discardWrite);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
     curl_easy_perform(curl);
     curl_easy_cleanup(curl);
 }
@@ -198,6 +261,38 @@ void TelegramModule::pollLoop() {
             if (!j.value("ok", false)) continue;
             for (const auto& upd : j.at("result")) {
                 update_offset_ = upd.at("update_id").get<int64_t>() + 1;
+
+                // ── 인라인 버튼 클릭 ──
+                if (upd.contains("callback_query")) {
+                    const auto& cq = upd.at("callback_query");
+                    // 어느 버튼이든 스피너부터 끈다(응답 여부와 무관하게).
+                    if (cq.contains("id")) {
+                        answerCallbackQuery(cq.at("id").get<std::string>());
+                    }
+                    if (!cq.contains("data")) continue;
+                    // 회신은 버튼이 눌린 채팅으로 — 그룹에서 쓰려면 from.id(누른
+                    // 사람 개인)가 아니라 message.chat.id(그 그룹)를 써야 알림·회신이
+                    // 등록된 그룹 채팅으로 간다. 메시지가 너무 오래돼 message가 빠진
+                    // 경우에만 from.id로 폴백.
+                    std::string chat_id;
+                    if (cq.contains("message") &&
+                        cq.at("message").contains("chat")) {
+                        chat_id = std::to_string(
+                            cq.at("message").at("chat").at("id").get<int64_t>());
+                    } else if (cq.contains("from")) {
+                        chat_id = std::to_string(
+                            cq.at("from").at("id").get<int64_t>());
+                    }
+                    if (chat_id.empty()) continue;
+                    std::string data = cq.at("data").get<std::string>();
+                    if (!isAuthorized(chat_id)) continue;  // 미등록 채팅은 무시
+                    if (on_callback_) {
+                        on_callback_(resolveChannel(chat_id), chat_id, data);
+                    }
+                    continue;
+                }
+
+                // ── 일반 텍스트 메시지 → 메뉴 표시 ──
                 if (!upd.contains("message")) continue;
                 const auto& msg = upd.at("message");
                 if (!msg.contains("text") || !msg.contains("chat")) continue;

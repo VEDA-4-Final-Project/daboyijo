@@ -1,60 +1,16 @@
 #ifndef MQTT_CLIENT_VEDA
 #define MQTT_CLIENT_VEDA
 
-#include <string>
+
 #include <mosquitto.h>
 #include <functional>
 #include "ThreadSafeQueue.hpp"
-#include <nlohmann/json.hpp>
-
+#include "veda_messages.hpp"
 
 struct MqttMessage {
     std::string topic;
     std::string payload;
 };
-
-struct WearableData {
-    std::string device_id; // 웨어러블 디바이스 id
-    bool is_fall_detected;
-    double temperature;
-    int heart_rate;
-    int spo2;
-    long long timestamp;
-};
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WearableData, device_id, is_fall_detected, temperature,heart_rate, spo2, timestamp)
-
-struct AlarmCommand {
-    // 대상
-    std::string target_device;  // 알림 노드 id
-    std::string room;           // 호실
-
-    // 이벤트
-    std::string type;           // FALL | EGRESS | VITAL_ABNORMAL | CONTROL
-    std::string message;
-    
-    // 오디오
-    std::string audio_action;
-    std::string audio_file;
-    int         volume;
-    bool        loop;
-
-    // LED 매트릭스
-    std::string matrix_action;  // SHOW | CLEAR | NONE
-    int         matrix_passes;  // 반복 스크롤 횟수
-    int         brightness;     // 0 ~ 255
-
-    long long timestamp;
-};
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlarmCommand,
-    target_device, room,
-    type, message,
-    audio_action, audio_file, volume, loop,
-    matrix_action, matrix_passes, brightness,
-    timestamp)
-
-
 
 
 

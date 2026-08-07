@@ -19,7 +19,9 @@
 #include <cstdio>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <curl/curl.h>
@@ -34,6 +36,8 @@
 #include "frame_queue.hpp"
 #include "privacy_masker.hpp"
 #include "protocol/video_stream.h"
+#include "onvif_imaging.hpp"
+#include "sunapi_focus.hpp"
 #include "rtsp_av_client.hpp"
 #include "stats_reporter.hpp"
 #include "stream_server.hpp"
@@ -82,6 +86,10 @@ int main(int argc, char* argv[]) {
     // Qt의 "카메라 연결" 신호(stream_server 콜백)가 오면 그 채널만 reconnect한다.
     std::vector<std::unique_ptr<RtspAvClient>> clients;
     std::array<RtspAvClient*, 4> client_by_channel{};  // 채널→워커 (연결 신호 라우팅)
+    // 채널별 최신 RTSP URL — ONVIF 이미지 조절 시 카메라 host/계정을 여기서 파싱.
+    // 수신 스레드(CAMERA_SET)가 쓰고, 이미지 적용 스레드가 읽으므로 뮤텍스로 보호.
+    std::array<std::string, 4> cam_url_by_channel{};
+    std::mutex cam_url_mutex;
     DetectionStore detections;  // 감지 이력 저장 + 프레임-좌표 시간 매칭
     SnapshotBuffer snapshots;   // 버퍼 A: 전원 블러본 (Gemini/평상시 사진용)
     SnapshotBuffer snapshots_fall;  // 버퍼 B: 낙상 선택본 (낙상자만 노출, 보호자 사진용)
@@ -100,15 +108,20 @@ int main(int argc, char* argv[]) {
     MqttMasterManager mqtt;         // [mqtt] 
     mqtt.init("localhost",1883);
 
-    // [케어봇] 실시간 상황 질의응답: 보호자 질문 → 스냅샷 + VLM → 답변
+    // [케어봇] 버튼 메뉴 기반 상호작용: 보호자가 아무 메시지나 보내면 버튼 메뉴를
+    // 띄우고(handleMessage), 버튼 클릭(handleCallback)으로 상황 조회·연락처·알림 토글.
+    // ※ 낙상 확인(블러 원복)은 텔레그램에서 빼고 Qt 관제 화면(setConfirmCallback)만 담당.
+
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
-    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, [&](int ch) {
-        privacy_masker.clearFall(ch);  // 봇 "/확인" → 낙상 블러 원상복구
-        std::printf("ch%d 낙상 경보 확인(텔레그램).\n", ch + 1);
-    });
+    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram);
+    care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
                                    const std::string& text) {
         care_qa.handleMessage(ch, chat_id, text);
+    });
+    telegram.setCallbackHandler([&](int ch, const std::string& chat_id,
+                                    const std::string& data) {
+        care_qa.handleCallback(ch, chat_id, data);
     });
 
     // ── 모듈 간 배선 ─────────────────────────────────────────────
@@ -134,14 +147,71 @@ int main(int argc, char* argv[]) {
     stream_server.setCameraSetCallback([&](int ch, const std::string& url) {
         if (ch < 0 || ch >= 4 || !client_by_channel[ch]) return;
         std::printf("ch%d 카메라 연결 요청 수신 → RTSP 연결\n", ch + 1);
+        {
+            std::lock_guard<std::mutex> lk(cam_url_mutex);
+            cam_url_by_channel[ch] = url;  // ONVIF 이미지 조절 시 재사용
+        }
         client_by_channel[ch]->reconnect(url);
     });
     // Qt의 "카메라 해제" 신호 → 해당 채널 연결 종료 후 대기 상태로.
     stream_server.setCameraClearCallback([&](int ch) {
         if (ch < 0 || ch >= 4 || !client_by_channel[ch]) return;
         std::printf("ch%d 카메라 연결 해제\n", ch + 1);
+        {
+            std::lock_guard<std::mutex> lk(cam_url_mutex);
+            cam_url_by_channel[ch].clear();
+        }
         client_by_channel[ch]->disconnect();
     });
+    // Qt의 "이미지 조절"(밝기/대비/채도) 신호 → 해당 채널 카메라에 ONVIF 적용.
+    // ONVIF는 블로킹 HTTP라 수신 스레드를 막지 않도록 분리 스레드에서 처리한다.
+    stream_server.setImageSetCallback(
+        [&](int ch, int b, int c, int s) {
+            if (ch < 0 || ch >= 4) return;
+            std::string url;
+            {
+                std::lock_guard<std::mutex> lk(cam_url_mutex);
+                url = cam_url_by_channel[ch];
+            }
+            if (url.empty()) {
+                std::fprintf(stderr, "[image] ch%d 카메라 미연결 — 이미지 조절 무시\n", ch + 1);
+                return;
+            }
+            OnvifImageParams p;
+            p.brightness = b; p.contrast = c; p.saturation = s;
+            std::thread([ch, url, p]() {
+                std::string err;
+                if (applyOnvifImaging(url, p, &err))
+                    std::fprintf(stderr, "[image] ch%d 이미지 적용 성공\n", ch + 1);
+                else
+                    std::fprintf(stderr, "[image] ch%d 이미지 적용 실패: %s\n",
+                                 ch + 1, err.c_str());
+            }).detach();
+        });
+    // Qt의 "포커스" 신호 → 해당 채널 카메라에 SUNAPI SimpleFocus 적용.
+    // area=false 전체 자동초점, area=true 클릭 지점(정규화 좌표) 영역 초점.
+    stream_server.setFocusCallback(
+        [&](int ch, bool area, float nx, float ny) {
+            if (ch < 0 || ch >= 4) return;
+            std::string url;
+            {
+                std::lock_guard<std::mutex> lk(cam_url_mutex);
+                url = cam_url_by_channel[ch];
+            }
+            if (url.empty()) {
+                std::fprintf(stderr, "[focus] ch%d 카메라 미연결 — 초점 무시\n", ch + 1);
+                return;
+            }
+            std::thread([ch, url, area, nx, ny]() {
+                std::string err;
+                if (sunapiFocus(url, ch, area, nx, ny, &err))
+                    std::fprintf(stderr, "[focus] ch%d 초점 적용 성공%s\n", ch + 1,
+                                 area ? " (영역)" : " (전체)");
+                else
+                    std::fprintf(stderr, "[focus] ch%d 초점 적용 실패: %s\n",
+                                 ch + 1, err.c_str());
+            }).detach();
+        });
     // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
         std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) obj=%d cx=%.2f cy=%.2f\n",
