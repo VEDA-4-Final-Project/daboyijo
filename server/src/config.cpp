@@ -58,6 +58,14 @@ ServerConfig loadServerConfig(const std::string& path) {
             if (!value.empty()) config.db_host = value;
             continue;
         }
+        if (key == "care_contact_caregiver") {
+            config.care_contact_caregiver = value;
+            continue;
+        }
+        if (key == "care_contact_manager") {
+            config.care_contact_manager = value;
+            continue;
+        }
         static const std::string kChatIdPrefix = "telegram_chat_id_";
         if (key.size() > kChatIdPrefix.size() &&
             key.compare(0, kChatIdPrefix.size(), kChatIdPrefix) == 0) {

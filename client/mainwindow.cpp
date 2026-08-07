@@ -151,8 +151,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.10";
+const char* kDefaultHostB  = "172.20.32.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -2620,7 +2620,7 @@ void MainWindow::sendCameraClear(int channel)
 //  담당 Pi 서버에 보낸다. 실제 카메라 적용(ONVIF/SUNAPI)은 서버가 수행한다.
 //  (sendCamera와 동일한 패턴 — 헤더 뒤에 4바이트 dbj_image_params_t를 붙임)
 // ═══════════════════════════════════════════════════════════
-void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
+void MainWindow::sendImageParams(int channel, int b, int c, int s)
 {
     QTcpSocket* sock = socketForChannel(channel);   // 이 채널 담당 Pi 소켓
     if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
@@ -2635,12 +2635,11 @@ void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
     h.type = kCtrlImageSet;
     h.channel = static_cast<uint8_t>(channel);
     h.point_count = 0;
-    h.reserved = sizeof(dbj_image_params_t);   // 이어지는 파라미터 바이트 수(4)
+    h.reserved = sizeof(dbj_image_params_t);   // 이어지는 파라미터 바이트 수
 
     dbj_image_params_t ip;
     ip.brightness = static_cast<uint8_t>(qBound(0, b, 100));
     ip.contrast   = static_cast<uint8_t>(qBound(0, c, 100));
-    ip.exposure   = static_cast<uint8_t>(qBound(0, e, 100));
     ip.saturation = static_cast<uint8_t>(qBound(0, s, 100));
 
     QByteArray pkt;
@@ -2650,9 +2649,66 @@ void MainWindow::sendImageParams(int channel, int b, int c, int e, int s)
     sock->flush();
 }
 
-// "카메라 설정" 팝업의 "이미지" 탭 — 밝기/대비/노출/채도 슬라이더 + Before/After
+// 카메라 초점 제어 — FOCUS_SET 제어 메시지로 담당 Pi에 전송. 실제 적용(SUNAPI
+// SimpleFocus)은 서버가 수행. area=false 전체 자동초점, true 클릭 지점 영역 초점.
+void MainWindow::sendFocus(int channel, bool area, float nx, float ny)
+{
+    QTcpSocket* sock = socketForChannel(channel);
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        QMessageBox::warning(this, QStringLiteral("전송 실패"),
+                             QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlFocusSet;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = sizeof(dbj_focus_t);
+
+    dbj_focus_t f;
+    f.mode = area ? kFocusArea : kFocusWhole;
+    f.reserved = 0;
+    f.x = static_cast<uint16_t>(qBound(0, int(nx * kRoiCoordScale), kRoiCoordScale));
+    f.y = static_cast<uint16_t>(qBound(0, int(ny * kRoiCoordScale), kRoiCoordScale));
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    pkt.append(reinterpret_cast<const char*>(&f), sizeof(f));
+    sock->write(pkt);
+    sock->flush();
+}
+
+// imgAfter(실시간 프리뷰) 클릭 → 클릭한 지점에 영역 초점. 레터박스(KeepAspectRatio)
+// 여백을 빼고 실제 표시된 이미지 안에서의 정규화 좌표를 계산한다.
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (obj == imgAfter && ev->type() == QEvent::MouseButtonPress) {
+        const QPixmap pm = imgAfter->pixmap();   // 현재 표시 중인(스케일된) 프레임
+        if (!pm.isNull()) {
+            const QSize ls = imgAfter->size();
+            const QSize ps = pm.size();           // 레터박스 안 실제 이미지 크기
+            const double ox = (ls.width()  - ps.width())  / 2.0;
+            const double oy = (ls.height() - ps.height()) / 2.0;
+            auto* me = static_cast<QMouseEvent*>(ev);
+            const double px = me->position().x() - ox;
+            const double py = me->position().y() - oy;
+            if (px >= 0 && py >= 0 && px < ps.width() && py < ps.height()) {
+                sendFocus(imgChannel->currentIndex(), true,
+                          float(px / ps.width()), float(py / ps.height()));
+            }
+        }
+        return true;   // 이 클릭은 소비
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
+// "카메라 설정" 팝업의 "이미지" 탭 — 밝기/대비/채도 슬라이더 + Before/After
 // 프리뷰. 채널 선택 후 [적용]을 누르면 값을 서버로 보내고(카메라에 실제 반영),
 // 실시간(After) 뷰가 바뀌어 적용 전(Before) 스냅샷과 비교된다.
+// (노출은 ONVIF에서 수동모드 전환이 필요해 야간감지에 위험 → 제외)
 QWidget* MainWindow::buildImageTab()
 {
     auto* tab = new QWidget();
@@ -2670,36 +2726,38 @@ QWidget* MainWindow::buildImageTab()
     chRow->addStretch();
     col->addLayout(chRow);
 
-    // 슬라이더 4종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
+    // 슬라이더 3종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
     imgBright     = new ClickSlider();
     imgContrast   = new ClickSlider();
-    imgExposure   = new ClickSlider();
     imgSaturation = new ClickSlider();
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignLeft);
     form->addRow(QStringLiteral("밝기"),   imgBright);
     form->addRow(QStringLiteral("대비"),   imgContrast);
-    form->addRow(QStringLiteral("노출"),   imgExposure);
     form->addRow(QStringLiteral("채도"),   imgSaturation);
     col->addLayout(form);
 
     // Before / After 프리뷰 (좌: 적용 전 스냅샷, 우: 실시간)
+    // 고정 크기 대신 남은 공간을 꽉 채우도록 확장(Expanding). 이미지는 KeepAspectRatio라
+    // 검은 배경 위에 레터박스로 얹힌다(왜곡 없음). 실시간 갱신 타이머가 현재 크기에
+    // 맞춰 다시 스케일하므로 창을 키우면 프리뷰도 같이 커진다.
     imgBefore = new QLabel(QStringLiteral("적용 전"));
     imgAfter  = new QLabel(QStringLiteral("실시간"));
     for (QLabel* p : {imgBefore, imgAfter}) {
-        p->setFixedSize(300, 170);
+        p->setMinimumSize(320, 200);
+        p->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         p->setAlignment(Qt::AlignCenter);
         p->setStyleSheet(QString("background:#000; color:%1; border:1px solid %2;")
                              .arg(kTextSub).arg(kBorder));
     }
     auto* capRow = new QHBoxLayout();
-    capRow->addWidget(new QLabel(QStringLiteral("적용 전")), 0, Qt::AlignHCenter);
-    capRow->addWidget(new QLabel(QStringLiteral("적용 후(실시간)")), 0, Qt::AlignHCenter);
+    capRow->addWidget(new QLabel(QStringLiteral("적용 전")), 1, Qt::AlignHCenter);
+    capRow->addWidget(new QLabel(QStringLiteral("적용 후(실시간)")), 1, Qt::AlignHCenter);
     auto* pv = new QHBoxLayout();
-    pv->addWidget(imgBefore);
-    pv->addWidget(imgAfter);
+    pv->addWidget(imgBefore, 1);
+    pv->addWidget(imgAfter, 1);
     col->addLayout(capRow);
-    col->addLayout(pv);
+    col->addLayout(pv, 1);   // 세로로 남는 공간을 프리뷰가 전부 차지
 
     // 적용 / 초기화
     auto* apply = new QPushButton(QStringLiteral("적용"));
@@ -2713,7 +2771,24 @@ QWidget* MainWindow::buildImageTab()
     br->addWidget(reset);
     br->addWidget(apply);
     col->addLayout(br);
-    col->addStretch();
+
+    // 포커스 (SUNAPI SimpleFocus) — 전체 자동초점 버튼 + 클릭-투-포커스 안내.
+    auto* afBtn = new QPushButton(QStringLiteral("전체 자동초점"));
+    afBtn->setObjectName("roiButton");
+    afBtn->setCursor(Qt::PointingHandCursor);
+    auto* focusHint = new QLabel(
+        QStringLiteral("💡 오른쪽 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
+    focusHint->setStyleSheet(QString("color:%1;").arg(kTextSub));
+    auto* fr = new QHBoxLayout();
+    fr->addWidget(afBtn);
+    fr->addWidget(focusHint, 1);
+    col->addLayout(fr);
+    connect(afBtn, &QPushButton::clicked, this, [this]() {
+        sendFocus(imgChannel->currentIndex(), false, 0.0f, 0.0f);
+    });
+    // 실시간 프리뷰 클릭 → 클릭 지점 영역 초점 (eventFilter가 처리)
+    imgAfter->installEventFilter(this);
+    imgAfter->setCursor(Qt::PointingHandCursor);
 
     connect(apply, &QPushButton::clicked, this, [this]() {
         const int ch = imgChannel->currentIndex();
@@ -2722,10 +2797,10 @@ QWidget* MainWindow::buildImageTab()
             imgBefore->setPixmap(lastFramePix_[ch].scaled(
                 imgBefore->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
         sendImageParams(ch, imgBright->value(), imgContrast->value(),
-                        imgExposure->value(), imgSaturation->value());
+                        imgSaturation->value());
     });
     connect(reset, &QPushButton::clicked, this, [this]() {
-        for (ClickSlider* s : {imgBright, imgContrast, imgExposure, imgSaturation})
+        for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
             s->setValue(50);
     });
 
@@ -2742,7 +2817,7 @@ QWidget* MainWindow::buildImageTab()
     });
     t->start(200);
 
-    for (ClickSlider* s : {imgBright, imgContrast, imgExposure, imgSaturation})
+    for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
         s->setValue(50);   // 중앙값에서 시작
     return tab;
 }
@@ -2969,7 +3044,7 @@ void MainWindow::buildCameraSettingsDialog()
 
     tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
 
-    // ══════════ 탭 3: 이미지 (밝기/대비/노출/채도) ══════════
+    // ══════════ 탭 3: 이미지 (밝기/대비/채도) ══════════
     tabs->addTab(buildImageTab(), QStringLiteral("이미지"));
 
     v->addWidget(tabs, 1);
