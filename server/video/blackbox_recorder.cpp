@@ -15,6 +15,19 @@ int64_t nowUnixMs() {
                std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
+
+// 한 클립의 절대 상한. 이벤트가 계속 재트리거되면 postDeadline_이 끝없이 밀리는데,
+// armed 동안에는 pre 버퍼 트리밍이 멈춰 있어 그동안 압축 패킷이 계속 쌓인다.
+// 몇 Mbps 스트림이면 1분에 수십 MB라, 라즈베리파이에서 오래 끌면 위험하다.
+// 여기서 한 번 끊고 다음 트리거가 새 클립을 시작하게 한다.
+constexpr double kMaxArmedSec = 60.0;
+
+std::chrono::steady_clock::duration toDuration(double sec) {
+    // duration<double>을 time_point에 바로 더하면 double 기반 time_point가 나와서
+    // steady_clock::time_point에 대입이 안 된다 (실제 빌드에서 걸린 에러).
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(sec));
+}
 }  // namespace
 
 BlackboxRecorder::BlackboxRecorder(int channel, std::string outputDir,
@@ -58,7 +71,7 @@ void BlackboxRecorder::onPacket(const AVPacket* pkt) {
     buf_.push_back(std::move(rec));
 
     if (armed_) {
-        if (std::chrono::steady_clock::now() >= postDeadline_) {
+        if (dueLocked()) {
             flushLocked();
         }
         return;
@@ -94,24 +107,43 @@ void BlackboxRecorder::onPacket(const AVPacket* pkt) {
 
 int64_t BlackboxRecorder::trigger(const std::string& eventType) {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // 종류가 다른 이벤트가 겹치면 지금 것을 먼저 끊어 저장한다.
+    // 파일명은 ch{채널}_{시각}_{종류}.mp4 인데 한 파일에 두 종류를 쓸 수 없다.
+    // 합쳐 버리면 저장은 첫 종류로 되는데 Qt는 두 번째 종류로 요청해서
+    // 없는 파일을 찾게 된다(낙상 직후 침상 이탈이 실제로 자주 겹친다).
+    // 끊고 새로 시작하면 두 번째 클립에 pre 구간이 거의 없지만, 그 앞부분은
+    // 이미 첫 클립에 담겨 있다.
+    if (armed_ && eventType != eventType_) {
+        flushLocked();   // armed_를 false로 되돌린다
+    }
+
+    const auto now = std::chrono::steady_clock::now();
     if (!armed_) {
         armed_ = true;
         eventUnixMs_ = nowUnixMs();
         eventType_ = eventType;
+        // 재트리거로 밀리지 않는 상한 — 여기서만 정한다
+        armDeadline_ = now + toDuration(kMaxArmedSec);
     }
-    // 재트리거(짧은 시간 안에 이벤트가 다시 발생)면 post 구간을 그만큼 연장.
-    // steady_clock::duration(정수 나노초)으로 먼저 캐스팅해야 time_point끼리
-    // 대입이 된다 (duration<double>을 바로 더하면 double 기반 time_point가
-    // 나와서 대입 불가 — 실제 빌드에서 걸린 에러).
-    postDeadline_ = std::chrono::steady_clock::now() +
-                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                        std::chrono::duration<double>(postSec_));
+    // 재트리거(짧은 시간 안에 같은 이벤트가 다시 발생)면 post 구간을 그만큼 연장
+    postDeadline_ = now + toDuration(postSec_);
     return eventUnixMs_;
 }
 
 void BlackboxRecorder::flush() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (armed_) flushLocked();
+}
+
+void BlackboxRecorder::flushIfDue() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (armed_ && dueLocked()) flushLocked();
+}
+
+bool BlackboxRecorder::dueLocked() const {
+    const auto now = std::chrono::steady_clock::now();
+    return now >= postDeadline_ || now >= armDeadline_;
 }
 
 void BlackboxRecorder::flushLocked() {
@@ -182,7 +214,6 @@ void BlackboxRecorder::flushLocked() {
     // 있다(음수 timestamp "out of range" 경고의 원인 — 실측). mp4는 누락·
     // 역행 타임스탬프를 허용하지 않으므로, 누락은 이웃 값으로 채우고 역행은
     // 직전 값 뒤로 밀어 단조 증가를 강제한다.
-    const size_t packet_count = buf_.size();
     int64_t base = AV_NOPTS_VALUE;
     for (const auto& rec : buf_) {  // 첫 유효 타임스탬프를 기준점으로
         if (rec.dts != AV_NOPTS_VALUE) { base = rec.dts; break; }
@@ -229,8 +260,7 @@ void BlackboxRecorder::flushLocked() {
         return;
     }
 
-    // std::fprintf(stderr, "[blackbox] ch%d 저장 완료: %s (%zu패킷)\n", channel_, path,
-    //              packet_count);
+    // std::fprintf(stderr, "[blackbox] ch%d 저장 완료: %s\n", channel_, path);
 
     if (onClipReady_) onClipReady_(channel_, path, eventUnixMs_);
     buf_.clear();

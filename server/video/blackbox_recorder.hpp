@@ -43,16 +43,26 @@ public:
     void onPacket(const AVPacket* pkt);
 
     // 이벤트(낙상 등) 발생 시 호출. 지금까지 버퍼된 구간 + 이후 postSec_초를
-    // 하나의 mp4로 저장 예약한다. 짧은 시간 안에 재호출되면(재트리거) 저장
-    // 예정 구간을 그만큼 연장한다. 파일명에 쓰인 이벤트 시각(unix ms)을
+    // 하나의 mp4로 저장 예약한다. 파일명에 쓰인 이벤트 시각(unix ms)을
     // 반환하므로, 호출자가 이 값을 Qt 쪽 이벤트 알림과 맞춰 클립 파일명을
     // 재구성할 수 있게 한다.
+    //
+    // 같은 종류로 재호출되면(재트리거) 저장 예정 구간을 그만큼 연장하고 최초
+    // 이벤트 시각을 그대로 돌려준다 — 한 사건이므로 클립도 하나다.
+    // 다른 종류면 지금 것을 즉시 끊어 저장하고 새 클립을 시작한다. 파일명이
+    // (채널, 시각, 종류)로 만들어지는데 한 파일에 두 종류를 담을 수 없어서,
+    // 합치면 Qt가 없는 파일명을 요청하게 된다.
     int64_t trigger(const std::string& eventType);
 
     // 이벤트가 걸린 채(armed) 서버가 종료되는 경우 등, 이후 postSec_초를
     // 못 채우더라도 지금까지 버퍼만이라도 강제로 저장하고 싶을 때 호출.
     // armed 상태가 아니면 아무 것도 하지 않는다.
     void flush();
+
+    // 저장 시점이 지났으면 저장한다. onPacket은 패킷이 들어와야 불리므로,
+    // 트리거 직후 RTSP가 끊기면 마감 시각이 지나도 아무도 저장을 안 한다.
+    // 주기적으로 이걸 불러 그 구멍을 메운다 (BlackboxModule의 감시 스레드).
+    void flushIfDue();
 
     void onClipReady(ClipReadyCallback cb) { onClipReady_ = std::move(cb); }
 
@@ -64,7 +74,8 @@ private:
         int flags = 0;
     };
 
-    void flushLocked();  // mutex_ 보유 상태에서 호출 — mp4로 remux 후 버퍼 비움
+    void flushLocked();      // mutex_ 보유 상태에서 호출 — mp4로 remux 후 버퍼 비움
+    bool dueLocked() const;  // mutex_ 보유 상태에서 호출 — 저장할 때가 됐는지
 
     const int channel_;
     const std::string outputDir_;
@@ -83,6 +94,10 @@ private:
     int64_t eventUnixMs_ = 0;
     std::string eventType_;
     std::chrono::steady_clock::time_point postDeadline_{};
+    // 한 클립의 절대 상한. armed 동안은 pre 버퍼 트리밍이 멈춰 있어서, 재트리거로
+    // postDeadline_이 계속 밀리면 버퍼가 끝없이 자란다. 이 시각은 재트리거로
+    // 밀리지 않으므로 아무리 길어져도 여기서 끊긴다.
+    std::chrono::steady_clock::time_point armDeadline_{};
 
     ClipReadyCallback onClipReady_;
 };
