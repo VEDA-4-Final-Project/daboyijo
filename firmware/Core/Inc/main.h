@@ -70,7 +70,9 @@ void Error_Handler(void);
 #define MAX30102_INT_EXTI_IRQn EXTI0_IRQn
 
 /* USER CODE BEGIN Private defines */
-
+/* 상태/에러 표시 LED (Black Pill 온보드, 액티브 로우) */
+#define STATUS_LED_Pin        GPIO_PIN_13
+#define STATUS_LED_GPIO_Port  GPIOC
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
