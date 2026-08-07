@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -143,24 +144,48 @@ int main(int argc, char* argv[])
     VedaAudioPlayer player;
     ThreadSafeQueue<AlarmCommand> queue;
 
+    /* 아래 STOP 처리 때문에 재생기를 MQTT 스레드와 메인 루프가 같이 만진다.
+     * VedaAudioPlayer::stop() 은 재생 스레드를 join 하므로 두 곳에서 동시에
+     * 부르면 같은 스레드를 두 번 join 하게 된다. 재생기 호출은 전부 이걸 잡고 한다. */
+    std::mutex player_mutex;
+
     MqttClient_veda client(cfg.node_id);
     client.setCallback([&](const std::string&, const std::string& payload) {
         try {
             auto cmd = nlohmann::json::parse(payload).get<AlarmCommand>();
-            if (cmd.target_device == cfg.node_id)
-                queue.push(cmd);            // 오래 걸리는 일은 메인 루프에서
+            if (cmd.target_device != cfg.node_id) return;
+
+            /* 소리 끄기만 큐를 거치지 않는다. 메인 루프가 패널 스크롤에 붙잡혀
+             * 있으면 한 바퀴(문구 길이에 따라 5~6초)를 다 돈 뒤에야 큐를 보는데,
+             * 그동안 사이렌이 계속 울린다. 관제사가 해제를 누른 순간 꺼져야 한다.
+             * 큐에도 그대로 넣어 매트릭스 CLEAR 등 나머지 처리는 원래대로 간다
+             * (메인 루프의 stop() 은 두 번째라 아무 일도 안 한다). */
+            if (cmd.audio_action == "STOP") {
+                std::lock_guard<std::mutex> lk(player_mutex);
+                player.stop();
+            }
+            queue.push(cmd);            // 오래 걸리는 일은 메인 루프에서
         } catch (const std::exception& e) {
             fprintf(stderr, "[MQTT] 파싱 실패: %s\n", e.what());
         }
     });
 
+    /* 여기서 죽는 건 의도다. MqttClient_veda 는 재연결 시 구독을 다시 걸지 않아서,
+     * 최초 연결에 실패한 채로 계속 돌면 브로커가 나중에 떠도 영영 아무것도 못 받는다.
+     * 프로세스는 살아 있는데 알림만 안 오는 상태가 제일 발견하기 어려우므로,
+     * 차라리 종료하고 systemd(Restart=always)가 다시 띄우게 둔다.
+     * MQTT/MQTT_prod 쪽에 재구독이 붙으면 중계 노드처럼 버티는 쪽으로 바꿀 것. */
     if (!client.connectToBroker(cfg.broker_host, cfg.broker_port)) {
-        fprintf(stderr, "브로커 연결 실패: %s:%d\n",
+        fprintf(stderr, "브로커 연결 실패: %s:%d - 종료 (systemd 가 재시작한다)\n",
                 cfg.broker_host.c_str(), cfg.broker_port);
         return 1;
     }
     client.startLoop();
-    client.subscribeTopic(cfg.topic, 0);
+    /* QoS 1 로 구독한다. 실제 전달 등급은 발행 QoS 와 구독 QoS 중 낮은 쪽이라,
+     * 여기가 0 이면 보내는 쪽이 1 로 보내도 마지막 구간에서 0 으로 깎인다. */
+    if (!client.subscribeTopic(cfg.topic, 1)) {
+        fprintf(stderr, "[MQTT] 구독 요청 실패: %s - 알람을 못 받는다\n", cfg.topic.c_str());
+    }
     printf("[알림노드] %s 로 %s 구독 시작 (node_id=%s)\n",
            cfg.broker_host.c_str(), cfg.topic.c_str(), cfg.node_id.c_str());
 
@@ -186,10 +211,12 @@ int main(int argc, char* argv[])
                cmd.room.c_str(), cmd.audio_action.c_str(), cmd.matrix_action.c_str());
 
         if (cmd.audio_action == "PLAY") {
+            std::lock_guard<std::mutex> lk(player_mutex);
             player.setVolume(cmd.volume);
             player.playWav(toAudioPath(cfg, cmd.audio_file), cmd.loop);   // 비동기
         } else if (cmd.audio_action == "STOP") {
-            player.stop();
+            std::lock_guard<std::mutex> lk(player_mutex);
+            player.stop();   // 대개 MQTT 콜백이 이미 껐다 — 두 번째 호출은 무해
         }
 
         if (cmd.brightness > 0) display.setBrightness(cmd.brightness);
@@ -205,8 +232,11 @@ int main(int argc, char* argv[])
             display.clear();
     }
 
-    client.stopLoop();
-    player.stop();
+    client.stopLoop();   // 먼저 멈춰야 아래 정리 중에 콜백이 끼어들지 않는다
+    {
+        std::lock_guard<std::mutex> lk(player_mutex);
+        player.stop();
+    }
     display.clear();
     printf("\n종료\n");
     return 0;
