@@ -45,6 +45,13 @@ static Config g_cfg;
 static std::atomic<bool> g_running{true};
 static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용. notify 등록 전 초기화 후 BLE 콜백에서만 접근
 
+// 조각난 notify 를 재조립하는 버퍼. runOnce 지역변수로 두면 안 되는데,
+// 아래 notify 콜백이 이걸 참조로 붙잡은 채 BLE 스레드에서 돌기 때문이다.
+// unsubscribe 가 실패하면(그 자리 catch(...) 가 삼킨다) 콜백이 등록된 채로 남아
+// 죽은 스택을 건드린다. 수명을 프로세스와 맞춰 그 창을 아예 없앤다.
+// g_prev_fall 과 마찬가지로 세션 시작 때 초기화하고 이후엔 BLE 콜백만 만진다.
+static std::string g_rx_buffer;
+
 void onSigint(int) { g_running = false; }
 
 std::string toLower(std::string s) {
@@ -134,9 +141,12 @@ long long nowMs() {
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// 체크섬이 없어서 필드 범위로 검증 — 하나라도 벗어나면 헤더 오정렬로 간주
+// 체크섬이 없어서 필드 범위로 검증 — 하나라도 벗어나면 헤더 오정렬로 간주.
+// 심박 상한 250 은 사람이 낼 수 있는 범위 밖을 걸러 가짜 헤더를 빨리 알아채려는 것.
+// 0 은 "측정 불가" 라 정상값으로 통과시킨다.
 bool packetIsValid(const std::string& buf) {
-    return (uint8_t)buf[2] <= 100 && (uint8_t)buf[3] <= 100 && (uint8_t)buf[4] <= 1;
+    return (uint8_t)buf[1] <= 250 && (uint8_t)buf[2] <= 100 &&
+           (uint8_t)buf[3] <= 100 && (uint8_t)buf[4] <= 1;
 }
 
 // 패킷 1개 → WearableData → JSON 발행
@@ -215,14 +225,16 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     std::cout << "[Relay Node] Connected: " << peripheral.identifier() << ". subscribing FFE1" << std::endl;
 
     g_prev_fall = 0;   // 끊긴 사이 상태를 모르므로 엣지 판정 초기화
-    std::string rx_buffer;
+    g_rx_buffer.clear();   // 이전 세션의 반쪽 패킷을 물고 가지 않는다
 
-    peripheral.notify(SVC_FFE0, CHAR_FFE1, [&](SimpleBLE::ByteArray bytes) {
+    // client 만 참조로 잡는다 (main 의 지역변수라 이 함수보다 오래 산다).
+    // 버퍼는 전역이라 캡처할 필요가 없고, 캡처하지 않는 편이 수명 문제도 안 생긴다.
+    peripheral.notify(SVC_FFE0, CHAR_FFE1, [&client](SimpleBLE::ByteArray bytes) {
         if(g_cfg.debug_hex) {
             std::cout << "[Relay Node] raw " << bytes.size() << "B: " << toHex(bytes) << std::endl;
         }
-        rx_buffer.append(bytes.begin(), bytes.end());
-        consumeBuffer(rx_buffer, client);
+        g_rx_buffer.append(bytes.begin(), bytes.end());
+        consumeBuffer(g_rx_buffer, client);
     });
 
     while(peripheral.is_connected() && g_running) {
@@ -231,7 +243,11 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
 
     // 정리해야 다음에 다시 스캔·연결된다. 안 하면 HM-10 이 연결 상태로 남아
     // 광고를 멈추기 때문에 스캔에 안 잡힌다.
-    try { peripheral.unsubscribe(SVC_FFE0, CHAR_FFE1); } catch (...) {}
+    // 실패를 삼키지 않고 알린다 — 해제가 안 됐다면 콜백이 아직 살아 있다는 뜻이라,
+    // 다음 세션에서 이상하게 굴 때 여기 로그가 유일한 단서다.
+    try { peripheral.unsubscribe(SVC_FFE0, CHAR_FFE1); }
+    catch (const std::exception& e) { std::cerr << "[Relay Node] unsubscribe 실패: " << e.what() << std::endl; }
+    catch (...) { std::cerr << "[Relay Node] unsubscribe 실패 (알 수 없는 예외)" << std::endl; }
     try { peripheral.disconnect(); } catch (...) {}
     std::cout << "[Relay Node] Disconnected (cleaned up)" << std::endl;
 }
@@ -243,7 +259,10 @@ int main(int argc, char* argv[]) {
     if(argc >= 3 && std::strcmp(argv[1], "-c") == 0) confPath = argv[2];
     loadConfig(confPath, g_cfg);
 
-    MqttClient_veda client("Relay_Node_01");
+    // MQTT 클라이언트 id 는 브로커 안에서 유일해야 한다. 같은 id 두 개가 붙으면
+    // 나중에 온 쪽이 먼저 있던 쪽을 끊어버려서, 웨어러블을 두 대로 늘리는 순간
+    // 중계 노드끼리 서로를 밀어낸다. 기기마다 다른 device_id 를 붙여 그걸 막는다.
+    MqttClient_veda client("relay_" + g_cfg.device_id);
 
     std::cout << "[Relay Node] Connecting to Mqtt broker "
               << g_cfg.broker_host << ":" << g_cfg.broker_port << "..." << std::endl;
