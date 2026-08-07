@@ -18,9 +18,9 @@ openssl genrsa -out ca.key 2048
 openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=DavoCA"
 
 echo "=== 3. 브로커 키 및 인증서 생성 ==="
-openssl genrsa -out ca.key 2048
+openssl genrsa -out server.key 2048
 openssl req -new -key server.key -out server.csr -subj "/CN=DaboBroker"
-openssl x509 -reg -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 3650
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 3650
 
 echo "=== 4. Mosquitto 시스템 폴더로 복사 및 권한 설정 ==="
 sudo mkdir -p "$MOSQUITTO_CONF_DIR"

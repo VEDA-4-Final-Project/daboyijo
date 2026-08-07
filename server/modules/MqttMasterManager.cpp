@@ -82,8 +82,8 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_
 
     // led 
     cmd.matrix_action = "SHOW"
-    cmd.matrix_passes = 3;
-    cmd.brightness = 127;
+    cmd.matrix_passes = 0;
+    cmd.brightness = 0;
     
     nlohmann::json j = cmd;
     std::string payload = j.dump();

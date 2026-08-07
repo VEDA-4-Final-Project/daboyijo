@@ -167,5 +167,10 @@ void MqttClient_veda::on_disconnect(struct mosquitto *mosq, void *obj, int rc) {
 
 
 
+void MqttClient_veda::setTlsConfig(const std::string& ca_path) {
+    m_use_tls = true;
+    m_ca_path = ca_path;
+}
+
 
 
