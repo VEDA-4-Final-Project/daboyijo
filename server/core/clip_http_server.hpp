@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -27,7 +29,15 @@ private:
 
     const int port_;
     const std::string rootDir_;
-    int listen_fd_ = -1;
+    // accept 루프와 stop()이 동시에 만지므로 원자적으로 다룬다.
+    std::atomic<int> listen_fd_{-1};
     std::atomic<bool> running_{false};
     std::thread accept_thread_;
+
+    // 요청 스레드는 detach라 join으로 기다릴 수 없다. 대신 처리 중인 개수를 세어
+    // stop()이 그게 0이 될 때까지 기다린다 — 안 기다리면 전송 중인 스레드가
+    // 이미 파괴된 이 객체의 멤버(rootDir_ 등)를 읽는다.
+    int inflight_ = 0;
+    std::mutex inflight_mutex_;
+    std::condition_variable inflight_cv_;
 };
