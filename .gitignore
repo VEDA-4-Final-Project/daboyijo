@@ -12,6 +12,8 @@ Debug/
 Release/
 bin/
 obj/
+# 실행 파일은 확장자가 없어 패턴으로 안 잡히니 이름으로 적는다
+relay-node/relay_node
 *.o
 *.obj
 *.so
@@ -33,6 +35,12 @@ ui_*.h
 Makefile*
 !protocol/Makefile
 !server/Makefile
+!alert-node/Makefile
+!alert-node/drivers/wm8960/Makefile
+!alert-node/drivers/hub75/Makefile
+!alert-node/app/Makefile
+!alert-node/app/matrix/Makefile
+!alert-node/app/AudioPlayer/Makefile
 
 # ===== STM32CubeIDE / Eclipse =====
 .metadata/

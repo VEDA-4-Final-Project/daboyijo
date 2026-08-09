@@ -29,5 +29,21 @@ Module.symvers
 
 
 # Vim 백업 및 스왑 파일
-.*.swp
+.*.sw[a-p]
 *~
+
+
+# 유저스페이스 앱 실행 파일 - 확장자가 없어 패턴으로 안 잡히니 이름으로 적는다
+# 앱을 추가하면 여기에 한 줄 추가할 것
+app/alert-node
+app/matrix/alert-demo
+app/AudioPlayer/veda_player
+app/AudioPlayer/2veda_player
+
+
+# hub75 데모용 미디어 - 원본에서 재생성 가능하고 용량이 커서 넣지 않는다
+drivers/hub75/*.rgb
+drivers/hub75/*.mp4
+drivers/hub75/*.gif
+drivers/hub75/*.webp
+drivers/hub75/*.svg

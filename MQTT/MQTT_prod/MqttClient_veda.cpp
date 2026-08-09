@@ -3,7 +3,7 @@
 #include <mosquitto.h>
 
 
-MqttClient_veda::MqttClient_veda(const std::string& id) : m_id(id), m_mosq(nullptr) {
+MqttClient_veda::MqttClient_veda(const std::string& id) : m_isConnected(false), m_mosq(nullptr), m_id(id) {
 
     mosquitto_lib_init();
     m_mosq = mosquitto_new(m_id.c_str(), true, this);

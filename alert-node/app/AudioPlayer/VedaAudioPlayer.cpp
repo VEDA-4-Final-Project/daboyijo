@@ -4,8 +4,9 @@
 #include <vector>
 
 VedaAudioPlayer::VedaAudioPlayer(const std::string& dev_name, const std::string& card_name)
-    : pcm_handle(nullptr), device_name(dev_name), is_playing(false), is_paused(false),
-    card_name(card_name),mixer_handle(nullptr),volume_elem(nullptr){
+    : pcm_handle(nullptr), device_name(dev_name),
+      mixer_handle(nullptr), volume_elem(nullptr), card_name(card_name),
+      is_playing(false), is_paused(false), is_looping(false) {
         // 멤버 변수 초기화
         
     initMixer("Speaker");
@@ -115,13 +116,14 @@ int VedaAudioPlayer::setHardwareParams(unsigned int rate, unsigned int channels,
     return 0;
 }
 
-int VedaAudioPlayer::playWav(const std::string& file_path)
+int VedaAudioPlayer::playWav(const std::string& file_path, bool loop)
 {
     is_playing = false;
     if(play_thread.joinable()) {
         play_thread.join();
     }
 
+    is_looping = loop;
     is_playing = true;
 
     play_thread = std::thread(&VedaAudioPlayer::playbackWorker, this, file_path);
@@ -174,18 +176,26 @@ void VedaAudioPlayer::playbackWorker(const std::string& file_path)
 
     //재생 루프 
 
-    while(is_playing && (file.read(buffer.data(), buffer.size()) || file.gcount() > 0)) {
+    while(is_playing) {
 
-        //일시정지 확인 
+        file.read(buffer.data(), buffer.size());
+
+        if(file.gcount() <= 0) {
+            if(!is_looping) break;
+            file.clear();   // EOF 표시를 지워야 seekg 뒤에 다시 읽힌다
+            file.seekg(sizeof(WavHeader), std::ios::beg);
+            continue;
+        }
+
+        //일시정지 확인
         while(is_paused && is_playing) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
 
-        //일시정지 중에 멈춤 발생시 
+        //일시정지 중에 멈춤 발생시
         if(!is_playing) break;
 
 
-        size_t read_bytes = file.gcount();
         snd_pcm_uframes_t frames_to_write = file.gcount() / bytes_per_frame;
         char* ptr = buffer.data();
 
@@ -198,6 +208,8 @@ void VedaAudioPlayer::playbackWorker(const std::string& file_path)
                 snd_pcm_prepare(pcm_handle);
                 continue;
             }else if( ret < 0 ) {
+                // stop() 이 snd_pcm_drop 으로 깨운 것이면 사고가 아니다
+                if(!is_playing) break;
                 int err = snd_pcm_recover(pcm_handle, ret, 0);
                 if(err<0) {
                     std::cerr << "오디오 전송 실패 : " << snd_strerror(ret) << std::endl;
@@ -239,8 +251,9 @@ int VedaAudioPlayer::initMixer(const std::string& mix_ctrl_name) {
     volume_elem = snd_mixer_find_selem(mixer_handle, sid);
     if(!volume_elem) {
         std::cerr << "[Mixer Warning] Mixer Control Element를 찾을수 없음 : " << mix_ctrl_name << std::endl;
+        return -1;
     }
-    return -1;
+    
 
     std::cout << "[Mixer] Volume Control 연동 성공: " << mix_ctrl_name << std::endl;
 

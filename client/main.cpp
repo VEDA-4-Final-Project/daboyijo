@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName(QStringLiteral("gvm-client"));
 
     QSqlDatabase db = QSqlDatabase::addDatabase("QMARIADB");
-    db.setHostName("172.20.32.105");
+    db.setHostName("172.20.32.10");
     db.setPort(3306);
     db.setDatabaseName("daboijo");
     db.setUserName("daboijo");

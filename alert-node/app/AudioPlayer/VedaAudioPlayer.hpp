@@ -41,6 +41,7 @@ private:
     //재생중 확인 플래그 
     std::atomic<bool> is_playing;
     std::atomic<bool> is_paused;
+    std::atomic<bool> is_looping;
 
     int setHardwareParams(unsigned int rate, unsigned int channels, snd_pcm_format_t format);
 
@@ -58,7 +59,7 @@ public:
     int initPlayer(unsigned int rate, unsigned int cahnnels, snd_pcm_format_t format);
 
     // 비동기 재생 시작함수 (호출시 스레드를 뛰우고 즉식 리턴) 
-    int playWav(const std::string& file_path);
+    int playWav(const std::string& file_path, bool loop = false);
 
     // 재생 제어 함수 
     int pause();

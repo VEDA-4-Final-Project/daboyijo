@@ -19,13 +19,10 @@ void CaregiverDetector::setThreshold(double threshold) {
 bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     if (personROI.empty()) return false;
 
-    cv::Rect torsoRect(0, 0, personROI.cols, personROI.rows);  // 상반신만 자름 -> 전체로 복귀
-    cv::Mat torso = personROI(torsoRect);
-    if (torso.empty()) return false;
 
     //색을 BGR -> HSV
     cv::Mat hsv;
-    cv::cvtColor(torso, hsv, cv::COLOR_BGR2HSV);
+    cv::cvtColor(personROI, hsv, cv::COLOR_BGR2HSV);
 
     //주황 범위에 드는 픽셀만 흰색, 나머지는 검정인 mask 생성
     cv::Mat mask;
@@ -72,10 +69,10 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     //   ratio는 "잡힌 덩어리가 노이즈 수준은 아님"을 보증하는 하한 역할만 맡긴다.
     bool result = (ratio >= threshold_) && (mean_sat >= min_sat_);
 
-    if(ratio>=0.03){
+    // if(ratio>=0.03){
     // std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
     //              ratio, mean_sat, result ? "O" : "X");
-    }
+    // }
 
     return result;
 }
@@ -96,7 +93,7 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
 
         // [디버그] 사람 후보의 신뢰도
         // std::fprintf(stderr, "[detectInFrame] human likelihood=%.2f\n", obj.likelihood);
-        //if (obj.likelihood < 0.5f) continue;  // 신뢰도 낮으면 스킵
+        //if (obj.likelihood < 0.5f) continue;  // 신뢰도 낮으면 스킵 -> wiseAi로 이미 걸러서 중복이라 비활성
 
         // 정규화 좌표(0~1) → 픽셀 Rect 변환
         int x = static_cast<int>(obj.left   * W);
@@ -113,14 +110,8 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
 
         cv::Rect box(x, y, w, h);
 
-        // ── [진단용] 판정 통과한 객체만 추적 — 확인 후 삭제 ──
-        // 어떤 obj가 어느 거리(bbox 크기)에서 요양사로 인정됐는지 본다.
-        bool is_cg = isCaregiver(frame(box));
-        if (is_cg) {
-            // std::fprintf(stderr, "  ↳ ch%d obj%d bbox=%dx%d\n",
-            //              df.channel + 1, obj.object_id, w, h);
-        }
-        if (is_cg) return true;   // 보호사 하나라도 있으면 true
+        if (isCaregiver(frame(box))) return true;
+
     }
     return false;
 }

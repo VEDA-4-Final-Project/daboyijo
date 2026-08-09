@@ -13,8 +13,20 @@
 #include <QTextEdit>
 #include <QSet>
 #include <QMap>
+#include <QPixmap>
+
+#include <QHash>
 
 #include "auth.h"
+// MqttQtManager 와 WearableData / AlarmCommand.
+//
+// MqttQtManager 는 포인터로만 쓰니 전방 선언으로 충분해 보이지만, 아래 슬롯들이
+// 그 구조체를 인자로 받는다. moc 은 슬롯 인자마다 QMetaTypeId 를 건드리는데,
+// Q_DECLARE_METATYPE 이 그보다 늦게 보이면
+//   specialization of 'QMetaTypeId<WearableData>' after instantiation
+// 으로 컴파일이 깨진다. 선언이 먼저 오도록 통째로 include 한다.
+#include "mqttqtmanager.h"
+#include "clickslider.h"
 
 
 
@@ -42,6 +54,19 @@ struct dbj_roi_point_t {
     uint16_t x;             // 정규화 x × 10000 (0~10000)
     uint16_t y;             // 정규화 y × 10000 (0~10000)
 };
+// 카메라 이미지 파라미터 (밝기/대비/채도) — IMAGE_SET 헤더 뒤 1개. 0~100.
+struct dbj_image_params_t {
+    uint8_t brightness;     // 0~100 (서버가 카메라 실제 범위로 매핑)
+    uint8_t contrast;       // 0~100
+    uint8_t saturation;     // 0~100
+};                          // 3B
+// 카메라 포커스 — FOCUS_SET 헤더 뒤 1개.
+struct dbj_focus_t {
+    uint8_t  mode;          // 0=전체 자동초점, 1=클릭 영역 초점
+    uint8_t  reserved;      // 0
+    uint16_t x;             // 클릭 중심 정규화 x × 10000
+    uint16_t y;             // 정규화 y × 10000
+};                          // 6B
 
 // 역방향(서버→클라) 이벤트 알림 — 낙상. magic=0xDB4D. 페이로드 없이 헤더(18B)만.
 // 영상 프레임(0xDB4B)과 같은 소켓(5500)으로 섞여 들어오며, magic으로 구분한다.
@@ -63,6 +88,10 @@ static constexpr uint8_t kCtrlRoiSet = 0x01;
 static constexpr uint8_t kCtrlRoiClear = 0x02;
 static constexpr uint8_t kCtrlCameraSet = 0x05;    // 채널 카메라 연결 (헤더 뒤 RTSP URL)
 static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
+static constexpr uint8_t kCtrlImageSet = 0x07;     // 카메라 이미지 파라미터 (헤더 뒤 dbj_image_params_t)
+static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤더 뒤 dbj_focus_t)
+static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
+static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;
 static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 
@@ -94,6 +123,18 @@ QT_END_NAMESPACE
 struct PatientInfo {
     QString name;   // 환자 이름
     QString bed;    // 위치 표기 — 병실/침대 제거 후 "채널 N"을 담는다(오버레이/바이탈 공용)
+    QString room;   // 호실 — MQTT 알림 명령에 실어 보낸다(알림 노드가 LED에 띄운다)
+};
+
+// 채널별 최신 웨어러블 값. MQTT 로 들어온 것만 담는다.
+// 한 번도 안 들어온 채널은 received=false 로 남아 화면에 "--" 가 뜬다 —
+// 값이 없는데 그럴듯한 숫자를 보여주면 관제사가 오판한다.
+struct VitalSample {
+    bool   received    = false;
+    double temperature = 0.0;
+    int    heartRate   = 0;
+    int    spo2        = 0;
+    qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
 };
 
 class MainWindow : public QMainWindow
@@ -127,6 +168,14 @@ private slots:
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
     void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
+
+    // ── MQTT (웨어러블·알림 노드) ─────────────────────────
+    // 영상 경로(TCP)와 별개로, 브로커를 통해 들어오는 것들을 받는 슬롯.
+    void onWearableData(const WearableData& data);   // 생체·낙상 원본 도착
+    void onMqttAlarm(const AlarmCommand& cmd);       // 알림 노드로 나간 명령을 엿들음
+    void onMqttConnected();
+    void onMqttDisconnected();
+    void onMqttError(const QString& message);
 
     // TAB2: 비상 로그 조회 및 블랙박스
     void onSearchClicked();
@@ -183,6 +232,13 @@ private:
     QLabel* vitalStatusDots[4] = {};   // 채널별 바이탈 상태등
     QLabel* vitalStatusBadges[4] = {}; // 채널별 상태 배지(정상/주의/위험)
     QLabel* vitalNameLabels[4] = {};   // 채널별 환자 이름(DB 매핑 반영)
+
+    // ── MQTT ─────────────────────────────────────────────
+    MqttQtManager* mqtt = nullptr;     // 브로커 연결(웨어러블 수신 + 알림 노드 제어)
+    // 웨어러블 기기 id → 채널(0~3). residents 테이블의 wearable_id·camera_id 로 만든다.
+    // 브로커는 "wear_01" 이라고만 알려주는데 화면은 채널 번호로 돼 있어 다리가 필요하다.
+    QHash<QString, int> wearableToChannel;
+    VitalSample vitals_[4];            // 채널별 최신 생체값 (MQTT 로 받은 것만)
     QLabel* vitalBedLabels[4] = {};    // 채널별 병상 표기(DB 매핑 반영)
     Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
 
@@ -236,6 +292,8 @@ private:
     //   행 = 한 번의 입원, 더블클릭 → 그 기간의 변경 내역 팝업
     QTableWidget* admissionTable = nullptr;
     QLabel* admissionInfo = nullptr;     // "입원 N건" 안내 문구
+    QWidget* admissionBox = nullptr;   // 입원 이력 패널(신규 등록 시 숨김)
+
 
     // 상세/편집 폼 — 기본정보 (병실/침대는 제거, 위치는 카메라 채널로 표기)
     QLineEdit* editName       = nullptr;
@@ -282,6 +340,9 @@ private:
     void buildBlackboxDialog();   // 블랙박스 재생 팝업 생성(1회)
     QWidget* buildCareTimeDashboard();
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
+    void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
+    void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
+
 
     // TAB3 빌드 헬퍼
     QWidget* buildDbTab();
@@ -356,6 +417,23 @@ private:
     QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
     QDialog* cameraSettingsDialog = nullptr;
     void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
+
+    // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
+    // "카메라 설정" 팝업의 "이미지" 탭. 슬라이더 값을 IMAGE_SET 제어 메시지로
+    // 서버에 보내면, 서버가 ONVIF Imaging으로 실제 카메라에 적용한다.
+    QWidget* buildImageTab();                          // 이미지 탭 구성(1회)
+    void     sendImageParams(int channel, int b, int c, int s);
+    // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
+    void     sendFocus(int channel, bool area, float nx, float ny);
+    // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
+    bool     eventFilter(QObject* obj, QEvent* ev) override;
+    QComboBox*   imgChannel = nullptr;                 // 대상 채널 선택
+    ClickSlider* imgBright = nullptr;
+    ClickSlider* imgContrast = nullptr;
+    ClickSlider* imgSaturation = nullptr;
+    QLabel*  imgBefore = nullptr;                      // 적용 전 스냅샷
+    QLabel*  imgAfter = nullptr;                       // 실시간(적용 후)
+    QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──
     QLineEdit* camIpEdit = nullptr;
