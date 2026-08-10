@@ -176,7 +176,7 @@ int main(int argc, char* argv[]) {
             p.brightness = b; p.contrast = c; p.saturation = s;
             std::thread([ch, url, p]() {
                 std::string err;
-                if (applyOnvifImaging(url, p, &err))
+                if (applyOnvifImaging(url, ch, p, &err))
                     std::fprintf(stderr, "[image] ch%d 이미지 적용 성공\n", ch + 1);
                 else
                     std::fprintf(stderr, "[image] ch%d 이미지 적용 실패: %s\n",

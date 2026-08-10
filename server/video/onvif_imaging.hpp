@@ -26,7 +26,10 @@ struct OnvifImageParams {
 };
 
 // rtsp_url에서 host/계정을 파싱해 ONVIF Imaging으로 p를 적용한다.
+// channel(0~3)은 다센서 카메라에서 어느 센서(VideoSource)에 적용할지 고른다 —
+// GetVideoSources가 돌려주는 여러 VideoSources 중 channel번째 토큰을 사용한다.
+// (단일 센서 카메라면 channel과 무관하게 첫 토큰으로 폴백)
 // 성공하면 true. 실패 시 false를 반환하고 err(널 아님)에 사유를 채운다.
 // 블로킹 HTTP 호출들을 수행하므로 수신 스레드가 아닌 별도 스레드에서 부를 것.
-bool applyOnvifImaging(const std::string& rtsp_url, const OnvifImageParams& p,
-                       std::string* err);
+bool applyOnvifImaging(const std::string& rtsp_url, int channel,
+                       const OnvifImageParams& p, std::string* err);
