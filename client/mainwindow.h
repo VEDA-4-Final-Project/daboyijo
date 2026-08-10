@@ -114,6 +114,8 @@ class QStackedWidget;
 class QMediaPlayer;
 class QVideoWidget;
 class QUdpSocket;
+class QListWidget;
+class QTextBrowser;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -150,6 +152,7 @@ public:
 
 private slots:
     void onLogoutClicked();      // 로그아웃 — 확인 후 창을 닫고 로그인으로 복귀
+    void onHelpClicked();        // 도움말 — 전체 기능 설명 창 열기
 
     void onReadyRead();          // 명세서 가이드라인 구현 슬롯 (영상 수신)
     void onSocketStateChanged(QAbstractSocket::SocketState state);
@@ -167,7 +170,6 @@ private slots:
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
-    void onSettingsClicked();    // "카메라 설정" — 탭 팝업(카메라/ROI) 열기
 
     // ── MQTT (웨어러블·알림 노드) ─────────────────────────
     // 영상 경로(TCP)와 별개로, 브로커를 통해 들어오는 것들을 받는 슬롯.
@@ -177,8 +179,7 @@ private slots:
     void onMqttDisconnected();
     void onMqttError(const QString& message);
 
-    // TAB2: 비상 로그 조회 및 블랙박스
-    void onSearchClicked();
+    // TAB2: 이벤트 기록
     void onLogRowActivated(int row, int column);
 
     // TAB3: DB 관리
@@ -215,6 +216,11 @@ private:
     PatientInfo patients[4];     // 병상별 환자 정보
     QLabel* clockLabel = nullptr;      // 상단 실시간 시계
     QPushButton* themeToggleButton = nullptr;  // 라이트/다크 테마 토글
+    QPushButton* helpButton = nullptr;         // ⓘ 도움말
+    QDialog* helpDialog = nullptr;             // 기능 설명 창(1회 생성 후 재사용)
+    QListWidget* helpList = nullptr;           // 좌측 주제 목록
+    QTextBrowser* helpBrowser = nullptr;       // 우측 내용
+    void renderHelpTopic(int idx);             // 선택 주제를 현재 테마 색으로 렌더
 
     // ── 로그인 세션 ──
     Auth::SessionUser currentUser;         // 현재 로그인한 사용자
@@ -250,13 +256,12 @@ private:
     // ── TAB 구조 ──────────────────────────────────────────
     QTabWidget* tabWidget = nullptr;
 
-    // TAB2: 비상 로그 조회 및 블랙박스
+    // TAB2: 이벤트 기록 (요약 카드 + 로그 표 + 인라인 블랙박스)
     QDateEdit* filterDateFrom = nullptr;
     QDateEdit* filterDateTo = nullptr;
     QComboBox* filterRoom = nullptr;
     QComboBox* filterEventType = nullptr;
     QTableWidget* logTable = nullptr;
-    QDialog* blackboxDialog = nullptr;      // 블랙박스 재생 팝업(로그 더블클릭 시)
     QLabel* blackboxPlaceholder = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
     QStackedWidget* blackboxStack = nullptr;
@@ -267,20 +272,33 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
-    QVBoxLayout* careTimeList = nullptr;
-    // 케어 타임 대시보드 카드(채널당 1개) — 매 갱신마다 라벨 텍스트만 바꾼다(카드는 1회 생성).
-    QLabel* careNameLabels[4] = {};  // "채널 N · 방-병상 이름"
-    QLabel* careStatLabels[4] = {};  // "오늘 N분 · M회 · 최근 HH:MM"
+    // 케어 타임 카드(채널당 1개) — 매 갱신마다 라벨 텍스트만 바꾼다(카드는 1회 생성).
+    QLabel* careNameLabels[4] = {};     // 환자 이름
+    QLabel* careMetaLabels[4] = {};     // "채널 N · 위치"
+    QLabel* careBigLabels[4] = {};      // 오늘 케어시간 큰 값 ("45분"/"30초")
+    QLabel* careSessionLabels[4] = {};  // "N회"
+    QLabel* careLastLabels[4] = {};     // "HH:mm" (최근 케어)
     QWidget* buildCareTimeCard(int channel);
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
-    QWidget*   residentCardHost = nullptr;   // FlowLayout이 붙는 카드 컨테이너
+    // ── 마스터(좌측 목록) ──
+    QWidget*   residentCardHost = nullptr;   // 목록 행이 붙는 컨테이너(세로 리스트)
     QLabel*    residentCountLabel = nullptr; // "재원 N명 / 검색 결과 N명"
-    QLineEdit* residentSearchEdit = nullptr; // 이름 검색창(재원·퇴원 전체 조회)
+    QLineEdit* residentSearchEdit = nullptr; // 이름 검색창
+    // 재원/전체/퇴원 필터 — 세그먼트 버튼. residentFilter_ 가 현재 모드.
+    QString      residentFilter_ = QStringLiteral("재원");
+    QPushButton* residentFilterBtns[3] = {}; // [0]재원 [1]전체 [2]퇴원
+    int          selectedResidentCardId = -1; // 목록에서 강조 표시 중인 id
+    // 상단 요약 통계 값
+    QLabel* resSumActive = nullptr;   // 재원 N명
+    QLabel* resSumHigh   = nullptr;   // 위험 상
+    QLabel* resSumMid    = nullptr;   // 위험 중
+    QLabel* resSumLow    = nullptr;   // 위험 하
+    QLabel* resSumCam    = nullptr;   // 채널 배정 N/4
 
-    // 입소자 편집 다이얼로그(1회 생성 후 재사용) + 헤더 요소
-    QDialog* residentDialog   = nullptr;
+    // ── 디테일(우측 인라인 편집) — 예전엔 팝업이었으나 페이지에 내장 ──
+    QStackedWidget* residentDetailStack = nullptr;  // 0=플레이스홀더 / 1=편집기
     QLabel*  dlgAvatar        = nullptr;  // 이름 이니셜 원형 배지
     QLabel*  dlgNameBig       = nullptr;  // 큰 이름
     QLabel*  dlgSubMeta       = nullptr;  // "201호-2 · 채널 2" 등
@@ -331,30 +349,39 @@ private:
     QWidget* buildVitalCard(int channel);
     void applyTheme();
     void setConnectionState(bool connected, const QString& text);
+    // 경보 해제 버튼 강조 갱신 — 낙상/침상이탈이 하나라도 활성이면 빨강 채움, 아니면 차분한 아웃라인.
+    void refreshAlarmButton();
 
-    // TAB2 빌드 헬퍼
-    QWidget* buildLogArchiveTab();
+    // TAB2 빌드 헬퍼 (이벤트 기록)
+    QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스
     QWidget* buildSearchFilters();
     QWidget* buildLogTable();
-    QWidget* buildBlackboxPlayer();
-    void buildBlackboxDialog();   // 블랙박스 재생 팝업 생성(1회)
-    QWidget* buildCareTimeDashboard();
+    QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
     void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
+    // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.
+    void refreshEventLog();
+
+    // 케어 타임은 이벤트 기록에서 분리해 자체 탭(채널별 카드 그리드)으로 뺀다.
+    QWidget* buildCareTimeTab();
 
 
-    // TAB3 빌드 헬퍼
+    // TAB3 빌드 헬퍼 (입소자 관리 — 마스터-디테일)
     QWidget* buildDbTab();
-    QWidget* buildResidentFormBody();   // 편집 다이얼로그에 들어갈 폼(그룹들)만
+    QWidget* buildResidentSummary();    // 상단 요약 통계 바
+    QWidget* buildResidentList();       // 좌측: 필터 탭 + 검색 + 신규 + 목록
+    QWidget* buildResidentDetail();     // 우측: 플레이스홀더/편집기 스택
+    QWidget* buildResidentFormBody();   // 편집기에 들어갈 폼(그룹들)만
     QWidget* buildAdmissionHistory();   // 입원 이력 표 + 안내 문구
-    void ensureResidentDialog();        // 편집 다이얼로그 1회 생성
-    void openResidentEditor(int residentId);  // id<0이면 신규, 아니면 로드 후 다이얼로그 표시
+    void setResidentFilter(const QString& mode);  // 재원/전체/퇴원 전환
+    void openResidentEditor(int residentId);  // id<0이면 신규, 아니면 로드 후 우측에 표시
     void loadResidentIntoForm(int residentId);// residents → 폼 필드 채우기
-    void refreshResidentDialogHeader();       // 다이얼로그 상단 아바타/배지 갱신
+    void refreshResidentDialogHeader();       // 편집기 상단 아바타/배지 갱신
+    void refreshResidentSummary();            // 상단 요약 통계 재계산
 
     // TAB3 데이터 갱신
-    // nameFilter 비어 있으면 재원자만, 있으면 이름 LIKE 검색(재원·퇴원 전체)
+    // nameFilter 비어 있으면 현재 필터(재원/전체/퇴원), 있으면 이름 LIKE 검색
     void refreshResidentCards(const QString& nameFilter = QString());
     void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
     // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
@@ -412,22 +439,37 @@ private:
     QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
     QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
 
-    // "카메라 설정" 팝업 — 카메라·ROI 작업을 팝업 안에서 직접 수행(탭 전환).
-    // 비모달로 띄워 ROI 그리기(영상 클릭)가 가능하게 한다. 1회만 생성(멤버 재사용).
-    QPushButton* settingsButton = nullptr;     // ⚙️ 카메라 설정 (툴바)
-    QDialog* cameraSettingsDialog = nullptr;
-    void buildCameraSettingsDialog();          // 팝업 최초 1회 구성
+    // "카메라 설정" — 상단 정식 탭. 좌측 컨트롤(연결/ROI/이미지) + 우측 라이브 영상의
+    // 마스터-디테일 구성. 상단 공용 채널 레일(CH1~4)이 좌우 모두를 하나의 채널로 묶는다.
+    QWidget* cameraSettingsTab_ = nullptr;     // 상단 탭 본문(가시성 판단용 멤버)
+    QWidget* buildCameraSettingsTab();         // 탭 본문 구성(1회)
+    // 카메라 설정 탭이 현재 활성 탭인지 — ROI/이미지 실시간 프리뷰 갱신 여부 판단.
+    bool cameraSettingsVisible() const;
+
+    // ── 카메라 설정 통합 UI ──
+    QWidget* buildCamChannelRail();   // 상단 공용 채널 선택(CH1~4 + 상태 배지)
+    QWidget* buildCamConnectPage();   // 좌측 '연결' 페이지(접속 폼 + 검색표)
+    QWidget* buildCamRoiPage();       // 좌측 'ROI' 페이지(안내 + 지정/제거/표시)
+    QWidget* buildCamImagePage();     // 좌측 '이미지' 페이지(밝기/대비/채도 + 초점)
+    QWidget* buildCamStagePanel();    // 우측 라이브 영상/프리뷰 스테이지
+    void selectCamChannel(int ch);    // 공용 채널 전환(레일·ROI·이미지 동기화)
+    void setCamMode(const QString& mode);   // 연결/ROI/이미지 모드 전환
+    void refreshCamChannelStatus();   // 채널별 연결·ROI 상태 배지 갱신
+    QPushButton* camChannelBtns[4] = {};    // 채널 레일 버튼
+    QLabel*      camChannelStatus[4] = {};  // 채널별 상태 배지
+    QPushButton* camModeBtns[3] = {};       // [0]연결 [1]ROI [2]이미지 세그먼트
+    QStackedWidget* camControlStack = nullptr;  // 좌측 컨트롤 스택
+    QStackedWidget* camStageStack = nullptr;    // 우측 스테이지(0=영상 / 1=이미지 프리뷰)
+    QString camMode_ = QStringLiteral("연결");
 
     // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
-    // "카메라 설정" 팝업의 "이미지" 탭. 슬라이더 값을 IMAGE_SET 제어 메시지로
-    // 서버에 보내면, 서버가 ONVIF Imaging으로 실제 카메라에 적용한다.
-    QWidget* buildImageTab();                          // 이미지 탭 구성(1회)
+    // 슬라이더 값을 IMAGE_SET 제어 메시지로 서버에 보내면, 서버가 ONVIF Imaging으로
+    // 실제 카메라에 적용한다. 대상 채널은 공용 채널(roiEditChannel)을 따른다.
     void     sendImageParams(int channel, int b, int c, int s);
     // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
     void     sendFocus(int channel, bool area, float nx, float ny);
     // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
     bool     eventFilter(QObject* obj, QEvent* ev) override;
-    QComboBox*   imgChannel = nullptr;                 // 대상 채널 선택
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
     ClickSlider* imgSaturation = nullptr;

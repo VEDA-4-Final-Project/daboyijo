@@ -181,6 +181,31 @@ std::string tagAttr(const std::string& xml, const std::string& localName,
     return seg.substr(p, q - p);
 }
 
+// localName 요소의 nth(0-base) 등장 인스턴스에서 attr="값" 속성을 반환.
+// GetVideoSources가 센서마다 <VideoSources token="..."> 를 여러 개 주는데,
+// 채널(센서)마다 다른 토큰을 골라야 해서 필요하다. 없으면 빈 문자열.
+std::string tagAttrNth(const std::string& xml, const std::string& localName,
+                       const std::string& attr, int nth) {
+    size_t pos = 0;
+    for (int i = 0; ; ++i) {
+        size_t open = findOpenTag(xml, localName, pos);
+        if (open == std::string::npos) return {};
+        size_t gt = xml.find('>', open);
+        if (gt == std::string::npos) return {};
+        if (i == nth) {
+            std::string seg = xml.substr(open, gt - open);
+            std::string key = attr + "=\"";
+            size_t p = seg.find(key);
+            if (p == std::string::npos) return {};
+            p += key.size();
+            size_t q = seg.find('"', p);
+            if (q == std::string::npos) return {};
+            return seg.substr(p, q - p);
+        }
+        pos = gt + 1;
+    }
+}
+
 // localName 요소 안의 Min/Max를 파싱. 성공 시 true.
 bool tagRange(const std::string& xml, const std::string& localName, double* mn, double* mx) {
     size_t open = findOpenTag(xml, localName);
@@ -267,8 +292,8 @@ int mapPct(int pct, double mn, double mx) {
 
 }  // namespace
 
-bool applyOnvifImaging(const std::string& rtsp_url, const OnvifImageParams& p,
-                       std::string* err) {
+bool applyOnvifImaging(const std::string& rtsp_url, int channel,
+                       const OnvifImageParams& p, std::string* err) {
     auto fail = [&](const std::string& m) { if (err) *err = m; return false; };
 
     std::string host, user, pw;
@@ -305,12 +330,17 @@ bool applyOnvifImaging(const std::string& rtsp_url, const OnvifImageParams& p,
     std::string mediaUrl = fixHost(tagText(resp, "XAddr",
                                    findOpenTag(resp, "Media")), devUrl);
 
-    // ② VideoSourceToken
+    // ② VideoSourceToken — 다센서 카메라는 VideoSources가 채널 수만큼 온다.
+    //    channel번째 토큰을 골라야 그 센서에 적용된다(첫 토큰 고정이면 CH1만 바뀜).
     code = httpPost(mediaUrl, envelope("<trt:GetVideoSources/>", user, pw, created), &resp);
     if (code != 200) return fail("GetVideoSources 실패 (HTTP " + std::to_string(code) +
                                  "): " + faultText(resp));
-    std::string token = tagAttr(resp, "VideoSources", "token");
+    const int ch = (channel < 0) ? 0 : channel;
+    std::string token = tagAttrNth(resp, "VideoSources", "token", ch);
+    if (token.empty())  // 단일 센서(또는 인덱스 초과) → 첫 토큰으로 폴백
+        token = tagAttr(resp, "VideoSources", "token");
     if (token.empty()) return fail("VideoSourceToken 을 못 찾음");
+    std::fprintf(stderr, "[image] ch%d → VideoSourceToken=%s\n", ch + 1, token.c_str());
 
     // ③ 범위(GetOptions)
     code = httpPost(imagingUrl,
