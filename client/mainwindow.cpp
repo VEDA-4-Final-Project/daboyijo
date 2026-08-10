@@ -2004,6 +2004,28 @@ QLabel {
 #detailPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
 #detailPlaceholder { color: %(sub); font-size: 14px; }
 
+/* ── 카메라 설정: 공용 채널 레일 + 좌측 컨트롤 ── */
+#camRail { background: %(card); border: 1px solid %(border); border-radius: 12px; }
+#camControlPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+#camChBtn { background: %(bgDeep); color: %(text); border: 1px solid %(border);
+            border-radius: 9px; padding: 6px 18px; font-size: 13px; font-weight: 800; }
+#camChBtn:hover { border-color: %(accent); }
+#camChBtn:checked { background: %(accent); color: #fff; border-color: %(accent); }
+#camChStatus { font-size: 11px; font-weight: 700; }
+#camSectionCap { color: %(text); font-size: 13px; font-weight: 800;
+                 border-left: 3px solid %(accent); padding-left: 8px; }
+
+/* ROI 페이지 — 단계 카드 + 주 액션 */
+#roiSteps { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+#roiStepNum { background: %(accent); color: #fff; border-radius: 11px;
+              font-size: 12px; font-weight: 800; }
+#roiStepText { color: %(text); font-size: 13px; }
+#roiPrimary { background: %(accent); color: #fff; border: none; border-radius: 10px;
+              font-size: 14px; font-weight: 800; }
+#roiPrimary:hover { background: %(accentHover); }
+#roiPrimary[drawing="true"] { background: %(critical); }
+#roiPrimary[drawing="true"]:hover { background: #ff6b62; }
+
 /* 편집기 프로필 헤더 */
 #dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
 #dlgName { color: %(text); font-size: 19px; font-weight: 800; }
@@ -2096,6 +2118,10 @@ QTextEdit#formEdit:focus {
                             .replace("%(border)", kBorder)
                             .replace("%(text)", kTextMain)
                             .replace("%(sub)", kTextSub)
+                            .replace("%(normal)", kNormal)
+                            .replace("%(warn)", kWarn)
+                            // accentHover는 accent의 부분문자열이라 반드시 accent보다 먼저 치환.
+                            .replace("%(accentHover)", darkMode ? "#3AD4C4" : "#3AD1C3")
                             .replace("%(accent)", kAccent)
                             .replace("%(critical)", kCritical);
 
@@ -2630,6 +2656,7 @@ void MainWindow::onRoiClearClicked()
     sendRoi(ch, QPolygonF(), true);            // 서버에 삭제 통보
     if (channelViews[ch]) channelViews[ch]->clearRoi();  // 메인 4분할 오버레이 제거
     if (roiEditorView) roiEditorView->clearRoi();         // 편집기 오버레이 제거
+    refreshCamChannelStatus();                            // 레일 ROI 배지 갱신
     qDebug() << "ROI 제거: ch" << ch;
 }
 
@@ -2639,8 +2666,8 @@ void MainWindow::onRoiVisibilityToggled(bool on)
         if (v) v->setRoiVisible(on);
     if (roiEditorView) roiEditorView->setRoiVisible(on);
     if (roiToggleButton)
-        roiToggleButton->setText(on ? QStringLiteral("표시")
-                                    : QStringLiteral("숨김"));
+        roiToggleButton->setText(on ? QStringLiteral("영상에 표시")
+                                    : QStringLiteral("표시 숨김"));
 }
 
 void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
@@ -2652,6 +2679,7 @@ void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
     // 방금 그린 걸 볼 수 있도록 표시 토글이 꺼져 있으면 켠다
     if (roiToggleButton && !roiToggleButton->isChecked())
         roiToggleButton->setChecked(true);
+    refreshCamChannelStatus();   // 레일 ROI 배지 갱신
     qDebug() << "ROI 전송: ch" << channel << "," << normPts.size() << "점";
 }
 
@@ -2874,6 +2902,9 @@ void MainWindow::sendImageParams(int channel, int b, int c, int s)
     pkt.append(reinterpret_cast<const char*>(&ip), sizeof(ip));
     sock->write(pkt);
     sock->flush();
+    // 어떤 채널이 어느 Pi로 나가는지 확인용 — CH2/3/4가 안 먹으면 서버 IMAGE_SET 핸들러 점검.
+    qDebug() << "➔ [Qt→서버] IMAGE_SET ch" << (channel + 1)
+             << "(Pi" << serverForChannel(channel) << ") b=" << b << "c=" << c << "s=" << s;
 }
 
 // 카메라 초점 제어 — FOCUS_SET 제어 메시지로 담당 Pi에 전송. 실제 적용(SUNAPI
@@ -2923,7 +2954,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
             const double px = me->position().x() - ox;
             const double py = me->position().y() - oy;
             if (px >= 0 && py >= 0 && px < ps.width() && py < ps.height()) {
-                sendFocus(imgChannel->currentIndex(), true,
+                sendFocus(roiEditChannel, true,
                           float(px / ps.width()), float(py / ps.height()));
             }
         }
@@ -2936,22 +2967,19 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
 // 프리뷰. 채널 선택 후 [적용]을 누르면 값을 서버로 보내고(카메라에 실제 반영),
 // 실시간(After) 뷰가 바뀌어 적용 전(Before) 스냅샷과 비교된다.
 // (노출은 ONVIF에서 수동모드 전환이 필요해 야간감지에 위험 → 제외)
-QWidget* MainWindow::buildImageTab()
+// 좌측 '이미지' 컨트롤 — 밝기/대비/채도 슬라이더 + 적용/초기화 + 전체 자동초점.
+// Before/After 프리뷰는 우측 스테이지(buildCamStagePanel)가 담당한다. 대상 채널은
+// 공용 채널(roiEditChannel)을 따른다.
+QWidget* MainWindow::buildCamImagePage()
 {
-    auto* tab = new QWidget();
-    auto* col = new QVBoxLayout(tab);
-    col->setContentsMargins(4, 8, 4, 4);
-    col->setSpacing(10);
+    auto* page = new QWidget();
+    auto* col = new QVBoxLayout(page);
+    col->setContentsMargins(0, 0, 0, 0);
+    col->setSpacing(12);
 
-    // 대상 채널 선택
-    imgChannel = new QComboBox();
-    for (int i = 0; i < 4; ++i)
-        imgChannel->addItem(QStringLiteral("채널 %1").arg(i + 1));
-    auto* chRow = new QHBoxLayout();
-    chRow->addWidget(new QLabel(QStringLiteral("대상 채널")));
-    chRow->addWidget(imgChannel);
-    chRow->addStretch();
-    col->addLayout(chRow);
+    auto* cap = new QLabel(QStringLiteral("밝기 · 대비 · 채도"));
+    cap->setObjectName("camSectionCap");
+    col->addWidget(cap);
 
     // 슬라이더 3종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
     imgBright     = new ClickSlider();
@@ -2959,32 +2987,12 @@ QWidget* MainWindow::buildImageTab()
     imgSaturation = new ClickSlider();
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignLeft);
+    form->setSpacing(12);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     form->addRow(QStringLiteral("밝기"),   imgBright);
     form->addRow(QStringLiteral("대비"),   imgContrast);
     form->addRow(QStringLiteral("채도"),   imgSaturation);
     col->addLayout(form);
-
-    // Before / After 프리뷰 (좌: 적용 전 스냅샷, 우: 실시간)
-    // 고정 크기 대신 남은 공간을 꽉 채우도록 확장(Expanding). 이미지는 KeepAspectRatio라
-    // 검은 배경 위에 레터박스로 얹힌다(왜곡 없음). 실시간 갱신 타이머가 현재 크기에
-    // 맞춰 다시 스케일하므로 창을 키우면 프리뷰도 같이 커진다.
-    imgBefore = new QLabel(QStringLiteral("적용 전"));
-    imgAfter  = new QLabel(QStringLiteral("실시간"));
-    for (QLabel* p : {imgBefore, imgAfter}) {
-        p->setMinimumSize(320, 200);
-        p->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        p->setAlignment(Qt::AlignCenter);
-        p->setStyleSheet(QString("background:#000; color:%1; border:1px solid %2;")
-                             .arg(kTextSub).arg(kBorder));
-    }
-    auto* capRow = new QHBoxLayout();
-    capRow->addWidget(new QLabel(QStringLiteral("적용 전")), 1, Qt::AlignHCenter);
-    capRow->addWidget(new QLabel(QStringLiteral("적용 후(실시간)")), 1, Qt::AlignHCenter);
-    auto* pv = new QHBoxLayout();
-    pv->addWidget(imgBefore, 1);
-    pv->addWidget(imgAfter, 1);
-    col->addLayout(capRow);
-    col->addLayout(pv, 1);   // 세로로 남는 공간을 프리뷰가 전부 차지
 
     // 적용 / 초기화
     auto* apply = new QPushButton(QStringLiteral("적용"));
@@ -2999,28 +3007,27 @@ QWidget* MainWindow::buildImageTab()
     br->addWidget(apply);
     col->addLayout(br);
 
-    // 포커스 (SUNAPI SimpleFocus) — 전체 자동초점 버튼 + 클릭-투-포커스 안내.
+    // 포커스 구분선 캡션
+    auto* fcap = new QLabel(QStringLiteral("초점"));
+    fcap->setObjectName("camSectionCap");
+    col->addWidget(fcap);
     auto* afBtn = new QPushButton(QStringLiteral("전체 자동초점"));
     afBtn->setObjectName("roiButton");
     afBtn->setCursor(Qt::PointingHandCursor);
+    col->addWidget(afBtn);
     auto* focusHint = new QLabel(
         QStringLiteral("💡 오른쪽 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
-    focusHint->setStyleSheet(QString("color:%1;").arg(kTextSub));
-    auto* fr = new QHBoxLayout();
-    fr->addWidget(afBtn);
-    fr->addWidget(focusHint, 1);
-    col->addLayout(fr);
-    connect(afBtn, &QPushButton::clicked, this, [this]() {
-        sendFocus(imgChannel->currentIndex(), false, 0.0f, 0.0f);
-    });
-    // 실시간 프리뷰 클릭 → 클릭 지점 영역 초점 (eventFilter가 처리)
-    imgAfter->installEventFilter(this);
-    imgAfter->setCursor(Qt::PointingHandCursor);
+    focusHint->setObjectName("segCaption");
+    focusHint->setWordWrap(true);
+    col->addWidget(focusHint);
 
+    connect(afBtn, &QPushButton::clicked, this, [this]() {
+        sendFocus(roiEditChannel, false, 0.0f, 0.0f);
+    });
     connect(apply, &QPushButton::clicked, this, [this]() {
-        const int ch = imgChannel->currentIndex();
+        const int ch = roiEditChannel;
         // 적용 직전 현재 프레임을 Before 스냅샷으로 고정
-        if (!lastFramePix_[ch].isNull())
+        if (imgBefore && !lastFramePix_[ch].isNull())
             imgBefore->setPixmap(lastFramePix_[ch].scaled(
                 imgBefore->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
         sendImageParams(ch, imgBright->value(), imgContrast->value(),
@@ -3031,22 +3038,9 @@ QWidget* MainWindow::buildImageTab()
             s->setValue(50);
     });
 
-    // 실시간(After) 갱신 — 선택 채널의 최신 프레임을 주기적으로 표시.
-    // 팝업이 보일 때만 그린다(불필요한 스케일 부하 방지).
-    auto* t = new QTimer(tab);
-    connect(t, &QTimer::timeout, this, [this]() {
-        if (!imgAfter || !cameraSettingsVisible())
-            return;
-        const int ch = imgChannel->currentIndex();
-        if (lastFramePix_[ch].isNull()) return;
-        imgAfter->setPixmap(lastFramePix_[ch].scaled(
-            imgAfter->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    });
-    t->start(200);
-
     for (ClickSlider* s : {imgBright, imgContrast, imgSaturation})
         s->setValue(50);   // 중앙값에서 시작
-    return tab;
+    return page;
 }
 
 // "카메라 설정" 팝업을 최초 1회 구성 — 카메라·ROI 작업을 팝업 안에서 직접 한다.
@@ -3058,16 +3052,110 @@ QWidget* MainWindow::buildCameraSettingsTab()
 
     cameraSettingsTab_ = new QWidget();
     auto* page = cameraSettingsTab_;
-    auto* v = new QVBoxLayout(page);
-    v->setContentsMargins(18, 18, 18, 18);
-    v->setSpacing(12);
+    auto* outer = new QVBoxLayout(page);
+    outer->setContentsMargins(18, 16, 18, 16);
+    outer->setSpacing(12);
 
-    auto* tabs = new QTabWidget(page);
-    tabs->setObjectName("subTabs");
+    auto* title = new QLabel(QStringLiteral("카메라 설정"));
+    title->setObjectName("panelTitle");
+    outer->addWidget(title);
 
-    // ══════════ 탭 1: 카메라 ══════════
+    outer->addWidget(buildCamChannelRail());   // 상단 공용 채널 레일
+
+    // 본문: 좌 컨트롤(연결/ROI/이미지) | 우 라이브 영상 스테이지
+    auto* body = new QHBoxLayout();
+    body->setSpacing(16);
+
+    auto* ctrlPanel = new QFrame();
+    ctrlPanel->setObjectName("camControlPanel");
+    ctrlPanel->setFixedWidth(400);
+    auto* cl = new QVBoxLayout(ctrlPanel);
+    cl->setContentsMargins(14, 14, 14, 14);
+    cl->setSpacing(12);
+    auto* seg = new QHBoxLayout();
+    seg->setSpacing(0);
+    const QString modes[3] = {QStringLiteral("연결"), QStringLiteral("ROI"),
+                              QStringLiteral("이미지")};
+    for (int i = 0; i < 3; ++i) {
+        camModeBtns[i] = new QPushButton(modes[i]);
+        camModeBtns[i]->setObjectName("segTab");
+        camModeBtns[i]->setCheckable(true);
+        camModeBtns[i]->setChecked(i == 0);
+        camModeBtns[i]->setCursor(Qt::PointingHandCursor);
+        const QString m = modes[i];
+        connect(camModeBtns[i], &QPushButton::clicked, this, [this, m] { setCamMode(m); });
+        seg->addWidget(camModeBtns[i]);
+    }
+    cl->addLayout(seg);
+    camControlStack = new QStackedWidget();
+    camControlStack->addWidget(buildCamConnectPage());
+    camControlStack->addWidget(buildCamRoiPage());
+    camControlStack->addWidget(buildCamImagePage());
+    // 스택이 '현재 페이지' 높이에 맞게 줄어들도록 — 숨은 페이지는 세로 크기 계산에서 제외.
+    // (안 그러면 가장 큰 '연결' 페이지 높이에 맞춰 ROI/이미지 좌측에 빈 공간이 크게 남는다)
+    auto sizeToCurrent = [](QStackedWidget* st) {
+        for (int i = 0; i < st->count(); ++i) {
+            auto pol = st->widget(i)->sizePolicy();
+            pol.setVerticalPolicy(i == st->currentIndex() ? QSizePolicy::Preferred
+                                                          : QSizePolicy::Ignored);
+            st->widget(i)->setSizePolicy(pol);
+        }
+    };
+    connect(camControlStack, &QStackedWidget::currentChanged, this,
+            [this, sizeToCurrent](int) { sizeToCurrent(camControlStack); });
+    sizeToCurrent(camControlStack);   // 초기 적용
+    cl->addWidget(camControlStack, 0);
+    // 컨트롤 카드는 내용 높이만큼만 차지하고 상단에 붙는다(아래 빈 카드 제거).
+    body->addWidget(ctrlPanel, 0, Qt::AlignTop);
+
+    body->addWidget(buildCamStagePanel(), 1);
+    outer->addLayout(body, 1);
+
+    selectCamChannel(0);
+    setCamMode(QStringLiteral("연결"));
+    refreshCamChannelStatus();
+    return cameraSettingsTab_;
+}
+
+// 상단 공용 채널 레일 — CH1~4 선택 + 연결/ROI 상태 배지.
+QWidget* MainWindow::buildCamChannelRail()
+{
+    auto* rail = new QFrame();
+    rail->setObjectName("camRail");
+    auto* h = new QHBoxLayout(rail);
+    h->setContentsMargins(12, 8, 12, 8);
+    h->setSpacing(10);
+    auto* cap = new QLabel(QStringLiteral("채널"));
+    cap->setObjectName("segCaption");
+    h->addWidget(cap);
+    for (int i = 0; i < 4; ++i) {
+        auto* col = new QVBoxLayout();
+        col->setSpacing(3);
+        camChannelBtns[i] = new QPushButton(QStringLiteral("CH %1").arg(i + 1));
+        camChannelBtns[i]->setObjectName("camChBtn");
+        camChannelBtns[i]->setCheckable(true);
+        camChannelBtns[i]->setChecked(i == 0);
+        camChannelBtns[i]->setCursor(Qt::PointingHandCursor);
+        const int ch = i;
+        connect(camChannelBtns[i], &QPushButton::clicked, this,
+                [this, ch] { selectCamChannel(ch); });
+        camChannelStatus[i] = new QLabel(QStringLiteral("○ 미연결"));
+        camChannelStatus[i]->setObjectName("camChStatus");
+        camChannelStatus[i]->setAlignment(Qt::AlignCenter);
+        col->addWidget(camChannelBtns[i]);
+        col->addWidget(camChannelStatus[i]);
+        h->addLayout(col);
+    }
+    h->addStretch();
+    return rail;
+}
+
+// 좌측 '연결' 페이지 — 접속 폼 + 검색/연결/해제 + 검색 결과 표.
+QWidget* MainWindow::buildCamConnectPage()
+{
     auto* camTab = new QWidget();
     auto* camV = new QVBoxLayout(camTab);
+    camV->setContentsMargins(0, 0, 0, 0);
     camV->setSpacing(10);
 
     // 접속 정보 폼 (마지막 값 복원)
@@ -3128,6 +3216,9 @@ QWidget* MainWindow::buildCameraSettingsTab()
     discoveryTable->setSelectionMode(QAbstractItemView::SingleSelection);
     discoveryTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     discoveryTable->verticalHeader()->setVisible(false);
+    // 하드 최소높이는 주지 않는다 — 숨은 '연결' 페이지가 스택 전체 높이를 강제해
+    // ROI/이미지 카드가 안 줄고 내용만 벌어지는 원인이 된다. sizeHint만 살짝 키운다.
+    discoveryTable->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     // 행 클릭/더블클릭 → IP 입력칸에 채워준다.
     auto fillIpFromRow = [this](int r, int) {
         if (discoveryTable->item(r, 1)) camIpEdit->setText(discoveryTable->item(r, 1)->text());
@@ -3143,7 +3234,7 @@ QWidget* MainWindow::buildCameraSettingsTab()
     // 임의 포트에 바인드 → 카메라는 우리가 보낸 소스 포트로 유니캐스트 ProbeMatch를
     // 돌려준다. (3702 공유 바인드는 Windows에서 유니캐스트 응답을 다른 프로세스가
     // 가로채 오히려 아무것도 못 받으므로 쓰지 않는다.)
-    discoverySocket = new QUdpSocket(page);
+    discoverySocket = new QUdpSocket(camTab);
     discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress);
     connect(discoverySocket, &QUdpSocket::readyRead, this, [this]() {
         while (discoverySocket->hasPendingDatagrams()) {
@@ -3200,82 +3291,195 @@ QWidget* MainWindow::buildCameraSettingsTab()
         }
     });
 
-    tabs->addTab(camTab, QStringLiteral("카메라"));
+    return camTab;
+}
 
-    // ══════════ 탭 2: ROI ══════════
-    auto* roiTab = new QWidget();
-    auto* roiV = new QVBoxLayout(roiTab);
-    roiV->setSpacing(10);
+// 좌측 'ROI' 페이지 — 상태 + 단계 안내 + 큼직한 액션. 편집 영상은 우측 스테이지.
+QWidget* MainWindow::buildCamRoiPage()
+{
+    auto* page = new QWidget();
+    auto* roiV = new QVBoxLayout(page);
+    roiV->setContentsMargins(0, 0, 0, 0);
+    roiV->setSpacing(14);
 
-    // 채널 선택 버튼 (1~4)
-    auto* chRow = new QHBoxLayout();
-    auto* chLabel = new QLabel(QStringLiteral("채널 선택:"));
-    chLabel->setObjectName("segCaption");
-    chRow->addWidget(chLabel);
-    for (int i = 0; i < 4; ++i) {
-        roiChannelButtons[i] =
-            new QPushButton(QStringLiteral("채널 %1").arg(i + 1));
-        roiChannelButtons[i]->setObjectName("roiToggle");
-        roiChannelButtons[i]->setCheckable(true);
-        roiChannelButtons[i]->setCursor(Qt::PointingHandCursor);
-        const int ch = i;
-        connect(roiChannelButtons[i], &QPushButton::clicked, this,
-                [this, ch]() { selectRoiChannel(ch); });
-        chRow->addWidget(roiChannelButtons[i]);
-    }
-    chRow->addStretch();
-    roiV->addLayout(chRow);
+    // 단계 안내 카드 — 남는 세로 공간을 채우려 늘어나지 않도록 Maximum 고정.
+    auto* steps = new QFrame();
+    steps->setObjectName("roiSteps");
+    steps->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto* sv = new QVBoxLayout(steps);
+    sv->setContentsMargins(14, 12, 14, 12);
+    sv->setSpacing(11);
+    auto addStep = [&](const QString& n, const QString& text) {
+        auto* row = new QHBoxLayout();
+        row->setSpacing(10);
+        auto* num = new QLabel(n);
+        num->setObjectName("roiStepNum");
+        num->setAlignment(Qt::AlignCenter);
+        num->setFixedSize(22, 22);
+        auto* t = new QLabel(text);
+        t->setObjectName("roiStepText");
+        t->setWordWrap(true);
+        row->addWidget(num, 0, Qt::AlignVCenter);
+        row->addWidget(t, 1, Qt::AlignVCenter);
+        sv->addLayout(row);
+    };
+    addStep(QStringLiteral("1"), QStringLiteral("아래 ‘영역 지정 시작’을 누릅니다."));
+    addStep(QStringLiteral("2"), QStringLiteral("오른쪽 영상 위를 클릭해 침대 모서리를 찍습니다."));
+    addStep(QStringLiteral("3"), QStringLiteral("더블클릭(또는 우클릭)으로 완료합니다."));
+    roiV->addWidget(steps);
 
-    roiEditInfo = new QLabel(
-        QStringLiteral("채널을 고르면 아래에 그 채널 영상이 표시됩니다. ‘지정’을 누른 뒤 "
-                       "영상 위를 클릭해 침대 영역을 그리고, 더블클릭(또는 우클릭)으로 완료하세요."));
-    roiEditInfo->setObjectName("segCaption");
-    roiEditInfo->setWordWrap(true);
-    roiV->addWidget(roiEditInfo);
-
-    // 팝업 내부 편집용 영상 뷰 (한 위젯을 채널 전환하며 재사용)
-    roiEditorView = new VideoView(roiEditChannel);
-    roiEditorView->setObjectName("video");
-    roiEditorView->setMinimumHeight(380);
-    connect(roiEditorView, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
-    connect(roiEditorView, &VideoView::drawModeChanged, this, [this](int, bool on) {
-        roiDrawing = on;
-        if (roiButton)
-            roiButton->setText(on ? QStringLiteral("취소") : QStringLiteral("지정"));
-    });
-    roiV->addWidget(roiEditorView, 1);
-
-    // ROI 액션: 지정 / 제거 / 표시
-    auto* roiBtnRow = new QHBoxLayout();
-    roiButton = new QPushButton(QStringLiteral("지정"));
-    roiButton->setObjectName("roiButton");
+    // 주 액션 — 지정 시작(그리는 중이면 '취소'로 토글). 전체 폭 강조 버튼.
+    roiButton = new QPushButton(QStringLiteral("영역 지정 시작"));
+    roiButton->setObjectName("roiPrimary");
     roiButton->setCursor(Qt::PointingHandCursor);
+    roiButton->setMinimumHeight(38);
     connect(roiButton, &QPushButton::clicked, this, &MainWindow::onRoiButtonClicked);
-    roiClearButton = new QPushButton(QStringLiteral("제거"));
+    roiV->addWidget(roiButton);
+
+    // 보조 액션 — 제거 / 표시 토글
+    roiClearButton = new QPushButton(QStringLiteral("ROI 제거"));
     roiClearButton->setObjectName("roiClear");
     roiClearButton->setCursor(Qt::PointingHandCursor);
     connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
-    roiToggleButton = new QPushButton(QStringLiteral("표시"));
+    roiToggleButton = new QPushButton(QStringLiteral("영상에 표시"));
     roiToggleButton->setObjectName("roiToggle");
     roiToggleButton->setCheckable(true);
     roiToggleButton->setChecked(true);
     roiToggleButton->setCursor(Qt::PointingHandCursor);
     connect(roiToggleButton, &QPushButton::toggled, this, &MainWindow::onRoiVisibilityToggled);
-    roiBtnRow->addWidget(roiButton);
-    roiBtnRow->addWidget(roiClearButton);
-    roiBtnRow->addWidget(roiToggleButton);
-    roiBtnRow->addStretch();
+    auto* roiBtnRow = new QHBoxLayout();
+    roiBtnRow->setSpacing(8);
+    roiBtnRow->addWidget(roiClearButton, 1);
+    roiBtnRow->addWidget(roiToggleButton, 1);
     roiV->addLayout(roiBtnRow);
+    roiV->addStretch();   // 남는 세로 공간은 아래로 — 단계/버튼이 벌어지지 않게
+    return page;
+}
 
-    tabs->addTab(roiTab, QStringLiteral("ROI 설정"));
+// 우측 스테이지 — 라이브/ROI 편집 영상(0) + 이미지 Before/After 프리뷰(1)를 스택으로.
+QWidget* MainWindow::buildCamStagePanel()
+{
+    camStageStack = new QStackedWidget();
 
-    // ══════════ 탭 3: 이미지 (밝기/대비/채도) ══════════
-    tabs->addTab(buildImageTab(), QStringLiteral("이미지"));
+    // 0) 라이브/ROI 편집 영상 (한 위젯을 채널 전환하며 재사용)
+    roiEditorView = new VideoView(roiEditChannel);
+    roiEditorView->setObjectName("video");
+    roiEditorView->setMinimumHeight(400);
+    connect(roiEditorView, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    connect(roiEditorView, &VideoView::drawModeChanged, this, [this](int, bool on) {
+        roiDrawing = on;
+        if (roiButton) {
+            roiButton->setText(on ? QStringLiteral("그리기 취소")
+                                  : QStringLiteral("영역 지정 시작"));
+            roiButton->setProperty("drawing", on);
+            roiButton->style()->unpolish(roiButton);
+            roiButton->style()->polish(roiButton);
+        }
+    });
+    camStageStack->addWidget(roiEditorView);
 
-    v->addWidget(tabs, 1);
+    // 1) 이미지 Before/After 프리뷰
+    auto* imgPage = new QWidget();
+    auto* iv = new QVBoxLayout(imgPage);
+    iv->setContentsMargins(0, 0, 0, 0);
+    iv->setSpacing(6);
+    auto* capRow = new QHBoxLayout();
+    capRow->addWidget(new QLabel(QStringLiteral("적용 전")), 1, Qt::AlignHCenter);
+    capRow->addWidget(new QLabel(QStringLiteral("적용 후(실시간)")), 1, Qt::AlignHCenter);
+    imgBefore = new QLabel(QStringLiteral("적용 전"));
+    imgAfter  = new QLabel(QStringLiteral("실시간"));
+    for (QLabel* p : {imgBefore, imgAfter}) {
+        p->setMinimumSize(320, 200);
+        p->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        p->setAlignment(Qt::AlignCenter);
+        p->setStyleSheet(QString("background:#000; color:%1; border:1px solid %2;"
+                                 " border-radius:8px;").arg(kTextSub).arg(kBorder));
+    }
+    auto* pv = new QHBoxLayout();
+    pv->addWidget(imgBefore, 1);
+    pv->addWidget(imgAfter, 1);
+    iv->addLayout(capRow);
+    iv->addLayout(pv, 1);
+    camStageStack->addWidget(imgPage);
 
-    selectRoiChannel(0);  // 초기 편집 채널
-    return cameraSettingsTab_;
+    // 실시간 프리뷰 클릭 → 클릭 지점 영역 초점 (eventFilter가 처리)
+    imgAfter->installEventFilter(this);
+    imgAfter->setCursor(Qt::PointingHandCursor);
+
+    // 실시간(After) 갱신 — 이미지 모드 + 탭이 보일 때만 그린다(스케일 부하 방지).
+    auto* t = new QTimer(camStageStack);
+    connect(t, &QTimer::timeout, this, [this]() {
+        if (!imgAfter || !cameraSettingsVisible() ||
+            camMode_ != QStringLiteral("이미지"))
+            return;
+        const int ch = roiEditChannel;
+        if (lastFramePix_[ch].isNull()) return;
+        imgAfter->setPixmap(lastFramePix_[ch].scaled(
+            imgAfter->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
+    t->start(200);
+
+    return camStageStack;
+}
+
+// 공용 채널 전환 — 레일 강조 + 편집 영상/ROI 로드 + 상태 배지 갱신.
+void MainWindow::selectCamChannel(int ch)
+{
+    if (ch < 0 || ch >= 4) return;
+    for (int i = 0; i < 4; ++i)
+        if (camChannelBtns[i]) camChannelBtns[i]->setChecked(i == ch);
+    selectRoiChannel(ch);          // roiEditChannel 설정 + roiEditorView 로드
+
+    // 이미지 프리뷰: 채널이 바뀌면 '적용 전'은 검은 화면으로 리셋(아직 이 채널에
+    // 적용한 적 없으니), '적용 후(실시간)'는 새 채널 프레임으로 즉시 교체.
+    if (imgBefore) {
+        imgBefore->clear();
+        imgBefore->setText(QStringLiteral("적용 전"));
+    }
+    if (imgAfter) {
+        if (lastFramePix_[ch].isNull()) {
+            imgAfter->clear();
+            imgAfter->setText(QStringLiteral("실시간"));
+        } else {
+            imgAfter->setPixmap(lastFramePix_[ch].scaled(
+                imgAfter->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
+    }
+
+    refreshCamChannelStatus();
+}
+
+// 연결/ROI/이미지 모드 전환 — 좌측 컨트롤 스택 + 우측 스테이지 스택 동기화.
+void MainWindow::setCamMode(const QString& mode)
+{
+    camMode_ = mode;
+    const QString modes[3] = {QStringLiteral("연결"), QStringLiteral("ROI"),
+                              QStringLiteral("이미지")};
+    int idx = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (camModeBtns[i]) camModeBtns[i]->setChecked(modes[i] == mode);
+        if (modes[i] == mode) idx = i;
+    }
+    if (camControlStack) camControlStack->setCurrentIndex(idx);
+    // 이미지 모드만 Before/After 프리뷰, 나머지는 라이브/ROI 영상.
+    if (camStageStack)
+        camStageStack->setCurrentIndex(mode == QStringLiteral("이미지") ? 1 : 0);
+}
+
+// 채널별 연결·ROI 지정 여부를 레일 배지에 반영.
+void MainWindow::refreshCamChannelStatus()
+{
+    for (int ch = 0; ch < 4; ++ch) {
+        if (!camChannelStatus[ch]) continue;
+        const bool connected = cameraActive_[ch];
+        const bool hasRoi = channelViews[ch] && !channelViews[ch]->roi().isEmpty();
+        QString txt = connected ? QStringLiteral("● 연결") : QStringLiteral("○ 미연결");
+        if (hasRoi) txt += QStringLiteral(" · ROI");
+        camChannelStatus[ch]->setText(txt);
+        camChannelStatus[ch]->setStyleSheet(
+            QString("color:%1; font-size:11px; font-weight:700;")
+                .arg(connected ? kNormal : kTextSub));
+    }
 }
 
 // ROI 편집 채널 전환 — 그 채널 영상/기존 ROI를 편집기에 로드하고 버튼을 강조.
@@ -3348,6 +3552,7 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
         if (sendCamera(ch, url)) ++sent;
     }
     persistCameraActive();
+    refreshCamChannelStatus();   // 채널 레일 배지에 연결 상태 반영
 
     if (sent == 0) {
         QMessageBox::warning(
@@ -3444,6 +3649,7 @@ void MainWindow::onCameraClearClicked()
         }
     }
     persistCameraActive();
+    refreshCamChannelStatus();   // 채널 레일 배지에 해제 상태 반영
 }
 
 // 활성 채널 집합을 QSettings에 비트마스크로 저장/복원한다. URL(비밀번호)은 담지 않는다.

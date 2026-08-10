@@ -431,23 +431,37 @@ private:
     QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
     QPushButton* clearCameraButton = nullptr;  // 카메라 해제 (모든 채널 CAMERA_CLEAR)
 
-    // "카메라 설정" — 팝업이 아니라 상단 정식 탭(입소자 관리 옆)으로 제공한다.
-    // 카메라(연결/검색/해제)·ROI(지정/제거/표시)·이미지(밝기/대비/채도) 서브탭을 담는다.
+    // "카메라 설정" — 상단 정식 탭. 좌측 컨트롤(연결/ROI/이미지) + 우측 라이브 영상의
+    // 마스터-디테일 구성. 상단 공용 채널 레일(CH1~4)이 좌우 모두를 하나의 채널로 묶는다.
     QWidget* cameraSettingsTab_ = nullptr;     // 상단 탭 본문(가시성 판단용 멤버)
     QWidget* buildCameraSettingsTab();         // 탭 본문 구성(1회)
     // 카메라 설정 탭이 현재 활성 탭인지 — ROI/이미지 실시간 프리뷰 갱신 여부 판단.
     bool cameraSettingsVisible() const;
 
+    // ── 카메라 설정 통합 UI ──
+    QWidget* buildCamChannelRail();   // 상단 공용 채널 선택(CH1~4 + 상태 배지)
+    QWidget* buildCamConnectPage();   // 좌측 '연결' 페이지(접속 폼 + 검색표)
+    QWidget* buildCamRoiPage();       // 좌측 'ROI' 페이지(안내 + 지정/제거/표시)
+    QWidget* buildCamImagePage();     // 좌측 '이미지' 페이지(밝기/대비/채도 + 초점)
+    QWidget* buildCamStagePanel();    // 우측 라이브 영상/프리뷰 스테이지
+    void selectCamChannel(int ch);    // 공용 채널 전환(레일·ROI·이미지 동기화)
+    void setCamMode(const QString& mode);   // 연결/ROI/이미지 모드 전환
+    void refreshCamChannelStatus();   // 채널별 연결·ROI 상태 배지 갱신
+    QPushButton* camChannelBtns[4] = {};    // 채널 레일 버튼
+    QLabel*      camChannelStatus[4] = {};  // 채널별 상태 배지
+    QPushButton* camModeBtns[3] = {};       // [0]연결 [1]ROI [2]이미지 세그먼트
+    QStackedWidget* camControlStack = nullptr;  // 좌측 컨트롤 스택
+    QStackedWidget* camStageStack = nullptr;    // 우측 스테이지(0=영상 / 1=이미지 프리뷰)
+    QString camMode_ = QStringLiteral("연결");
+
     // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
-    // "카메라 설정" 팝업의 "이미지" 탭. 슬라이더 값을 IMAGE_SET 제어 메시지로
-    // 서버에 보내면, 서버가 ONVIF Imaging으로 실제 카메라에 적용한다.
-    QWidget* buildImageTab();                          // 이미지 탭 구성(1회)
+    // 슬라이더 값을 IMAGE_SET 제어 메시지로 서버에 보내면, 서버가 ONVIF Imaging으로
+    // 실제 카메라에 적용한다. 대상 채널은 공용 채널(roiEditChannel)을 따른다.
     void     sendImageParams(int channel, int b, int c, int s);
     // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
     void     sendFocus(int channel, bool area, float nx, float ny);
     // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
     bool     eventFilter(QObject* obj, QEvent* ev) override;
-    QComboBox*   imgChannel = nullptr;                 // 대상 채널 선택
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
     ClickSlider* imgSaturation = nullptr;
