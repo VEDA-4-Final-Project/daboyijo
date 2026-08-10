@@ -114,6 +114,8 @@ class QStackedWidget;
 class QMediaPlayer;
 class QVideoWidget;
 class QUdpSocket;
+class QListWidget;
+class QTextBrowser;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -150,6 +152,7 @@ public:
 
 private slots:
     void onLogoutClicked();      // 로그아웃 — 확인 후 창을 닫고 로그인으로 복귀
+    void onHelpClicked();        // 도움말 — 전체 기능 설명 창 열기
 
     void onReadyRead();          // 명세서 가이드라인 구현 슬롯 (영상 수신)
     void onSocketStateChanged(QAbstractSocket::SocketState state);
@@ -213,6 +216,11 @@ private:
     PatientInfo patients[4];     // 병상별 환자 정보
     QLabel* clockLabel = nullptr;      // 상단 실시간 시계
     QPushButton* themeToggleButton = nullptr;  // 라이트/다크 테마 토글
+    QPushButton* helpButton = nullptr;         // ⓘ 도움말
+    QDialog* helpDialog = nullptr;             // 기능 설명 창(1회 생성 후 재사용)
+    QListWidget* helpList = nullptr;           // 좌측 주제 목록
+    QTextBrowser* helpBrowser = nullptr;       // 우측 내용
+    void renderHelpTopic(int idx);             // 선택 주제를 현재 테마 색으로 렌더
 
     // ── 로그인 세션 ──
     Auth::SessionUser currentUser;         // 현재 로그인한 사용자

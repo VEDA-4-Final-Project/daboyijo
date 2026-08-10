@@ -15,6 +15,10 @@
 #include <QFrame>
 #include <QScrollArea>
 #include <QGraphicsDropShadowEffect>
+#include <QTextBrowser>
+#include <QListWidget>
+#include <QPainter>
+#include <QIcon>
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -466,18 +470,11 @@ QWidget* MainWindow::buildHeader()
     lay->setContentsMargins(22, 0, 18, 0);
     lay->setSpacing(10);
 
-    // 로고 / 타이틀 — 청록 점 + 워드마크로 브랜드 존을 하나로 묶는다
-    auto* brandDot = new QLabel();
-    brandDot->setObjectName("brandDot");
-    brandDot->setFixedSize(10, 10);
+    // 로고 / 타이틀 — 워드마크만 (브랜드 점·부제목 제거)
     auto* logo = new QLabel(QStringLiteral("다보이조"));
     logo->setObjectName("logo");
-    auto* subtitle = new QLabel(QStringLiteral("요양원 통합 모니터링 · 201호"));
-    subtitle->setObjectName("subtitle");
 
-    lay->addWidget(brandDot);
     lay->addWidget(logo);
-    lay->addWidget(subtitle);
     lay->addStretch();
 
     // 연결 상태 — pill 배지
@@ -494,11 +491,53 @@ QWidget* MainWindow::buildHeader()
     spLay->addWidget(statusDot);
     spLay->addWidget(statusText);
     lay->addWidget(statusPill);
+    // "영상 서버 연결됨" 배지는 화면에서 감춘다 — statusDot/statusText 객체는 연결 상태
+    // 갱신 로직(setConnectionState 등)이 참조하므로 그대로 살려두고 표시만 끈다.
+    statusPill->hide();
 
     // 실시간 시계
     clockLabel = new QLabel();
     clockLabel->setObjectName("clock");
     lay->addWidget(clockLabel);
+
+    // 도움말 — 원형 물음표 아이콘 + "도움말" 텍스트 (한화 웹UI 헤더와 유사).
+    // 아이콘은 직접 그려 넣는다 — QPushButton은 아이콘+텍스트를 정상 배치/측정한다.
+    helpButton = new QPushButton(QStringLiteral("도움말"));
+    helpButton->setObjectName("helpBtn");
+    helpButton->setCursor(Qt::PointingHandCursor);
+    helpButton->setToolTip(QStringLiteral("도움말 — 기능 설명"));
+    {
+        const int d = 20;
+        const qreal dpr = 2.0;               // 고해상도로 그려 또렷하게
+        QPixmap pm(int(d * dpr), int(d * dpr));
+        pm.setDevicePixelRatio(dpr);
+        pm.fill(Qt::transparent);
+        QPainter pt(&pm);
+        pt.setRenderHint(QPainter::Antialiasing, true);
+        const QColor ic(0x8B, 0x98, 0xA5);   // 두 테마 모두에서 보이는 중간 회색
+        QPen pen(ic);
+        pen.setWidthF(1.4);
+        pt.setPen(pen);
+        // 원 — 여백을 조금만 두고 꽉 차게
+        const qreal m = 1.2;
+        pt.drawEllipse(QRectF(m, m, d - 2 * m, d - 2 * m));
+        // 물음표 — 타이트 바운딩 박스로 원 정중앙에 딱 맞춘다
+        QFont f = pt.font();
+        f.setPixelSize(13);
+        f.setBold(true);
+        pt.setFont(f);
+        const QString q = QStringLiteral("?");
+        const QFontMetricsF fm(f);
+        const QRectF br = fm.tightBoundingRect(q);
+        const qreal cx = d / 2.0, cy = d / 2.0;
+        pt.drawText(QPointF(cx - (br.x() + br.width() / 2.0),
+                            cy - (br.y() + br.height() / 2.0)), q);
+        pt.end();
+        helpButton->setIcon(QIcon(pm));
+        helpButton->setIconSize(QSize(d, d));
+    }
+    connect(helpButton, &QPushButton::clicked, this, &MainWindow::onHelpClicked);
+    lay->addWidget(helpButton);
 
     // 테마 토글
     themeToggleButton = new QPushButton(QStringLiteral("🌙"));
@@ -543,6 +582,134 @@ QWidget* MainWindow::buildHeader()
 }
 
 // ═══════════════════════════════════════════════════════════
+//  도움말 — 앱의 모든 기능을 설명하는 창(한화 웹UI의 '도움말'과 유사)
+// ═══════════════════════════════════════════════════════════
+void MainWindow::onHelpClicked()
+{
+    if (!helpDialog) {
+        helpDialog = new QDialog(this);
+        helpDialog->setObjectName("panel");
+        helpDialog->setWindowTitle(QStringLiteral("도움말 — 기능 설명"));
+        helpDialog->resize(880, 660);
+        helpDialog->setMinimumSize(640, 440);
+        enableDarkTitleBar(helpDialog);
+        auto* h = new QHBoxLayout(helpDialog);
+        h->setContentsMargins(0, 0, 0, 0);
+        h->setSpacing(0);
+
+        // 좌측 주제 목록
+        helpList = new QListWidget();
+        helpList->setObjectName(QStringLiteral("helpList"));
+        helpList->setFixedWidth(200);
+        helpList->addItems({
+            QStringLiteral("개요"),
+            QStringLiteral("상단 헤더"),
+            QStringLiteral("실시간 관제 및 제어"),
+            QStringLiteral("이벤트 기록"),
+            QStringLiteral("케어 타임"),
+            QStringLiteral("입소자 관리"),
+            QStringLiteral("카메라 설정"),
+        });
+        h->addWidget(helpList);
+
+        // 우측 내용
+        helpBrowser = new QTextBrowser();
+        helpBrowser->setObjectName(QStringLiteral("helpBrowser"));
+        helpBrowser->setOpenExternalLinks(false);
+        h->addWidget(helpBrowser, 1);
+
+        connect(helpList, &QListWidget::currentRowChanged, this,
+                &MainWindow::renderHelpTopic);
+        helpList->setCurrentRow(0);
+    }
+    renderHelpTopic(helpList ? helpList->currentRow() : 0);  // 현재 테마 색으로 갱신
+    helpDialog->show();
+    helpDialog->raise();
+    helpDialog->activateWindow();
+}
+
+// 선택된 도움말 주제를 현재 테마 색으로 렌더한다.
+void MainWindow::renderHelpTopic(int idx)
+{
+    if (!helpBrowser) return;
+    if (idx < 0) idx = 0;
+
+    const QString A  = QString::fromLatin1(kAccent);
+    const QString T  = QString::fromLatin1(kTextMain);
+    const QString S  = QString::fromLatin1(kTextSub);
+    const QString BG = QString::fromLatin1(kPanel);
+    const QString BD = QString::fromLatin1(kBorder);
+
+    auto li = [](const QString& k, const QString& d) {
+        return QStringLiteral("<p style='margin:9px 0;'><b>%1</b><br>%2</p>").arg(k, d);
+    };
+    QString title, body;
+    switch (idx) {
+    case 0:
+        title = QStringLiteral("개요");
+        body = QStringLiteral(
+            "<p>다보이조는 요양원 통합 모니터링 관제 프로그램입니다. "
+            "실시간 영상 관제, 낙상·침상이탈 경보, 웨어러블 생체신호, 블랙박스 기록, "
+            "입소자 관리, 카메라 설정을 한 화면에서 다룹니다.</p>")
+          + li(QStringLiteral("탭 구성"),
+               QStringLiteral("실시간 관제 및 제어 · 이벤트 기록 · 케어 타임 · 입소자 관리 · 카메라 설정"))
+          + li(QStringLiteral("사용 팁"),
+               QStringLiteral("왼쪽 목록에서 주제를 고르면 해당 기능 설명이 여기에 표시됩니다."));
+        break;
+    case 1:
+        title = QStringLiteral("상단 헤더");
+        body = li(QStringLiteral("영상 서버 상태등"), QStringLiteral("초록=정상 연결, 빨강=연결 끊김. 끊기면 자동 재접속을 시도합니다."))
+             + li(QStringLiteral("실시간 시계"), QStringLiteral("현재 시각(관제 기록 기준)."))
+             + li(QStringLiteral("도움말"), QStringLiteral("이 창을 엽니다."))
+             + li(QStringLiteral("테마 전환(🌙/☀)"), QStringLiteral("다크(야간 관제)·라이트(주간) 전환."))
+             + li(QStringLiteral("계정 · 로그아웃"), QStringLiteral("로그인 사용자 표시. 로그아웃 시 로그인 화면으로 복귀."));
+        break;
+    case 2:
+        title = QStringLiteral("실시간 관제 및 제어");
+        body = li(QStringLiteral("4채널 영상"), QStringLiteral("병상별 실시간 영상. 낙상·침상이탈 발생 시 해당 칸이 빨간 테두리로 강조됩니다."))
+             + li(QStringLiteral("🎤 방송"), QStringLiteral("누르고 있는 동안 현장으로 음성 송출(인터콤). 떼면 종료."))
+             + li(QStringLiteral("경보 해제"), QStringLiteral("평상시엔 차분한 아웃라인, 경보 시 빨강 강조. 누르면 낙상/침상이탈 경보를 일괄 해제하고 현장 사이렌·LED를 끕니다."))
+             + li(QStringLiteral("웨어러블 생체신호"), QStringLiteral("우측 패널에 채널별 체온·심박과 심박 추세 그래프. 정상/주의/위험에 따라 색이 바뀝니다."));
+        break;
+    case 3:
+        title = QStringLiteral("이벤트 기록");
+        body = li(QStringLiteral("필터"), QStringLiteral("날짜 범위·이벤트 종류를 바꾸면 즉시 목록에 반영(별도 검색 버튼 없음)."))
+             + li(QStringLiteral("로그 표"), QStringLiteral("낙상=빨강, 침상이탈=주황. 상태는 미확인=빨강/확인=초록으로 구분."))
+             + li(QStringLiteral("블랙박스 재생"), QStringLiteral("표의 이벤트를 더블클릭하면 우측 플레이어에서 그 시점 영상을 바로 재생하고 ‘확인’ 처리됩니다."));
+        break;
+    case 4:
+        title = QStringLiteral("케어 타임");
+        body = li(QStringLiteral("채널별 카드"), QStringLiteral("오늘(00:00~) 채널별 누적 케어시간·세션 수·최근 케어 시각을 표시합니다. 서버가 쌓는 care_logs 기준으로 주기적으로 갱신됩니다."));
+        break;
+    case 5:
+        title = QStringLiteral("입소자 관리");
+        body = li(QStringLiteral("상단 요약"), QStringLiteral("재원 인원·위험도(상/중/하) 분포·채널 배정 수를 한눈에."))
+             + li(QStringLiteral("재원/전체/퇴원 필터"), QStringLiteral("좌측 목록을 상태별로 전환. 이름 검색도 가능."))
+             + li(QStringLiteral("목록 → 상세"), QStringLiteral("행을 클릭하면 우측에서 바로 편집(팝업 없음). 행 왼쪽 색 띠는 위험도(상=빨강/중=주황/하=초록)."))
+             + li(QStringLiteral("＋ 신규 등록 / 저장 / 퇴원 처리"), QStringLiteral("입소자 추가·수정·퇴원(재입원). 변경 내역은 입원 이력에 기록됩니다."));
+        break;
+    case 6:
+    default:
+        title = QStringLiteral("카메라 설정");
+        body = li(QStringLiteral("채널 레일(CH1~4)"), QStringLiteral("상단에서 채널 선택. 연결·ROI 상태가 배지로 표시되고, 아래 컨트롤과 우측 영상이 그 채널로 묶입니다."))
+             + li(QStringLiteral("연결"), QStringLiteral("CCTV IP·계정·비밀번호 입력 후 연결. ‘같은 망 카메라 검색’으로 자동 탐색."))
+             + li(QStringLiteral("ROI"), QStringLiteral("‘영역 지정 시작’ → 우측 영상 클릭으로 침대 영역을 그리고 더블클릭으로 완료. 이 영역이 낙상·침상이탈 판정 기준이 됩니다."))
+             + li(QStringLiteral("이미지"), QStringLiteral("밝기·대비·채도 슬라이더 후 ‘적용’. 우측에 적용 전/적용 후(실시간) 비교. 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
+        break;
+    }
+
+    const QString html = QStringLiteral(
+        "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",sans-serif; font-size:14px; color:%1;'>"
+        "<h1 style='color:%2; margin:0 0 10px;'>%3</h1>"
+        "<hr style='border:none; border-top:1px solid %4;'>"
+        "<div style='line-height:155%;'>%5</div></div>")
+        .arg(T, A, title, BD, body);
+    helpBrowser->setHtml(html);
+    helpBrowser->setStyleSheet(
+        QString("QTextBrowser#helpBrowser{background:%1; border:none; padding:20px 22px;}").arg(BG));
+}
+
+// ═══════════════════════════════════════════════════════════
 //  로그아웃 — 창을 닫고 main()의 루프가 로그인 창을 다시 띄운다
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onLogoutClicked()
@@ -571,9 +738,9 @@ QWidget* MainWindow::buildVideoWall()
     // 제목 줄: 좌측 타이틀 + 우측 도구 (ROI / 인터콤 / 경보해제)
     auto* titleRow = new QHBoxLayout();
     titleRow->setSpacing(8);
-    auto* title = new QLabel(QStringLiteral("실시간 영상  ·  4채널"));
-    title->setObjectName("panelTitle");
-    titleRow->addWidget(title);
+    // auto* title = new QLabel(QStringLiteral("실시간 영상  ·  4채널"));
+    // title->setObjectName("panelTitle");
+    // titleRow->addWidget(title);
     titleRow->addStretch();
 
     // ── 실시간 액션: 방송 / 경보해제만 노출. 나머지(카메라·ROI)는 "설정" 팝업으로 ──
@@ -1835,6 +2002,18 @@ void MainWindow::applyTheme()
                        min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
                        font-size: 15px; }
         #themeToggle:hover { border-color: %(accent); background: %(card); }
+
+        /* 도움말 버튼 — 원형 물음표 아이콘 + "도움말" 텍스트 (필 형태) */
+        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 15px;
+                   padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
+        #helpBtn:hover { background: %(card); color: %(text); }
+
+        /* 도움말 창 — 좌측 주제 목록 */
+        #helpList { background: %(card); color: %(sub); border: none; outline: none;
+                    border-right: 1px solid %(border); font-size: 13px; }
+        #helpList::item { padding: 11px 16px; border: none; }
+        #helpList::item:selected { background: %(panel); color: %(accent); font-weight: 700; }
+        #helpList::item:hover:!selected { color: %(text); }
 
         /* 연결 상태 pill 배지 */
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 13px; }
