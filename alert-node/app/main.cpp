@@ -112,14 +112,17 @@ severity toSeverity(const std::string& type)
 /* 패널에 흘릴 문구. 호실을 알면 노드가 조립하고, 모르면 서버 문구를 쓴다 */
 std::string toText(const AlarmCommand& c)
 {
-    if (c.room.empty()) return c.message;
+    /* room 은 int 다. 0(또는 음수)이면 호실을 특정할 수 없다는 뜻이라
+     * 예전의 빈 문자열과 같게 취급해 서버 문구를 그대로 띄운다. */
+    if (c.room <= 0) return c.message;
+    const std::string room = std::to_string(c.room);
 
     /* 64px 화면을 한 바퀴 흘리는 데 문구 길이만큼 시간이 든다.
      * 바뀌는 정보(호실)를 맨 앞에 두고 나머지는 최소한으로 줄인다. */
-    if (c.type == "FALL")           return c.room + "호 낙상 발생";
-    if (c.type == "EGRESS")         return c.room + "호 침상 이탈";
-    if (c.type == "VITAL_ABNORMAL") return c.room + "호 " + c.message;
-    return c.room + "호 " + c.message;
+    if (c.type == "FALL")           return room + "호 낙상 발생";
+    if (c.type == "EGRESS")         return room + "호 침상 이탈";
+    if (c.type == "VITAL_ABNORMAL") return room + "호 " + c.message;
+    return room + "호 " + c.message;
 }
 
 /* 서버가 절대 경로를 보내면 그대로, 파일명만 보내면 audio_dir 에서 찾는다 */
@@ -219,8 +222,8 @@ int main(int argc, char* argv[])
             continue;
         }
         idleShown = false;
-        printf("[명령] type=%s room=%s audio=%s matrix=%s\n", cmd.type.c_str(),
-               cmd.room.c_str(), cmd.audio_action.c_str(), cmd.matrix_action.c_str());
+        printf("[명령] type=%s room=%d audio=%s matrix=%s\n", cmd.type.c_str(),
+               cmd.room, cmd.audio_action.c_str(), cmd.matrix_action.c_str());
 
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
