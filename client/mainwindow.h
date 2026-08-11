@@ -119,6 +119,7 @@ class QListWidget;
 class QTextBrowser;
 class QGridLayout;
 class QResizeEvent;
+class QPropertyAnimation;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -390,12 +391,14 @@ private:
     QWidget* alarmOverlay_ = nullptr;
     void resizeEvent(QResizeEvent* e) override;   // 오버레이를 중앙 위젯 크기에 맞춤
 
-    // 경보 배너 — 경보가 활성일 때만 헤더 아래에 뜨는 전체 폭 알림 바.
+    // 경보 토스트 — 감지 시 화면 상단에서 아래로 슬라이드해 내려오는 알림 카드.
     QFrame* alarmBanner_ = nullptr;
-    QLabel* alarmSummaryLabel_ = nullptr;   // "채널 2 낙상 · 채널 3 침상이탈"
-    QLabel* alarmCountChip_ = nullptr;      // "N건" 칩
-    QWidget* buildAlarmBanner();
-    void updateAlarmBanner();               // 활성 경보에 따라 표시/문구 갱신
+    QLabel* alarmSummaryLabel_ = nullptr;   // "채널 2에서 낙상 발생!"
+    QPropertyAnimation* alarmAnim_ = nullptr;
+    bool alarmToastShown_ = false;
+    QWidget* buildAlarmBanner();            // 토스트 카드 생성(오버레이)
+    void updateAlarmBanner();               // 활성 경보에 따라 문구·표시 갱신
+    void animateAlarmToast(bool show);      // 위→아래 슬라이드 인/아웃
 
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스

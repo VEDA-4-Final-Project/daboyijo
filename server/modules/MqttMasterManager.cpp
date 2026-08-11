@@ -17,7 +17,7 @@ bool MqttMasterManager::init(const std::string& broker_ip, int port) {
 
 
     std::string ca_path = "../../MQTT/certs/ca.crt";
-    mqtt_client_.setTlsConfig(ca_path);
+    mqtt_client_->setTlsConfig(ca_path);
     if(!mqtt_client_->connectToBroker(broker_ip, port)) {
         std::cerr << "[MqttMasterManager] Broker connection failed!" << std::endl;
         return false;
@@ -44,7 +44,7 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
         out_cmd.volume = 90;
         out_cmd.loop = true;
 
-        out_cmd.status = "낙상"; // 프로토콜 정해지면 넣을께요 
+        
         out_cmd.message = "낙상 감지";
         out_cmd.audio_action = "PLAY";
         out_cmd.audio_file = "/home/mayoina/study_veda/daboyijo/server/MQTT_dev/build/alarm_node/fall_alert.wav";
@@ -64,11 +64,11 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_
         cmd.message = "room" + std::to_string(channel_id) + " FALL";
         cmd.audio_file = "fall_alert.wav";
     }else if(event_type == AlarmEventType::EGRESS){
-        cmd.status = "EGRESS";
+        cmd.type = "EGRESS";
         cmd.message = "ch" + std::to_string(channel_id + 1) + " channel EGRESS";
         cmd.audio_file = "egress_alert.wav";
     }else if(event_type == AlarmEventType::VITAL_ABNORMAL){
-        cmd.status = "VITAL_ABNORMAL";
+        cmd.type = "VITAL_ABNORMAL";
         cmd.message = "id "+ std::to_string(channel_id) + "VITAL_ABNORMAL";
         cmd.audio_file = "vital_alert.wav";
     }
@@ -85,7 +85,7 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_
     cmd.audio_action = "PLAY";
 
     // led 
-    cmd.matrix_action = "SHOW"
+    cmd.matrix_action = "SHOW";
     cmd.matrix_passes = 0;
     cmd.brightness = 0;
     
