@@ -16,6 +16,7 @@
 #include <QPixmap>
 
 #include <QHash>
+#include <QVector>
 
 #include "auth.h"
 // MqttQtManager 와 WearableData / AlarmCommand.
@@ -128,8 +129,17 @@ struct PatientInfo {
     QString room;   // 호실 — MQTT 알림 명령에 실어 보낸다(알림 노드가 LED에 띄운다)
 };
 
-// 채널별 최신 웨어러블 값. MQTT 로 들어온 것만 담는다.
-// 한 번도 안 들어온 채널은 received=false 로 남아 화면에 "--" 가 뜬다 —
+// 입소자 한 명의 표시 정보. 한 채널에 여러 명이 있을 수 있어 채널 단위인
+// PatientInfo(대표 1명)와 따로 둔다 — 바이탈은 사람마다 따로 와야 한다.
+struct ResidentInfo {
+    QString name;
+    QString bed;        // 위치 표기("채널 N")
+    QString room;       // 호실
+    int     channel = -1;
+};
+
+// 입소자별 최신 웨어러블 값. MQTT 로 들어온 것만 담는다.
+// 한 번도 안 들어온 사람은 received=false 로 남아 화면에 "--" 가 뜬다 —
 // 값이 없는데 그럴듯한 숫자를 보여주면 관제사가 오판한다.
 struct VitalSample {
     bool   received    = false;
@@ -233,20 +243,34 @@ private:
     void toggleTheme();                // 테마 전환 + 재적용
     QLabel* statusDot = nullptr;       // 서버 연결 상태 표시등
     QLabel* statusText = nullptr;      // 서버 연결 상태 문구
-    QLabel* tempValues[4] = {};        // 채널별 체온 값
-    QLabel* hrValues[4] = {};          // 채널별 심박수 값
-    QLabel* vitalStatusDots[4] = {};   // 채널별 바이탈 상태등
-    QLabel* vitalStatusBadges[4] = {}; // 채널별 상태 배지(정상/주의/위험)
-    QLabel* vitalNameLabels[4] = {};   // 채널별 환자 이름(DB 매핑 반영)
+    // ── 바이탈 카드 위젯들 ─────────────────────────────────
+    // 키는 카드 하나를 가리키는 식별자다: 입소자가 있으면 resident_id(양수),
+    // 아무도 배정되지 않은 채널이면 -(채널+1). 음수 키는 vitals_ 에 값이 없어
+    // 자연히 "대기" 상태로 표시된다.
+    // ★ 카드 개수가 입소자 수에 따라 변하므로 고정 배열이 아니라 해시다.
+    //   rebuildVitalCards() 가 통째로 비우고 다시 채운다.
+    QHash<int, QLabel*> tempValues;         // 체온 값
+    QHash<int, QLabel*> hrValues;           // 심박수 값
+    QHash<int, QLabel*> vitalStatusDots;    // 바이탈 상태등
+    QHash<int, QLabel*> vitalStatusBadges;  // 상태 배지(정상/주의/위험)
+    QHash<int, QLabel*> vitalNameLabels;    // 입소자 이름
 
     // ── MQTT ─────────────────────────────────────────────
     MqttQtManager* mqtt = nullptr;     // 브로커 연결(웨어러블 수신 + 알림 노드 제어)
-    // 웨어러블 기기 id → 채널(0~3). residents 테이블의 wearable_id·camera_id 로 만든다.
-    // 브로커는 "wear_01" 이라고만 알려주는데 화면은 채널 번호로 돼 있어 다리가 필요하다.
-    QHash<QString, int> wearableToChannel;
-    VitalSample vitals_[4];            // 채널별 최신 생체값 (MQTT 로 받은 것만)
-    QLabel* vitalBedLabels[4] = {};    // 채널별 병상 표기(DB 매핑 반영)
-    Sparkline* hrSpark[4] = {};        // 채널별 심박 미니 추세 그래프
+    // 웨어러블 기기 id → 입소자(resident_id). residents 의 wearable_id 로 만든다.
+    // ★ 채널이 아니라 사람으로 잇는다 — 한 채널에 여러 명이면 채널로는 누구 값인지
+    //   구분이 안 돼 나중에 온 값이 앞 값을 덮어쓴다. 기기 id 는 사람마다 고유하다.
+    QHash<QString, int> wearableToResident;
+    QHash<int, ResidentInfo> residentInfo_;   // resident_id → 표시 정보
+    QVector<int> residentsByChannel_[4];      // 채널 → 입소자 id 목록(표시 순서)
+    QHash<int, VitalSample> vitals_;          // resident_id → 최신 생체값
+    // 입소자별 심박 이력. ★ Sparkline 위젯 안에도 값이 쌓이지만, 카드를 다시 만들면
+    //   위젯과 함께 사라진다. 입소자가 추가·퇴원할 때마다 남의 그래프까지 초기화되지
+    //   않도록 이력은 위젯 밖인 여기에 두고, 카드를 만들 때 다시 부어넣는다.
+    QHash<int, QVector<double>> hrHistory_;
+    QHash<int, QLabel*> vitalBedLabels;       // 위치 표기("채널 N")
+    QHash<int, Sparkline*> hrSpark;           // 심박 미니 추세 그래프
+    QVBoxLayout* vitalListLayout_ = nullptr;  // 바이탈 카드 목록(재생성 대상)
 
     QTimer clockTimer;
     QTimer vitalsTimer;
@@ -346,7 +370,11 @@ private:
     QWidget* buildVideoWall();
     QWidget* buildVitalsPanel();
     QWidget* buildVideoCard(int channel);
-    QWidget* buildVitalCard(int channel);
+    // 바이탈 카드 1장. key 는 입소자면 resident_id(양수), 미배정 채널이면 -(채널+1).
+    QWidget* buildVitalCard(int key, const QString& name, const QString& bedText);
+    // 바이탈 카드 목록을 입소자 구성에 맞춰 통째로 다시 만든다.
+    // 입소자가 늘거나 줄면 카드 개수 자체가 달라져서 글자만 갈아끼울 수 없다.
+    void rebuildVitalCards();
     void applyTheme();
     void setConnectionState(bool connected, const QString& text);
     // 경보 해제 버튼 강조 갱신 — 낙상/침상이탈이 하나라도 활성이면 빨강 채움, 아니면 차분한 아웃라인.

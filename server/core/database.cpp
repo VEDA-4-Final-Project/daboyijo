@@ -27,9 +27,9 @@ bool Database::connect(const std::string& host, const std::string& user,
     return true;
 }
 
-bool Database::insertCareLog(int cameraId, int durationSec) {
+long long Database::insertCareLog(int cameraId, int durationSec) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return false;
+    if (!conn_) return 0;
 
     // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
     // (문자열 필드를 넣을 땐 반드시 이스케이프 필요 — 나중에 안내)
@@ -42,10 +42,38 @@ bool Database::insertCareLog(int cameraId, int durationSec) {
 
     if (mysql_query(conn_, sql)) {
         std::cerr << "[DB] INSERT 실패: " << mysql_error(conn_) << "\n";
+        return 0;
+    }
+    // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
+    // INSERT 해서 남의 id를 집어올 수 있다.
+    const long long logId = static_cast<long long>(mysql_insert_id(conn_));
+    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1)
+              << ", " << durationSec << "초, log_id=" << logId << ")\n";
+    return logId;
+}
+
+bool Database::addCareLogDuration(long long logId, int addSec) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "UPDATE care_logs SET duration_sec = duration_sec + %d, end_time = NOW() "
+        "WHERE log_id = %lld",
+        addSec, logId);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
-    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1)
-              << ", " << durationSec << "초)\n";
+    // 행이 안 맞았으면(누가 지웠다든지) 병합한 척하면 안 된다 — 케어시간이 통째로
+    // 사라진다. false를 돌려주면 호출자가 새 행으로 INSERT 하는 쪽으로 넘어간다.
+    if (mysql_affected_rows(conn_) == 0) {
+        std::cerr << "[DB] 케어로그 병합 대상 없음 (log_id=" << logId << ")\n";
+        return false;
+    }
+    std::cout << "[DB] 케어로그 병합 (log_id=" << logId
+              << ", +" << addSec << "초)\n";
     return true;
 }
 
