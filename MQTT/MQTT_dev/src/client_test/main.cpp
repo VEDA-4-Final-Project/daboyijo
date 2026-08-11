@@ -1,51 +1,38 @@
+// test_tls_main.cpp
 #include "MqttClient_veda.hpp"
 #include <iostream>
-#include <unistd.h>
-
-
-void onMessageReceived(const std::string& topic, const std::string&payload) {
-    std::cout << "[Received] topic: "<< topic << " | message: " << payload << std::endl;
-}
-
+#include <thread>
+#include <chrono>
 
 int main() {
-    MqttClient_veda client("Test_Node");
+    MqttClient_veda client("TLS_Test_Client");
 
-    client.setCallback(onMessageReceived);
+    // 1. TLS 인증서 경로 등록 (경로는 실제 본인 ca.crt 위치로 지정)
+    std::string ca_path = "/home/mayoina/study_veda/daboyijo/MQTT/certs/ca.crt";
+    client.setTlsConfig(ca_path);
 
-    std::cout << "Connecting to broker..." << std::endl; 
-    if(!client.connectToBroker("localhost")) {
-        std::cerr << "Failed to connect to broker. is mosquitoo service runninng? " << std::endl;
+    // 2. 메시지 수신 콜백 등록
+    client.setCallback([](const std::string& topic, const std::string& payload) {
+        std::cout << "[ 수신 완료 ] Topic: " << topic << " | Payload: " << payload << std::endl;
+    });
+
+    // 3. MQTTS 포트(8883)로 로컬 접속 시도
+    std::cout << "[Test] Connecting to MQTTS Broker..." << std::endl;
+    if (!client.connectToBroker("127.0.0.1", 8883)) {
+        std::cerr << "[Test] MQTTS Connection Failed!" << std::endl;
         return 1;
     }
 
+    // 4. 이벤트 루프 시작
     client.startLoop();
-    usleep(500000);
-    client.subscribeTopic("veda/test/topic");
 
-    std::cout << "Loop started. exit is ctrl + c " << std::endl;
+    // 연결 안정화를 위해 잠시 대기 후 메시지 테스트 발행
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    client.publishMessage("veda/test/topic", "Hello Encrypted World!");
 
-    int count = 0;
-    while (true) {
-        WearableData mock_sensor_data;
-        mock_sensor_data.device_id = "wearable_rpi_01";
-        mock_sensor_data.temperature = 36.6 + (count%3) *0.2;
-        mock_sensor_data.heart_rate = 75 + (count % 5);
-        mock_sensor_data.is_fall_detected = ((count % 10)==0);
-        mock_sensor_data.timestamp = 1830000+ count;
+    // 5초간 대기하며 메시지 수신 확인
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
-        nlohmann::json j = mock_sensor_data;
-        std::string serialized_payload = j.dump();
-
-        client.publishMessage("veda/test/topic",serialized_payload);
-        std::cout << "[publish] sent json paload (Count : " << count++ <<")" << std::endl;
-
-        sleep(2);
-    }
-
-    client.stopLoop();
-
+    client.disconnect();
     return 0;
 }
-
-

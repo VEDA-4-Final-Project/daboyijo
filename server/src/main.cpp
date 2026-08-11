@@ -70,6 +70,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
@@ -106,7 +107,7 @@ int main(int argc, char* argv[]) {
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
     MqttMasterManager mqtt;         // [mqtt] 
-    mqtt.init("localhost",1883);
+    mqtt.init("dabo.local",8883);
 
     // [케어봇] 버튼 메뉴 기반 상호작용: 보호자가 아무 메시지나 보내면 버튼 메뉴를
     // 띄우고(handleMessage), 버튼 클릭(handleCallback)으로 상황 조회·연락처·알림 토글.

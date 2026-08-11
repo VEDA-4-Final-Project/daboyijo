@@ -14,6 +14,10 @@ MqttMasterManager::~MqttMasterManager() {
 }
 
 bool MqttMasterManager::init(const std::string& broker_ip, int port) {
+
+
+    std::string ca_path = "../../MQTT/certs/ca.crt";
+    mqtt_client_.setTlsConfig(ca_path);
     if(!mqtt_client_->connectToBroker(broker_ip, port)) {
         std::cerr << "[MqttMasterManager] Broker connection failed!" << std::endl;
         return false;
