@@ -39,7 +39,7 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
         out_cmd.loop = true;
 
         out_cmd.type = "FALL";
-        out_cmd.room = "";      // TODO: device_id -> 호실 매핑 붙일 것
+        out_cmd.room = 0;       // TODO: device_id -> 호실 매핑 붙일 것
         out_cmd.message = "낙상 감지";
         out_cmd.audio_action = "PLAY";
         out_cmd.audio_file = "/home/mayoina/study_veda/daboyijo/server/MQTT_dev/build/alarm_node/fall_alert.wav";

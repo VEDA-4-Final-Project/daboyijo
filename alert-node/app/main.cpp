@@ -112,13 +112,11 @@ severity toSeverity(const std::string& type)
 /* 패널에 흘릴 문구. 호실을 알면 노드가 조립하고, 모르면 서버 문구를 쓴다 */
 std::string toText(const AlarmCommand& c)
 {
-    /* room 은 int 다. 0(또는 음수)이면 호실을 특정할 수 없다는 뜻이라
-     * 예전의 빈 문자열과 같게 취급해 서버 문구를 그대로 띄운다. */
-    if (c.room <= 0) return c.message;
-    const std::string room = std::to_string(c.room);
+    if (c.room == 0) return c.message;   // AlarmCommand::room 은 int — 0 은 "모름"
 
     /* 64px 화면을 한 바퀴 흘리는 데 문구 길이만큼 시간이 든다.
      * 바뀌는 정보(호실)를 맨 앞에 두고 나머지는 최소한으로 줄인다. */
+    const std::string room = std::to_string(c.room);
     if (c.type == "FALL")           return room + "호 낙상 발생";
     if (c.type == "EGRESS")         return room + "호 침상 이탈";
     if (c.type == "VITAL_ABNORMAL") return room + "호 " + c.message;
