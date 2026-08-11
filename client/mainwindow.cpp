@@ -2804,7 +2804,19 @@ void MainWindow::onWearableData(const WearableData& data)
     if (data.is_fall_detected && info.channel >= 0 && info.channel < 4
         && !fallActive[info.channel]) {
         qDebug() << "[MQTT] 웨어러블 낙상 감지 —" << info.name
-                 << "채널" << info.channel << "기기" << id;
+                 << "채널" << (info.channel + 1) << "기기" << id;
+
+        // 카메라 낙상(handleFallEvent)과 같은 상태로 만든다. 다만 비상 로그에는
+        // 넣지 않는다 — 그쪽 행은 블랙박스 클립 URL 을 달고 있는데, 웨어러블만
+        // 감지한 낙상은 녹화된 클립이 없어서 눌러도 열리지 않는 행이 된다.
+        fallActive[info.channel] = true;
+        if (channelViews[info.channel]) {
+            // 웨어러블은 기기가 사람마다 달라 "누가" 넘어졌는지까지 띄울 수 있다.
+            channelViews[info.channel]->setAlert(
+                true, QStringLiteral("🚨 %1 낙상 감지").arg(info.name));
+        }
+        refreshAlarmButton();          // → updateAlarmBanner() 로 상단 배너가 내려온다
+        setVideoFocus(info.channel);   // 감지 채널을 크게(스포트라이트)
     }
 
     updateVitals();   // 도착 즉시 화면 반영 (2초 타이머를 기다리지 않는다)
