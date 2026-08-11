@@ -8,6 +8,8 @@
 class CaregiverDetector {
 public:
     // HSV 하한/상한과 판정 임계값(유니폼 색 픽셀 비율)
+    // 아래 값들은 단독 테스트용 fallback.
+    // 실제 동작값은 modules/caregiver_module.cpp 상단 상수가 주입한다.
     CaregiverDetector(cv::Scalar lower = cv::Scalar(5, 50, 50),
                       cv::Scalar upper = cv::Scalar(28, 255, 255),
                       double threshold = 0.08);
@@ -22,7 +24,7 @@ public:
     void setColorRange(const cv::Scalar& lower, const cv::Scalar& upper);
     void setThreshold(double threshold);
 
-    // ★ 튜닝용 — 최소 평균 채도 조정 (caregiver_module.cpp에서 주입)
+    // 튜닝용 — 최소 평균 채도 조정 (caregiver_module.cpp에서 주입)
     void setMinSaturation(double s) { min_sat_ = s; }
 
 private:

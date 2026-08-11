@@ -16,7 +16,7 @@ struct Detection {
     float right = 0;
     float bottom = 0;
     float cx = 0;            // tt:CenterOfGravity 무게중심 (정규화 0~1).
-    float cy = 0;            // 프레임 간 cy 변화율 = 낙하 속도 → 낙상 판정 핵심 신호
+    float cy = 0;            // 프레임 간 cy 변화율 = 낙하 속도 → 낙상 판정용
     float likelihood = 0;    // 사람일 확률 0~1
     std::string type;        // "Human", "Head", "Other" 등
 
