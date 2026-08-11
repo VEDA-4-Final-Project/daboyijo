@@ -6,6 +6,9 @@ MqttQtManager::MqttQtManager(QObject* parent) :QObject(parent), m_client(nullptr
 
 }
 
+MqttQtManager::~MqttQtManager() {
+    disconnectFromBroker();
+}
 
 
 bool MqttQtManager::init(const QString& broker_ip, int port, const QString& client_id ){
@@ -18,12 +21,21 @@ bool MqttQtManager::init(const QString& broker_ip, int port, const QString& clie
         std::string ip_std = broker_ip.toStdString();
         std::string id_std = client_id.toStdString();
 
-        m_client = std::make_unique<MqttClient_veda>();
+        m_client = std::make_unique<MqttClient_veda>(id_std.empty() ? "Qt_Control_Node" : id_std);
+
+        m_client->setCallback([this](const std::string& topic, const std::string& payload) {
+            this->handleIncomingMessage(topic,payload);
+        });
 
         bool result = m_client->connectToBroker(ip_std,port);
 
         if(result){
             m_isConnected = true;
+               
+            m_client->subscribeTopic("veda/wearable/data");
+            m_client->startLoop();
+
+
             qInfo() <<"[MQTT] Connected to " << broker_ip << ": " << port ;
             emit connected();
             return true;
@@ -34,7 +46,7 @@ bool MqttQtManager::init(const QString& broker_ip, int port, const QString& clie
         }
     }catch(const std::exception& e) {
         qCritical() << "[MQTT] Exception during init : " << e.what();
-        emit connectionError(QString::fromLocal8bit(e.what()));
+        emit connectionError(QString::fromLocal8Bit(e.what()));
         return false;
     } 
 
@@ -43,11 +55,27 @@ bool MqttQtManager::init(const QString& broker_ip, int port, const QString& clie
 
 void MqttQtManager::disconnectFromBroker() {
     if(m_client && m_isConnected) {
+        m_client->stopLoop();
         m_client->disconnect();
         m_isConnected = false;
         m_client.reset();
         qInfo() <<"[MQTT] Disconnected from broker";
         emit disconnected();
+    }
+}
+
+
+void MqttQtManager::handleIncomingMessage(const std::string& topic, const std::string& payload){
+    try {
+        auto j = nlohmann::json::parse(payload);
+
+        if (topic == "veda/wearable/data") {
+            auto data = j.get<WearableData>();
+
+            emit wearableDataReceived(data);
+        }
+    } catch (const std::exception& e) {
+        qWarning() << "[MQTT] JSON Parse Error on topic" << QString::fromStdString(topic) << ":" << e.what();
     }
 }
 
@@ -80,8 +108,4 @@ void MqttQtManager::sendAlarmCommand(const AlarmCommand& cmd,int qos) {
         qCritical() << "[MQTT] Exception during sendAlarmCommand : " << e.what();
     } 
 }
-
-
-
-        
 

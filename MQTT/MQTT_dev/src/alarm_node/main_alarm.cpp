@@ -34,7 +34,7 @@ int main() {
     MqttClient_veda client("Alarm_Node");
 
     std::cout << "[Alarm node] Connecting to mqtt broker... " << std::endl;
-    if(!client.connectToBroker("localhost",1883)) {
+    if(!client.connectToBroker("172.20.32.10",1883)) {
         std::cerr << "[Alarm node] Connection failed" << std::endl;
         return 1;
     }

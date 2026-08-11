@@ -1,0 +1,119 @@
+#include "MqttMasterManager.hpp"
+#include <iostream>
+#include <nlohmann/json.hpp>
+#include <chrono>
+
+MqttMasterManager::MqttMasterManager() {
+        mqtt_client_ = std::make_unique<MqttClient_veda>("Main_Master_Module");
+}
+
+MqttMasterManager::~MqttMasterManager() {
+    if(mqtt_client_) {
+        mqtt_client_->stopLoop();
+    }
+}
+
+bool MqttMasterManager::init(const std::string& broker_ip, int port) {
+
+
+    std::string ca_path = "../../MQTT/certs/ca.crt";
+    mqtt_client_.setTlsConfig(ca_path);
+    if(!mqtt_client_->connectToBroker(broker_ip, port)) {
+        std::cerr << "[MqttMasterManager] Broker connection failed!" << std::endl;
+        return false;
+    }
+
+    mqtt_client_->setCallback([this](const::std::string& t , const std::string& p) {
+        this->onMessageReceived(t,p);
+    });
+
+    mqtt_client_->startLoop();
+
+    mqtt_client_->subscribeTopic("veda/wearable/data");
+    std::printf("[MqttMasterManager] Subscribed to 'veda/wearable/data'");
+    std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
+
+    return true;
+}
+
+
+bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& out_cmd) {
+    if(data.is_fall_detected) {
+        out_cmd.target_device = "alarm_rpi_01";
+        out_cmd.timestamp = data.timestamp;
+        out_cmd.volume = 90;
+        out_cmd.loop = true;
+
+        out_cmd.status = "낙상"; // 프로토콜 정해지면 넣을께요 
+        out_cmd.message = "낙상 감지";
+        out_cmd.audio_action = "PLAY";
+        out_cmd.audio_file = "/home/mayoina/study_veda/daboyijo/server/MQTT_dev/build/alarm_node/fall_alert.wav";
+        return true;
+    }
+    return false;
+}
+
+
+void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_id ) {
+
+    AlarmCommand cmd;
+
+    if(event_type == AlarmEventType::FALL){
+        cmd.type= "FALL";
+        cmd.room= channel_id; 
+        cmd.message = "room" + std::to_string(channel_id) + " FALL";
+        cmd.audio_file = "fall_alert.wav";
+    }else if(event_type == AlarmEventType::EGRESS){
+        cmd.status = "EGRESS";
+        cmd.message = "ch" + std::to_string(channel_id + 1) + " channel EGRESS";
+        cmd.audio_file = "egress_alert.wav";
+    }else if(event_type == AlarmEventType::VITAL_ABNORMAL){
+        cmd.status = "VITAL_ABNORMAL";
+        cmd.message = "id "+ std::to_string(channel_id) + "VITAL_ABNORMAL";
+        cmd.audio_file = "vital_alert.wav";
+    }
+
+
+    cmd.target_device = "alarm_rpi_01";
+    //cmd.timestamp = data.timestamp;
+    // chrono를 이용하여 시스템 타임 스탬프 대입 
+    auto now = std::chrono::system_clock::now();
+    cmd.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count();
+    cmd.volume = 90;
+    cmd.loop = true;
+    cmd.audio_action = "PLAY";
+
+    // led 
+    cmd.matrix_action = "SHOW"
+    cmd.matrix_passes = 0;
+    cmd.brightness = 0;
+    
+    nlohmann::json j = cmd;
+    std::string payload = j.dump();
+
+    mqtt_client_->publishMessage("veda/alarm/control",payload);
+    std::cout << "[MqttMasterManager] SentAlarm Command to Node: " << payload<< std::endl;
+}
+
+void MqttMasterManager::onMessageReceived(const std::string& topic, const std::string& payload) {
+    try {
+        auto j = nlohmann::json::parse(payload);
+        auto data = j.get<WearableData>();
+
+        if(data.is_fall_detected){
+            wearable_callback_(data.is_fall_detected);
+        }
+
+        //std::cout << "[MqttMasterManager] Fall: " << (data.is_fall_detected ? "yes" : "no") << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "[MqttMasterManager] Parsing Error: " << e.what() << std::endl;
+    }
+}
+
+void MqttMasterManager::setWearableCallback(WearableCallback cd){
+    wearable_callback_ = cd;
+}
+
+
