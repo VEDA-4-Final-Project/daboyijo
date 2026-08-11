@@ -116,6 +116,8 @@ class QVideoWidget;
 class QUdpSocket;
 class QListWidget;
 class QTextBrowser;
+class QGridLayout;
+class QResizeEvent;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -200,6 +202,11 @@ private:
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
+    QWidget* videoCards[4] = {};      // 영상 카드(스포트라이트 재배치용)
+    QGridLayout* videoGrid = nullptr; // 영상 월 그리드(재배치 대상)
+    int focusedChannel_ = -2;         // 스포트라이트 채널(-1=균등 2×2, -2=아직 미배치)
+    // 낙상·침상이탈 감지 시 그 채널을 크게, 나머지는 작게. -1이면 균등 2×2로 복귀.
+    void setVideoFocus(int channel);
     // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
     // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
     QString lastCameraUrl_[4];
@@ -351,6 +358,16 @@ private:
     void setConnectionState(bool connected, const QString& text);
     // 경보 해제 버튼 강조 갱신 — 낙상/침상이탈이 하나라도 활성이면 빨강 채움, 아니면 차분한 아웃라인.
     void refreshAlarmButton();
+    // 경보 중 창 전체 테두리 빨강 펄스 오버레이. (QWidget*로 보관 — 실체는 파일 로컬 클래스)
+    QWidget* alarmOverlay_ = nullptr;
+    void resizeEvent(QResizeEvent* e) override;   // 오버레이를 중앙 위젯 크기에 맞춤
+
+    // 경보 배너 — 경보가 활성일 때만 헤더 아래에 뜨는 전체 폭 알림 바.
+    QFrame* alarmBanner_ = nullptr;
+    QLabel* alarmSummaryLabel_ = nullptr;   // "채널 2 낙상 · 채널 3 침상이탈"
+    QLabel* alarmCountChip_ = nullptr;      // "N건" 칩
+    QWidget* buildAlarmBanner();
+    void updateAlarmBanner();               // 활성 경보에 따라 표시/문구 갱신
 
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스

@@ -19,6 +19,9 @@
 #include <QListWidget>
 #include <QPainter>
 #include <QIcon>
+#include <QLinearGradient>
+#include <QResizeEvent>
+#include <cmath>
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -156,7 +159,7 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.23";
+const char* kDefaultHostA  = "172.20.32.31";
 const char* kDefaultHostB  = "172.20.32.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
@@ -420,6 +423,62 @@ static void applyCardShadow(QWidget* w, int blur = 22, int dy = 6, int alpha = 7
     w->setGraphicsEffect(sh);
 }
 
+// 경보 중 창 가장자리에 빨강 글로우(비네트)를 잔잔히 숨쉬게 하는 오버레이.
+// 두꺼운 테두리가 아니라, 모서리에서 안쪽으로 부드럽게 사라지는 그라데이션 —
+// 관제/보안 대시보드에서 흔한 "엣지 경보" 방식. 마우스는 통과, 내부는 투명.
+class AlarmOverlay : public QWidget {
+public:
+    explicit AlarmOverlay(QWidget* parent) : QWidget(parent) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        QObject::connect(&timer_, &QTimer::timeout, this, [this] {
+            phase_ += 0.10;                       // 느리고 잔잔한 호흡(≈2초 주기)
+            if (phase_ > 6.28318) phase_ -= 6.28318;
+            update();
+        });
+        hide();
+    }
+    void start() {
+        if (!isVisible()) show();
+        raise();
+        if (!timer_.isActive()) timer_.start(33);
+    }
+    void stop() { timer_.stop(); hide(); }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        // 부드러운 호흡: 알파만 은은하게 오르내린다(두께·모양 변화 없음).
+        const double t = (std::sin(phase_) + 1.0) / 2.0;      // 0..1
+        const int a = int((0.20 + 0.30 * t) * 255.0);         // 소프트 0.20..0.50
+        const QColor edge(216, 40, 54, a);                    // 차분한 경보 레드
+        const QColor clear(216, 40, 54, 0);
+        const int W = width(), H = height();
+        const int g = qMin(110, qMin(W, H) / 5);              // 글로우가 스며드는 폭
+
+        auto band = [&](const QRect& r, const QPointF& from, const QPointF& to) {
+            QLinearGradient lg(from, to);
+            lg.setColorAt(0.0, edge);
+            lg.setColorAt(1.0, clear);
+            p.fillRect(r, lg);
+        };
+        band(QRect(0, 0, W, g),        QPointF(0, 0),   QPointF(0, g));         // 상
+        band(QRect(0, H - g, W, g),    QPointF(0, H),   QPointF(0, H - g));     // 하
+        band(QRect(0, 0, g, H),        QPointF(0, 0),   QPointF(g, 0));         // 좌
+        band(QRect(W - g, 0, g, H),    QPointF(W, 0),   QPointF(W - g, 0));     // 우
+
+        // 가장자리에 아주 얇은 1px 라인 한 스푼 — 프레임이 또렷하게 잡힌다.
+        p.setPen(QPen(QColor(230, 55, 66, int(a * 0.8)), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5));
+    }
+
+private:
+    QTimer timer_;
+    double phase_ = 0.0;
+};
+
 void MainWindow::buildUi()
 {
     auto* root = new QVBoxLayout(ui->centralwidget);
@@ -427,6 +486,7 @@ void MainWindow::buildUi()
     root->setSpacing(0);
 
     root->addWidget(buildHeader());
+    root->addWidget(buildAlarmBanner());   // 경보 시에만 보이는 전체 폭 알림 바
 
     tabWidget = new QTabWidget();
     tabWidget->setObjectName("mainTabs");
@@ -456,8 +516,20 @@ void MainWindow::buildUi()
 
     root->addWidget(tabWidget, 1);
 
+    // 경보 펄스 오버레이 — 중앙 위젯 전체를 덮되 테두리만 그린다(마우스 통과).
+    alarmOverlay_ = new AlarmOverlay(ui->centralwidget);
+    alarmOverlay_->setGeometry(ui->centralwidget->rect());
+
     resize(1600, 940);
     setMinimumSize(1340, 760);
+}
+
+// 창 크기가 바뀌면 경보 오버레이도 중앙 위젯 크기에 맞춘다.
+void MainWindow::resizeEvent(QResizeEvent* e)
+{
+    QMainWindow::resizeEvent(e);
+    if (alarmOverlay_ && ui && ui->centralwidget)
+        alarmOverlay_->setGeometry(ui->centralwidget->rect());
 }
 
 QWidget* MainWindow::buildHeader()
@@ -476,6 +548,15 @@ QWidget* MainWindow::buildHeader()
 
     lay->addWidget(logo);
     lay->addStretch();
+
+    // ── 실시간 관제 액션 — 방송(인터콤) ──
+    // 경보 해제는 헤더가 아니라 "경보 배너"(경보 시에만 표시)로 옮겼다.
+    micButton = new QPushButton(QStringLiteral("🎤 방송"));
+    micButton->setObjectName("micButton");
+    micButton->setCursor(Qt::PointingHandCursor);
+    connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
+    connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
+    lay->addWidget(micButton);
 
     // 연결 상태 — pill 배지
     auto* statusPill = new QFrame();
@@ -579,6 +660,73 @@ QWidget* MainWindow::buildHeader()
     lay->addWidget(userChip);
 
     return header;
+}
+
+// 경보 배너 — 평상시엔 숨김. 낙상/침상이탈이 활성이면 헤더 아래에 전체 폭으로 떠서
+// "어느 채널·무슨 경보"를 보여주고, 큼직한 [경보 해제] 버튼을 제공한다.
+QWidget* MainWindow::buildAlarmBanner()
+{
+    alarmBanner_ = new QFrame();
+    alarmBanner_->setObjectName("alarmBanner");
+    auto* lay = new QHBoxLayout(alarmBanner_);
+    lay->setContentsMargins(18, 9, 16, 9);
+    lay->setSpacing(10);
+
+    // 상태 점(빨강) + "긴급 경보" 타이틀 + 건수 칩
+    auto* dot = new QLabel();
+    dot->setObjectName("alarmDot");
+    dot->setFixedSize(8, 8);
+    lay->addWidget(dot);
+
+    auto* title = new QLabel(QStringLiteral("긴급 경보"));
+    title->setObjectName("alarmTitle");
+    lay->addWidget(title);
+
+    alarmCountChip_ = new QLabel(QStringLiteral("0건"));
+    alarmCountChip_->setObjectName("alarmCountChip");
+    alarmCountChip_->setAlignment(Qt::AlignCenter);
+    lay->addWidget(alarmCountChip_);
+
+    auto* sep = new QFrame();
+    sep->setFrameShape(QFrame::VLine);
+    sep->setObjectName("alarmSep");
+    sep->setFixedHeight(16);
+    lay->addWidget(sep);
+
+    // 상세(어느 채널·무슨 경보) — 차분한 서브 톤
+    alarmSummaryLabel_ = new QLabel();
+    alarmSummaryLabel_->setObjectName("alarmBannerText");
+    lay->addWidget(alarmSummaryLabel_);
+    lay->addStretch();
+
+    alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
+    alarmClearButton->setObjectName("alarmBannerBtn");
+    alarmClearButton->setCursor(Qt::PointingHandCursor);
+    connect(alarmClearButton, &QPushButton::clicked, this, &MainWindow::onAlarmClearClicked);
+    lay->addWidget(alarmClearButton);
+
+    alarmBanner_->hide();   // 경보 없을 땐 숨김(공간도 차지 안 함)
+    return alarmBanner_;
+}
+
+// 활성 경보 목록을 모아 배너 문구를 만들고 표시/숨김을 결정한다.
+void MainWindow::updateAlarmBanner()
+{
+    if (!alarmBanner_) return;
+    QStringList parts;
+    for (int ch = 0; ch < 4; ++ch) {
+        if (fallActive[ch])      parts << QStringLiteral("채널 %1 낙상").arg(ch + 1);
+        if (bedEgressActive[ch]) parts << QStringLiteral("채널 %1 침상이탈").arg(ch + 1);
+    }
+    if (parts.isEmpty()) {
+        alarmBanner_->hide();
+        return;
+    }
+    if (alarmCountChip_)
+        alarmCountChip_->setText(QStringLiteral("%1건").arg(parts.size()));
+    if (alarmSummaryLabel_)
+        alarmSummaryLabel_->setText(parts.join(QStringLiteral("   ·   ")));
+    alarmBanner_->show();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -732,46 +880,17 @@ QWidget* MainWindow::buildVideoWall()
     panel->setObjectName("panel");
 
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(16, 14, 16, 16);
-    outer->setSpacing(12);
+    outer->setContentsMargins(12, 12, 12, 12);
+    outer->setSpacing(0);
 
-    // 제목 줄: 좌측 타이틀 + 우측 도구 (ROI / 인터콤 / 경보해제)
-    auto* titleRow = new QHBoxLayout();
-    titleRow->setSpacing(8);
-    // auto* title = new QLabel(QStringLiteral("실시간 영상  ·  4채널"));
-    // title->setObjectName("panelTitle");
-    // titleRow->addWidget(title);
-    titleRow->addStretch();
+    // 방송·경보해제 버튼은 상단 헤더로 올렸다 → 여기선 영상 4개가 패널을 꽉 채운다.
+    videoGrid = new QGridLayout();
+    videoGrid->setSpacing(12);   // 라운드 카드가 숨 쉴 만큼의 간격(모던 대시보드 톤)
+    for (int ch = 0; ch < 4; ++ch)
+        videoCards[ch] = buildVideoCard(ch);
+    outer->addLayout(videoGrid, 1);
 
-    // ── 실시간 액션: 방송 / 경보해제만 노출. 나머지(카메라·ROI)는 "설정" 팝업으로 ──
-    // 🎤 원격 방송(인터콤)
-    micButton = new QPushButton(QStringLiteral("🎤 방송"));
-    micButton->setObjectName("micButton");
-    micButton->setCursor(Qt::PointingHandCursor);
-    connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
-    connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
-    titleRow->addWidget(micButton);
-
-    // 🚨 경보 해제
-    alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
-    alarmClearButton->setObjectName("alarmButton");
-    alarmClearButton->setCursor(Qt::PointingHandCursor);
-    connect(alarmClearButton, &QPushButton::clicked, this,
-            &MainWindow::onAlarmClearClicked);
-    titleRow->addWidget(alarmClearButton);
-
-    // 카메라·ROI·이미지 설정은 상단 "카메라 설정" 탭으로 이동 — 툴바 버튼은 제거했다.
-
-    outer->addLayout(titleRow);
-
-    auto* grid = new QGridLayout();
-    grid->setSpacing(12);   // 라운드 카드가 숨 쉴 만큼의 간격(모던 대시보드 톤)
-    grid->addWidget(buildVideoCard(0), 0, 0);
-    grid->addWidget(buildVideoCard(1), 0, 1);
-    grid->addWidget(buildVideoCard(2), 1, 0);
-    grid->addWidget(buildVideoCard(3), 1, 1);
-    outer->addLayout(grid, 1);
-
+    setVideoFocus(-1);   // 초기: 균등 2×2 배치
     return panel;
 }
 
@@ -779,18 +898,17 @@ QWidget* MainWindow::buildVideoCard(int channel)
 {
     auto* card = new QFrame();
     card->setObjectName("videoCard");
-    card->setMinimumSize(420, 280);
+    // 스포트라이트 시 작은 칸으로도 줄어들 수 있게 최소 크기를 낮게 잡는다.
+    card->setMinimumSize(140, 96);
 
     auto* lay = new QVBoxLayout(card);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
-    // 영상 영역 — VideoView가 프레임 + NVR 오버레이(채널/이름/LIVE) + ROI를 담당.
-    // 별도 상단 바 없이 정보는 영상 위에 직접 얹는다(관제 콘솔 느낌).
+    // 영상 영역 — VideoView가 프레임 + NVR 오버레이(CH 태그/LIVE) + ROI를 담당.
+    // 오버레이는 "CH1"만 — 병상·이름은 표시하지 않는다(overlayInfo 비움).
     auto* video = new VideoView(channel);
     video->setObjectName("video");
-    video->setOverlayInfo(QStringLiteral("%1 · %2")
-                              .arg(patients[channel].bed, patients[channel].name));
     channelViews[channel] = video;
     connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
     connect(video, &VideoView::drawModeChanged, this,
@@ -803,6 +921,48 @@ QWidget* MainWindow::buildVideoCard(int channel)
     lay->addWidget(video, 1);
 
     return card;
+}
+
+// 감지된 채널을 좌측 대형으로, 나머지 3개는 우측에 작게 세로로 배치한다(스포트라이트).
+// channel<0 이면 균등 2×2로 복귀. 팝업 없이 그리드만 재배치한다.
+void MainWindow::setVideoFocus(int channel)
+{
+    if (!videoGrid) return;
+    if (channel == focusedChannel_) return;   // 이미 그 상태면 재배치 생략
+    focusedChannel_ = channel;
+
+    for (int ch = 0; ch < 4; ++ch)
+        if (videoCards[ch]) videoGrid->removeWidget(videoCards[ch]);
+    for (int i = 0; i < 4; ++i) {             // 스트레치 초기화
+        videoGrid->setColumnStretch(i, 0);
+        videoGrid->setRowStretch(i, 0);
+    }
+
+    if (channel < 0 || channel >= 4) {
+        // 균등 2×2
+        videoGrid->addWidget(videoCards[0], 0, 0);
+        videoGrid->addWidget(videoCards[1], 0, 1);
+        videoGrid->addWidget(videoCards[2], 1, 0);
+        videoGrid->addWidget(videoCards[3], 1, 1);
+        videoGrid->setColumnStretch(0, 1);
+        videoGrid->setColumnStretch(1, 1);
+        videoGrid->setRowStretch(0, 1);
+        videoGrid->setRowStretch(1, 1);
+    } else {
+        // 스포트라이트: 좌측 대형(3행 span) + 우측 작은 3개 세로
+        videoGrid->addWidget(videoCards[channel], 0, 0, 3, 1);
+        int r = 0;
+        for (int ch = 0; ch < 4; ++ch) {
+            if (ch == channel) continue;
+            videoGrid->addWidget(videoCards[ch], r, 1, 1, 1);
+            ++r;
+        }
+        videoGrid->setColumnStretch(0, 3);   // 대형 ≈ 75%
+        videoGrid->setColumnStretch(1, 1);   // 작은 열 ≈ 25%
+        videoGrid->setRowStretch(0, 1);
+        videoGrid->setRowStretch(1, 1);
+        videoGrid->setRowStretch(2, 1);
+    }
 }
 
 QWidget* MainWindow::buildVitalsPanel()
@@ -2066,6 +2226,19 @@ void MainWindow::applyTheme()
                         stop:0 #ff6b62, stop:1 %(critical)); }
         #alarmButton[active="true"]:hover { background: #ff6b62; }
 
+        /* 경보 배너 — 어두운 바 + 빨강 액센트(엔터프라이즈 알림 톤) */
+        #alarmBanner { background: %(panel); border: none;
+                       border-bottom: 1px solid %(border); border-left: 4px solid %(critical); }
+        #alarmDot { background: %(critical); border-radius: 4px; }
+        #alarmTitle { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.3px; }
+        #alarmCountChip { background: %(critical); color: #fff; border-radius: 9px;
+                          padding: 1px 9px; font-size: 11px; font-weight: 800; }
+        #alarmSep { color: %(border); }
+        #alarmBannerText { color: %(sub); font-size: 13px; font-weight: 600; }
+        #alarmBannerBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
+                          padding: 8px 18px; font-size: 13px; font-weight: 800; }
+        #alarmBannerBtn:hover { background: #ff6b62; }
+
         /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
         #videoCard { background: #000000; border: 1px solid %(border); border-radius: 12px; }
         #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 12px; }
@@ -2726,7 +2899,8 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, flo
         }
         qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
-    refreshAlarmButton();   // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
 
     // 2. 비상 로그 조회 탭에 URL 및 정보 등록
     if (logTable) {
@@ -2768,7 +2942,8 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         }
         qDebug() << "⚠️ [침상 이탈 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐";
     }
-    refreshAlarmButton();   // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
 
     // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
     if (logTable) {
@@ -3937,6 +4112,7 @@ void MainWindow::onAlarmClearClicked()
 
     // (flush는 위 루프에서 채널별 소켓마다 이미 처리)
     refreshAlarmButton();   // 모두 해제됐으니 버튼을 차분한 아웃라인으로 되돌린다
+    setVideoFocus(-1);      // 경보 해제 → 균등 2×2로 복귀
     if (!packetSent) {
         // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
         QMessageBox::information(this, QStringLiteral("경보 해제"),
@@ -3951,9 +4127,14 @@ void MainWindow::refreshAlarmButton()
     bool anyActive = false;
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch]) { anyActive = true; break; }
-    alarmClearButton->setProperty("active", anyActive);
-    alarmClearButton->style()->unpolish(alarmClearButton);
-    alarmClearButton->style()->polish(alarmClearButton);
+    updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
+
+    // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
+    if (alarmOverlay_) {
+        auto* ov = static_cast<AlarmOverlay*>(alarmOverlay_);
+        if (anyActive) { ov->setGeometry(ui->centralwidget->rect()); ov->start(); }
+        else           ov->stop();
+    }
 }
 
 
@@ -4109,9 +4290,7 @@ void MainWindow::loadPatientsFromDb()
 void MainWindow::refreshPatientLabels()
 {
     for (int ch = 0; ch < 4; ++ch) {
-        if (channelViews[ch])
-            channelViews[ch]->setOverlayInfo(
-                QStringLiteral("%1 · %2").arg(patients[ch].bed, patients[ch].name));
+        // 영상 오버레이는 "CH1"만 유지 — 병상·이름은 얹지 않는다.
         if (vitalNameLabels[ch]) vitalNameLabels[ch]->setText(patients[ch].name);
         if (vitalBedLabels[ch])  vitalBedLabels[ch]->setText(patients[ch].bed);
     }
