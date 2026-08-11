@@ -54,22 +54,22 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
 }
 
 
-void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int channel_id ) {
+void MqttMasterManager::(AlarmEventType event_type, int room ) {
 
     AlarmCommand cmd;
-
+    cmd.room = room;
+    
     if(event_type == AlarmEventType::FALL){
         cmd.type= "FALL";
-        cmd.room= channel_id; 
-        cmd.message = "room" + std::to_string(channel_id) + " FALL";
+        cmd.message = "room" + std::to_string(cmd.room) + " FALL";
         cmd.audio_file = "fall_alert.wav";
     }else if(event_type == AlarmEventType::EGRESS){
         cmd.status = "EGRESS";
-        cmd.message = "ch" + std::to_string(channel_id + 1) + " channel EGRESS";
+        cmd.message = "room" + std::to_string(cmd.room) + " EGRESS";
         cmd.audio_file = "egress_alert.wav";
     }else if(event_type == AlarmEventType::VITAL_ABNORMAL){
         cmd.status = "VITAL_ABNORMAL";
-        cmd.message = "id "+ std::to_string(channel_id) + "VITAL_ABNORMAL";
+        cmd.message = "room"+ std::to_string(cmd.room) + " VITAL_ABNORMAL";
         cmd.audio_file = "vital_alert.wav";
     }
 
@@ -102,10 +102,11 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         auto data = j.get<WearableData>();
 
         if(data.is_fall_detected){
-            wearable_callback_(data.is_fall_detected);
+            wearable_callback_(AlarmEventType::FALL, data.device_id);
         }
-
-        //std::cout << "[MqttMasterManager] Fall: " << (data.is_fall_detected ? "yes" : "no") << std::endl;
+        if(data.temperature > 40 || data.heart_rate > 180 || data.spo2 < 90){
+            wearable_callback_(AlarmEventType::VITAL_ABNORMAL, data.device_id);
+        }
         
     } catch (const std::exception& e) {
         std::cerr << "[MqttMasterManager] Parsing Error: " << e.what() << std::endl;
@@ -115,5 +116,3 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
 void MqttMasterManager::setWearableCallback(WearableCallback cd){
     wearable_callback_ = cd;
 }
-
-

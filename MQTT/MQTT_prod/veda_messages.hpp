@@ -31,7 +31,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WearableData, device_id, is_fall_detected, te
 struct AlarmCommand {
     // 대상
     std::string target_device;  // 알림 노드 id
-    std::string room;           // 호실
+    int room;                   // 호실
 
     // 이벤트
     std::string type;           // FALL | EGRESS | VITAL_ABNORMAL | CONTROL

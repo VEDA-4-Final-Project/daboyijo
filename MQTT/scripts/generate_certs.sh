@@ -12,7 +12,6 @@ echo "=== 1. 인증서 저장 디렉토리 생성 ($CERT_DIR) ==="
 mkdir -p "$CERT_DIR"
 cd "$CERT_DIR"
 
-
 echo "=== 2. CA 키 및 루트 인증서 생성 ==="
 openssl genrsa -out ca.key 2048
 openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=DavoCA"

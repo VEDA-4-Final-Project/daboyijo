@@ -115,6 +115,96 @@ int Database::getRiskLevelByCamera(int channel) {
     return level;
 }
 
+int Database::getCHById(int id){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT  camera_id"
+        "FROM residents WHERE wearable_id = %d", id);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    int ch = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    // 집계 쿼리는 항상 한 행을 반환하지만, 대상 입소자가 없으면 그 값이 NULL이다.
+    if (row && row[0]) {
+        ch = std::atoi(row[0]);
+    }
+    mysql_free_result(res);
+    return ch;
+}
+
+int Database::getRoomById(int id){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT  room"
+        "FROM residents WHERE wearable_id = %d", id);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    int room = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    // 집계 쿼리는 항상 한 행을 반환하지만, 대상 입소자가 없으면 그 값이 NULL이다.
+    if (row && row[0]) {
+        room = std::atoi(row[0]);
+    }
+    mysql_free_result(res);
+    return room;
+}
+
+int Database::getRoomByCh(int channel){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT  room"
+        "FROM residents WHERE camera_id = %d", channel);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    int room = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    // 집계 쿼리는 항상 한 행을 반환하지만, 대상 입소자가 없으면 그 값이 NULL이다.
+    if (row && row[0]) {
+        room = std::atoi(row[0]);
+    }
+    mysql_free_result(res);
+    return room;
+}
+
 void Database::close() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (conn_) { mysql_close(conn_); conn_ = nullptr; }

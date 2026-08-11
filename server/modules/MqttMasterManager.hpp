@@ -24,7 +24,7 @@ public:
     bool checkFallStatus(const WearableData& data, AlarmCommand& out_cmd);
 
     // 알림노드로 제어 명령어 전송 함수 
-    void sendAlarmCommand(AlarmEventType event_type, int channel_id);
+    void sendAlarmCommand(AlarmEventType event_type, int room);
 
     // 함수 타입 정의 (c에서의 typedef)
     using WearableCallback = std::function<void(bool)>;

@@ -30,6 +30,9 @@ public:
     // 한 채널에 재원 입소자가 여럿이면 가장 높은 위험도(가장 안전한 쪽)를 반환.
     // 반환: 3(상)/2(중)/1(하), 재원 입소자가 없거나 실패 시 -1.
     int getRiskLevelByCamera(int channel);
+    int getCHById(int id);
+    int getRoomById(int id);
+    int getRoomByCh(int channel);
     void close();
 private:
     std::mutex mutex_;  // conn_ 보호
