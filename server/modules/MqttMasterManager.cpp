@@ -17,7 +17,7 @@ bool MqttMasterManager::init(const std::string& broker_ip, int port) {
 
 
     std::string ca_path = "../../MQTT/certs/ca.crt";
-    mqtt_client_.setTlsConfig(ca_path);
+    mqtt_client_->setTlsConfig(ca_path);
     if(!mqtt_client_->connectToBroker(broker_ip, port)) {
         std::cerr << "[MqttMasterManager] Broker connection failed!" << std::endl;
         return false;
@@ -44,7 +44,7 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
         out_cmd.volume = 90;
         out_cmd.loop = true;
 
-        out_cmd.status = "낙상"; // 프로토콜 정해지면 넣을께요 
+        
         out_cmd.message = "낙상 감지";
         out_cmd.audio_action = "PLAY";
         out_cmd.audio_file = "/home/mayoina/study_veda/daboyijo/server/MQTT_dev/build/alarm_node/fall_alert.wav";
@@ -85,7 +85,7 @@ void MqttMasterManager::(AlarmEventType event_type, int room ) {
     cmd.audio_action = "PLAY";
 
     // led 
-    cmd.matrix_action = "SHOW"
+    cmd.matrix_action = "SHOW";
     cmd.matrix_passes = 0;
     cmd.brightness = 0;
     

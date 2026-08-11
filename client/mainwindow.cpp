@@ -21,6 +21,9 @@
 #include <QIcon>
 #include <QLinearGradient>
 #include <QResizeEvent>
+#include <QPropertyAnimation>
+#include <QPair>
+#include <QList>
 #include <cmath>
 #include <QPushButton>
 #include <QInputDialog>
@@ -490,7 +493,6 @@ void MainWindow::buildUi()
     root->setSpacing(0);
 
     root->addWidget(buildHeader());
-    root->addWidget(buildAlarmBanner());   // 경보 시에만 보이는 전체 폭 알림 바
 
     tabWidget = new QTabWidget();
     tabWidget->setObjectName("mainTabs");
@@ -524,6 +526,9 @@ void MainWindow::buildUi()
     alarmOverlay_ = new AlarmOverlay(ui->centralwidget);
     alarmOverlay_->setGeometry(ui->centralwidget->rect());
 
+    // 경보 토스트 — 상단에서 슬라이드해 내려오는 알림(오버레이, 레이아웃 밖).
+    buildAlarmBanner();
+
     resize(1600, 940);
     setMinimumSize(1340, 760);
 }
@@ -534,6 +539,11 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     QMainWindow::resizeEvent(e);
     if (alarmOverlay_ && ui && ui->centralwidget)
         alarmOverlay_->setGeometry(ui->centralwidget->rect());
+    // 경보 토스트가 떠 있으면 가로 중앙으로 다시 맞춘다.
+    if (alarmToastShown_ && alarmBanner_ && ui && ui->centralwidget) {
+        const int x = qMax(12, (ui->centralwidget->width() - alarmBanner_->width()) / 2);
+        alarmBanner_->move(x, 78);
+    }
 }
 
 QWidget* MainWindow::buildHeader()
@@ -666,71 +676,98 @@ QWidget* MainWindow::buildHeader()
     return header;
 }
 
-// 경보 배너 — 평상시엔 숨김. 낙상/침상이탈이 활성이면 헤더 아래에 전체 폭으로 떠서
-// "어느 채널·무슨 경보"를 보여주고, 큼직한 [경보 해제] 버튼을 제공한다.
+// 경보 토스트 — 감지 시 화면 상단에서 아래로 슬라이드해 내려오는 알림 카드(오버레이).
+// "채널 N에서 낙상 발생!" + [경보 해제]. 평상시엔 화면 위로 파킹돼 안 보인다.
 QWidget* MainWindow::buildAlarmBanner()
 {
-    alarmBanner_ = new QFrame();
-    alarmBanner_->setObjectName("alarmBanner");
+    alarmBanner_ = new QFrame(ui->centralwidget);   // 레이아웃 밖 오버레이
+    alarmBanner_->setObjectName("alarmToast");
+    applyCardShadow(alarmBanner_, 30, 10, 110);      // 떠 있는 느낌의 진한 그림자
     auto* lay = new QHBoxLayout(alarmBanner_);
-    lay->setContentsMargins(18, 9, 16, 9);
-    lay->setSpacing(10);
+    lay->setContentsMargins(18, 12, 14, 12);
+    lay->setSpacing(12);
 
-    // 상태 점(빨강) + "긴급 경보" 타이틀 + 건수 칩
     auto* dot = new QLabel();
     dot->setObjectName("alarmDot");
-    dot->setFixedSize(8, 8);
+    dot->setFixedSize(9, 9);
     lay->addWidget(dot);
 
-    auto* title = new QLabel(QStringLiteral("긴급 경보"));
-    title->setObjectName("alarmTitle");
-    lay->addWidget(title);
-
-    alarmCountChip_ = new QLabel(QStringLiteral("0건"));
-    alarmCountChip_->setObjectName("alarmCountChip");
-    alarmCountChip_->setAlignment(Qt::AlignCenter);
-    lay->addWidget(alarmCountChip_);
-
-    auto* sep = new QFrame();
-    sep->setFrameShape(QFrame::VLine);
-    sep->setObjectName("alarmSep");
-    sep->setFixedHeight(16);
-    lay->addWidget(sep);
-
-    // 상세(어느 채널·무슨 경보) — 차분한 서브 톤
-    alarmSummaryLabel_ = new QLabel();
-    alarmSummaryLabel_->setObjectName("alarmBannerText");
+    alarmSummaryLabel_ = new QLabel(QStringLiteral("낙상 발생!"));
+    alarmSummaryLabel_->setObjectName("alarmToastText");
     lay->addWidget(alarmSummaryLabel_);
-    lay->addStretch();
+    lay->addSpacing(8);
 
     alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
-    alarmClearButton->setObjectName("alarmBannerBtn");
+    alarmClearButton->setObjectName("alarmToastBtn");
     alarmClearButton->setCursor(Qt::PointingHandCursor);
     connect(alarmClearButton, &QPushButton::clicked, this, &MainWindow::onAlarmClearClicked);
     lay->addWidget(alarmClearButton);
 
-    alarmBanner_->hide();   // 경보 없을 땐 숨김(공간도 차지 안 함)
+    alarmAnim_ = new QPropertyAnimation(alarmBanner_, "pos", this);
+    alarmAnim_->setDuration(300);
+    alarmAnim_->setEasingCurve(QEasingCurve::OutCubic);
+
+    alarmBanner_->adjustSize();
+    alarmBanner_->move(0, -alarmBanner_->height() - 24);   // 화면 위로 파킹
     return alarmBanner_;
 }
 
-// 활성 경보 목록을 모아 배너 문구를 만들고 표시/숨김을 결정한다.
+// 활성 경보를 모아 토스트 문구를 만들고, 있으면 내려오게(없으면 올라가게) 한다.
 void MainWindow::updateAlarmBanner()
 {
     if (!alarmBanner_) return;
-    QStringList parts;
+    // (채널, 종류) 수집
+    QList<QPair<int, QString>> evts;
     for (int ch = 0; ch < 4; ++ch) {
-        if (fallActive[ch])      parts << QStringLiteral("채널 %1 낙상").arg(ch + 1);
-        if (bedEgressActive[ch]) parts << QStringLiteral("채널 %1 침상이탈").arg(ch + 1);
+        if (fallActive[ch])      evts.append({ch, QStringLiteral("낙상")});
+        if (bedEgressActive[ch]) evts.append({ch, QStringLiteral("침상이탈")});
     }
-    if (parts.isEmpty()) {
-        alarmBanner_->hide();
-        return;
+    if (evts.isEmpty()) { animateAlarmToast(false); return; }
+
+    QString msg;
+    if (evts.size() == 1) {
+        msg = QStringLiteral("채널 %1에서 %2 발생!")
+                  .arg(evts[0].first + 1).arg(evts[0].second);
+    } else {
+        QStringList parts;
+        for (const auto& e : evts)
+            parts << QStringLiteral("채널 %1 %2").arg(e.first + 1).arg(e.second);
+        msg = parts.join(QStringLiteral("   ·   ")) +
+              QStringLiteral("   (%1건)").arg(evts.size());
     }
-    if (alarmCountChip_)
-        alarmCountChip_->setText(QStringLiteral("%1건").arg(parts.size()));
-    if (alarmSummaryLabel_)
-        alarmSummaryLabel_->setText(parts.join(QStringLiteral("   ·   ")));
-    alarmBanner_->show();
+    if (alarmSummaryLabel_) alarmSummaryLabel_->setText(msg);
+    animateAlarmToast(true);
+}
+
+// 토스트를 상단에서 아래로(show=true) 또는 위로(show=false) 슬라이드. 중앙 정렬.
+void MainWindow::animateAlarmToast(bool show)
+{
+    if (!alarmBanner_ || !alarmAnim_ || !ui->centralwidget) return;
+    alarmBanner_->adjustSize();
+    const int w = alarmBanner_->width();
+    const int x = qMax(12, (ui->centralwidget->width() - w) / 2);
+    const int shownY = 78;                              // 헤더 바로 아래
+    const int hiddenY = -alarmBanner_->height() - 24;   // 화면 위로
+
+    if (show) {
+        if (!alarmToastShown_) {
+            alarmBanner_->move(x, hiddenY);
+            alarmBanner_->show();
+        }
+        alarmBanner_->raise();
+        alarmToastShown_ = true;
+        alarmAnim_->stop();
+        alarmAnim_->setStartValue(alarmBanner_->pos());
+        alarmAnim_->setEndValue(QPoint(x, shownY));
+        alarmAnim_->start();
+    } else {
+        if (!alarmToastShown_) return;
+        alarmToastShown_ = false;
+        alarmAnim_->stop();
+        alarmAnim_->setStartValue(alarmBanner_->pos());
+        alarmAnim_->setEndValue(QPoint(alarmBanner_->x(), hiddenY));
+        alarmAnim_->start();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2282,18 +2319,14 @@ void MainWindow::applyTheme()
                         stop:0 #ff6b62, stop:1 %(critical)); }
         #alarmButton[active="true"]:hover { background: #ff6b62; }
 
-        /* 경보 배너 — 어두운 바 + 빨강 액센트(엔터프라이즈 알림 톤) */
-        #alarmBanner { background: %(panel); border: none;
-                       border-bottom: 1px solid %(border); border-left: 4px solid %(critical); }
+        /* 경보 토스트 — 상단에서 내려오는 떠 있는 알림 카드 */
+        #alarmToast { background: %(card); border: 1px solid %(border);
+                      border-left: 4px solid %(critical); border-radius: 12px; }
         #alarmDot { background: %(critical); border-radius: 4px; }
-        #alarmTitle { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.3px; }
-        #alarmCountChip { background: %(critical); color: #fff; border-radius: 9px;
-                          padding: 1px 9px; font-size: 11px; font-weight: 800; }
-        #alarmSep { color: %(border); }
-        #alarmBannerText { color: %(sub); font-size: 13px; font-weight: 600; }
-        #alarmBannerBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
-                          padding: 8px 18px; font-size: 13px; font-weight: 800; }
-        #alarmBannerBtn:hover { background: #ff6b62; }
+        #alarmToastText { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.2px; }
+        #alarmToastBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
+                         padding: 7px 16px; font-size: 13px; font-weight: 800; }
+        #alarmToastBtn:hover { background: #ff6b62; }
 
         /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
         #videoCard { background: #000000; border: 1px solid %(border); border-radius: 12px; }

@@ -38,12 +38,40 @@ VedaAudioPlayer::~VedaAudioPlayer() {
 int VedaAudioPlayer::initPlayer(unsigned int rate, unsigned int channels, snd_pcm_format_t format)
 {
     int ret;
-    //ALSA PCM 장치 열기 
 
+    // 이미 같은 포맷으로 열려 있으면 그대로 재사용한다.
+    //
+    // 재생마다 새로 열면 이전 핸들이 닫히지 않고 그대로 샌다. 경보를 반복해서
+    // 받는 기기라 계속 쌓이고, 배타 장치(hw:)면 두 번째 open 이 -EBUSY 로 실패해
+    // 그 뒤 경보는 소리가 아예 안 난다.
+    //
+    // 여닫지 않는 편이 안전하기도 하다. stop() 은 MQTT 콜백 스레드에서 불리는데
+    // (main.cpp 의 경보 해제 경로), 그때 이 워커 스레드가 close 와 open 사이에
+    // 있으면 stop() 이 닫힌 핸들을 만지게 된다. 핸들을 한 번만 열어 두면 그 창이
+    // 아예 없어진다.
+    //
+    // 이전 재생의 잔여물은 drop 으로 버리고 prepare 로 다시 쓸 준비만 한다.
+    if (pcm_handle && rate == cur_rate_ && channels == cur_channels_
+        && format == cur_format_) {
+        snd_pcm_drop(pcm_handle);
+        snd_pcm_prepare(pcm_handle);
+        return 0;
+    }
+
+    // 포맷이 바뀐 경우에만 닫고 새로 연다 (음원을 섞어 쓰기 시작하면 타는 경로).
+    if (pcm_handle) {
+        snd_pcm_close(pcm_handle);
+        pcm_handle = nullptr;
+    }
+
+    //ALSA PCM 장치 열기
     ret = snd_pcm_open(&pcm_handle, device_name.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
 
     if(ret<0) {
         std::cerr<< "PCM 장치 오픈 실패:"<< snd_strerror(ret) << std::endl;
+        // 실패 시 snd_pcm_open 이 핸들을 건드렸을 수 있어 확실히 비운다 —
+        // 안 비우면 stop() 의 if(pcm_handle) 가 쓰레기 포인터를 통과시킨다.
+        pcm_handle = nullptr;
         return ret;
     }
 
@@ -53,6 +81,12 @@ int VedaAudioPlayer::initPlayer(unsigned int rate, unsigned int channels, snd_pc
         pcm_handle = nullptr;
         return ret;
     }
+
+    // 여기까지 왔을 때만 기억한다 — 실패한 포맷을 기억하면 다음 재생이
+    // 열리지도 않은 장치를 재사용하려 든다.
+    cur_rate_     = rate;
+    cur_channels_ = channels;
+    cur_format_   = format;
 
     std::cout << "[VedaAudioPlayer] 장치오픈 완료 " << std::endl;
     return 0;
