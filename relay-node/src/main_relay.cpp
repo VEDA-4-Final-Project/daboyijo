@@ -279,7 +279,19 @@ int main(int argc, char* argv[]) {
               << g_cfg.broker_host << ":" << g_cfg.broker_port
               << (g_cfg.ca_path.empty() ? " (평문)" : " (TLS)") << "..." << std::endl;
     if(!client.connectToBroker(g_cfg.broker_host, g_cfg.broker_port)) {
-        // 죽이지 않는다 — 오프라인 큐에 쌓다가 자동 재연결되면 flush 된다
+        // TLS 를 쓰는데 실패했다면 인증서 문제일 가능성이 높고, 그건 저절로 낫지
+        // 않는다. tls_set 이 실패하면 mosquitto_connect 가 호출조차 안 돼 자동
+        // 재연결이 돌지 않고, 설정이 핸들에 안 올라갔으니 나중에 붙어봐야 평문으로
+        // 8883 을 두드릴 뿐이다. 그대로 두면 BLE 는 멀쩡히 돌면서 패킷은 오프라인
+        // 큐에만 무한정 쌓이는 "조용히 죽은" 상태가 된다 — 차라리 끊고 systemd 가
+        // 다시 띄우게 한다.
+        if(!g_cfg.ca_path.empty()) {
+            std::cerr << "[Relay Node] TLS 연결 실패 — ca_path 확인: " << g_cfg.ca_path
+                      << " (종료, systemd 가 재시작한다)" << std::endl;
+            return 1;
+        }
+        // 평문일 때는 기존대로 버틴다 — 브로커가 늦게 떠도 자동 재연결로 붙고,
+        // 그때 오프라인 큐가 flush 된다
         std::cerr << "[Relay Node] Mqtt connection failed! buffering until reconnect" << std::endl;
     }
     client.startLoop();
