@@ -47,6 +47,7 @@
 #include "snapshot_buffer.hpp"
 #include "gemini_client.hpp"
 #include "care_qa.hpp"
+#include "MqttMasterManager.hpp"
 
 namespace {
 
@@ -68,6 +69,7 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "담당 채널이 없습니다 — cameras.conf에 채널을 선언하세요 (예: 0=)\n");
         return 1;
     }
+
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
@@ -104,9 +106,13 @@ int main(int argc, char* argv[]) {
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
+    MqttMasterManager mqtt;         // [mqtt] 
+    mqtt.init("dabo.local",8883);
+
     // [케어봇] 버튼 메뉴 기반 상호작용: 보호자가 아무 메시지나 보내면 버튼 메뉴를
     // 띄우고(handleMessage), 버튼 클릭(handleCallback)으로 상황 조회·연락처·알림 토글.
     // ※ 낙상 확인(블러 원복)은 텔레그램에서 빼고 Qt 관제 화면(setConfirmCallback)만 담당.
+
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
     CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram);
     care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
@@ -216,6 +222,7 @@ int main(int argc, char* argv[]) {
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
         telegram.notifyFall(ch);      // 즉시 기본 알림
         care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
+        mqtt.sendAlarmCommand(AlarmEventType::FALL,ch); // mqtt 알림전송 
     });
     // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
@@ -223,6 +230,15 @@ int main(int argc, char* argv[]) {
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
+        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,ch);//mqtt 알림전송 
+    });
+    // MQTT로 웨어러블 낙상 신후 수신시 처리
+    mqtt.setWearableCallback([&](bool is_fall){
+        if(is_fall){
+            // 여기다가 다른 모듈배선로 신호 전달 작성하면됩니다.
+            std::printf("mqtt 낙상 수신!!!!");// 확인용 printf
+            mqtt.sendAlarmCommand(AlarmEventType::FALL,1); // test 확인용 mqtt 알림전송 
+        }
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
     ai_worker.addProcessor([&](const AiJob& job) { caregiver.processFrame(job); });

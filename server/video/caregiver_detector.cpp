@@ -19,7 +19,7 @@ void CaregiverDetector::setThreshold(double threshold) {
 bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     if (personROI.empty()) return false;
 
-
+    
     //색을 BGR -> HSV
     cv::Mat hsv;
     cv::cvtColor(personROI, hsv, cv::COLOR_BGR2HSV);

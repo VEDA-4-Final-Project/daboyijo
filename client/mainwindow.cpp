@@ -19,6 +19,9 @@
 #include <QListWidget>
 #include <QPainter>
 #include <QIcon>
+#include <QLinearGradient>
+#include <QResizeEvent>
+#include <cmath>
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -156,7 +159,7 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.23";
+const char* kDefaultHostA  = "172.20.32.31";
 const char* kDefaultHostB  = "172.20.32.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
@@ -175,7 +178,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.32.23").toString();
+    return s.value(kSettingsBrokerHost, "172.20.32.31").toString();
 }
 int brokerPort() {
     QSettings s;
@@ -186,6 +189,10 @@ int brokerPort() {
 // 웨어러블이 빠졌거나 중계 노드가 죽은 걸 관제사가 알아야 하는데, 마지막 값이
 // 계속 떠 있으면 멀쩡한 줄 안다.
 constexpr qint64 kVitalStaleMs = 30000;   // 30초
+
+// 입소자별로 보관하는 심박 이력 길이. Sparkline 위젯이 그리는 점 개수(capacity_)와
+// 같게 맞춘다 — 카드를 다시 만들 때 이 이력을 그대로 부어넣어 추세를 복원한다.
+constexpr int kHrHistoryMax = 40;
 }  // namespace
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
@@ -420,6 +427,62 @@ static void applyCardShadow(QWidget* w, int blur = 22, int dy = 6, int alpha = 7
     w->setGraphicsEffect(sh);
 }
 
+// 경보 중 창 가장자리에 빨강 글로우(비네트)를 잔잔히 숨쉬게 하는 오버레이.
+// 두꺼운 테두리가 아니라, 모서리에서 안쪽으로 부드럽게 사라지는 그라데이션 —
+// 관제/보안 대시보드에서 흔한 "엣지 경보" 방식. 마우스는 통과, 내부는 투명.
+class AlarmOverlay : public QWidget {
+public:
+    explicit AlarmOverlay(QWidget* parent) : QWidget(parent) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        QObject::connect(&timer_, &QTimer::timeout, this, [this] {
+            phase_ += 0.10;                       // 느리고 잔잔한 호흡(≈2초 주기)
+            if (phase_ > 6.28318) phase_ -= 6.28318;
+            update();
+        });
+        hide();
+    }
+    void start() {
+        if (!isVisible()) show();
+        raise();
+        if (!timer_.isActive()) timer_.start(33);
+    }
+    void stop() { timer_.stop(); hide(); }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        // 부드러운 호흡: 알파만 은은하게 오르내린다(두께·모양 변화 없음).
+        const double t = (std::sin(phase_) + 1.0) / 2.0;      // 0..1
+        const int a = int((0.20 + 0.30 * t) * 255.0);         // 소프트 0.20..0.50
+        const QColor edge(216, 40, 54, a);                    // 차분한 경보 레드
+        const QColor clear(216, 40, 54, 0);
+        const int W = width(), H = height();
+        const int g = qMin(110, qMin(W, H) / 5);              // 글로우가 스며드는 폭
+
+        auto band = [&](const QRect& r, const QPointF& from, const QPointF& to) {
+            QLinearGradient lg(from, to);
+            lg.setColorAt(0.0, edge);
+            lg.setColorAt(1.0, clear);
+            p.fillRect(r, lg);
+        };
+        band(QRect(0, 0, W, g),        QPointF(0, 0),   QPointF(0, g));         // 상
+        band(QRect(0, H - g, W, g),    QPointF(0, H),   QPointF(0, H - g));     // 하
+        band(QRect(0, 0, g, H),        QPointF(0, 0),   QPointF(g, 0));         // 좌
+        band(QRect(W - g, 0, g, H),    QPointF(W, 0),   QPointF(W - g, 0));     // 우
+
+        // 가장자리에 아주 얇은 1px 라인 한 스푼 — 프레임이 또렷하게 잡힌다.
+        p.setPen(QPen(QColor(230, 55, 66, int(a * 0.8)), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5));
+    }
+
+private:
+    QTimer timer_;
+    double phase_ = 0.0;
+};
+
 void MainWindow::buildUi()
 {
     auto* root = new QVBoxLayout(ui->centralwidget);
@@ -427,6 +490,7 @@ void MainWindow::buildUi()
     root->setSpacing(0);
 
     root->addWidget(buildHeader());
+    root->addWidget(buildAlarmBanner());   // 경보 시에만 보이는 전체 폭 알림 바
 
     tabWidget = new QTabWidget();
     tabWidget->setObjectName("mainTabs");
@@ -456,8 +520,20 @@ void MainWindow::buildUi()
 
     root->addWidget(tabWidget, 1);
 
+    // 경보 펄스 오버레이 — 중앙 위젯 전체를 덮되 테두리만 그린다(마우스 통과).
+    alarmOverlay_ = new AlarmOverlay(ui->centralwidget);
+    alarmOverlay_->setGeometry(ui->centralwidget->rect());
+
     resize(1600, 940);
     setMinimumSize(1340, 760);
+}
+
+// 창 크기가 바뀌면 경보 오버레이도 중앙 위젯 크기에 맞춘다.
+void MainWindow::resizeEvent(QResizeEvent* e)
+{
+    QMainWindow::resizeEvent(e);
+    if (alarmOverlay_ && ui && ui->centralwidget)
+        alarmOverlay_->setGeometry(ui->centralwidget->rect());
 }
 
 QWidget* MainWindow::buildHeader()
@@ -476,6 +552,15 @@ QWidget* MainWindow::buildHeader()
 
     lay->addWidget(logo);
     lay->addStretch();
+
+    // ── 실시간 관제 액션 — 방송(인터콤) ──
+    // 경보 해제는 헤더가 아니라 "경보 배너"(경보 시에만 표시)로 옮겼다.
+    micButton = new QPushButton(QStringLiteral("🎤 방송"));
+    micButton->setObjectName("micButton");
+    micButton->setCursor(Qt::PointingHandCursor);
+    connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
+    connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
+    lay->addWidget(micButton);
 
     // 연결 상태 — pill 배지
     auto* statusPill = new QFrame();
@@ -579,6 +664,73 @@ QWidget* MainWindow::buildHeader()
     lay->addWidget(userChip);
 
     return header;
+}
+
+// 경보 배너 — 평상시엔 숨김. 낙상/침상이탈이 활성이면 헤더 아래에 전체 폭으로 떠서
+// "어느 채널·무슨 경보"를 보여주고, 큼직한 [경보 해제] 버튼을 제공한다.
+QWidget* MainWindow::buildAlarmBanner()
+{
+    alarmBanner_ = new QFrame();
+    alarmBanner_->setObjectName("alarmBanner");
+    auto* lay = new QHBoxLayout(alarmBanner_);
+    lay->setContentsMargins(18, 9, 16, 9);
+    lay->setSpacing(10);
+
+    // 상태 점(빨강) + "긴급 경보" 타이틀 + 건수 칩
+    auto* dot = new QLabel();
+    dot->setObjectName("alarmDot");
+    dot->setFixedSize(8, 8);
+    lay->addWidget(dot);
+
+    auto* title = new QLabel(QStringLiteral("긴급 경보"));
+    title->setObjectName("alarmTitle");
+    lay->addWidget(title);
+
+    alarmCountChip_ = new QLabel(QStringLiteral("0건"));
+    alarmCountChip_->setObjectName("alarmCountChip");
+    alarmCountChip_->setAlignment(Qt::AlignCenter);
+    lay->addWidget(alarmCountChip_);
+
+    auto* sep = new QFrame();
+    sep->setFrameShape(QFrame::VLine);
+    sep->setObjectName("alarmSep");
+    sep->setFixedHeight(16);
+    lay->addWidget(sep);
+
+    // 상세(어느 채널·무슨 경보) — 차분한 서브 톤
+    alarmSummaryLabel_ = new QLabel();
+    alarmSummaryLabel_->setObjectName("alarmBannerText");
+    lay->addWidget(alarmSummaryLabel_);
+    lay->addStretch();
+
+    alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
+    alarmClearButton->setObjectName("alarmBannerBtn");
+    alarmClearButton->setCursor(Qt::PointingHandCursor);
+    connect(alarmClearButton, &QPushButton::clicked, this, &MainWindow::onAlarmClearClicked);
+    lay->addWidget(alarmClearButton);
+
+    alarmBanner_->hide();   // 경보 없을 땐 숨김(공간도 차지 안 함)
+    return alarmBanner_;
+}
+
+// 활성 경보 목록을 모아 배너 문구를 만들고 표시/숨김을 결정한다.
+void MainWindow::updateAlarmBanner()
+{
+    if (!alarmBanner_) return;
+    QStringList parts;
+    for (int ch = 0; ch < 4; ++ch) {
+        if (fallActive[ch])      parts << QStringLiteral("채널 %1 낙상").arg(ch + 1);
+        if (bedEgressActive[ch]) parts << QStringLiteral("채널 %1 침상이탈").arg(ch + 1);
+    }
+    if (parts.isEmpty()) {
+        alarmBanner_->hide();
+        return;
+    }
+    if (alarmCountChip_)
+        alarmCountChip_->setText(QStringLiteral("%1건").arg(parts.size()));
+    if (alarmSummaryLabel_)
+        alarmSummaryLabel_->setText(parts.join(QStringLiteral("   ·   ")));
+    alarmBanner_->show();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -732,46 +884,17 @@ QWidget* MainWindow::buildVideoWall()
     panel->setObjectName("panel");
 
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(16, 14, 16, 16);
-    outer->setSpacing(12);
+    outer->setContentsMargins(12, 12, 12, 12);
+    outer->setSpacing(0);
 
-    // 제목 줄: 좌측 타이틀 + 우측 도구 (ROI / 인터콤 / 경보해제)
-    auto* titleRow = new QHBoxLayout();
-    titleRow->setSpacing(8);
-    // auto* title = new QLabel(QStringLiteral("실시간 영상  ·  4채널"));
-    // title->setObjectName("panelTitle");
-    // titleRow->addWidget(title);
-    titleRow->addStretch();
+    // 방송·경보해제 버튼은 상단 헤더로 올렸다 → 여기선 영상 4개가 패널을 꽉 채운다.
+    videoGrid = new QGridLayout();
+    videoGrid->setSpacing(12);   // 라운드 카드가 숨 쉴 만큼의 간격(모던 대시보드 톤)
+    for (int ch = 0; ch < 4; ++ch)
+        videoCards[ch] = buildVideoCard(ch);
+    outer->addLayout(videoGrid, 1);
 
-    // ── 실시간 액션: 방송 / 경보해제만 노출. 나머지(카메라·ROI)는 "설정" 팝업으로 ──
-    // 🎤 원격 방송(인터콤)
-    micButton = new QPushButton(QStringLiteral("🎤 방송"));
-    micButton->setObjectName("micButton");
-    micButton->setCursor(Qt::PointingHandCursor);
-    connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
-    connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
-    titleRow->addWidget(micButton);
-
-    // 🚨 경보 해제
-    alarmClearButton = new QPushButton(QStringLiteral("경보 해제"));
-    alarmClearButton->setObjectName("alarmButton");
-    alarmClearButton->setCursor(Qt::PointingHandCursor);
-    connect(alarmClearButton, &QPushButton::clicked, this,
-            &MainWindow::onAlarmClearClicked);
-    titleRow->addWidget(alarmClearButton);
-
-    // 카메라·ROI·이미지 설정은 상단 "카메라 설정" 탭으로 이동 — 툴바 버튼은 제거했다.
-
-    outer->addLayout(titleRow);
-
-    auto* grid = new QGridLayout();
-    grid->setSpacing(12);   // 라운드 카드가 숨 쉴 만큼의 간격(모던 대시보드 톤)
-    grid->addWidget(buildVideoCard(0), 0, 0);
-    grid->addWidget(buildVideoCard(1), 0, 1);
-    grid->addWidget(buildVideoCard(2), 1, 0);
-    grid->addWidget(buildVideoCard(3), 1, 1);
-    outer->addLayout(grid, 1);
-
+    setVideoFocus(-1);   // 초기: 균등 2×2 배치
     return panel;
 }
 
@@ -779,18 +902,17 @@ QWidget* MainWindow::buildVideoCard(int channel)
 {
     auto* card = new QFrame();
     card->setObjectName("videoCard");
-    card->setMinimumSize(420, 280);
+    // 스포트라이트 시 작은 칸으로도 줄어들 수 있게 최소 크기를 낮게 잡는다.
+    card->setMinimumSize(140, 96);
 
     auto* lay = new QVBoxLayout(card);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
-    // 영상 영역 — VideoView가 프레임 + NVR 오버레이(채널/이름/LIVE) + ROI를 담당.
-    // 별도 상단 바 없이 정보는 영상 위에 직접 얹는다(관제 콘솔 느낌).
+    // 영상 영역 — VideoView가 프레임 + NVR 오버레이(CH 태그/LIVE) + ROI를 담당.
+    // 오버레이는 "CH1"만 — 병상·이름은 표시하지 않는다(overlayInfo 비움).
     auto* video = new VideoView(channel);
     video->setObjectName("video");
-    video->setOverlayInfo(QStringLiteral("%1 · %2")
-                              .arg(patients[channel].bed, patients[channel].name));
     channelViews[channel] = video;
     connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
     connect(video, &VideoView::drawModeChanged, this,
@@ -803,6 +925,48 @@ QWidget* MainWindow::buildVideoCard(int channel)
     lay->addWidget(video, 1);
 
     return card;
+}
+
+// 감지된 채널을 좌측 대형으로, 나머지 3개는 우측에 작게 세로로 배치한다(스포트라이트).
+// channel<0 이면 균등 2×2로 복귀. 팝업 없이 그리드만 재배치한다.
+void MainWindow::setVideoFocus(int channel)
+{
+    if (!videoGrid) return;
+    if (channel == focusedChannel_) return;   // 이미 그 상태면 재배치 생략
+    focusedChannel_ = channel;
+
+    for (int ch = 0; ch < 4; ++ch)
+        if (videoCards[ch]) videoGrid->removeWidget(videoCards[ch]);
+    for (int i = 0; i < 4; ++i) {             // 스트레치 초기화
+        videoGrid->setColumnStretch(i, 0);
+        videoGrid->setRowStretch(i, 0);
+    }
+
+    if (channel < 0 || channel >= 4) {
+        // 균등 2×2
+        videoGrid->addWidget(videoCards[0], 0, 0);
+        videoGrid->addWidget(videoCards[1], 0, 1);
+        videoGrid->addWidget(videoCards[2], 1, 0);
+        videoGrid->addWidget(videoCards[3], 1, 1);
+        videoGrid->setColumnStretch(0, 1);
+        videoGrid->setColumnStretch(1, 1);
+        videoGrid->setRowStretch(0, 1);
+        videoGrid->setRowStretch(1, 1);
+    } else {
+        // 스포트라이트: 좌측 대형(3행 span) + 우측 작은 3개 세로
+        videoGrid->addWidget(videoCards[channel], 0, 0, 3, 1);
+        int r = 0;
+        for (int ch = 0; ch < 4; ++ch) {
+            if (ch == channel) continue;
+            videoGrid->addWidget(videoCards[ch], r, 1, 1, 1);
+            ++r;
+        }
+        videoGrid->setColumnStretch(0, 3);   // 대형 ≈ 75%
+        videoGrid->setColumnStretch(1, 1);   // 작은 열 ≈ 25%
+        videoGrid->setRowStretch(0, 1);
+        videoGrid->setRowStretch(1, 1);
+        videoGrid->setRowStretch(2, 1);
+    }
 }
 
 QWidget* MainWindow::buildVitalsPanel()
@@ -828,12 +992,12 @@ QWidget* MainWindow::buildVitalsPanel()
     scroll->setObjectName("vitalScroll");
 
     auto* inner = new QWidget();
-    auto* list = new QVBoxLayout(inner);
-    list->setContentsMargins(0, 0, 6, 0);
-    list->setSpacing(10);
-    // 카드마다 stretch 1 → 세로 공간을 균등하게 나눠 채운다(하단 빈공간 제거).
-    for (int i = 0; i < 4; ++i)
-        list->addWidget(buildVitalCard(i), 1);
+    vitalListLayout_ = new QVBoxLayout(inner);
+    vitalListLayout_->setContentsMargins(0, 0, 6, 0);
+    vitalListLayout_->setSpacing(10);
+    // 카드 개수는 재원 입소자 수에 따라 달라진다(한 채널에 여러 명일 수 있음).
+    // 생성자에서 loadPatientsFromDb() 를 먼저 부르므로 여기서 목록을 알 수 있다.
+    rebuildVitalCards();
 
     scroll->setWidget(inner);
     outer->addWidget(scroll, 1);
@@ -841,7 +1005,53 @@ QWidget* MainWindow::buildVitalsPanel()
     return panel;
 }
 
-QWidget* MainWindow::buildVitalCard(int channel)
+// 바이탈 카드 목록을 입소자 구성에 맞춰 다시 만든다.
+// 입소자가 늘거나 줄면 위젯 개수 자체가 달라지므로 글자만 갈아끼울 수 없다.
+// 심박 이력은 hrHistory_(위젯 밖)에 있어서 다시 만들어도 살아남는다.
+void MainWindow::rebuildVitalCards()
+{
+    if (!vitalListLayout_) return;   // 아직 패널을 만들기 전(생성자 초기 단계)
+
+    // 위젯을 지우면 라벨 포인터가 전부 무효가 된다 — 표를 먼저 비워야
+    // updateVitals() 가 죽은 포인터를 만지지 않는다.
+    tempValues.clear();
+    hrValues.clear();
+    vitalStatusDots.clear();
+    vitalStatusBadges.clear();
+    vitalNameLabels.clear();
+    vitalBedLabels.clear();
+    hrSpark.clear();
+
+    while (QLayoutItem* item = vitalListLayout_->takeAt(0)) {
+        // 레이아웃에서 빼기만 하면 위젯은 부모에 그대로 남아 화면에 계속 보인다.
+        // 부모에서 떼어내야 사라지고, 삭제 자체는 이벤트 루프에 맡긴다.
+        if (QWidget* w = item->widget()) {
+            w->setParent(nullptr);
+            w->deleteLater();
+        }
+        delete item;
+    }
+
+    for (int ch = 0; ch < 4; ++ch) {
+        const QString bedText = QStringLiteral("채널 %1").arg(ch + 1);
+        const QVector<int>& ids = residentsByChannel_[ch];
+
+        // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
+        // 관제사가 그 채널을 잊는다. 음수 키라 값이 안 들어와 "대기"로 뜬다.
+        if (ids.isEmpty()) {
+            vitalListLayout_->addWidget(
+                buildVitalCard(-(ch + 1), QStringLiteral("미배정"), bedText), 1);
+            continue;
+        }
+        for (int rid : ids)
+            vitalListLayout_->addWidget(
+                buildVitalCard(rid, residentInfo_.value(rid).name, bedText), 1);
+    }
+
+    updateVitals();   // 새로 만든 위젯에 현재 값·색을 즉시 반영
+}
+
+QWidget* MainWindow::buildVitalCard(int key, const QString& name, const QString& bedText)
 {
     auto* card = new QFrame();
     card->setObjectName("vitalCard");
@@ -857,23 +1067,25 @@ QWidget* MainWindow::buildVitalCard(int channel)
     auto* hl = new QHBoxLayout(head);
     hl->setContentsMargins(14, 7, 12, 7);
     hl->setSpacing(8);
-    vitalStatusDots[channel] = new QLabel();
-    vitalStatusDots[channel]->setObjectName("vitalDot");
-    vitalStatusDots[channel]->setFixedSize(9, 9);
-    auto* name = new QLabel(patients[channel].name);
-    name->setObjectName("vitalName");
-    vitalNameLabels[channel] = name;
-    auto* bed = new QLabel(patients[channel].bed);
+    auto* dot = new QLabel();
+    dot->setObjectName("vitalDot");
+    dot->setFixedSize(9, 9);
+    vitalStatusDots[key] = dot;
+    auto* nameLbl = new QLabel(name);
+    nameLbl->setObjectName("vitalName");
+    vitalNameLabels[key] = nameLbl;
+    auto* bed = new QLabel(bedText);
     bed->setObjectName("vitalBed");
-    vitalBedLabels[channel] = bed;
-    vitalStatusBadges[channel] = new QLabel(QStringLiteral("대기"));
-    vitalStatusBadges[channel]->setObjectName("vitalBadge");
-    vitalStatusBadges[channel]->setAlignment(Qt::AlignCenter);
-    hl->addWidget(vitalStatusDots[channel]);
-    hl->addWidget(name);
+    vitalBedLabels[key] = bed;
+    auto* badge = new QLabel(QStringLiteral("대기"));
+    badge->setObjectName("vitalBadge");
+    badge->setAlignment(Qt::AlignCenter);
+    vitalStatusBadges[key] = badge;
+    hl->addWidget(dot);
+    hl->addWidget(nameLbl);
     hl->addWidget(bed);
     hl->addStretch();
-    hl->addWidget(vitalStatusBadges[channel]);
+    hl->addWidget(badge);
     lay->addWidget(head);
 
     // ── 본문: 큰 판독값 2개 (체온 / 심박) — 환자 모니터 느낌 ──
@@ -906,23 +1118,27 @@ QWidget* MainWindow::buildVitalCard(int channel)
     };
 
     body->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"),
-                             QStringLiteral("℃"), tempValues[channel]));
+                             QStringLiteral("℃"), tempValues[key]));
     body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
-                             QStringLiteral("bpm"), hrValues[channel]));
+                             QStringLiteral("bpm"), hrValues[key]));
     lay->addLayout(body);
 
     // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
     auto* sparkRow = new QHBoxLayout();
     sparkRow->setContentsMargins(14, 0, 14, 10);
-    hrSpark[channel] = new Sparkline();
-    hrSpark[channel]->setRange(40, 140);
-    hrSpark[channel]->setGuides({
+    auto* spark = new Sparkline();
+    spark->setRange(40, 140);
+    spark->setGuides({
         {110.0, QColor(QString::fromLatin1(kCritical))},  // 고 위험
         {100.0, QColor(QString::fromLatin1(kWarn))},      // 고 주의
         { 55.0, QColor(QString::fromLatin1(kWarn))},      // 저 주의
         { 45.0, QColor(QString::fromLatin1(kCritical))},  // 저 위험
     });
-    sparkRow->addWidget(hrSpark[channel]);
+    // 카드를 다시 만들어도 그래프가 리셋되지 않도록 보관해둔 이력을 다시 부어넣는다.
+    // (다른 입소자가 추가·퇴원했다고 이 사람 추세가 사라지면 안 된다)
+    for (double v : hrHistory_.value(key)) spark->addValue(v);
+    hrSpark[key] = spark;
+    sparkRow->addWidget(spark);
     lay->addLayout(sparkRow);
 
     return card;
@@ -2066,6 +2282,19 @@ void MainWindow::applyTheme()
                         stop:0 #ff6b62, stop:1 %(critical)); }
         #alarmButton[active="true"]:hover { background: #ff6b62; }
 
+        /* 경보 배너 — 어두운 바 + 빨강 액센트(엔터프라이즈 알림 톤) */
+        #alarmBanner { background: %(panel); border: none;
+                       border-bottom: 1px solid %(border); border-left: 4px solid %(critical); }
+        #alarmDot { background: %(critical); border-radius: 4px; }
+        #alarmTitle { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.3px; }
+        #alarmCountChip { background: %(critical); color: #fff; border-radius: 9px;
+                          padding: 1px 9px; font-size: 11px; font-weight: 800; }
+        #alarmSep { color: %(border); }
+        #alarmBannerText { color: %(sub); font-size: 13px; font-weight: 600; }
+        #alarmBannerBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
+                          padding: 8px 18px; font-size: 13px; font-weight: 800; }
+        #alarmBannerBtn:hover { background: #ff6b62; }
+
         /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
         #videoCard { background: #000000; border: 1px solid %(border); border-radius: 12px; }
         #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 12px; }
@@ -2308,9 +2537,11 @@ QTextEdit#formEdit:focus {
 
     // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
     statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
-    for (int i = 0; i < 4; ++i) {
-        vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:5px;").arg(kTextSub));
-    }
+    // 카드는 입소자 수만큼 있으므로 채널 인덱스로 돌면 안 된다(해시에 0~3 키가 없다).
+    // 여기서 일단 흐리게 깔고, 아래 updateVitals()가 값 있는 카드만 상태색을 다시 입힌다.
+    for (QLabel* dot : vitalStatusDots)
+        if (dot) dot->setStyleSheet(
+            QString("background:%1; border-radius:5px;").arg(kTextSub));
 }
 
 void MainWindow::toggleTheme()
@@ -2415,30 +2646,40 @@ void MainWindow::updateVitals()
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
-    for (int i = 0; i < 4; ++i) {
-        const VitalSample& v = vitals_[i];
+    // 카드 단위로 돈다. 키는 입소자면 resident_id, 미배정 채널이면 음수 —
+    // 음수 키는 vitals_ 에 값이 없어 기본값(received=false)이 잡히고 "대기"로 뜬다.
+    for (auto it = vitalNameLabels.constBegin(); it != vitalNameLabels.constEnd(); ++it) {
+        const int key = it.key();
+        QLabel* tempLbl  = tempValues.value(key);
+        QLabel* hrLbl    = hrValues.value(key);
+        QLabel* dotLbl   = vitalStatusDots.value(key);
+        QLabel* badgeLbl = vitalStatusBadges.value(key);
+        if (!tempLbl || !hrLbl || !dotLbl || !badgeLbl) continue;
+        Sparkline* spark = hrSpark.value(key);
+
+        const VitalSample v = vitals_.value(key);
         const bool fresh = v.received && (now - v.arrivedAtMs) <= kVitalStaleMs;
 
         if (!fresh) {
             const QString dim = kTextSub;
-            tempValues[i]->setText(QStringLiteral("--"));
-            tempValues[i]->setStyleSheet(QString("color:%1;").arg(dim));
-            hrValues[i]->setText(QStringLiteral("--"));
-            hrValues[i]->setStyleSheet(QString("color:%1;").arg(dim));
+            tempLbl->setText(QStringLiteral("--"));
+            tempLbl->setStyleSheet(QString("color:%1;").arg(dim));
+            hrLbl->setText(QStringLiteral("--"));
+            hrLbl->setStyleSheet(QString("color:%1;").arg(dim));
 
-            vitalStatusDots[i]->setStyleSheet(
+            dotLbl->setStyleSheet(
                 QString("background:%1; border-radius:4px;").arg(dim));
 
             // 한 번도 못 받은 것과 받다가 끊긴 것을 구분한다 — 대응이 다르다.
             // (전자는 등록/배선 문제, 후자는 기기가 빠졌거나 중계 노드가 죽은 것)
-            vitalStatusBadges[i]->setText(v.received ? QStringLiteral("신호 끊김")
-                                                     : QStringLiteral("대기"));
-            vitalStatusBadges[i]->setStyleSheet(QString(
+            badgeLbl->setText(v.received ? QStringLiteral("신호 끊김")
+                                         : QStringLiteral("대기"));
+            badgeLbl->setStyleSheet(QString(
                 "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
                 " padding:1px 10px; font-size:11px; font-weight:800;")
                 .arg(dim, blendHex(dim, kCard, 0.18)));
 
-            if (hrSpark[i]) hrSpark[i]->setLineColor(QColor(dim));
+            if (spark) spark->setLineColor(QColor(dim));
             continue;
         }
 
@@ -2446,16 +2687,16 @@ void MainWindow::updateVitals()
         const int    hr   = v.heartRate;
         const QString color = vitalColor(temp, hr);
 
-        tempValues[i]->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
-        tempValues[i]->setStyleSheet(QString("color:%1;").arg(color));
-        hrValues[i]->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
-        hrValues[i]->setStyleSheet(QString("color:%1;").arg(color));
+        tempLbl->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
+        tempLbl->setStyleSheet(QString("color:%1;").arg(color));
+        hrLbl->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
+        hrLbl->setStyleSheet(QString("color:%1;").arg(color));
 
-        vitalStatusDots[i]->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
+        dotLbl->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
 
         const QString status = vitalStatusLabel(temp, hr);
-        vitalStatusBadges[i]->setText(status);
-        vitalStatusBadges[i]->setStyleSheet(QString(
+        badgeLbl->setText(status);
+        badgeLbl->setStyleSheet(QString(
             "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
             " padding:1px 10px; font-size:11px; font-weight:800;")
             .arg(color, blendHex(color, kCard, 0.18)));
@@ -2463,7 +2704,7 @@ void MainWindow::updateVitals()
         // 그래프에 점을 찍는 건 여기가 아니라 onWearableData 다. 이 함수는 2초마다
         // 불리는데 여기서 addValue 를 하면 새 값이 없어도 같은 값이 계속 쌓여
         // 실제 측정 간격이 그래프에서 사라진다.
-        if (hrSpark[i]) hrSpark[i]->setLineColor(QColor(color));
+        if (spark) spark->setLineColor(QColor(color));
     }
 }
 
@@ -2472,21 +2713,22 @@ void MainWindow::updateVitals()
 // ═══════════════════════════════════════════════════════════
 void MainWindow::onWearableData(const WearableData& data)
 {
-    // 브로커는 기기 id 로만 알려준다. 화면은 채널(0~3)로 돼 있어 다리를 건넌다.
-    // 등록되지 않은 기기는 어느 채널 것인지 알 수 없어 버린다 — 엉뚱한 채널에
+    // 브로커는 기기 id 로만 알려준다. 그 기기가 누구 것인지로 건너간다.
+    // ★ 채널이 아니라 입소자로 잇는다 — 한 채널에 여러 명이 있으면 채널로는
+    //   누구 값인지 구분이 안 돼 나중에 온 값이 앞 값을 덮어쓴다.
+    // 등록되지 않은 기기는 누구 것인지 알 수 없어 버린다 — 엉뚱한 사람 자리에
     // 남의 심박수를 띄우느니 안 띄우는 편이 낫다.
     const QString id = QString::fromStdString(data.device_id).trimmed();
-    const auto it = wearableToChannel.constFind(id);
-    if (it == wearableToChannel.constEnd()) {
+    const auto it = wearableToResident.constFind(id);
+    if (it == wearableToResident.constEnd()) {
         qDebug() << "[MQTT] 미등록 웨어러블 무시:" << id
-                 << "(residents.wearable_id 에 등록하면 해당 채널에 표시됩니다)";
+                 << "(residents.wearable_id 에 등록하면 해당 입소자에게 표시됩니다)";
         return;
     }
 
-    const int ch = it.value();
-    if (ch < 0 || ch >= 4) return;
+    const int rid = it.value();
 
-    VitalSample& v = vitals_[ch];
+    VitalSample& v = vitals_[rid];
     v.received    = true;
     v.temperature = data.temperature;
     v.heartRate   = data.heart_rate;
@@ -2494,12 +2736,21 @@ void MainWindow::onWearableData(const WearableData& data)
     v.arrivedAtMs = QDateTime::currentMSecsSinceEpoch();
 
     // 그래프 점은 값이 실제로 도착했을 때만 찍는다.
-    if (hrSpark[ch]) hrSpark[ch]->addValue(data.heart_rate);
+    // 위젯 밖(hrHistory_)에도 같이 쌓아둬야 카드를 다시 만들 때 추세가 살아난다.
+    QVector<double>& hist = hrHistory_[rid];
+    hist.append(data.heart_rate);
+    while (hist.size() > kHrHistoryMax) hist.removeFirst();
+    if (Sparkline* spark = hrSpark.value(rid)) spark->addValue(data.heart_rate);
 
     // 웨어러블이 낙상을 감지한 경우. 카메라 낙상(TCP 0xDB4D)과는 별개 경로라
     // 같은 사건이 두 번 들어올 수 있다 — 이미 경보 중인 채널은 다시 울리지 않는다.
-    if (data.is_fall_detected && !fallActive[ch]) {
-        qDebug() << "[MQTT] 웨어러블 낙상 감지 — 채널" << ch << "기기" << id;
+    // ★ 웨어러블은 기기가 사람마다 달라서 "누가" 넘어졌는지까지 알 수 있다.
+    //   (카메라 낙상은 채널까지만 알 수 있어 이름을 붙일 수 없다)
+    const ResidentInfo info = residentInfo_.value(rid);
+    if (data.is_fall_detected && info.channel >= 0 && info.channel < 4
+        && !fallActive[info.channel]) {
+        qDebug() << "[MQTT] 웨어러블 낙상 감지 —" << info.name
+                 << "채널" << info.channel << "기기" << id;
     }
 
     updateVitals();   // 도착 즉시 화면 반영 (2초 타이머를 기다리지 않는다)
@@ -2544,10 +2795,14 @@ void MainWindow::updateCareTime()
     int sessions[4] = {};
     QString lastSeen[4];
 
+    // ★ 하루 구분은 end_time 이 아니라 start_time 기준이다. 서버가 요양사의 잠깐
+    //   자리 비움 후 복귀를 직전 행에 합산하면서 end_time 을 뒤로 미는데,
+    //   end_time 으로 자르면 자정 직전에 시작한 케어가 통째로 다음 날로 넘어간다.
+    //   케어는 시작한 날의 것으로 센다.
     QSqlQuery q;
     if (q.exec(QStringLiteral(
             "SELECT camera_id, COALESCE(SUM(duration_sec),0), COUNT(*), MAX(end_time) "
-            "FROM care_logs WHERE DATE(end_time)=CURDATE() GROUP BY camera_id"))) {
+            "FROM care_logs WHERE DATE(start_time)=CURDATE() GROUP BY camera_id"))) {
         while (q.next()) {
             const int ch = q.value(0).toInt();
             if (ch < 0 || ch >= 4) continue;   // 4채널 밖 기록은 무시
@@ -2726,7 +2981,8 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, flo
         }
         qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
-    refreshAlarmButton();   // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
 
     // 2. 비상 로그 조회 탭에 URL 및 정보 등록
     if (logTable) {
@@ -2768,7 +3024,8 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
         }
         qDebug() << "⚠️ [침상 이탈 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐";
     }
-    refreshAlarmButton();   // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
 
     // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
     if (logTable) {
@@ -3937,6 +4194,7 @@ void MainWindow::onAlarmClearClicked()
 
     // (flush는 위 루프에서 채널별 소켓마다 이미 처리)
     refreshAlarmButton();   // 모두 해제됐으니 버튼을 차분한 아웃라인으로 되돌린다
+    setVideoFocus(-1);      // 경보 해제 → 균등 2×2로 복귀
     if (!packetSent) {
         // 현재 활성화된 경보가 아예 없을 때만 안내 메시지 표시
         QMessageBox::information(this, QStringLiteral("경보 해제"),
@@ -3951,9 +4209,14 @@ void MainWindow::refreshAlarmButton()
     bool anyActive = false;
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch]) { anyActive = true; break; }
-    alarmClearButton->setProperty("active", anyActive);
-    alarmClearButton->style()->unpolish(alarmClearButton);
-    alarmClearButton->style()->polish(alarmClearButton);
+    updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
+
+    // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
+    if (alarmOverlay_) {
+        auto* ov = static_cast<AlarmOverlay*>(alarmOverlay_);
+        if (anyActive) { ov->setGeometry(ui->centralwidget->rect()); ov->start(); }
+        else           ov->stop();
+    }
 }
 
 
@@ -4064,20 +4327,26 @@ void MainWindow::applyLogFilters(bool withDates)
 }
 
 
-// residents(재원)를 camera_id로 채널(0~3)에 매핑해 patients[]를 채운다.
+// residents(재원)를 읽어 두 가지를 채운다.
+//  1) patients[] — 채널당 대표 1명. 영상 오버레이·케어 타임 카드처럼 "장소" 단위로
+//     보여주는 화면이 쓴다(그 자리에 카드가 하나뿐이라 여러 명을 담을 수 없다).
+//  2) residentInfo_ / residentsByChannel_ / wearableToResident — 사람 단위. 바이탈은
+//     기기가 사람마다 달라 한 명씩 따로 보여줘야 하므로 이쪽을 쓴다.
 // 채널에 등록된 입소자가 없으면 "미배정"으로 둔다(하드코딩 이름 없음).
-// 한 채널에 2명이 배정된 경우 병상 순으로 먼저 나오는 1명을 대표로 표시한다.
 void MainWindow::loadPatientsFromDb()
 {
-    for (int ch = 0; ch < 4; ++ch)
+    for (int ch = 0; ch < 4; ++ch) {
         patients[ch] = { QStringLiteral("미배정"),
                          QStringLiteral("채널 %1").arg(ch + 1),
                          QString() };
-    wearableToChannel.clear();
+        residentsByChannel_[ch].clear();
+    }
+    wearableToResident.clear();
+    residentInfo_.clear();
 
     QSqlQuery q;
     if (!q.exec(QStringLiteral(
-            "SELECT camera_id, name, room, wearable_id FROM residents "
+            "SELECT resident_id, camera_id, name, room, wearable_id FROM residents "
             "WHERE status='재원' AND camera_id BETWEEN 0 AND 3 "
             "ORDER BY camera_id, resident_id"))) {
         qDebug() << "채널 환자 매핑 조회 실패:" << q.lastError().text();
@@ -4086,35 +4355,55 @@ void MainWindow::loadPatientsFromDb()
 
     bool assigned[4] = {};
     while (q.next()) {
-        const int ch = q.value(0).toInt();
+        const int rid = q.value(0).toInt();
+        const int ch  = q.value(1).toInt();
         if (ch < 0 || ch >= 4) continue;
 
-        // 웨어러블은 대표 1명만이 아니라 그 채널에 있는 모든 입소자 것을 등록한다.
-        // 브로커는 기기 id("wear_01")로만 알려주므로, 여기 등록이 빠지면 그 기기가
-        // 보낸 값은 어느 채널 것인지 몰라 버려진다.
-        const QString wearable = q.value(3).toString().trimmed();
-        if (!wearable.isEmpty()) wearableToChannel.insert(wearable, ch);
+        ResidentInfo info;
+        info.name    = q.value(2).toString();
+        info.room    = q.value(3).toString();
+        // 위치는 채널로만 표기. 침상 구분이 생기기 전까지는 같은 채널이면 같은 값.
+        info.bed     = QStringLiteral("채널 %1").arg(ch + 1);
+        info.channel = ch;
+        residentInfo_.insert(rid, info);
+        residentsByChannel_[ch].append(rid);
 
-        if (assigned[ch]) continue;   // 화면 표시는 기존대로 채널당 대표 1명만
+        // 웨어러블은 그 채널의 모든 입소자 것을 등록한다. 브로커는 기기 id로만
+        // 알려주므로, 여기 등록이 빠지면 그 기기가 보낸 값은 주인을 몰라 버려진다.
+        const QString wearable = q.value(4).toString().trimmed();
+        if (!wearable.isEmpty()) wearableToResident.insert(wearable, rid);
+
+        if (assigned[ch]) continue;   // 오버레이·케어 카드는 채널당 대표 1명만
         assigned[ch] = true;
-        patients[ch].name = q.value(1).toString();
-        // 위치는 채널로만 표기(bed 필드에 "채널 N"). 기본값과 동일 형식.
-        patients[ch].bed  = QStringLiteral("채널 %1").arg(ch + 1);
-        patients[ch].room = q.value(2).toString();
+        patients[ch].name = info.name;
+        patients[ch].bed  = info.bed;
+        patients[ch].room = info.room;
+    }
+
+    // 목록에서 빠진 입소자(퇴원 등)의 값·이력은 버린다. 남겨두면 나중에 재입원했을 때
+    // 몇 달 전 그래프가 되살아나고, 계속 쌓이기만 해서 줄어들 일이 없다.
+    for (auto it = vitals_.begin(); it != vitals_.end(); ) {
+        if (residentInfo_.contains(it.key())) ++it;
+        else it = vitals_.erase(it);
+    }
+    for (auto it = hrHistory_.begin(); it != hrHistory_.end(); ) {
+        if (residentInfo_.contains(it.key())) ++it;
+        else it = hrHistory_.erase(it);
     }
 }
 
-// patients[]를 실제 화면 요소(영상 오버레이 + 바이탈 카드 이름/병상)에 다시 반영한다.
+// 입소자 정보를 실제 화면에 다시 반영한다.
+// 영상 오버레이는 채널당 한 줄이라 대표 1명(patients[])을 쓰고,
+// 바이탈 카드는 입소자 수만큼 개수가 달라져 통째로 다시 만든다.
 // 케어 타임 대시보드는 updateCareTime()에서 patients[]를 직접 읽으므로 여기선 제외.
 void MainWindow::refreshPatientLabels()
 {
     for (int ch = 0; ch < 4; ++ch) {
-        if (channelViews[ch])
-            channelViews[ch]->setOverlayInfo(
-                QStringLiteral("%1 · %2").arg(patients[ch].bed, patients[ch].name));
+        // 영상 오버레이는 "CH1"만 유지 — 병상·이름은 얹지 않는다.
         if (vitalNameLabels[ch]) vitalNameLabels[ch]->setText(patients[ch].name);
         if (vitalBedLabels[ch])  vitalBedLabels[ch]->setText(patients[ch].bed);
     }
+    rebuildVitalCards();
 }
 
 void MainWindow::onResidentSearch()
