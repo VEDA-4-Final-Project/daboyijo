@@ -38,6 +38,9 @@ struct Config {
     std::string audio_dir   = "sounds";
     std::string idle_text   = "감시 중";      // 평상시 표시 (64px 안에 들어갈 것)
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘린다
+    // 브로커 검증용 CA 인증서. 비어 있으면 TLS 없이 평문으로 붙는다
+    // (브로커의 1883 리스너가 살아 있는 동안의 폴백 겸, 롤백 손잡이).
+    std::string ca_path     = "";
 };
 
 /* 실행 파일이 있는 디렉터리. 현재 디렉터리를 쓰면 어디서 실행했느냐에 따라
@@ -93,6 +96,7 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
+        else if (k == "ca_path")     c.ca_path     = v;
     }
 }
 
@@ -108,14 +112,17 @@ severity toSeverity(const std::string& type)
 /* 패널에 흘릴 문구. 호실을 알면 노드가 조립하고, 모르면 서버 문구를 쓴다 */
 std::string toText(const AlarmCommand& c)
 {
-    if (c.room.empty()) return c.message;
+    /* room 은 int 다. 0(또는 음수)이면 호실을 특정할 수 없다는 뜻이라
+     * 예전의 빈 문자열과 같게 취급해 서버 문구를 그대로 띄운다. */
+    if (c.room <= 0) return c.message;
+    const std::string room = std::to_string(c.room);
 
     /* 64px 화면을 한 바퀴 흘리는 데 문구 길이만큼 시간이 든다.
      * 바뀌는 정보(호실)를 맨 앞에 두고 나머지는 최소한으로 줄인다. */
-    if (c.type == "FALL")           return c.room + "호 낙상 발생";
-    if (c.type == "EGRESS")         return c.room + "호 침상 이탈";
-    if (c.type == "VITAL_ABNORMAL") return c.room + "호 " + c.message;
-    return c.room + "호 " + c.message;
+    if (c.type == "FALL")           return room + "호 낙상 발생";
+    if (c.type == "EGRESS")         return room + "호 침상 이탈";
+    if (c.type == "VITAL_ABNORMAL") return room + "호 " + c.message;
+    return room + "호 " + c.message;
 }
 
 /* 서버가 절대 경로를 보내면 그대로, 파일명만 보내면 audio_dir 에서 찾는다 */
@@ -170,14 +177,22 @@ int main(int argc, char* argv[])
         }
     });
 
+    /* ca.crt 도 conf 와 같은 이유로 실행 파일 기준으로 푼다 — systemd 는 작업
+     * 디렉터리가 / 라, 상대 경로 그대로 두면 손으로 실행할 때만 되고 서비스로
+     * 띄우면 tls_set 이 실패해 아래 종료 경로로 빠진다. */
+    if (!cfg.ca_path.empty() && cfg.ca_path[0] != '/')
+        cfg.ca_path = exeDir() + "/" + cfg.ca_path;
+    if (!cfg.ca_path.empty()) client.setTlsConfig(cfg.ca_path);
+
     /* 여기서 죽는 건 의도다. MqttClient_veda 는 재연결 시 구독을 다시 걸지 않아서,
      * 최초 연결에 실패한 채로 계속 돌면 브로커가 나중에 떠도 영영 아무것도 못 받는다.
      * 프로세스는 살아 있는데 알림만 안 오는 상태가 제일 발견하기 어려우므로,
      * 차라리 종료하고 systemd(Restart=always)가 다시 띄우게 둔다.
      * MQTT/MQTT_prod 쪽에 재구독이 붙으면 중계 노드처럼 버티는 쪽으로 바꿀 것. */
     if (!client.connectToBroker(cfg.broker_host, cfg.broker_port)) {
-        fprintf(stderr, "브로커 연결 실패: %s:%d - 종료 (systemd 가 재시작한다)\n",
-                cfg.broker_host.c_str(), cfg.broker_port);
+        fprintf(stderr, "브로커 연결 실패: %s:%d%s - 종료 (systemd 가 재시작한다)\n",
+                cfg.broker_host.c_str(), cfg.broker_port,
+                cfg.ca_path.empty() ? "" : " [TLS]");
         return 1;
     }
     client.startLoop();
@@ -207,8 +222,8 @@ int main(int argc, char* argv[])
             continue;
         }
         idleShown = false;
-        printf("[명령] type=%s room=%s audio=%s matrix=%s\n", cmd.type.c_str(),
-               cmd.room.c_str(), cmd.audio_action.c_str(), cmd.matrix_action.c_str());
+        printf("[명령] type=%s room=%d audio=%s matrix=%s\n", cmd.type.c_str(),
+               cmd.room, cmd.audio_action.c_str(), cmd.matrix_action.c_str());
 
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
