@@ -6,6 +6,8 @@
 #include "sparkline.h"
 #include "mqttqtmanager.h"
 #include <QHostAddress>
+#include <QCoreApplication>   // MQTT CA 인증서를 실행 파일 기준 경로에서 찾는다
+#include <QFile>
 #include <QPixmap>
 #include <QDateTime>
 #include <QDebug>
@@ -159,8 +161,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.31";
-const char* kDefaultHostB  = "172.20.32.8";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -182,7 +184,17 @@ QString brokerHost() {
 }
 int brokerPort() {
     QSettings s;
-    return s.value(kSettingsBrokerPort, 1883).toInt();
+    return s.value(kSettingsBrokerPort, 8883).toInt();   // 8883 = MQTTS(TLS), 평문은 1883
+}
+
+// 브로커 검증용 CA 인증서(ca.crt) 위치. 실행 파일 옆의 certs/ 폴더에서 찾는다.
+// 상대경로("./certs/ca.crt")를 쓰면 어느 폴더에서 실행했느냐에 따라 못 찾을 수
+// 있어서, 실행 파일 기준으로 잡는다.
+QString brokerCaPath() {
+    QSettings s;
+    return s.value(QStringLiteral("mqtt/caCert"),
+                   QCoreApplication::applicationDirPath()
+                       + QStringLiteral("/certs/ca.crt")).toString();
 }
 
 // 이 시간이 지나도록 새 값이 안 오면 화면의 생체값을 "--" 로 되돌린다.
@@ -335,6 +347,15 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
                 // 다른 노드가 형식을 바꿨을 때 조용히 묻히지 않게 남긴다.
                 qWarning() << "[MQTT] 형식이 맞지 않는 메시지 무시:" << topic << why;
             });
+    // TLS(MQTTS) 설정은 init() 보다 먼저 해야 첫 접속부터 암호화된다.
+    // ca.crt 가 없으면 경고만 남기고 평문(1883)으로 붙는다 — 인증서를 아직
+    // 못 받은 개발 PC 에서도 앱은 뜨게 하려는 의도다.
+    const QString caPath = brokerCaPath();
+    if (QFile::exists(caPath)) {
+        mqtt->setTlsConfig(caPath);
+    } else {
+        qWarning() << "[MQTT] CA 인증서가 없어 평문으로 접속합니다:" << caPath;
+    }
     mqtt->init(brokerHost(), brokerPort());
 
     // 케어 타임 대시보드: 10초마다 care_logs를 재조회해 채널별 케어시간 갱신.
@@ -2764,7 +2785,7 @@ void MainWindow::onMqttAlarm(const AlarmCommand& cmd)
 {
     qDebug() << "[MQTT] 알림 명령:"
              << QString::fromStdString(cmd.type)
-             << QString::fromStdString(cmd.room)
+             << cmd.room                             // AlarmCommand::room 은 정수(호실 번호)
              << QString::fromStdString(cmd.message);
 }
 
@@ -3599,7 +3620,7 @@ QWidget* MainWindow::buildCamConnectPage()
     auto* form = new QFormLayout();
     camIpEdit = new QLineEdit(s.value(QStringLiteral("camera/ip")).toString());
     camIpEdit->setPlaceholderText(
-        QStringLiteral("예: 172.20.35.140  (아래 검색 결과를 클릭하면 자동 입력)"));
+        QStringLiteral("예: 172.20.32.31  (아래 검색 결과를 클릭하면 자동 입력)"));
     camUserEdit = new QLineEdit(
         s.value(QStringLiteral("camera/user"), QStringLiteral("admin")).toString());
     camPwEdit = new QLineEdit();
