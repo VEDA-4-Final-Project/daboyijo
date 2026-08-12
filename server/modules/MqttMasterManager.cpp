@@ -16,23 +16,33 @@ MqttMasterManager::~MqttMasterManager() {
 bool MqttMasterManager::init(const std::string& broker_ip, int port) {
 
 
-    std::string ca_path = "../../MQTT/certs/ca.crt";
+    std::string ca_path = "../MQTT/certs/ca.crt";
     mqtt_client_->setTlsConfig(ca_path);
-    if(!mqtt_client_->connectToBroker(broker_ip, port)) {
-        std::cerr << "[MqttMasterManager] Broker connection failed!" << std::endl;
-        return false;
-    }
 
+    // 콜백·구독은 연결보다 먼저 걸어둔다 — 연결 직후 들어오는 메시지를 놓치지 않고,
+    // 구독은 목록에 기록됐다가 on_connect 에서(재접속마다) 자동으로 다시 걸린다.
     mqtt_client_->setCallback([this](const::std::string& t , const std::string& p) {
         this->onMessageReceived(t,p);
     });
+    mqtt_client_->subscribeTopic("veda/wearable/data");
 
+    const bool connected = mqtt_client_->connectToBroker(broker_ip, port);
+
+    // ★ 연결 실패해도 네트워크 루프는 반드시 띄운다.
+    //   mosquitto 의 자동 재접속(reconnect_delay)은 이 루프 안에서만 돈다.
+    //   예전처럼 여기서 return 해버리면 루프가 안 떠서 영원히 오프라인이 되고,
+    //   그동안 발행한 알람은 전부 큐에만 쌓인다(사이렌은 안 울린다).
     mqtt_client_->startLoop();
 
-    mqtt_client_->subscribeTopic("veda/wearable/data");
-    std::printf("[MqttMasterManager] Subscribed to 'veda/wearable/data'");
-    std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
+    if(!connected) {
+        std::cerr << "[MqttMasterManager] 브로커 최초 연결 실패 (" << broker_ip << ":" << port
+                  << ") — 백그라운드에서 재접속을 계속 시도합니다." << std::endl;
+        std::cerr << "[MqttMasterManager] TLS CA 경로: " << ca_path
+                  << " (실행 위치 기준 상대경로 — 파일이 없으면 연결이 안 됩니다)" << std::endl;
+        return false;
+    }
 
+    std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
     return true;
 }
 
@@ -92,8 +102,17 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int room ) {
     nlohmann::json j = cmd;
     std::string payload = j.dump();
 
-    mqtt_client_->publishMessage("veda/alarm/control",payload);
-    std::cout << "[MqttMasterManager] SentAlarm Command to Node: " << payload<< std::endl;
+    // 알람은 "보냈다고 찍는 것"과 "실제로 나간 것"이 반드시 같아야 한다.
+    // 브로커가 끊긴 상태면 큐에 담길 뿐 알림 노드는 아무 소리도 내지 않는다.
+    const PublishResult pr = mqtt_client_->publish("veda/alarm/control", payload);
+    if(pr == PublishResult::Sent) {
+        std::cout << "[MqttMasterManager] SentAlarm Command to Node: " << payload << std::endl;
+    } else if(pr == PublishResult::Queued) {
+        std::cerr << "[MqttMasterManager] ⚠️ 알람 미전송 — 브로커 오프라인. 알림 노드는 울리지 않습니다."
+                     " (재접속 시 전송 예정) payload: " << payload << std::endl;
+    } else {
+        std::cerr << "[MqttMasterManager] ⚠️ 알람 전송 실패. payload: " << payload << std::endl;
+    }
 }
 
 void MqttMasterManager::onMessageReceived(const std::string& topic, const std::string& payload) {
