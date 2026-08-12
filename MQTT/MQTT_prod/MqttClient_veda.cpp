@@ -133,7 +133,9 @@ void MqttClient_veda::setCallback(MessageCallback callback) {
 
 // === 내부 static 콜백 구현 ===
 
+// mosq 는 mosquitto 콜백 시그니처가 요구할 뿐 안 씀 — 객체는 obj 로 되찾음
 void MqttClient_veda::on_connect(struct mosquitto *mosq, void *obj, int rc) {
+    (void)mosq;
     if(rc == 0) {
         std::cout << "===> [MQTT] Successfully connected to broker" << std::endl;
         MqttClient_veda* client = static_cast<MqttClient_veda*>(obj);
@@ -157,8 +159,9 @@ void MqttClient_veda::on_connect(struct mosquitto *mosq, void *obj, int rc) {
 }
 
 void MqttClient_veda::on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *message) {
+    (void)mosq;
 
-    // void* obj포인터를 MqttClient_veda 객체 타입으로 캐스팅 
+    // void* obj포인터를 MqttClient_veda 객체 타입으로 캐스팅
     //std::cout <<"[debug] on_message 트리거"<< std::endl;
     MqttClient_veda* client = static_cast<MqttClient_veda*>(obj);
 
@@ -172,6 +175,7 @@ void MqttClient_veda::on_message(struct mosquitto *mosq, void *obj, const struct
 }
 
 void MqttClient_veda::on_disconnect(struct mosquitto *mosq, void *obj, int rc) {
+    (void)mosq;
     MqttClient_veda* client = static_cast<MqttClient_veda*>(obj);
 
     if(client) {
