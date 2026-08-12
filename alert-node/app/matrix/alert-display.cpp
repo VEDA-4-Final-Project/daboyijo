@@ -84,7 +84,10 @@ bool AlertDisplay::open()
     }
     if (fbfd_ < 0) return false;
 
-    cols_ = var.xres; rows_ = var.yres; stride_ = fix.line_length;
+    // fbdev 가 __u32 로 주는 값 — 패널이 64x32 라 int 로 좁혀도 손실 없음
+    cols_   = static_cast<int>(var.xres);
+    rows_   = static_cast<int>(var.yres);
+    stride_ = static_cast<int>(fix.line_length);
     mapSize_ = fix.smem_len;
     fb_ = (uint8_t*)mmap(nullptr, mapSize_, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd_, 0);
     if (fb_ == MAP_FAILED) {
@@ -93,7 +96,7 @@ bool AlertDisplay::open()
         fbfd_ = -1;
         return false;
     }
-    scratch_.assign((size_t)rows_ * stride_, 0);
+    scratch_.assign(static_cast<size_t>(rows_) * static_cast<size_t>(stride_), 0);
     return true;
 }
 
@@ -182,7 +185,7 @@ void AlertDisplay::drawText(int x, int y, const std::string& s, const uint8_t rg
                 for (int col = 0; col < 16; col++) {
                     int px = x + col;
                     if (!(bits & (0x8000 >> col)) || px < 0 || px >= cols_) continue;
-                    memcpy(&scratch_[py * stride_ + px * 3], rgb, 3);
+                    memcpy(&scratch_[static_cast<size_t>(py * stride_ + px * 3)], rgb, 3);
                 }
             }
         x += g->adv;
@@ -197,8 +200,8 @@ void AlertDisplay::drawBorder(const uint8_t rgb[3], int scale)
                            (uint8_t)(rgb[2] * scale / 255) };
     for (int y = 0; y < BAND; y++)
         for (int x = 0; x < cols_; x++) {
-            memcpy(&scratch_[y * stride_ + x * 3], c, 3);
-            memcpy(&scratch_[(rows_ - 1 - y) * stride_ + x * 3], c, 3);
+            memcpy(&scratch_[static_cast<size_t>(y * stride_ + x * 3)], c, 3);
+            memcpy(&scratch_[static_cast<size_t>((rows_ - 1 - y) * stride_ + x * 3)], c, 3);
         }
 }
 
