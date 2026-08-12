@@ -106,7 +106,7 @@ class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
-class QTabWidget;
+
 class QTableWidget;
 class QComboBox;
 class QDateEdit;
@@ -145,9 +145,10 @@ struct ResidentInfo {
 // 입소자별 최신 웨어러블 값. MQTT 로 들어온 것만 담는다.
 // 한 번도 안 들어온 사람은 received=false 로 남아 화면에 "--" 가 뜬다 —
 // 값이 없는데 그럴듯한 숫자를 보여주면 관제사가 오판한다.
+// (웨어러블 JSON에는 temperature 필드도 있지만 기기가 실제로 채워 보내지 않는다 →
+//  화면에 띄우지 않고 보관도 하지 않는다. 값이 들어오기 시작하면 여기에 되살리면 된다.)
 struct VitalSample {
     bool   received    = false;
-    double temperature = 0.0;
     int    heartRate   = 0;
     int    spo2        = 0;
     qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
@@ -258,7 +259,7 @@ private:
     // 자연히 "대기" 상태로 표시된다.
     // ★ 카드 개수가 입소자 수에 따라 변하므로 고정 배열이 아니라 해시다.
     //   rebuildVitalCards() 가 통째로 비우고 다시 채운다.
-    QHash<int, QLabel*> tempValues;         // 체온 값
+    QHash<int, QLabel*> spo2Values;         // 산소포화도 값
     QHash<int, QLabel*> hrValues;           // 심박수 값
     QHash<int, QLabel*> vitalStatusDots;    // 바이탈 상태등
     QHash<int, QLabel*> vitalStatusBadges;  // 상태 배지(정상/주의/위험)
@@ -287,7 +288,16 @@ private:
     QTimer reconnectTimer;       // 영상 서버 자동 재접속
 
     // ── TAB 구조 ──────────────────────────────────────────
-    QTabWidget* tabWidget = nullptr;
+    // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
+    static constexpr int kNavCount = 5;
+    QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 5개 + 접기 토글)
+    void     refreshNavIcons();       // 팔레트 전환 시 아이콘 색 재생성
+    void     setNavCollapsed(bool on);// 접기/펼치기 (QSettings에 저장)
+    QFrame*         navRail = nullptr;
+    QPushButton*    navToggle = nullptr;
+    QPushButton*    navBtns[kNavCount] = {};
+    bool            navCollapsed_ = false;
+    QStackedWidget* contentStack = nullptr;
 
     // TAB2: 이벤트 기록 (요약 카드 + 로그 표 + 인라인 블랙박스)
     QDateEdit* filterDateFrom = nullptr;

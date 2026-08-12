@@ -30,7 +30,7 @@
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
-#include <QTabWidget>
+
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QComboBox>
@@ -132,18 +132,37 @@ const LoggedField kLoggedFields[] = {
     {"특이사항", "notes"},
     };
 
+// 상태 판정 — 웨어러블이 실제로 보내오는 두 값(산소포화도·심박)만 본다.
+// SpO2 기준은 임상에서 널리 쓰는 구간: 95% 이상 정상, 90~94% 주의, 90% 미만 위험.
+// spo2 <= 0 은 "측정 실패/미수신"이라 판정에서 빼고 심박만 본다 — 0을 그대로
+// 넣으면 센서가 잠깐 못 읽은 것뿐인데 위험으로 뜬다.
+namespace {
+enum class VitalLevel { Normal, Warn, Critical };
+
+VitalLevel vitalLevel(int spo2, int hr) {
+    const bool hasSpo2 = spo2 > 0;
+    if ((hasSpo2 && spo2 < 90) || hr >= 110 || hr <= 45) return VitalLevel::Critical;
+    if ((hasSpo2 && spo2 < 95) || hr >= 100 || hr < 55)  return VitalLevel::Warn;
+    return VitalLevel::Normal;
+}
+}  // namespace
+
 // 상태 색상: 정상/주의/위험 판정
-QString vitalColor(double temp, int hr) {
-    if (temp >= 38.0 || hr >= 110 || hr <= 45) return kCritical;
-    if (temp >= 37.5 || hr >= 100 || hr < 55)  return kWarn;
-    return kNormal;
+QString vitalColor(int spo2, int hr) {
+    switch (vitalLevel(spo2, hr)) {
+        case VitalLevel::Critical: return kCritical;
+        case VitalLevel::Warn:     return kWarn;
+        default:                   return kNormal;
+    }
 }
 
 // 상태 라벨: 정상/주의/위험 (배지 텍스트용)
-QString vitalStatusLabel(double temp, int hr) {
-    if (temp >= 38.0 || hr >= 110 || hr <= 45) return QStringLiteral("위험");
-    if (temp >= 37.5 || hr >= 100 || hr < 55)  return QStringLiteral("주의");
-    return QStringLiteral("정상");
+QString vitalStatusLabel(int spo2, int hr) {
+    switch (vitalLevel(spo2, hr)) {
+        case VitalLevel::Critical: return QStringLiteral("위험");
+        case VitalLevel::Warn:     return QStringLiteral("주의");
+        default:                   return QStringLiteral("정상");
+    }
 }
 
 // 두 색을 f:(1-f) 비율로 섞는다. 배지 배경 tint 계산용.
@@ -507,6 +526,146 @@ private:
     double phase_ = 0.0;
 };
 
+namespace {
+// 좌측 네비 아이콘 — 외부 리소스 없이 QPainter로 그린다.
+// 이모지를 쓰면 폰트마다 톤·크기가 제각각이라 관제 UI에서 장난감처럼 보인다.
+// 선 굵기 하나로 통일된 단색 아이콘이라 팔레트가 바뀌면 색만 다시 입히면 된다.
+QPixmap navIconPixmap(int kind, const QColor& c, int px = 20)
+{
+    QPixmap pm(px, px);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(c, 1.6);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    const qreal m = 2.5, w = px - 2 * m;
+    switch (kind) {
+        case 0: {   // 실시간 관제 — 2×2 영상 그리드
+            const qreal g = 1.8, s = (w - g) / 2.0;
+            for (int r = 0; r < 2; ++r)
+                for (int col = 0; col < 2; ++col)
+                    p.drawRoundedRect(
+                        QRectF(m + col * (s + g), m + r * (s + g), s, s), 1.5, 1.5);
+            break;
+        }
+        case 1: {   // 이벤트 기록 — 점 + 줄 목록
+            for (int i = 0; i < 3; ++i) {
+                const qreal y = m + 1.5 + i * (w - 3) / 2.0;
+                p.setBrush(c);
+                p.drawEllipse(QPointF(m + 1.2, y), 1.15, 1.15);
+                p.setBrush(Qt::NoBrush);
+                p.drawLine(QPointF(m + 5.0, y), QPointF(m + w, y));
+            }
+            break;
+        }
+        case 2: {   // 케어 타임 — 시계
+            p.drawEllipse(QRectF(m, m, w, w));
+            const QPointF o(m + w / 2, m + w / 2);
+            p.drawLine(o, o + QPointF(0, -w * 0.27));
+            p.drawLine(o, o + QPointF(w * 0.19, 0));
+            break;
+        }
+        case 3: {   // 입소자 관리 — 사람
+            p.drawEllipse(QRectF(m + w * 0.29, m + w * 0.04, w * 0.42, w * 0.42));
+            p.drawArc(QRectF(m + w * 0.06, m + w * 0.54, w * 0.88, w * 0.84), 0, 180 * 16);
+            break;
+        }
+        default: {  // 카메라 설정 — 카메라 바디 + 렌즈
+            p.drawRoundedRect(QRectF(m, m + w * 0.20, w, w * 0.62), 2.5, 2.5);
+            p.drawEllipse(QRectF(m + w * 0.33, m + w * 0.36, w * 0.34, w * 0.32));
+            p.drawLine(QPointF(m + w * 0.30, m + w * 0.20),
+                       QPointF(m + w * 0.40, m + w * 0.06));
+            p.drawLine(QPointF(m + w * 0.40, m + w * 0.06),
+                       QPointF(m + w * 0.62, m + w * 0.06));
+            break;
+        }
+    }
+    return pm;
+}
+}  // namespace
+
+// 좌측 네비 레일 — 아이콘+라벨 5개, 접으면 아이콘만. 상태는 QSettings에 남는다.
+QWidget* MainWindow::buildNavRail()
+{
+    navRail = new QFrame();
+    navRail->setObjectName("navRail");
+    auto* v = new QVBoxLayout(navRail);
+    v->setContentsMargins(10, 12, 10, 12);
+    v->setSpacing(4);
+
+    navToggle = new QPushButton(QStringLiteral("☰"));
+    navToggle->setObjectName("navToggle");
+    navToggle->setCursor(Qt::PointingHandCursor);
+    navToggle->setFixedSize(34, 32);
+    connect(navToggle, &QPushButton::clicked, this,
+            [this] { setNavCollapsed(!navCollapsed_); });
+    auto* toggleRow = new QHBoxLayout();
+    toggleRow->setContentsMargins(0, 0, 0, 0);
+    toggleRow->addWidget(navToggle);
+    toggleRow->addStretch();
+    v->addLayout(toggleRow);
+    v->addSpacing(10);
+
+    const QString names[kNavCount] = {
+        QStringLiteral("실시간 관제"), QStringLiteral("이벤트 기록"),
+        QStringLiteral("케어 타임"),   QStringLiteral("입소자 관리"),
+        QStringLiteral("카메라 설정")};
+    for (int i = 0; i < kNavCount; ++i) {
+        navBtns[i] = new QPushButton(names[i]);
+        navBtns[i]->setObjectName("navBtn");
+        navBtns[i]->setCheckable(true);
+        navBtns[i]->setChecked(i == 0);
+        navBtns[i]->setAutoExclusive(true);
+        navBtns[i]->setCursor(Qt::PointingHandCursor);
+        navBtns[i]->setIconSize(QSize(20, 20));
+        navBtns[i]->setMinimumHeight(40);
+        navBtns[i]->setToolTip(names[i]);   // 접었을 때 라벨 대신 알려준다
+        connect(navBtns[i], &QPushButton::clicked, this, [this, i] {
+            if (contentStack) contentStack->setCurrentIndex(i);
+        });
+        v->addWidget(navBtns[i]);
+    }
+    v->addStretch();
+
+    refreshNavIcons();
+    QSettings s;
+    setNavCollapsed(s.value(QStringLiteral("ui/nav_collapsed"), false).toBool());
+    return navRail;
+}
+
+// 팔레트가 바뀌면 아이콘 색도 다시 입힌다. 체크 상태(On)는 흰색 — 악센트 배경 위라서.
+void MainWindow::refreshNavIcons()
+{
+    for (int i = 0; i < kNavCount; ++i) {
+        if (!navBtns[i]) continue;
+        QIcon ic;
+        ic.addPixmap(navIconPixmap(i, QColor(QString::fromLatin1(kTextSub))),
+                     QIcon::Normal, QIcon::Off);
+        ic.addPixmap(navIconPixmap(i, QColor(Qt::white)), QIcon::Normal, QIcon::On);
+        navBtns[i]->setIcon(ic);
+    }
+}
+
+void MainWindow::setNavCollapsed(bool on)
+{
+    navCollapsed_ = on;
+    if (navRail) navRail->setFixedWidth(on ? 62 : 208);
+    for (int i = 0; i < kNavCount; ++i) {
+        if (!navBtns[i]) continue;
+        // 접힘: 라벨을 지워 아이콘만 남긴다(툴팁이 이름을 대신한다).
+        navBtns[i]->setText(on ? QString() : navBtns[i]->toolTip());
+        navBtns[i]->setProperty("collapsed", on);
+        navBtns[i]->style()->unpolish(navBtns[i]);
+        navBtns[i]->style()->polish(navBtns[i]);
+    }
+    QSettings s;
+    s.setValue(QStringLiteral("ui/nav_collapsed"), on);
+}
+
 void MainWindow::buildUi()
 {
     auto* root = new QVBoxLayout(ui->centralwidget);
@@ -515,10 +674,13 @@ void MainWindow::buildUi()
 
     root->addWidget(buildHeader());
 
-    tabWidget = new QTabWidget();
-    tabWidget->setObjectName("mainTabs");
+    // 화면 전환은 상단 탭이 아니라 좌측 네비 레일이 맡는다.
+    // 관제 그리드는 세로가 모자라고 가로가 남는 비율(16:9 4분할)이라, 탭바가
+    // 먹던 높이를 레일의 폭으로 옮기면 영상이 오히려 커진다.
+    contentStack = new QStackedWidget();
+    contentStack->setObjectName("contentStack");
 
-    // ── TAB 1: 실시간 관제 및 제어 (영상월 + 바이탈 패널) ──
+    // ── 1: 실시간 관제 및 제어 (영상월 + 바이탈 패널) ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(18, 18, 18, 18);
     body->setSpacing(18);
@@ -527,21 +689,19 @@ void MainWindow::buildUi()
 
     auto* dashboardTab = new QWidget();
     dashboardTab->setLayout(body);
-    tabWidget->addTab(dashboardTab, QStringLiteral("실시간 관제 및 제어"));
+    contentStack->addWidget(dashboardTab);
 
-    // ── TAB 2: 이벤트 기록 (요약 카드 + 로그 + 인라인 블랙박스) ──
-    tabWidget->addTab(buildEventLogTab(), QStringLiteral("이벤트 기록"));
+    contentStack->addWidget(buildEventLogTab());        // 2: 이벤트 기록
+    contentStack->addWidget(buildCareTimeTab());        // 3: 케어 타임
+    contentStack->addWidget(buildDbTab());              // 4: 입소자 관리
+    contentStack->addWidget(buildCameraSettingsTab());  // 5: 카메라 설정
 
-    // ── TAB 3: 케어 타임 (이벤트 기록에서 분리) ──
-    tabWidget->addTab(buildCareTimeTab(), QStringLiteral("케어 타임"));
-
-    // ── TAB 4: 입소자 관리 ──
-    tabWidget->addTab(buildDbTab(), QStringLiteral("입소자 관리"));
-
-    // ── TAB 5: 카메라 설정 (카메라/ROI/이미지) — 예전엔 팝업이었으나 정식 탭으로 승격 ──
-    tabWidget->addTab(buildCameraSettingsTab(), QStringLiteral("카메라 설정"));
-
-    root->addWidget(tabWidget, 1);
+    auto* shell = new QHBoxLayout();
+    shell->setContentsMargins(0, 0, 0, 0);
+    shell->setSpacing(0);
+    shell->addWidget(buildNavRail(), 0);
+    shell->addWidget(contentStack, 1);
+    root->addLayout(shell, 1);
 
     // 경보 펄스 오버레이 — 중앙 위젯 전체를 덮되 테두리만 그린다(마우스 통과).
     alarmOverlay_ = new AlarmOverlay(ui->centralwidget);
@@ -861,8 +1021,9 @@ void MainWindow::renderHelpTopic(int idx)
             "<p>다보이조는 요양원 통합 모니터링 관제 프로그램입니다. "
             "실시간 영상 관제, 낙상·침상이탈 경보, 웨어러블 생체신호, 블랙박스 기록, "
             "입소자 관리, 카메라 설정을 한 화면에서 다룹니다.</p>")
-          + li(QStringLiteral("탭 구성"),
-               QStringLiteral("실시간 관제 및 제어 · 이벤트 기록 · 케어 타임 · 입소자 관리 · 카메라 설정"))
+          + li(QStringLiteral("화면 구성"),
+               QStringLiteral("왼쪽 메뉴에서 실시간 관제 · 이벤트 기록 · 케어 타임 · 입소자 관리 · 카메라 설정으로 이동합니다. "
+                              "메뉴 위 ☰ 버튼으로 접었다 펼 수 있습니다."))
           + li(QStringLiteral("사용 팁"),
                QStringLiteral("왼쪽 목록에서 주제를 고르면 해당 기능 설명이 여기에 표시됩니다."));
         break;
@@ -879,7 +1040,7 @@ void MainWindow::renderHelpTopic(int idx)
         body = li(QStringLiteral("4채널 영상"), QStringLiteral("병상별 실시간 영상. 낙상·침상이탈 발생 시 해당 칸이 빨간 테두리로 강조됩니다."))
              + li(QStringLiteral("🎤 방송"), QStringLiteral("누르고 있는 동안 현장으로 음성 송출(인터콤). 떼면 종료."))
              + li(QStringLiteral("경보 해제"), QStringLiteral("평상시엔 차분한 아웃라인, 경보 시 빨강 강조. 누르면 낙상/침상이탈 경보를 일괄 해제하고 현장 사이렌·LED를 끕니다."))
-             + li(QStringLiteral("웨어러블 생체신호"), QStringLiteral("우측 패널에 채널별 체온·심박과 심박 추세 그래프. 정상/주의/위험에 따라 색이 바뀝니다."));
+             + li(QStringLiteral("웨어러블 생체신호"), QStringLiteral("우측 패널에 채널별 산소포화도·심박과 심박 추세 그래프. 정상/주의/위험에 따라 색이 바뀝니다."));
         break;
     case 3:
         title = QStringLiteral("이벤트 기록");
@@ -1073,7 +1234,7 @@ void MainWindow::rebuildVitalCards()
 
     // 위젯을 지우면 라벨 포인터가 전부 무효가 된다 — 표를 먼저 비워야
     // updateVitals() 가 죽은 포인터를 만지지 않는다.
-    tempValues.clear();
+    spo2Values.clear();
     hrValues.clear();
     vitalStatusDots.clear();
     vitalStatusBadges.clear();
@@ -1147,7 +1308,7 @@ QWidget* MainWindow::buildVitalCard(int key, const QString& name, const QString&
     hl->addWidget(badge);
     lay->addWidget(head);
 
-    // ── 본문: 큰 판독값 2개 (체온 / 심박) — 환자 모니터 느낌 ──
+    // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(14, 9, 14, 6);
     body->setSpacing(10);
@@ -1176,8 +1337,8 @@ QWidget* MainWindow::buildVitalCard(int key, const QString& name, const QString&
         return box;
     };
 
-    body->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"),
-                             QStringLiteral("℃"), tempValues[key]));
+    body->addWidget(makeStat(QStringLiteral("🫁"), QStringLiteral("산소포화도"),
+                             QStringLiteral("%"), spo2Values[key]));
     body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
                              QStringLiteral("bpm"), hrValues[key]));
     lay->addLayout(body);
@@ -2304,6 +2465,19 @@ void MainWindow::applyTheme()
                         border-radius: 14px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
         #logoutButton:hover { background: %(critical); color: #fff; }
 
+        /* ── 좌측 네비 레일 ── */
+        #navRail { background: %(panel); border-right: 1px solid %(border); }
+        #navBtn { background: transparent; color: %(sub); border: none; border-radius: 10px;
+                  padding: 0 12px; text-align: left;
+                  font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+        #navBtn:hover { background: %(card); color: %(text); }
+        #navBtn:checked { background: %(accent); color: #ffffff; font-weight: 800; }
+        /* 접힘 상태 — 라벨이 없으니 아이콘을 가운데로 */
+        #navBtn[collapsed="true"] { padding: 0; text-align: center; }
+        #navToggle { background: transparent; color: %(sub); border: none;
+                     border-radius: 8px; font-size: 15px; }
+        #navToggle:hover { background: %(card); color: %(text); }
+
         #panel { background: %(panel); border: 1px solid %(border); border-radius: 16px; }
         /* 섹션 제목: 좌측 굵은 청록 악센트 바 + 큼직한 타이틀 */
         #panelTitle { color: %(text); font-size: 17px; font-weight: 800; letter-spacing: 0.3px;
@@ -2392,16 +2566,7 @@ void MainWindow::applyTheme()
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         QAbstractScrollArea::corner { background: transparent; }
 
-        /* ── TAB 구조 ── */
-        QTabWidget::pane { border: none; }
-        QTabBar { qproperty-drawBase: 0; }
-        QTabBar::tab { background: transparent; color: %(sub); padding: 10px 20px;
-                       border: none; border-bottom: 2px solid transparent;
-                       font-size: 13px; font-weight: 700; margin-right: 4px; }
-        QTabBar::tab:selected { color: %(accent); border-bottom: 2px solid %(accent); }
-        QTabBar::tab:hover:!selected { color: %(text); }
-
-        /* ── TAB2: 이벤트 기록 ── */
+        /* ── 이벤트 기록 ── */
         #filterBar QLabel { color: %(sub); font-size: 12px; }
         #filterBar QComboBox, #filterBar QDateEdit {
             background: %(card); color: %(text); border: 1px solid %(border);
@@ -2630,7 +2795,8 @@ void MainWindow::toggleTheme()
 {
     darkMode = !darkMode;
     applyPalette(darkMode ? kDark : kLight);
-    applyTheme();  // 바뀐 팔레트로 QSS 재생성·재적용
+    applyTheme();     // 바뀐 팔레트로 QSS 재생성·재적용
+    refreshNavIcons();  // 네비 아이콘은 QPainter로 그린 픽스맵이라 따로 다시 그린다
 
     if (themeToggleButton)
         themeToggleButton->setText(darkMode ? QStringLiteral("☀")
@@ -2732,11 +2898,11 @@ void MainWindow::updateVitals()
     // 음수 키는 vitals_ 에 값이 없어 기본값(received=false)이 잡히고 "대기"로 뜬다.
     for (auto it = vitalNameLabels.constBegin(); it != vitalNameLabels.constEnd(); ++it) {
         const int key = it.key();
-        QLabel* tempLbl  = tempValues.value(key);
+        QLabel* spo2Lbl  = spo2Values.value(key);
         QLabel* hrLbl    = hrValues.value(key);
         QLabel* dotLbl   = vitalStatusDots.value(key);
         QLabel* badgeLbl = vitalStatusBadges.value(key);
-        if (!tempLbl || !hrLbl || !dotLbl || !badgeLbl) continue;
+        if (!spo2Lbl || !hrLbl || !dotLbl || !badgeLbl) continue;
         Sparkline* spark = hrSpark.value(key);
 
         const VitalSample v = vitals_.value(key);
@@ -2744,8 +2910,8 @@ void MainWindow::updateVitals()
 
         if (!fresh) {
             const QString dim = kTextSub;
-            tempLbl->setText(QStringLiteral("--"));
-            tempLbl->setStyleSheet(QString("color:%1;").arg(dim));
+            spo2Lbl->setText(QStringLiteral("--"));
+            spo2Lbl->setStyleSheet(QString("color:%1;").arg(dim));
             hrLbl->setText(QStringLiteral("--"));
             hrLbl->setStyleSheet(QString("color:%1;").arg(dim));
 
@@ -2765,18 +2931,20 @@ void MainWindow::updateVitals()
             continue;
         }
 
-        const double temp = v.temperature;
-        const int    hr   = v.heartRate;
-        const QString color = vitalColor(temp, hr);
+        const int spo2 = v.spo2;
+        const int hr   = v.heartRate;
+        const QString color = vitalColor(spo2, hr);
 
-        tempLbl->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
-        tempLbl->setStyleSheet(QString("color:%1;").arg(color));
+        // 센서가 못 읽어 0이 오면 숫자 대신 "--" — 0%를 그대로 띄우면 오독한다.
+        spo2Lbl->setText(spo2 > 0 ? QString::number(spo2)   // 단위(%)는 별도 라벨
+                                  : QStringLiteral("--"));
+        spo2Lbl->setStyleSheet(QString("color:%1;").arg(color));
         hrLbl->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
         hrLbl->setStyleSheet(QString("color:%1;").arg(color));
 
         dotLbl->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
 
-        const QString status = vitalStatusLabel(temp, hr);
+        const QString status = vitalStatusLabel(spo2, hr);
         badgeLbl->setText(status);
         badgeLbl->setStyleSheet(QString(
             "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
@@ -2812,7 +2980,6 @@ void MainWindow::onWearableData(const WearableData& data)
 
     VitalSample& v = vitals_[rid];
     v.received    = true;
-    v.temperature = data.temperature;
     v.heartRate   = data.heart_rate;
     v.spo2        = data.spo2;
     v.arrivedAtMs = QDateTime::currentMSecsSinceEpoch();
@@ -4149,8 +4316,8 @@ void MainWindow::selectRoiChannel(int ch)
 // 카메라 설정 탭이 현재 보이는 탭인지 — ROI/이미지 실시간 프리뷰는 이때만 갱신한다.
 bool MainWindow::cameraSettingsVisible() const
 {
-    return tabWidget && cameraSettingsTab_ &&
-           tabWidget->currentWidget() == cameraSettingsTab_;
+    return contentStack && cameraSettingsTab_ &&
+           contentStack->currentWidget() == cameraSettingsTab_;
 }
 
 // "연결" — 카메라 탭의 IP/계정/비번으로 바로 연결. 포트·프로파일은 고정값.
