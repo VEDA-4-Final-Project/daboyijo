@@ -57,6 +57,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define ST7789_RST_Pin GPIO_PIN_1
+#define ST7789_RST_GPIO_Port GPIOA
 #define BMI270_CS_Pin GPIO_PIN_4
 #define BMI270_CS_GPIO_Port GPIOA
 #define BMI270_INT1_Pin GPIO_PIN_5
@@ -68,6 +70,12 @@ void Error_Handler(void);
 #define MAX30102_INT_Pin GPIO_PIN_0
 #define MAX30102_INT_GPIO_Port GPIOB
 #define MAX30102_INT_EXTI_IRQn EXTI0_IRQn
+#define ST7789_BL_Pin GPIO_PIN_1
+#define ST7789_BL_GPIO_Port GPIOB
+#define ST7789_DC_Pin GPIO_PIN_8
+#define ST7789_DC_GPIO_Port GPIOA
+#define ST7789_CS_Pin GPIO_PIN_4
+#define ST7789_CS_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 /* 상태/에러 표시 LED (Black Pill 온보드, 액티브 로우) */
