@@ -1,10 +1,7 @@
-/*
- * alert-display.cpp - 경보 표시기
- *
- * 그리기는 전부 scratch_ 에 하고, flush() 가 프레임 경계를 기다렸다가
- * 한 번에 프레임버퍼로 복사한다. 이 순서를 깨고 fb_ 에 직접 그리면
- * 스캔이 그리는 도중을 앞질러 스크롤이 찢어진다 (드라이버가 단일 버퍼).
- */
+// 경보 표시기
+//
+// 그리기는 전부 scratch_ 에 하고 flush() 가 프레임 경계에서 한 번에 복사
+// fb_ 에 직접 그리면 스캔이 그리는 도중을 앞질러 스크롤이 찢어짐 (단일 버퍼)
 #include "alert-display.hpp"
 #include "hub75-font16.h"
 
@@ -18,11 +15,11 @@
 
 namespace {
 
-constexpr int FPS_US = 30000;   /* 프레임 간격 - 프레임당 1px 이동 */
-constexpr int BAND   = 3;       /* 위아래 테두리 두께 */
-constexpr int BLINK_FRAMES = 15; /* 긴급 깜빡임 한 상태의 프레임 수 (약 1Hz) */
+constexpr int FPS_US = 30000;    // 프레임 간격 — 프레임당 1px 이동
+constexpr int BAND   = 3;        // 위아래 테두리 두께
+constexpr int BLINK_FRAMES = 15; // 긴급 깜빡임 한 상태의 프레임 수 (약 1Hz)
 
-/* 등급별 대표색 */
+// 등급별 대표색
 const uint8_t* sevColor(severity s)
 {
     static const uint8_t info[3] = {   0, 200,  60 };
@@ -31,7 +28,7 @@ const uint8_t* sevColor(severity s)
     return s == SEV_INFO ? info : s == SEV_WARN ? warn : crit;
 }
 
-/* UTF-8 한 글자 디코드 - *cp 에 코드포인트, 다음 위치 반환 (한글은 3바이트) */
+// UTF-8 한 글자 디코드 — *cp 에 코드포인트, 다음 위치 반환 (한글은 3바이트)
 const char* utf8Next(const char* s, uint32_t* cp)
 {
     uint8_t c = (uint8_t)s[0];
@@ -45,7 +42,7 @@ const char* utf8Next(const char* s, uint32_t* cp)
     return s + 1;
 }
 
-/* 코드포인트로 글리프 찾기 - 표가 cp 오름차순이라 이진탐색 */
+// 코드포인트로 글리프 찾기 — 표가 cp 오름차순이라 이진탐색
 const glyph16_t* findGlyph(uint32_t cp)
 {
     int lo = 0, hi = (int)FONT16_COUNT - 1;
@@ -71,7 +68,7 @@ bool AlertDisplay::open()
     fb_var_screeninfo var;
     fb_fix_screeninfo fix;
 
-    /* fb 번호는 HDMI 유무에 따라 바뀐다. fix.id 로 찾는다 */
+    // fb 번호는 HDMI 유무에 따라 바뀌므로 fix.id 로 탐색
     for (int i = 0; i < 32 && fbfd_ < 0; i++) {
         char path[32];
         snprintf(path, sizeof(path), "/dev/fb%d", i);
@@ -113,11 +110,8 @@ void AlertDisplay::clear()
     flush();
 }
 
-/*
- * 밝기는 패널 전역 설정이라 프레임버퍼가 아니라 드라이버 파라미터로 간다.
- * ioctl(HUB75_SET_BRIGHTNESS)로도 되지만 그러면 /dev/hub75 를 따로 열어야 해서
- * sysfs 를 쓴다 (fbdev 하나로 자족).
- */
+// 밝기는 패널 전역 설정이라 프레임버퍼가 아닌 드라이버 파라미터로 감
+// ioctl 로도 되지만 /dev/hub75 를 따로 열어야 해서 sysfs 사용 (fbdev 하나로 자족)
 bool AlertDisplay::setBrightness(int v)
 {
     if (v < 0) v = 0;
@@ -130,14 +124,11 @@ bool AlertDisplay::setBrightness(int v)
     return ok;
 }
 
-/*
- * 위아래 테두리를 등급색으로 빠르게 깜빡인다.
- *
- * 스크롤 중 긴급 깜빡임(BLINK_FRAMES)의 절반 주기라 평소보다 두 배 빠르다.
- * 같은 리듬이면 새 경보인지 진행 중인 경보인지 구분이 안 되기 때문이다.
- * 화면 전체를 채우면 눈이 부시고 그냥 껐다 켜면 잘 안 보여서, 이미 쓰고
- * 있는 테두리만 쓴다.
- */
+// 위아래 테두리를 등급색으로 빠르게 깜빡임
+//
+// 스크롤 중 깜빡임(BLINK_FRAMES)의 절반 주기 — 같은 리듬이면 새 경보인지
+// 진행 중인 경보인지 구분이 안 됨
+// 화면 전체는 눈이 부시고 껐다 켜면 잘 안 보여서 테두리만 사용
 void AlertDisplay::blinkCue(severity sev, int times)
 {
     if (!fb_) return;
@@ -145,9 +136,8 @@ void AlertDisplay::blinkCue(severity sev, int times)
     const uint8_t* col = sevColor(sev);
     const int half = BLINK_FRAMES / 2;          // 두 배 속도
 
-    /* show() 와 같은 프레임 간격을 써야 BLINK_FRAMES 의 절반이 실제로
-     * 두 배 속도가 된다. usleep 을 빼면 프레임이 vsync 주기로만 흘러
-     * 훨씬 빨라진다 */
+    // show() 와 같은 프레임 간격을 써야 BLINK_FRAMES 의 절반이 실제 2배 속도가 됨
+    // usleep 을 빼면 vsync 주기로만 흘러 훨씬 빨라짐
     for (int t = 0; t < times; t++) {
         for (int f = 0; f < half; f++) {
             memset(scratch_.data(), 0, scratch_.size());
@@ -175,7 +165,7 @@ int AlertDisplay::measureText(const std::string& s) const
     return w;
 }
 
-/* 문구를 (x, y) 부터 한 색으로 찍는다. 화면 밖은 잘라낸다 */
+// 문구를 (x, y) 부터 한 색으로 그림 — 화면 밖은 잘라냄
 void AlertDisplay::drawText(int x, int y, const std::string& s, const uint8_t rgb[3])
 {
     for (const char* p = s.c_str(); *p; ) {
@@ -199,7 +189,7 @@ void AlertDisplay::drawText(int x, int y, const std::string& s, const uint8_t rg
     }
 }
 
-/* 위아래 등급색 띠 (scale: 0=꺼짐, 255=최대 - 깜빡임용) */
+// 위아래 등급색 띠 — scale 은 0=꺼짐, 255=최대 (깜빡임용)
 void AlertDisplay::drawBorder(const uint8_t rgb[3], int scale)
 {
     const uint8_t c[3] = { (uint8_t)(rgb[0] * scale / 255),
@@ -212,7 +202,7 @@ void AlertDisplay::drawBorder(const uint8_t rgb[3], int scale)
         }
 }
 
-/* 화면보다 긴 문구는 양옆이 잘린다 - 짧은 문구를 넘기는 건 호출자 몫 */
+// 화면보다 긴 문구는 양옆이 잘림 — 짧게 넘기는 건 호출자 몫
 void AlertDisplay::showStatic(const std::string& msg, severity sev)
 {
     if (!fb_) return;
@@ -229,8 +219,8 @@ void AlertDisplay::show(const std::string& msg, severity sev, int passes,
 {
     if (!fb_) return;
 
-    /* MQTT 로 들어오는 값이라 범위를 믿지 않는다. 0 이면 조용히 아무것도 안
-     * 뜨고, 큰 값이면 몇 분씩 붙잡혀 있어 둘 다 디버깅하기 나쁘다 */
+    // MQTT 로 들어오는 값이라 범위를 안 믿음
+    // 0 이면 조용히 아무것도 안 뜨고, 큰 값이면 몇 분씩 붙잡혀 둘 다 디버깅이 나쁨
     if (passes < 1)  passes = 1;
     if (passes > 10) passes = 10;
 
@@ -243,7 +233,7 @@ void AlertDisplay::show(const std::string& msg, severity sev, int passes,
         for (int off = 0; off <= span; off++, frame++) {
             if (abort && abort(pass)) return;
 
-            /* 긴급은 약 1Hz 로 테두리 깜빡임 */
+            // 긴급은 약 1Hz 로 테두리 깜빡임
             int scale = (sev == SEV_CRIT && (frame / BLINK_FRAMES) % 2) ? 40 : 255;
 
             memset(scratch_.data(), 0, scratch_.size());

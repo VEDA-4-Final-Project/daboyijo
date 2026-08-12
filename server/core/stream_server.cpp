@@ -16,10 +16,10 @@
 #include "protocol/video_stream.h"
 
 namespace {
-constexpr size_t kMaxOutbox = 8;  // 클라이언트당 대기 프레임 상한
-constexpr size_t kRecvBufCap = 64 * 1024;  // 제어 수신 버퍼 상한(동기 깨지면 리셋)
+constexpr size_t kMaxOutbox = 8;           // 클라이언트당 대기 프레임 상한
+constexpr size_t kRecvBufCap = 64 * 1024;  // 제어 수신 버퍼 상한 — 동기 깨지면 리셋
 
-// 이벤트(낙상 통보 등) 패킷인지 — outbox가 가득 차도 드롭하면 안 되는 패킷
+// 이벤트 패킷인지 — outbox 가 차도 드롭하면 안 되는 패킷
 bool isEventPacket(const std::vector<unsigned char>& buf) {
     if (buf.size() < sizeof(uint16_t)) return false;
     uint16_t magic;
@@ -87,13 +87,13 @@ void StreamServer::stop() {
     clients_.clear();
 }
 
-// 송신·수신 스레드를 안전하게 내리고 소켓을 닫는다.
-// 순서 중요: alive=false → shutdown(recv/send 블로킹 해제) → join → close.
-// (join 전에 close하면 안 됨 — receiver가 recv()에서 못 깨어나 데드락)
+// 송신·수신 스레드를 내리고 소켓 닫기
+// 순서 중요 — alive=false → shutdown(블로킹 해제) → join → close
+// join 전에 close 하면 receiver 가 recv() 에서 못 깨어나 데드락
 void StreamServer::closeClient(Client& client) {
     client.alive.store(false);
     if (client.fd >= 0) {
-        ::shutdown(client.fd, SHUT_RDWR);  // recv()/send() 즉시 반환시킴
+        ::shutdown(client.fd, SHUT_RDWR);  // recv()/send() 즉시 반환
     }
     client.cv.notify_all();
     if (client.sender.joinable()) {
@@ -118,7 +118,7 @@ void StreamServer::acceptLoop() {
             if (running_.load()) {
                 continue;  // 일시적 오류
             }
-            break;  // stop()에 의한 종료
+            break;  // stop() 에 의한 종료
         }
 
         int on = 1;
@@ -161,7 +161,7 @@ void StreamServer::senderLoop(Client& client) {
             ssize_t n = ::send(client.fd, buf.data() + sent, buf.size() - sent,
                                MSG_NOSIGNAL);
             if (n <= 0) {
-                client.alive.store(false);  // 연결 끊김 — broadcast()가 정리
+                client.alive.store(false);  // 연결 끊김 — broadcast() 가 정리
                 break;
             }
             sent += static_cast<size_t>(n);
@@ -169,15 +169,15 @@ void StreamServer::senderLoop(Client& client) {
     }
 }
 
-// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다.
-// TCP는 경계 없이 도착하므로 버퍼에 쌓아가며 완성된 메시지만 뽑아낸다.
+// Qt 가 보내는 제어 메시지 파싱
+// TCP 는 경계가 없어 버퍼에 쌓아가며 완성된 메시지만 뽑아냄
 void StreamServer::receiverLoop(Client& client) {
     std::vector<uint8_t> buf;
     uint8_t chunk[1024];
     while (running_.load() && client.alive.load()) {
         ssize_t n = ::recv(client.fd, chunk, sizeof(chunk), 0);
         if (n <= 0) {
-            client.alive.store(false);  // 끊김/오류 — broadcast()가 정리
+            client.alive.store(false);  // 끊김/오류 — broadcast() 가 정리
             break;
         }
         buf.insert(buf.end(), chunk, chunk + static_cast<size_t>(n));
@@ -357,9 +357,8 @@ void StreamServer::enqueueAll(Packet packet) {
         {
             std::lock_guard<std::mutex> client_lock(client.mutex);
             if (client.outbox.size() >= kMaxOutbox) {
-                // 느린 클라이언트: 오래된 "영상 프레임"부터 드롭.
-                // 이벤트(낙상 통보)는 절대 버리지 않는다 — 전부 이벤트면 상한 초과 허용
-                // (이벤트는 18바이트라 메모리 부담 없음).
+                // 느린 클라이언트 — 오래된 영상 프레임부터 드롭
+                // 이벤트는 안 버림, 전부 이벤트면 상한 초과 허용 (18바이트라 부담 없음)
                 auto victim = std::find_if(
                     client.outbox.begin(), client.outbox.end(),
                     [](const Packet& p) { return !isEventPacket(*p); });

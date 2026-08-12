@@ -5,8 +5,8 @@ project(VedaRelayNode VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 실행 파일을 relay-node/ 에 둔다. 설정 파일을 실행 파일 옆에서 찾는데,
-# build/ 는 지웠다 다시 만드는 곳이라 거기에 두면 매번 사라진다.
+# 실행 파일 위치를 relay-node/ 로 — 설정 파일을 실행 파일 옆에서 찾는데
+# build/ 는 지웠다 다시 만드는 곳이라 거기 두면 매번 사라짐
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 find_package(Threads REQUIRED)
@@ -14,7 +14,7 @@ find_package(nlohmann_json REQUIRED)
 find_package(simpleble REQUIRED)
 find_library(MOSQUITTO_LIB mosquitto REQUIRED)
 
-# MQTT 클라이언트는 프로젝트 공용 구현(MQTT/MQTT_prod)을 그대로 사용한다.
+# MQTT 클라이언트는 프로젝트 공용 구현(MQTT/MQTT_prod) 사용
 set(MQTT_COMMON_DIR ${CMAKE_SOURCE_DIR}/../MQTT/MQTT_prod)
 
 include_directories(${CMAKE_SOURCE_DIR}/src ${MQTT_COMMON_DIR})

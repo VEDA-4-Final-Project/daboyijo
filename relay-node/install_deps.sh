@@ -15,8 +15,8 @@ sudo apt install -y g++ cmake git pkg-config \
 
 echo "===== SimpleBLE 설치 (${SIMPLEBLE_TAG}) ====="
 
-# apt 패키지가 없어서 소스 빌드해야 한다.
-# /usr/local 에 설치되고, CMake 는 find_package(simpleble) 로 찾는다.
+# apt 패키지가 없어 소스 빌드 필요
+# /usr/local 에 설치되고 CMake 는 find_package(simpleble) 로 찾음
 if [ -f /usr/local/lib/cmake/simpleble/simpleble-config.cmake ]; then
     echo "이미 설치되어 있음 — 건너뜀"
 else
