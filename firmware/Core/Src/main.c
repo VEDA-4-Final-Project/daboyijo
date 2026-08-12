@@ -66,11 +66,11 @@ static uint8_t spi_raw_buf[14] = {0};
 static uint8_t i2c_raw_buf[6] = {0};
 MAX30102_Data_t maxData = {0};
 
-/* HM-10 낙상 의심 플래그 (확정 시 세우고, 일정 시간 유지 후 자동 해제) */
+/* HM-10 낙상 의심 플래그 - 확정 시 세우고 일정 시간 뒤 자동 해제 */
 volatile uint8_t  g_fall_flag = 0;
 volatile uint32_t g_fall_flag_ms = 0;
-#define HM10_FALL_HOLD_MS   5000   /* 낙상 플래그 유지 시간(ms) — 카메라 교차검증 윈도우 확보 */
-#define HM10_VITAL_PERIOD_MS 1000  /* 바이탈 주기 송신 간격(ms) */
+#define HM10_FALL_HOLD_MS   5000   /* 낙상 플래그 유지 (ms) - 카메라 교차검증 윈도우 확보 */
+#define HM10_VITAL_PERIOD_MS 1000  /* 바이탈 주기 송신 간격 (ms) */
 
 /* 센서 사용 가능 여부. 초기화에 실패해도 멈추지 않고 해당 센서만 끈 채로 계속 돈다.
  * 한쪽이 죽어도 나머지 기능과 HM-10 송신은 살아있어야 하기 때문. */
@@ -131,7 +131,7 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  hm10_init(&huart2); // HM-10을 USART2에 등록 (기존 낙상 알림 UART 재활용)
+  hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
 
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
@@ -329,25 +329,25 @@ static void Process_PPG_Data(void)
     }
 }
 
-// 현재 바이탈 + 낙상 플래그를 HM-10 5바이트 패킷으로 송신
+/* 현재 바이탈 + 낙상 플래그를 HM-10 5바이트 패킷으로 송신 */
 static void HM10_Send_Now(void)
 {
     uint32_t bpm  = HeartRateCalc_GetBPM();
     uint32_t spo2 = HeartRateCalc_GetSpO2();
-    uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   // 심박 8bit 클램프
+    uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   /* 심박 8bit 클램프 */
 
-    // 온도: temperature_calc 미구현 → 우선 0 더미
+    /* 온도: temperature_calc 미구현 - 우선 0 더미 */
     uint8_t temp = 0;
 
     hm10_send_packet(hr, (uint8_t)spo2, temp, g_fall_flag);
 }
 
-// 낙상 확정 시 호출 (fall_detection.c) → 플래그 세우고 즉시 1회 송신
+/* 낙상 확정 시 호출 (fall_detection.c) - 플래그 세우고 즉시 1회 송신 */
 void Send_Fall_Alert_Hardware(void)
 {
     g_fall_flag = HM10_FALL_SUSPECT;
     g_fall_flag_ms = HAL_GetTick();
-    HM10_Send_Now();   // 다음 주기(1s) 기다리지 않고 즉시 반영
+    HM10_Send_Now();   /* 다음 주기(1s) 안 기다리고 즉시 반영 */
 }
 
 // 부팅 시 센서 실패를 LED 깜빡임 횟수로 알린다 (USB 미연결 시 유일한 단서)

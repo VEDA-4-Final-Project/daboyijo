@@ -1,13 +1,9 @@
-/*
- * alert-demo.cpp - 패널 알림 데모
- *
- * 이벤트를 난수로 지어내 AlertDisplay 로 흘려 보낸다. 하드웨어 연동 없이
- * 패널과 글꼴이 제대로 도는지 확인하는 용도다.
- *
- * 실제 알림 노드는 이 자리에 MQTT 소스를 꽂는다 (app/main.cpp).
- *
- * 빌드: make          실행: sudo ./alert-demo      종료: Ctrl-C
- */
+// 패널 알림 데모 — 이벤트를 난수로 지어내 AlertDisplay 로 흘림
+//
+// 하드웨어 연동 없이 패널과 글꼴 동작만 확인하는 용도
+// 실제 알림 노드는 이 자리에 MQTT 소스를 꽂음 (app/main.cpp)
+//
+// 빌드: make          실행: sudo ./alert-demo      종료: Ctrl-C
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -22,11 +18,8 @@ void onSignal(int) { running = 0; }
 
 const int rooms[] = { 301, 302, 303, 305, 308, 311, 315 };
 
-/*
- * alert_source_fn 구현 - 이벤트 하나를 지어내 ev 를 채운다.
- * MQTT 연동은 같은 시그니처의 소스를 만들어 갈아끼우면 된다. 호실·타입·
- * 측정값을 문구와 등급으로 바꾸는 일은 그 소스 안에서 끝낸다.
- */
+// alert_source_fn 구현 — 이벤트 하나를 지어내 ev 를 채움
+// MQTT 연동은 같은 시그니처의 소스를 만들어 갈아끼우면 됨
 int demoNextEvent(alert_event* ev)
 {
     int room = rooms[rand() % (sizeof(rooms) / sizeof(rooms[0]))];
@@ -57,7 +50,7 @@ int demoNextEvent(alert_event* ev)
         break;
     }
 
-    /* 긴급은 한 번 더 반복해 확실히 알린다 */
+    // 긴급은 한 번 더 반복해 확실히 알림
     ev->passes = (ev->sev == SEV_CRIT) ? 3 : 2;
     return 1;
 }
@@ -84,7 +77,7 @@ int main()
     while (running) {
         alert_event ev;
 
-        display.showStatic("감시 중", SEV_INFO);   // 평상시 - 그리고 바로 리턴
+        display.showStatic("감시 중", SEV_INFO);   // 평상시 — 그리고 바로 리턴
         if (!nextEvent(&ev))
             continue;
 

@@ -141,26 +141,26 @@ static const u16 gamma11_base[256] = {
 };
 
 /*
- * 감마 x 밝기를 구운 조회표 갱신 - 파라미터가 바뀌었을 때만 불린다
- * 밝기는 시간(틱)이 아니라 여기서 값을 줄여서 만든다 (리프레시 불변)
+ * 감마 x 밝기 조회표 갱신 - 파라미터가 바뀌었을 때만 호출
+ * 밝기는 시간(틱)이 아니라 값을 줄여서 만듦 (리프레시 주기 불변)
  */
 static void hub75_update_lut(struct hub75 *h)
 {
-	int b_raw = brightness;	// 전역 파라미터는 진입 때 딱 한 번만 읽는다
+	int b_raw = brightness;	// 전역 파라미터는 진입 때 한 번만 읽음
 	int g = gamma;
-	int b = b_raw;		// 클램프는 사본에만 (원값은 캐시용으로 보존)
+	int b = b_raw;		// 클램프는 사본에만, 원값은 캐시용으로 보존
 	int v;
 	u16 base;
 
 	if (b < 0)   b = 0;
-	if (b > 255) b = 255;	// 안 가두면 lut 가 2047 을 넘어 비트11 위로 새서
-				// 밝은 픽셀이 오히려 어둡게 랩어라운드된다
+	if (b > 255) b = 255;	// 안 가두면 lut 가 2047 을 넘어 비트11 위로 새고
+				// 밝은 픽셀이 오히려 어둡게 랩어라운드됨
 
 	for (v = 0; v < 256; v++) {
-		base = g ? gamma11_base[v] : ((u16)v << 3);	// off 면 선형 (8비트 -> 11비트 폭)
+		base = g ? gamma11_base[v] : ((u16)v << 3);	// off 면 선형 (8 -> 11비트 폭)
 		h->lut[v] = ((u32)base * b + 127) / 255;	// 정수 반올림 스케일
 	}
-	h->lut_brightness = b_raw;	// 변경 감지용 - 전역 재읽기하면 그 사이 바뀐 값이 끼어든다
+	h->lut_brightness = b_raw;	// 변경 감지용 - 전역 재읽기하면 그 사이 값이 끼어듦
 	h->lut_gamma = g;
 }
 
@@ -186,7 +186,7 @@ static void hub75_pwm_init(struct hub75 *h)
 	writel(fsel, h->gpio_regs + GPFSEL1);
 }
 
-/* ticks 틱짜리 LOW 펄스를 발사한다 (1틱 = CM_DIV 가 정하는 단위, 현재 약 111ns) */
+/* ticks 틱짜리 LOW 펄스 발사 (1틱 = CM_DIV 가 정하는 단위, 현재 약 111ns) */
 static void hub75_pwm_pulse(struct hub75 *h, int ticks)
 {
 	if (ticks < 2)		// 하드웨어 최소값(2) 미달이면 안 쏨 = 소등 유지
@@ -194,11 +194,11 @@ static void hub75_pwm_pulse(struct hub75 *h, int ticks)
 
 	if (ticks < 16) {
 		writel(ticks, h->pwm_regs + PWM_RNG1);	// 주기 = ticks
-		writel(ticks, h->pwm_regs + PWM_FIF1);	// 값=주기 -> 100% 듀티 = 꽉 찬 LOW 한 주기
+		writel(ticks, h->pwm_regs + PWM_FIF1);	// 값=주기 -> 100% 듀티 = 꽉 찬 LOW
 	} else {
 		/* 주기를 짧게 쪼개 여러 번 (센티널 낭비 축소)
-		   조각 수는 rem < chunk 이 보장되게 고른다 - 안 그러면
-		   나머지 항목의 값이 주기보다 커져 하드웨어가 잘라버림 */
+		   조각 수는 rem < chunk 이 보장되게 선택 - 안 그러면
+		   나머지 값이 주기보다 커져 하드웨어가 잘라버림 */
 		int nchunk = (ticks < 64) ? 4 : 8;
 		int chunk = ticks / nchunk;
 		int rem = ticks % nchunk;
@@ -210,8 +210,8 @@ static void hub75_pwm_pulse(struct hub75 *h, int ticks)
 		if (rem)
 			writel(rem, h->pwm_regs + PWM_FIF1);	// 나머지 틱 - 이 주기엔 rem 틱만 LOW
 	}
-	writel(0, h->pwm_regs + PWM_FIF1);	// 센티널 1 - 출력을 idle(HIGH)로 복귀시킴
-	writel(0, h->pwm_regs + PWM_FIF1);	// 센티널 2 - EMPT 감지가 제대로 되게
+	writel(0, h->pwm_regs + PWM_FIF1);	// 센티널 1 - 출력을 idle(HIGH)로 복귀
+	writel(0, h->pwm_regs + PWM_FIF1);	// 센티널 2 - EMPT 감지용
 
 	writel(PWM_CTL_USEF1 | PWM_CTL_POLA1 | PWM_CTL_PWEN1, h->pwm_regs + PWM_CTL); // 발사!
 }
@@ -234,7 +234,7 @@ static void hub75_pwm_wait(struct hub75 *h)
 
 /*
  * hub75_pwm_init 의 역순 - OE 를 일반 출력-HIGH(소등)로 되돌리고 PWM/클럭 정지
- * quiesce(rmmod/shutdown)와 probe 에러 경로가 공용으로 쓴다
+ * quiesce(rmmod/shutdown)와 probe 에러 경로가 공용으로 사용
  */
 static void hub75_pwm_off(struct hub75 *h)
 {
@@ -253,7 +253,7 @@ static void hub75_pwm_off(struct hub75 *h)
 }
 
 /* 테스트 패턴: 왼쪽 어두움 -> 오른쪽 밝음 회색 그라데이션
- * probe 에서 부르지 않는다 - 패널 점검할 때만 호출해서 쓴다 */
+ * probe 에선 호출 안 함 - 패널 점검할 때만 수동 호출 */
 static void __maybe_unused hub75_fill_test(struct hub75 *h)
 {
 	int row, col;
@@ -269,10 +269,8 @@ static void __maybe_unused hub75_fill_test(struct hub75 *h)
 
 /*
  * 패널을 쉬지 않고 다시 그리는 스레드
- * 행쌍(row)마다 비트평면(plane)을 돌며
- *   [시프트(직전 펄스 발광과 겹침) -> 펄스 대기 -> 주소 -> 래치 -> 발사]
- * 평면 plane 의 발광 시간 = BASE_TICKS << plane 틱 (고정, BCM 으로 색심도 표현)
- * 밝기는 시간이 아니라 LUT 값 스케일링으로 조절 (리프레시 불변)
+ * 행쌍마다 비트평면을 돌며 [시프트 -> 펄스 대기 -> 주소 -> 래치 -> 발사]
+ * 평면별 발광 시간 = BASE_TICKS << plane (BCM 으로 색심도 표현)
  * 발광 중에 다음 데이터를 시프트하는 파이프라인 - 래치 덕분에 안전
  */
 static int hub75_refresh(void *arg)
@@ -448,7 +446,7 @@ static int hub75_mmap(struct file *file, struct vm_area_struct *vma)
 	return hub75_map_fb(file->private_data, vma);
 }
 
-/* open - private_data 를 miscdevice 에서 h 로 바꿔둔다
+/* open - private_data 를 miscdevice 에서 h 로 교체
    이후 write/ioctl/mmap 이 container_of 없이 바로 h 를 씀 */
 static int hub75_open(struct inode *inode, struct file *file)
 {
@@ -683,10 +681,9 @@ err_pwm:
 /*
  * 소등 절차 - remove(rmmod)와 shutdown(재부팅/전원끔)이 공용으로 사용
  *
- * 두 경로가 다 불릴 수 있어서 한 번만 밟게 막는다. kthread_stop 을 이미 멈춘
- * 스레드에 두 번 부르면 해제된 task_struct 를 건드린다.
- * (probe 순서상 remove/shutdown 은 둘 다 프로세스 문맥에서 직렬로 불리므로
- *  이 플래그에 별도 잠금은 필요 없다)
+ * 두 경로가 다 불릴 수 있어 플래그로 한 번만 밟게 막음
+ * kthread_stop 을 이미 멈춘 스레드에 두 번 부르면 해제된 task_struct 를 건드림
+ * remove/shutdown 은 둘 다 프로세스 문맥에서 직렬로 불려 별도 잠금은 불필요
  */
 static void hub75_quiesce(struct hub75 *h)
 {
