@@ -132,18 +132,37 @@ const LoggedField kLoggedFields[] = {
     {"특이사항", "notes"},
     };
 
+// 상태 판정 — 웨어러블이 실제로 보내오는 두 값(산소포화도·심박)만 본다.
+// SpO2 기준은 임상에서 널리 쓰는 구간: 95% 이상 정상, 90~94% 주의, 90% 미만 위험.
+// spo2 <= 0 은 "측정 실패/미수신"이라 판정에서 빼고 심박만 본다 — 0을 그대로
+// 넣으면 센서가 잠깐 못 읽은 것뿐인데 위험으로 뜬다.
+namespace {
+enum class VitalLevel { Normal, Warn, Critical };
+
+VitalLevel vitalLevel(int spo2, int hr) {
+    const bool hasSpo2 = spo2 > 0;
+    if ((hasSpo2 && spo2 < 90) || hr >= 110 || hr <= 45) return VitalLevel::Critical;
+    if ((hasSpo2 && spo2 < 95) || hr >= 100 || hr < 55)  return VitalLevel::Warn;
+    return VitalLevel::Normal;
+}
+}  // namespace
+
 // 상태 색상: 정상/주의/위험 판정
-QString vitalColor(double temp, int hr) {
-    if (temp >= 38.0 || hr >= 110 || hr <= 45) return kCritical;
-    if (temp >= 37.5 || hr >= 100 || hr < 55)  return kWarn;
-    return kNormal;
+QString vitalColor(int spo2, int hr) {
+    switch (vitalLevel(spo2, hr)) {
+        case VitalLevel::Critical: return kCritical;
+        case VitalLevel::Warn:     return kWarn;
+        default:                   return kNormal;
+    }
 }
 
 // 상태 라벨: 정상/주의/위험 (배지 텍스트용)
-QString vitalStatusLabel(double temp, int hr) {
-    if (temp >= 38.0 || hr >= 110 || hr <= 45) return QStringLiteral("위험");
-    if (temp >= 37.5 || hr >= 100 || hr < 55)  return QStringLiteral("주의");
-    return QStringLiteral("정상");
+QString vitalStatusLabel(int spo2, int hr) {
+    switch (vitalLevel(spo2, hr)) {
+        case VitalLevel::Critical: return QStringLiteral("위험");
+        case VitalLevel::Warn:     return QStringLiteral("주의");
+        default:                   return QStringLiteral("정상");
+    }
 }
 
 // 두 색을 f:(1-f) 비율로 섞는다. 배지 배경 tint 계산용.
@@ -879,7 +898,7 @@ void MainWindow::renderHelpTopic(int idx)
         body = li(QStringLiteral("4채널 영상"), QStringLiteral("병상별 실시간 영상. 낙상·침상이탈 발생 시 해당 칸이 빨간 테두리로 강조됩니다."))
              + li(QStringLiteral("🎤 방송"), QStringLiteral("누르고 있는 동안 현장으로 음성 송출(인터콤). 떼면 종료."))
              + li(QStringLiteral("경보 해제"), QStringLiteral("평상시엔 차분한 아웃라인, 경보 시 빨강 강조. 누르면 낙상/침상이탈 경보를 일괄 해제하고 현장 사이렌·LED를 끕니다."))
-             + li(QStringLiteral("웨어러블 생체신호"), QStringLiteral("우측 패널에 채널별 체온·심박과 심박 추세 그래프. 정상/주의/위험에 따라 색이 바뀝니다."));
+             + li(QStringLiteral("웨어러블 생체신호"), QStringLiteral("우측 패널에 채널별 산소포화도·심박과 심박 추세 그래프. 정상/주의/위험에 따라 색이 바뀝니다."));
         break;
     case 3:
         title = QStringLiteral("이벤트 기록");
@@ -1073,7 +1092,7 @@ void MainWindow::rebuildVitalCards()
 
     // 위젯을 지우면 라벨 포인터가 전부 무효가 된다 — 표를 먼저 비워야
     // updateVitals() 가 죽은 포인터를 만지지 않는다.
-    tempValues.clear();
+    spo2Values.clear();
     hrValues.clear();
     vitalStatusDots.clear();
     vitalStatusBadges.clear();
@@ -1147,7 +1166,7 @@ QWidget* MainWindow::buildVitalCard(int key, const QString& name, const QString&
     hl->addWidget(badge);
     lay->addWidget(head);
 
-    // ── 본문: 큰 판독값 2개 (체온 / 심박) — 환자 모니터 느낌 ──
+    // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(14, 9, 14, 6);
     body->setSpacing(10);
@@ -1176,8 +1195,8 @@ QWidget* MainWindow::buildVitalCard(int key, const QString& name, const QString&
         return box;
     };
 
-    body->addWidget(makeStat(QStringLiteral("🌡"), QStringLiteral("체온"),
-                             QStringLiteral("℃"), tempValues[key]));
+    body->addWidget(makeStat(QStringLiteral("🫁"), QStringLiteral("산소포화도"),
+                             QStringLiteral("%"), spo2Values[key]));
     body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
                              QStringLiteral("bpm"), hrValues[key]));
     lay->addLayout(body);
@@ -2732,11 +2751,11 @@ void MainWindow::updateVitals()
     // 음수 키는 vitals_ 에 값이 없어 기본값(received=false)이 잡히고 "대기"로 뜬다.
     for (auto it = vitalNameLabels.constBegin(); it != vitalNameLabels.constEnd(); ++it) {
         const int key = it.key();
-        QLabel* tempLbl  = tempValues.value(key);
+        QLabel* spo2Lbl  = spo2Values.value(key);
         QLabel* hrLbl    = hrValues.value(key);
         QLabel* dotLbl   = vitalStatusDots.value(key);
         QLabel* badgeLbl = vitalStatusBadges.value(key);
-        if (!tempLbl || !hrLbl || !dotLbl || !badgeLbl) continue;
+        if (!spo2Lbl || !hrLbl || !dotLbl || !badgeLbl) continue;
         Sparkline* spark = hrSpark.value(key);
 
         const VitalSample v = vitals_.value(key);
@@ -2744,8 +2763,8 @@ void MainWindow::updateVitals()
 
         if (!fresh) {
             const QString dim = kTextSub;
-            tempLbl->setText(QStringLiteral("--"));
-            tempLbl->setStyleSheet(QString("color:%1;").arg(dim));
+            spo2Lbl->setText(QStringLiteral("--"));
+            spo2Lbl->setStyleSheet(QString("color:%1;").arg(dim));
             hrLbl->setText(QStringLiteral("--"));
             hrLbl->setStyleSheet(QString("color:%1;").arg(dim));
 
@@ -2765,18 +2784,20 @@ void MainWindow::updateVitals()
             continue;
         }
 
-        const double temp = v.temperature;
-        const int    hr   = v.heartRate;
-        const QString color = vitalColor(temp, hr);
+        const int spo2 = v.spo2;
+        const int hr   = v.heartRate;
+        const QString color = vitalColor(spo2, hr);
 
-        tempLbl->setText(QString::number(temp, 'f', 1));  // 단위(℃)는 별도 라벨
-        tempLbl->setStyleSheet(QString("color:%1;").arg(color));
+        // 센서가 못 읽어 0이 오면 숫자 대신 "--" — 0%를 그대로 띄우면 오독한다.
+        spo2Lbl->setText(spo2 > 0 ? QString::number(spo2)   // 단위(%)는 별도 라벨
+                                  : QStringLiteral("--"));
+        spo2Lbl->setStyleSheet(QString("color:%1;").arg(color));
         hrLbl->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
         hrLbl->setStyleSheet(QString("color:%1;").arg(color));
 
         dotLbl->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
 
-        const QString status = vitalStatusLabel(temp, hr);
+        const QString status = vitalStatusLabel(spo2, hr);
         badgeLbl->setText(status);
         badgeLbl->setStyleSheet(QString(
             "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
@@ -2812,7 +2833,6 @@ void MainWindow::onWearableData(const WearableData& data)
 
     VitalSample& v = vitals_[rid];
     v.received    = true;
-    v.temperature = data.temperature;
     v.heartRate   = data.heart_rate;
     v.spo2        = data.spo2;
     v.arrivedAtMs = QDateTime::currentMSecsSinceEpoch();

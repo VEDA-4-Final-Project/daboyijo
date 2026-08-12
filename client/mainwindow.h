@@ -145,9 +145,10 @@ struct ResidentInfo {
 // 입소자별 최신 웨어러블 값. MQTT 로 들어온 것만 담는다.
 // 한 번도 안 들어온 사람은 received=false 로 남아 화면에 "--" 가 뜬다 —
 // 값이 없는데 그럴듯한 숫자를 보여주면 관제사가 오판한다.
+// (웨어러블 JSON에는 temperature 필드도 있지만 기기가 실제로 채워 보내지 않는다 →
+//  화면에 띄우지 않고 보관도 하지 않는다. 값이 들어오기 시작하면 여기에 되살리면 된다.)
 struct VitalSample {
     bool   received    = false;
-    double temperature = 0.0;
     int    heartRate   = 0;
     int    spo2        = 0;
     qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
@@ -258,7 +259,7 @@ private:
     // 자연히 "대기" 상태로 표시된다.
     // ★ 카드 개수가 입소자 수에 따라 변하므로 고정 배열이 아니라 해시다.
     //   rebuildVitalCards() 가 통째로 비우고 다시 채운다.
-    QHash<int, QLabel*> tempValues;         // 체온 값
+    QHash<int, QLabel*> spo2Values;         // 산소포화도 값
     QHash<int, QLabel*> hrValues;           // 심박수 값
     QHash<int, QLabel*> vitalStatusDots;    // 바이탈 상태등
     QHash<int, QLabel*> vitalStatusBadges;  // 상태 배지(정상/주의/위험)
