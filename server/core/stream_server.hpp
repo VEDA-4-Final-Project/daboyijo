@@ -12,17 +12,15 @@
 #include <utility>
 #include <vector>
 
-// 처리된 JPEG 프레임을 관제 클라이언트(Qt)로 송출하는 TCP 서버.
-// 패킷 형식: protocol/video_stream.h 참조.
-// v1은 평문 TCP — 파이프라인 검증용. 검증 후 OpenSSL TLS로 감싼다.
+// 처리된 JPEG 프레임을 관제 클라이언트(Qt)로 송출하는 TCP 서버
+// 패킷 형식은 protocol/video_stream.h 참조, v1 은 평문 (추후 TLS)
 //
-// 클라이언트마다 전송 스레드와 대기열(outbox)을 따로 두어,
-// 느린 클라이언트가 있어도 파이프라인과 다른 클라이언트에 영향을 주지 않는다
-// (대기열이 차면 그 클라이언트의 오래된 프레임부터 버림).
+// 클라이언트마다 전송 스레드와 대기열(outbox)을 따로 둬서 느린 클라이언트가
+// 파이프라인·다른 클라이언트에 영향을 안 줌 (차면 오래된 프레임부터 버림)
 class StreamServer {
 public:
-    // Qt에서 보낸 ROI 갱신 1건. points는 화면 대비 0~1 정규화 다각형.
-    // clear=true면 해당 채널 ROI 삭제(이때 points는 비어 있음).
+    // Qt 가 보낸 ROI 갱신 1건 — points 는 화면 대비 0~1 정규화 다각형
+    // clear=true 면 해당 채널 ROI 삭제 (points 는 빈 상태)
     struct RoiUpdate {
         int channel = 0;
         bool clear = false;
@@ -31,20 +29,17 @@ public:
     using RoiCallback = std::function<void(const RoiUpdate&)>;
 
     using ConfirmCallback = std::function<void(int channel)>;
-    // 위험도 변경 시 호출될 콜백 함수 타입 정의 (채널 번호, 위험도 레벨)
+    // 위험도 변경 콜백 — (채널, 위험도 레벨)
     using RiskLevelCallback = std::function<void(int channel, int risk_level)>;
-    // Qt가 카메라를 지정/해제할 때 호출 — url은 채널의 전체 RTSP 주소.
-    // 수신 스레드에서 호출되므로 콜백 구현은 스레드 안전해야 한다.
+    // Qt 의 카메라 지정/해제 — url 은 채널의 전체 RTSP 주소
+    // ★ 아래 콜백들은 전부 수신 스레드에서 불림 — 스레드 안전 + 블로킹 금지
     using CameraSetCallback = std::function<void(int channel, const std::string& url)>;
     using CameraClearCallback = std::function<void(int channel)>;
-    // Qt가 카메라 이미지 파라미터(밝기/대비/채도, 각 0~100)를 조절할 때 호출.
-    // 수신 스레드에서 호출되므로 콜백 구현은 스레드 안전 + 오래 블로킹하지 말 것
-    // (ONVIF HTTP 호출은 별도 스레드로 넘겨 처리).
+    // 이미지 파라미터 조절 (밝기/대비/채도, 각 0~100) — ONVIF HTTP 는 별도 스레드로
     using ImageSetCallback =
         std::function<void(int channel, int brightness, int contrast, int saturation)>;
-    // Qt가 카메라 초점을 조절할 때 호출. area=false면 전체 자동초점(nx,ny 무시),
-    // area=true면 클릭 지점(정규화 0~1) 영역 초점. 수신 스레드에서 호출되므로
-    // 콜백 구현은 스레드 안전 + 블로킹 금지(SUNAPI HTTP는 별도 스레드로).
+    // 초점 조절 — area=false 면 전체 자동초점(nx,ny 무시), true 면 클릭 지점 영역 초점
+    // SUNAPI HTTP 도 별도 스레드로
     using FocusCallback =
         std::function<void(int channel, bool area, float nx, float ny)>;
 
@@ -54,18 +49,13 @@ public:
     StreamServer(const StreamServer&) = delete;
     StreamServer& operator=(const StreamServer&) = delete;
 
-    // ROI 수신 콜백. start() 전에 등록할 것 (접속 즉시 수신 스레드가 뜬다).
+    // ★ 콜백 등록은 전부 start() 전에 — 접속 즉시 수신 스레드가 뜸
     void setRoiCallback(RoiCallback cb) { on_roi_ = std::move(cb); }
-    // 경보 확인 수신 콜백. start() 전 등록
     void setConfirmCallback(ConfirmCallback cb) { on_confirm_ = std::move(cb); }
-    // 위험도 수신 콜백. start() 전 등록
     void setRiskLevelCallback(RiskLevelCallback cb) { on_risk_level_ = std::move(cb); }
-    // 카메라 연결/해제 수신 콜백. start() 전 등록
     void setCameraSetCallback(CameraSetCallback cb) { on_camera_set_ = std::move(cb); }
     void setCameraClearCallback(CameraClearCallback cb) { on_camera_clear_ = std::move(cb); }
-    // 카메라 이미지 파라미터 수신 콜백. start() 전 등록
     void setImageSetCallback(ImageSetCallback cb) { on_image_set_ = std::move(cb); }
-    // 카메라 초점 수신 콜백. start() 전 등록
     void setFocusCallback(FocusCallback cb) { on_focus_ = std::move(cb); }
 
     bool start();
@@ -74,13 +64,11 @@ public:
     // 접속한 모든 클라이언트에 채널 프레임 1장 전송
     void broadcast(int channel, std::vector<unsigned char> jpeg);
 
-    // 접속한 모든 클라이언트에 이벤트(dbj_evt_header_t) 전송.
-    // type은 DBJ_EVT_*, (x,y)는 발생 위치 정규화 0~1 (없으면 0,0).
-    // timestampMsOverride를 0이 아닌 값으로 주면 그 값을 그대로 timestamp_ms에
-    // 싣는다(기본 0이면 지금까지처럼 서버 현재 시각을 사용). 블랙박스 클립
-    // 파일명과 같은 시각을 써야 하는 등, 호출자가 이벤트 시각을 다른 값과
-    // 맞춰야 할 때 쓴다.
-    // 아무 스레드에서나 호출 가능 (낙상 콜백은 AI 워커 스레드에서 온다).
+    // 접속한 모든 클라이언트에 이벤트(dbj_evt_header_t) 전송
+    // type 은 DBJ_EVT_*, (x,y)는 발생 위치 정규화 0~1 (없으면 0,0)
+    // timestampMsOverride 가 0 이 아니면 그 값을 그대로 사용 — 블랙박스 클립
+    // 파일명과 시각을 맞춰야 할 때 씀 (0 이면 서버 현재 시각)
+    // 아무 스레드에서나 호출 가능 (낙상 콜백은 AI 워커 스레드)
     void broadcastEvent(int channel, uint8_t type, float x, float y,
                         int64_t timestampMsOverride = 0);
 
@@ -95,15 +83,15 @@ private:
         std::mutex mutex;
         std::condition_variable cv;
         std::thread sender;
-        std::thread receiver;  // 클라→서버 제어 메시지(ROI) 수신
+        std::thread receiver;  // 클라 → 서버 제어 메시지 수신
         std::atomic<bool> alive{true};
     };
 
     void acceptLoop();
-    void enqueueAll(Packet packet);  // 모든 클라이언트 outbox에 적재 (죽은 클라 정리 겸)
+    void enqueueAll(Packet packet);     // 모든 outbox 에 적재 + 죽은 클라 정리
     void senderLoop(Client& client);
-    void receiverLoop(Client& client);  // 제어 메시지 파싱 → on_roi_
-    void closeClient(Client& client);   // alive=false → 소켓 셧다운 → 스레드 join → close
+    void receiverLoop(Client& client);  // 제어 메시지 파싱 → 각 콜백
+    void closeClient(Client& client);   // alive=false → 셧다운 → join → close
 
     const int port_;
     int listen_fd_ = -1;
