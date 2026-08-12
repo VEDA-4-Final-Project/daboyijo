@@ -106,8 +106,15 @@ int main(int argc, char* argv[]) {
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
-    MqttMasterManager mqtt;         // [mqtt] 
-    mqtt.init("dado.local",8883);
+    MqttMasterManager mqtt;         // [mqtt]
+    // 실패해도 서버는 계속 뜬다(영상·낙상 판정은 MQTT와 무관) — 다만 그 사이
+    // 알람은 알림 노드에 닿지 않으므로, 조용히 넘기지 말고 크게 남긴다.
+    // 연결은 백그라운드에서 계속 재시도된다(MqttMasterManager::init 참고).
+    if (!mqtt.init("dabo.local", 8883)) {
+        std::fprintf(stderr,
+                     "[main] MQTT 브로커 미연결 상태로 시작합니다 — 웨어러블 수신과 "
+                     "알림 노드 알람은 재접속될 때까지 동작하지 않습니다.\n");
+    }
 
     // [케어봇] 버튼 메뉴 기반 상호작용: 보호자가 아무 메시지나 보내면 버튼 메뉴를
     // 띄우고(handleMessage), 버튼 클릭(handleCallback)으로 상황 조회·연락처·알림 토글.
