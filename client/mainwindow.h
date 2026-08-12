@@ -101,7 +101,8 @@ static constexpr uint16_t kEvtMagic = 0xDB4D;
 static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 
-class VideoView;  // 영상+ROI 오버레이 위젯 (videoview.h)
+class VideoView;     // 영상+ROI 오버레이 위젯 (videoview.h)
+class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
@@ -495,19 +496,26 @@ private:
     bool cameraSettingsVisible() const;
 
     // ── 카메라 설정 통합 UI ──
-    QWidget* buildCamChannelRail();   // 상단 공용 채널 선택(CH1~4 + 상태 배지)
-    QWidget* buildCamConnectPage();   // 좌측 '연결' 페이지(접속 폼 + 검색표)
-    QWidget* buildCamRoiPage();       // 좌측 'ROI' 페이지(안내 + 지정/제거/표시)
-    QWidget* buildCamImagePage();     // 좌측 '이미지' 페이지(밝기/대비/채도 + 초점)
-    QWidget* buildCamStagePanel();    // 우측 라이브 영상/프리뷰 스테이지
-    void selectCamChannel(int ch);    // 공용 채널 전환(레일·ROI·이미지 동기화)
+    // 3단 구성: [채널 스트립(썸네일)] │ [스테이지(큰 영상)] │ [인스펙터(모드별 설정)]
+    QWidget* buildCamModeSegment();   // 상단 페이지 모드 세그먼트(연결/ROI/이미지)
+    QWidget* buildCamChannelStrip();  // 좌측 채널 썸네일 타일 4개
+    QWidget* buildCamInspector();     // 우측 인스펙터(헤더 + 모드별 페이지 스택)
+    QWidget* buildCamConnectPage();   // 인스펙터 '연결' 페이지(접속 폼 + 검색표)
+    QWidget* buildCamRoiPage();       // 인스펙터 'ROI' 페이지(안내 + 지정/제거/표시)
+    QWidget* buildCamImagePage();     // 인스펙터 '이미지' 페이지(밝기/대비/채도 + 초점)
+    QWidget* buildCamStagePanel();    // 가운데 라이브 영상/프리뷰 스테이지
+    void selectCamChannel(int ch);    // 공용 채널 전환(스트립·스테이지·인스펙터 동기화)
     void setCamMode(const QString& mode);   // 연결/ROI/이미지 모드 전환
-    void refreshCamChannelStatus();   // 채널별 연결·ROI 상태 배지 갱신
-    QPushButton* camChannelBtns[4] = {};    // 채널 레일 버튼
-    QLabel*      camChannelStatus[4] = {};  // 채널별 상태 배지
+    void refreshCamChannelStatus();   // 채널 타일 배지 + 인스펙터 헤더 갱신
+    QPushButton* camChannelBtns[4] = {};    // 채널 타일(썸네일을 품은 체크 버튼)
+    QLabel*      camChannelStatus[4] = {};  // 타일 안 상태 배지
+    FramePreview* camThumbs[4] = {};        // 타일 안 라이브 썸네일
+    QLabel* camInspCh = nullptr;            // 인스펙터 헤더 "CH 2"
+    QLabel* camInspPill = nullptr;          // 인스펙터 헤더 연결 상태 알약
+    QLabel* camInspIp = nullptr;            // 인스펙터 헤더 카메라 주소
     QPushButton* camModeBtns[3] = {};       // [0]연결 [1]ROI [2]이미지 세그먼트
-    QStackedWidget* camControlStack = nullptr;  // 좌측 컨트롤 스택
-    QStackedWidget* camStageStack = nullptr;    // 우측 스테이지(0=영상 / 1=이미지 프리뷰)
+    QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
+    QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
 
     // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
@@ -521,8 +529,8 @@ private:
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
     ClickSlider* imgSaturation = nullptr;
-    QLabel*  imgBefore = nullptr;                      // 적용 전 스냅샷
-    QLabel*  imgAfter = nullptr;                       // 실시간(적용 후)
+    FramePreview* imgBefore = nullptr;                 // 적용 전 스냅샷
+    FramePreview* imgAfter = nullptr;                   // 실시간(적용 후)
     QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──
@@ -530,6 +538,7 @@ private:
     QLineEdit* camUserEdit = nullptr;
     QLineEdit* camPwEdit = nullptr;
     QTableWidget* discoveryTable = nullptr;    // 검색 결과(모델/IP/MAC)
+    void syncDiscoveryTableHeight();           // 결과 표를 행 수만큼만(0행이면 숨김)
     QLabel* discoveryStatus = nullptr;
     QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
     QSet<QString> discoverySeen;               // 중복 응답 제거
