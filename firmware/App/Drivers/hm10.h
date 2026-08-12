@@ -1,9 +1,8 @@
 /*
  * hm10.h — HM-10 BLE 송신 모듈 (인터페이스)
  *
- * 역할:
- *   STM32(웨어러블) → HM-10 → BLE → 중계 파이(RPi)
- *   HM-10 투과모드라 UART로 바이트 배열만 밀어내면 그대로 BLE로 넘어감.
+ * STM32(웨어러블) → HM-10 → BLE → 중계 노드(RPi)
+ * 투과모드라 UART 로 바이트만 밀어내면 그대로 BLE 로 넘어감
  *
  * 사용법:
  *   1) main.c에서 #include "hm10.h"
@@ -61,7 +60,7 @@
 #define HM10_FALL_NONE    0x00
 #define HM10_FALL_SUSPECT 0x01
 
-/* HM-10이 연결된 UART 핸들 등록 (부팅 시 1회) */
+/* HM-10 이 연결된 UART 핸들 등록 (부팅 시 1회) */
 void hm10_init(UART_HandleTypeDef *huart);
 
 /* 7바이트 바이너리 패킷 송신 (체크섬은 내부에서 계산해 붙인다)

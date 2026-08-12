@@ -24,7 +24,7 @@
 #include <unistd.h>
 #include <linux/limits.h>
 
-// HM-10 투과모드가 쓰는 표준 UUID — 기기가 바뀌어도 같다
+// HM-10 투과모드 표준 UUID — 기기가 바뀌어도 동일
 const std::string SVC_FFE0    = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const std::string CHAR_FFE1   = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
@@ -33,7 +33,7 @@ const size_t  PKT_LEN    = 7;
 const int QOS_VITAL      = 0;   // 바이탈: 빠르게 (유실 감수)
 const int QOS_FALL       = 1;   // 낙상: 반드시 전달
 
-// 기기마다 달라지는 값 — relay-node.conf 에서 읽는다
+// 기기마다 달라지는 값 — relay-node.conf 에서 읽음
 struct Config {
     std::string broker_host  = "localhost";
     int         broker_port  = 1883;
@@ -43,20 +43,15 @@ struct Config {
     int         scan_ms      = 8000;
     int         reconnect_ms = 3000;
     bool        debug_hex    = false;                 // 원시 바이트 덤프
-    // 브로커 검증용 CA 인증서. 비어 있으면 TLS 없이 평문으로 붙는다
-    // (브로커의 1883 리스너가 살아 있는 동안의 폴백 겸, 롤백 손잡이).
-    std::string ca_path      = "";
+    std::string ca_path      = "";                    // 브로커 검증용 CA — 비면 평문 폴백
 };
 
 static Config g_cfg;
 static std::atomic<bool> g_running{true};
-static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용. notify 등록 전 초기화 후 BLE 콜백에서만 접근
+static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용 — 세션 시작 때 초기화, 이후 BLE 콜백 전용
 
-// 조각난 notify 를 재조립하는 버퍼. runOnce 지역변수로 두면 안 되는데,
-// 아래 notify 콜백이 이걸 참조로 붙잡은 채 BLE 스레드에서 돌기 때문이다.
-// unsubscribe 가 실패하면(그 자리 catch(...) 가 삼킨다) 콜백이 등록된 채로 남아
-// 죽은 스택을 건드린다. 수명을 프로세스와 맞춰 그 창을 아예 없앤다.
-// g_prev_fall 과 마찬가지로 세션 시작 때 초기화하고 이후엔 BLE 콜백만 만진다.
+// 조각난 notify 재조립 버퍼 — 전역인 이유는 수명
+// unsubscribe 가 실패하면 콜백이 남는데, 지역변수였다면 죽은 스택을 건드림
 static std::string g_rx_buffer;
 
 void onSigint(int) { g_running = false; }
@@ -66,8 +61,7 @@ std::string toLower(std::string s) {
     return s;
 }
 
-// 실행 파일이 있는 디렉터리. 현재 디렉터리를 쓰면 어디서 실행했느냐에 따라
-// 설정 파일을 못 찾는다 (systemd 는 작업 디렉터리가 / 다)
+// 실행 파일이 있는 디렉터리 — systemd 는 작업 디렉터리가 / 라 상대 경로가 깨짐
 std::string exeDir() {
     char buf[PATH_MAX];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -77,8 +71,7 @@ std::string exeDir() {
     return p.substr(0, p.find_last_of('/'));
 }
 
-// 설정 파일은 손으로 고치는 곳이라 오타가 나기 쉽다.
-// 잘못된 값 하나로 죽지 않고 기본값을 유지한 채 어느 키가 문제인지 알린다.
+// 오타 하나로 죽지 않게 — 기본값 유지하고 어느 키가 문제인지만 알림
 int toInt(const std::string& k, const std::string& v, int fallback) {
     try {
         return std::stoi(v);
@@ -89,8 +82,7 @@ int toInt(const std::string& k, const std::string& v, int fallback) {
     }
 }
 
-// aa:bb:cc:dd:ee:ff 꼴인지만 본다. 틀리면 스캔에 영원히 안 잡히는데
-// "not found" 만 반복돼서 설정 오타인지 기기가 꺼진 건지 구분이 안 된다.
+// aa:bb:cc:dd:ee:ff 꼴 검사 — 오타면 "not found" 만 반복돼 기기 문제와 구분이 안 됨
 bool looksLikeMac(const std::string& s) {
     if(s.size() != 17) return false;
     for(size_t i = 0; i < s.size(); i++) {
@@ -101,7 +93,7 @@ bool looksLikeMac(const std::string& s) {
     return true;
 }
 
-// "키 = 값" 형식. # 는 주석. 없는 키는 기본값을 그대로 둔다
+// "키 = 값" 형식, # 는 주석 — 없는 키는 기본값 유지
 void loadConfig(const std::string& path, Config& c) {
     std::ifstream f(path);
     if(!f) {
@@ -186,7 +178,7 @@ void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall,
     // 채워 스키마 호환만 유지한다. 어차피 이전에도 항상 0 이었다.
     data.temperature      = 0.0;
     data.is_fall_detected = rising_edge;
-    data.timestamp        = nowMs();   // 패킷에 시각 필드가 없어 수신 시점으로 찍는다
+    data.timestamp        = nowMs();   // 패킷에 시각 필드가 없어 수신 시점으로 대체
 
     nlohmann::json j = data;
     std::string payload = j.dump();
@@ -244,14 +236,13 @@ std::optional<SimpleBLE::Peripheral> findDevice(SimpleBLE::Adapter& adapter) {
     }
     if(adapter.scan_is_active()) adapter.scan_stop();
 
-    // 위 콜백은 지역변수 found 를 참조로 붙잡고 있는데 어댑터에는 계속 등록된 채로 남는다.
-    // 해제하지 않으면 다음 스캔까지의 사이에 콜백이 늦게 불릴 때 죽은 스택을 건드린다.
+    // 위 콜백이 지역변수 found 를 붙잡은 채 어댑터에 남음 — 늦게 불리면 죽은 스택 참조
     adapter.set_callback_on_scan_found([](SimpleBLE::Peripheral){});
 
     return found;
 }
 
-// 연결 1회 세션 — 끊길 때까지 수신하고 정리하고 돌아온다
+// 연결 1회 세션 — 끊길 때까지 수신 후 정리
 void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     auto dev = findDevice(adapter);
     if(!dev) {
@@ -264,10 +255,9 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     std::cout << "[Relay Node] Connected: " << peripheral.identifier() << ". subscribing FFE1" << std::endl;
 
     g_prev_fall = 0;   // 끊긴 사이 상태를 모르므로 엣지 판정 초기화
-    g_rx_buffer.clear();   // 이전 세션의 반쪽 패킷을 물고 가지 않는다
+    g_rx_buffer.clear();   // 이전 세션의 반쪽 패킷 폐기
 
-    // client 만 참조로 잡는다 (main 의 지역변수라 이 함수보다 오래 산다).
-    // 버퍼는 전역이라 캡처할 필요가 없고, 캡처하지 않는 편이 수명 문제도 안 생긴다.
+    // client 만 캡처 — main 지역변수라 이 함수보다 오래 살고, 버퍼는 전역이라 불필요
     peripheral.notify(SVC_FFE0, CHAR_FFE1, [&client](SimpleBLE::ByteArray bytes) {
         if(g_cfg.debug_hex) {
             std::cout << "[Relay Node] raw " << bytes.size() << "B: " << toHex(bytes) << std::endl;
@@ -280,10 +270,8 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    // 정리해야 다음에 다시 스캔·연결된다. 안 하면 HM-10 이 연결 상태로 남아
-    // 광고를 멈추기 때문에 스캔에 안 잡힌다.
-    // 실패를 삼키지 않고 알린다 — 해제가 안 됐다면 콜백이 아직 살아 있다는 뜻이라,
-    // 다음 세션에서 이상하게 굴 때 여기 로그가 유일한 단서다.
+    // 정리 안 하면 HM-10 이 연결 상태로 남아 광고를 멈춰 다음 스캔에 안 잡힘
+    // 실패해도 로그는 남김 — 콜백이 살아있다는 뜻이라 다음 세션 이상동작의 단서
     try { peripheral.unsubscribe(SVC_FFE0, CHAR_FFE1); }
     catch (const std::exception& e) { std::cerr << "[Relay Node] unsubscribe 실패: " << e.what() << std::endl; }
     catch (...) { std::cerr << "[Relay Node] unsubscribe 실패 (알 수 없는 예외)" << std::endl; }
@@ -298,14 +286,12 @@ int main(int argc, char* argv[]) {
     if(argc >= 3 && std::strcmp(argv[1], "-c") == 0) confPath = argv[2];
     loadConfig(confPath, g_cfg);
 
-    // MQTT 클라이언트 id 는 브로커 안에서 유일해야 한다. 같은 id 두 개가 붙으면
-    // 나중에 온 쪽이 먼저 있던 쪽을 끊어버려서, 웨어러블을 두 대로 늘리는 순간
-    // 중계 노드끼리 서로를 밀어낸다. 기기마다 다른 device_id 를 붙여 그걸 막는다.
+    // MQTT client id 는 브로커 안에서 유일해야 함 — 겹치면 나중 접속이 먼저 것을 끊음
+    // 웨어러블을 여러 대로 늘려도 안 겹치게 device_id 를 붙임
     MqttClient_veda client("relay_" + g_cfg.device_id);
 
-    // ca.crt 도 conf 와 같은 이유로 실행 파일 기준으로 푼다 — systemd 는 작업
-    // 디렉터리가 / 라, 상대 경로 그대로 두면 손으로 실행할 때만 되고 서비스로
-    // 띄우면 tls_set 이 실패한다. 그 실패는 "평문도 TLS 도 아닌" 미연결이 된다.
+    // ca.crt 도 conf 와 같은 이유로 실행 파일 기준 — systemd 에선 상대 경로가 깨져
+    // tls_set 이 실패하고, 평문도 TLS 도 아닌 미연결이 됨
     if(!g_cfg.ca_path.empty() && g_cfg.ca_path[0] != '/')
         g_cfg.ca_path = exeDir() + "/" + g_cfg.ca_path;
     if(!g_cfg.ca_path.empty()) client.setTlsConfig(g_cfg.ca_path);
@@ -314,19 +300,15 @@ int main(int argc, char* argv[]) {
               << g_cfg.broker_host << ":" << g_cfg.broker_port
               << (g_cfg.ca_path.empty() ? " (평문)" : " (TLS)") << "..." << std::endl;
     if(!client.connectToBroker(g_cfg.broker_host, g_cfg.broker_port)) {
-        // TLS 를 쓰는데 실패했다면 인증서 문제일 가능성이 높고, 그건 저절로 낫지
-        // 않는다. tls_set 이 실패하면 mosquitto_connect 가 호출조차 안 돼 자동
-        // 재연결이 돌지 않고, 설정이 핸들에 안 올라갔으니 나중에 붙어봐야 평문으로
-        // 8883 을 두드릴 뿐이다. 그대로 두면 BLE 는 멀쩡히 돌면서 패킷은 오프라인
-        // 큐에만 무한정 쌓이는 "조용히 죽은" 상태가 된다 — 차라리 끊고 systemd 가
-        // 다시 띄우게 한다.
+        // TLS 실패는 대개 인증서 문제라 저절로 안 나음
+        // tls_set 이 실패하면 mosquitto_connect 가 호출조차 안 돼 자동 재연결도 안 돎
+        // 그대로 두면 BLE 만 돌고 패킷은 큐에 쌓이는 "조용히 죽은" 상태
         if(!g_cfg.ca_path.empty()) {
             std::cerr << "[Relay Node] TLS 연결 실패 — ca_path 확인: " << g_cfg.ca_path
                       << " (종료, systemd 가 재시작한다)" << std::endl;
             return 1;
         }
-        // 평문일 때는 기존대로 버틴다 — 브로커가 늦게 떠도 자동 재연결로 붙고,
-        // 그때 오프라인 큐가 flush 된다
+        // 평문은 버팀 — 브로커가 늦게 떠도 자동 재연결로 붙고 그때 큐가 flush 됨
         std::cerr << "[Relay Node] Mqtt connection failed! buffering until reconnect" << std::endl;
     }
     client.startLoop();

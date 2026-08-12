@@ -148,15 +148,12 @@ static volatile uint16_t g_imu_block_bytes = 0;
 static uint8_t         ppg_rx[MAX30102_MAX_BLOCK_BYTES] = {0};
 static MAX30102_Data_t ppg_samples[MAX30102_FIFO_DEPTH] = {0};
 
-/* HM-10 낙상 의심 플래그 (확정 시 세우고, 일정 시간 유지 후 자동 해제) */
+/* HM-10 낙상 의심 플래그 - 확정 시 세우고 일정 시간 뒤 자동 해제 */
 volatile uint8_t  g_fall_flag = 0;
 volatile uint32_t g_fall_flag_ms = 0;
 #define HM10_FALL_HOLD_MS   5000   /* 낙상 플래그 유지 시간(ms) — 카메라 교차검증 윈도우 확보 */
-/* 바이탈 송신 간격.
- * 측정 정확도와 무관하다 — 내부 적분(자기상관 16초 창)은 그대로 돌고,
- * 여기서는 이미 확정된 값을 얼마나 자주 내보낼지만 정한다.
- * 5초로 늘리면 BLE 패킷과 송신 전력이 1/5 로 줄어든다. */
-#define HM10_VITAL_PERIOD_MS 5000
+
+#define HM10_VITAL_PERIOD_MS 1000  /* 바이탈 주기 송신 간격 (ms) */
 
 /* 주기 송신 시각. 낙상 즉시 송신도 이 시각을 갱신해야 패킷이 겹치지 않는다. */
 static uint32_t g_last_vital_ms = 0;
@@ -247,7 +244,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-  hm10_init(&huart2); // HM-10을 USART2에 등록 (기존 낙상 알림 UART 재활용)
+  hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
 
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
@@ -679,7 +676,7 @@ static void HM10_Send_Now(void)
 {
     uint32_t bpm  = HeartRateCalc_GetBPM();
     uint32_t spo2 = HeartRateCalc_GetSpO2();
-    uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   // 심박 8bit 클램프
+    uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   /* 심박 8bit 클램프 */
 
     /* 걸음 수 16bit 포화.
      * 자정마다 0 으로 돌아가므로 65535 를 넘길 일은 없지만, 시각 동기가 없어
@@ -691,7 +688,7 @@ static void HM10_Send_Now(void)
     hm10_send_packet(hr, (uint8_t)spo2, g_fall_flag, steps16);
 }
 
-// 낙상 확정 시 호출 (fall_detection.c) → 플래그 세우고 즉시 1회 송신
+/* 낙상 확정 시 호출 (fall_detection.c) - 플래그 세우고 즉시 1회 송신 */
 void Send_Fall_Alert_Hardware(void)
 {
     g_fall_flag = HM10_FALL_SUSPECT;

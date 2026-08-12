@@ -8,15 +8,12 @@
 namespace {
 
 // ── 블랙박스 튜닝값 ──────────────────────────────────────────────
-// 디코딩 전 압축 패킷을 그대로 버퍼링/remux하므로 채널당 버퍼는 수 MB
-// 수준(720p 수 Mbps 스트림 기준)이라 라즈베리파이에서도 부담이 거의 없다.
+// 압축 패킷을 그대로 버퍼링/remux 해서 채널당 수 MB — Pi 에서도 부담 없음
 const std::string kBlackboxDir = "blackbox_clips";
 constexpr double kBlackboxPreSec = 5.0;
 constexpr double kBlackboxPostSec = 5.0;
-// 저장된 클립을 Qt가 QMediaPlayer로 바로 재생할 수 있게 서빙하는 HTTP 포트.
-constexpr int kClipHttpPort = 5501;
-// 마감 시각이 지난 클립을 확인하는 주기. 사람이 체감할 만큼만 빠르면 되고,
-// 평상시엔 recorders_를 한 번 훑고 끝이라 부담이 없다.
+constexpr int kClipHttpPort = 5501;   // Qt(QMediaPlayer)가 클립을 받아가는 포트
+// 마감 확인 주기 — 평시엔 recorders_ 한 번 훑고 끝이라 부담 없음
 constexpr auto kWatchdogPeriod = std::chrono::milliseconds(1000);
 
 }  // namespace
