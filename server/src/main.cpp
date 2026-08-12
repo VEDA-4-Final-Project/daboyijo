@@ -213,32 +213,51 @@ int main(int argc, char* argv[]) {
                                  ch + 1, err.c_str());
             }).detach();
         });
-    // 낙상 확정 → 블러 즉시 해제 + 블랙박스 클립 저장 + Qt 경보
+    // CCTV 기반 낙상 판정  → 블러 부분 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
-        std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (자세 판정) obj=%d cx=%.2f cy=%.2f\n",
+        std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (CCTV 판정) obj=%d cx=%.2f cy=%.2f\n",
                      ch + 1, at.object_id, at.cx, at.cy);
         privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
         telegram.notifyFall(ch);      // 즉시 기본 알림
         care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
-        mqtt.sendAlarmCommand(AlarmEventType::FALL,ch); // mqtt 알림전송 
+        int room = db.getRoomByCh(ch);
+        mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송 
     });
-    // 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
+    // CCTV 기반 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](int ch, int obj_id) {
         std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch + 1, obj_id);
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
-        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,ch);//mqtt 알림전송 
+        int room = db.getRoomByCh(ch);   // 낙상 콜백과 동일하게 채널로 호실을 찾는다
+        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
     });
-    // MQTT로 웨어러블 낙상 신후 수신시 처리
-    mqtt.setWearableCallback([&](bool is_fall){
-        if(is_fall){
-            // 여기다가 다른 모듈배선로 신호 전달 작성하면됩니다.
-            std::printf("mqtt 낙상 수신!!!!");// 확인용 printf
-            mqtt.sendAlarmCommand(AlarmEventType::FALL,1); // test 확인용 mqtt 알림전송 
-        }
+    // 웨어러블 기반 이벤트 발생
+    mqtt.setWearableCallback([&](AlarmEventType event, std::string device_id){
+        int ch = db.getCHById(device_id);
+        int room = db.getRoomById(device_id);
+        if(ch < 2){
+            // 웨어러블 기반 낙상 판정 -> 블러 전체 해제 + 블랙박스 클립 저장 + Qt 경보
+            if(event == AlarmEventType::FALL){
+                std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (웨어러블 판정)\n", ch + 1);
+                // privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy); 블러 해제(원본) 추가 예정
+                int64_t evt_ms = blackbox.trigger(ch, "FALL");
+                stream_server.broadcastEvent(ch, DBJ_EVT_FALL, 0.0f, 0.0f, evt_ms);
+                telegram.notifyFall(ch);
+                care_qa.reportFall(ch);
+                mqtt.sendAlarmCommand(AlarmEventType::FALL,room);
+            }
+            // 웨어러블 기반 생체데이터 이상 -> 블랙박스 클립 저장 + Qt 경보
+            else if(event == AlarmEventType::VITAL_ABNORMAL){
+                std::fprintf(stderr, "🚨 [ch%d] 생체데이터 이상!\n", ch + 1);
+                int64_t evt_ms = blackbox.trigger(ch, "VITAL_ABNORMAL");
+                stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f, evt_ms);
+                telegram.notifyVitalAbnormal(ch);
+                mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room);
+            }
+        } 
     });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
     ai_worker.addProcessor([&](const AiJob& job) { caregiver.processFrame(job); });

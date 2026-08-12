@@ -902,6 +902,7 @@ void MainWindow::updateAlarmBanner()
     for (int ch = 0; ch < 4; ++ch) {
         if (fallActive[ch])      evts.append({ch, QStringLiteral("낙상")});
         if (bedEgressActive[ch]) evts.append({ch, QStringLiteral("침상이탈")});
+        if (vitalAbnormalActive[ch]) evts.append({ch, QStringLiteral("생체신호 이상")});
     }
     if (evts.isEmpty()) { animateAlarmToast(false); return; }
 
@@ -1462,7 +1463,7 @@ QWidget* MainWindow::buildSearchFilters()
 
     filterEventType = new QComboBox();
     filterEventType->addItems({QStringLiteral("전체 이벤트"), QStringLiteral("낙상"),
-                               QStringLiteral("침상이탈")});
+                               QStringLiteral("침상이탈"), QStringLiteral("생체신호 이상")});
     // 드롭다운에서 항목을 고르는 즉시 표에 필터 적용(날짜 범위까지 함께)
     connect(filterEventType, &QComboBox::currentTextChanged,
             this, [this](const QString&) { applyLogFilters(true); });
@@ -3147,6 +3148,10 @@ void MainWindow::onReadyRead()
                 else if (evt.type == kEvtBedEgress) {
                     handleBedEgressEvent(evt.channel, evt.timestamp_ms);
                 }
+                // 웨어러블 생체데이터 이상 — x,y 는 쓰지 않는다(서버가 0 으로 채움)
+                else if (evt.type == kEvtVitalAbnormal) {
+                    handleVitalAbnormalEvent(evt.channel, evt.timestamp_ms);
+                }
             }
             continue;
         }
@@ -3322,6 +3327,54 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
 
         logTable->setSortingEnabled(true);
         logTable->sortItems(0, Qt::DescendingOrder);   // 최신 이벤트가 위로
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  웨어러블 생체신호 이상 — 빨간색 테두리 활성화 및 로그 추가
+//
+//  카메라가 아니라 웨어러블이 근거인 경보다. 발생 위치라는 개념이 없어
+//  십자 조준점을 찍지 않는 것만 낙상/이탈과 다르고, 나머지 흐름은 같다.
+// ═══════════════════════════════════════════════════════════
+void MainWindow::handleVitalAbnormalEvent(int channel, quint64 timestampMs)
+{
+    // 1. 빨간 테두리 즉각 활성화
+    if (channel >= 0 && channel < 4) {
+        vitalAbnormalActive[channel] = true;
+        if (channelViews[channel]) {
+            channelViews[channel]->setAlert(true, QStringLiteral("🚨 생체신호 이상"));
+        }
+        qDebug() << "🚨 [생체신호 이상] 채널" << (channel + 1) << "빨간 테두리 켜짐";
+    }
+    refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
+    setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
+
+    // 2. 비상 로그 조회 탭에 블랙박스 URL 및 정보 등록
+    if (logTable) {
+        logTable->setSortingEnabled(false);   // 삽입 중 재정렬 방지
+
+        const int row = logTable->rowCount();
+        logTable->insertRow(row);
+
+        const QString when = QDateTime::fromMSecsSinceEpoch(
+                                 static_cast<qint64>(timestampMs)).toString("yyyy-MM-dd HH:mm:ss");
+        auto* dtItem = new QTableWidgetItem(when);
+
+        // 서버 저장 규칙: blackbox.trigger(ch, "VITAL_ABNORMAL") 과 접미사를 맞춘다
+        const QString clipUrl = QStringLiteral("http://%1:%2/ch%3_%4_VITAL_ABNORMAL.mp4")
+                                     .arg(hostForChannel(channel))
+                                     .arg(kClipHttpPort)
+                                     .arg(channel)
+                                     .arg(timestampMs);
+        dtItem->setData(Qt::UserRole, clipUrl);
+        logTable->setItem(row, 0, dtItem);
+        logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+        logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("생체신호 이상")));
+        logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
+
+        logTable->setSortingEnabled(true);
+        logTable->sortItems(0, Qt::DescendingOrder);   // 최신 이벤트가 위로
+        applyLogFilters();   // 현재 필터 조건을 새로 들어온 행에도 적용
     }
 }
 
@@ -4544,10 +4597,11 @@ void MainWindow::onAlarmClearClicked()
 
     // 되묻는 팝업 없이 버튼 클릭 즉시 원스톱으로 리셋 처리!
     for (int channel = 0; channel < 4; ++channel) {
-        if (fallActive[channel] || bedEgressActive[channel]) {
-            // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어 (낙상·침상이탈 모두)
+        if (fallActive[channel] || bedEgressActive[channel] || vitalAbnormalActive[channel]) {
+            // 1. 빨간 테두리 끄고 로컬 경보 상태 클리어 (낙상·침상이탈·생체이상 모두)
             fallActive[channel] = false;
             bedEgressActive[channel] = false;
+            vitalAbnormalActive[channel] = false;
             if (channelViews[channel]) {
                 channelViews[channel]->setAlert(false);
             }
@@ -4593,7 +4647,7 @@ void MainWindow::refreshAlarmButton()
     if (!alarmClearButton) return;
     bool anyActive = false;
     for (int ch = 0; ch < 4; ++ch)
-        if (fallActive[ch] || bedEgressActive[ch]) { anyActive = true; break; }
+        if (fallActive[ch] || bedEgressActive[ch] || vitalAbnormalActive[ch]) { anyActive = true; break; }
     updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
 
     // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.

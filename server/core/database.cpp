@@ -115,6 +115,109 @@ int Database::getRiskLevelByCamera(int channel) {
     return level;
 }
 
+int Database::getCHById(const std::string& wearable_id){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    /* device_id 는 MQTT 페이로드로 들어온 외부 입력이다. 정수 파라미터와 달리
+     * 문자열을 그대로 SQL 에 넣으면 인젝션이 성립하므로 반드시 이스케이프한다.
+     * 버퍼는 원문 길이의 2배 + 1 이 필요하다 (모든 문자가 이스케이프될 때). */
+    char esc[65];
+    if (wearable_id.size() > 32) return -1;   // 컬럼 정의(VARCHAR(32))를 넘으면 조회할 것도 없다
+    mysql_real_escape_string(conn_, esc, wearable_id.c_str(),
+                             (unsigned long)wearable_id.size());
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT camera_id "
+        "FROM residents WHERE wearable_id = '%s'", esc);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    int ch = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    // 집계 쿼리는 항상 한 행을 반환하지만, 대상 입소자가 없으면 그 값이 NULL이다.
+    if (row && row[0]) {
+        ch = std::atoi(row[0]);
+    }
+    mysql_free_result(res);
+    return ch;
+}
+
+int Database::getRoomById(const std::string& wearable_id){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    char esc[65];
+    if (wearable_id.size() > 32) return -1;
+    mysql_real_escape_string(conn_, esc, wearable_id.c_str(),
+                             (unsigned long)wearable_id.size());
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT room "
+        "FROM residents WHERE wearable_id = '%s'", esc);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    int room = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    // 집계 쿼리는 항상 한 행을 반환하지만, 대상 입소자가 없으면 그 값이 NULL이다.
+    if (row && row[0]) {
+        room = std::atoi(row[0]);
+    }
+    mysql_free_result(res);
+    return room;
+}
+
+int Database::getRoomByCh(int channel){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT room "
+        "FROM residents WHERE camera_id = %d", channel);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+
+    int room = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    // 집계 쿼리는 항상 한 행을 반환하지만, 대상 입소자가 없으면 그 값이 NULL이다.
+    if (row && row[0]) {
+        room = std::atoi(row[0]);
+    }
+    mysql_free_result(res);
+    return room;
+}
+
 void Database::close() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (conn_) { mysql_close(conn_); conn_ = nullptr; }

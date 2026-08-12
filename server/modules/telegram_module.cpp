@@ -80,6 +80,12 @@ void TelegramModule::notifyEgress(int channel) {
               /*respect_mute=*/true);
 }
 
+void TelegramModule::notifyVitalAbnormal(int channel) {
+    // 생체데이터 이상은 낙상과 같이 건강에 직결되므로 무음이어도 반드시 전송한다.
+    sendAsync(channel, "🚨 [ch" + std::to_string(channel + 1) + "] 생체데이터 이상이 감지되었습니다. 확인 바랍니다.",
+              /*respect_mute=*/false);
+}
+
 bool TelegramModule::isMuted(int channel) const {
     std::lock_guard<std::mutex> lock(mute_mutex_);
     auto it = mute_until_.find(channel);

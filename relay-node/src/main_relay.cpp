@@ -5,6 +5,8 @@
 //   [0] 0xAA  [1] 심박  [2] SpO2  [3] 낙상 0/1
 //   [4] 걸음 lo  [5] 걸음 hi   (uint16, 리틀엔디안)
 //   [6] 체크섬 — [0]~[5] 를 XOR
+//
+// ⚠ 펌웨어와 반드시 동시에 배포할 것. 길이가 어긋나면 프레이밍이 깨진다.
 
 #include "MqttClient_veda.hpp"
 #include <simpleble/SimpleBLE.h>
@@ -169,7 +171,8 @@ void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall, uint16_t steps, MqttC
     std::string payload = j.dump();
 
     client.publishMessage(g_cfg.topic, payload, rising_edge ? QOS_FALL : QOS_VITAL);
-    std::cout << "[Relay Node] Published " << (rising_edge ? "FALL : " : "vital: ") << payload << std::endl;
+    std::cout << "[Relay Node] Published " << (rising_edge ? "FALL : " : "vital: ") << payload
+              << " (steps=" << steps << ")" << std::endl;
 }
 
 // 조각난 데이터를 0xAA 헤더 기준 PKT_LEN 바이트로 재조립

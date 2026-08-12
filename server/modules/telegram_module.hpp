@@ -42,6 +42,7 @@ public:
     // ── 단방향 알림 (AI 워커 스레드에서 호출, 비동기 전송) ──
     void notifyFall(int channel);
     void notifyEgress(int channel);
+    void notifyVitalAbnormal(int channel);
 
     // ── 양방향 봇 ──
     void setCommandHandler(CommandHandler h) { on_command_ = std::move(h); }
