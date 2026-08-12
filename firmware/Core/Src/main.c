@@ -77,6 +77,9 @@
 #include "app_clock.h"
 #include "usbd_cdc_if.h"
 #include "hm10.h"
+#include "st7789.h"
+#include "lvgl.h"
+#include "ui.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -222,6 +225,7 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -243,6 +247,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
 
@@ -328,6 +333,19 @@ int main(void)
   /* 첫 송신을 한 주기 뒤로 맞춘다. 0 으로 두면 부팅에 이미 3초 남짓 쓴 상태라
    * 기준점이 어긋난 채 시작한다. */
   g_last_vital_ms = HAL_GetTick();
+
+
+  // 1. 디스플레이 초기화
+  ST7789_Init();
+
+  // 2. 백라이트 켜기
+  HAL_GPIO_WritePin(ST7789_BL_GPIO_Port, ST7789_BL_Pin, GPIO_PIN_SET);
+  // lvgl 연결
+  lv_init();
+  lv_port_disp_init();
+  //ui 생성
+  ui_init();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -394,6 +412,28 @@ int main(void)
        *   센서 인터럽트(EXTI) 또는 DMA 완료가 곧 기상 신호다.
        * ------------------------------------------------------------------ */
       Enter_Idle();
+      // ui  코드
+      /*
+       	  // 1. LVGL에 5ms 경과를 직접 알리고 타이머 처리
+	      lv_tick_inc(5);      // 💡 5ms 추가
+	      lv_timer_handler();  // LVGL 이벤트 처리
+	      HAL_Delay(5);        // 5ms 대기
+
+	      // 2. 1초(1000ms)마다 분(ui_Label3) 변경 테스트
+	      static uint32_t last_tick = 0;
+	      static int minute_count = 0;
+
+	      if (HAL_GetTick() - last_tick >= 1000) {
+	        last_tick = HAL_GetTick();
+
+	        minute_count++;
+	        if (minute_count >= 60) {
+	          minute_count = 0;
+	        }
+
+	        // 텍스트 업데이트
+	        lv_label_set_text_fmt(ui_timeMinute, "%02d", minute_count);
+       */
   }
     /* USER CODE END WHILE */
 
