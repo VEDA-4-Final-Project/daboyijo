@@ -51,10 +51,9 @@ STM32 ──UART(9600)──> HM-10 ──BLE──> RPi4 (relay_node) ──MQT
 > 깨진다. 한쪽만 올리면 다음 패킷의 헤더까지 현재 패킷으로 삼키거나, 남는
 > 바이트가 `0xAA`(170)일 때 가짜 헤더로 오인된다.
 
-걸음 수는 아직 MQTT JSON 에 싣지 않는다 — `WearableData` 가 server/Qt 공용
-스키마라 필드를 늘리거나 줄이면 세 컴포넌트를 함께 배포해야 하기 때문이다.
-현재는 릴레이 로그에 `(steps=N)` 으로만 찍힌다. 같은 이유로 JSON 의
-`temperature` 필드도 남겨두고 `0.0` 을 채운다.
+걸음 수는 `WearableData.steps` 로 MQTT 까지 그대로 발행된다. 같은 변경에서
+`temperature` 필드는 스키마에서 제거했다 — 체온은 측정 하드웨어가 없어 구현된
+적이 없다.
 
 펌웨어는 **1Hz 주기** 송신하고, 낙상 확정 시 주기를 기다리지 않고 즉시 1회 추가 송신한다.
 `fall_flag` 는 엣지가 아니라 **레벨**이라 확정 후 5초간 1로 유지된다
@@ -66,8 +65,8 @@ STM32 ──UART(9600)──> HM-10 ──BLE──> RPi4 (relay_node) ──MQT
 토픽 `veda/wearable/data`, payload 는 `WearableData` JSON.
 
 ```json
-{"device_id":"wearable_01","is_fall_detected":false,"temperature":0.0,
- "heart_rate":78,"spo2":98,"timestamp":1754000000000}
+{"device_id":"wearable_01","is_fall_detected":false,
+ "heart_rate":78,"spo2":98,"steps":1000,"timestamp":1754000000000}
 ```
 
 | 종류 | QoS |
@@ -125,8 +124,7 @@ FFE0/FFE1 UUID 와 7바이트 패킷 규격은 설정으로 빼지 않았다. �
 
 ## 알려진 제약
 
-- **`temperature` 가 항상 0** — 체온 기능은 폐기했다. 측정 하드웨어가 없어
-  구현된 적이 없고 펌웨어 패킷에서도 제거했다. JSON 필드만 공용 스키마 호환을
-  위해 남아 있으며, server/Qt 와 함께 배포할 수 있을 때 지우면 된다.
+- **체온은 지원하지 않는다** — 측정 하드웨어가 없어 구현된 적이 없다. 펌웨어
+  패킷과 `WearableData` 양쪽에서 제거했다.
 - **심박은 범위 검증을 하지 않는다** — 0~255 전체가 유효값이라 검사할 근거가
   없다. 걸음 수도 마찬가지다. 프레이밍은 체크섬이 맡으므로 문제되지 않는다.
