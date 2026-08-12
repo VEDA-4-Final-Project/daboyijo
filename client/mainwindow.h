@@ -106,7 +106,7 @@ class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
-class QTabWidget;
+
 class QTableWidget;
 class QComboBox;
 class QDateEdit;
@@ -288,7 +288,16 @@ private:
     QTimer reconnectTimer;       // 영상 서버 자동 재접속
 
     // ── TAB 구조 ──────────────────────────────────────────
-    QTabWidget* tabWidget = nullptr;
+    // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
+    static constexpr int kNavCount = 5;
+    QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 5개 + 접기 토글)
+    void     refreshNavIcons();       // 팔레트 전환 시 아이콘 색 재생성
+    void     setNavCollapsed(bool on);// 접기/펼치기 (QSettings에 저장)
+    QFrame*         navRail = nullptr;
+    QPushButton*    navToggle = nullptr;
+    QPushButton*    navBtns[kNavCount] = {};
+    bool            navCollapsed_ = false;
+    QStackedWidget* contentStack = nullptr;
 
     // TAB2: 이벤트 기록 (요약 카드 + 로그 표 + 인라인 블랙박스)
     QDateEdit* filterDateFrom = nullptr;
