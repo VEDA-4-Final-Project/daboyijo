@@ -100,6 +100,7 @@ static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 static constexpr uint16_t kEvtMagic = 0xDB4D;
 static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
+static constexpr uint8_t kEvtVitalAbnormal = 0x03;  // 웨어러블 생체데이터 이상 (x,y 미사용)
 
 class VideoView;     // 영상+ROI 오버레이 위젯 (videoview.h)
 class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
@@ -231,6 +232,7 @@ private:
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
+    bool vitalAbnormalActive[4] = {};  // 채널별 생체신호 이상 경보 활성 상태
 
     // ── 대시보드 UI 구성 요소 ──────────────────────────────
     PatientInfo patients[4];     // 병상별 환자 정보
@@ -464,6 +466,7 @@ private:
 
     // 침상 이탈 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
     void handleBedEgressEvent(int channel, quint64 timestampMs);
+    void handleVitalAbnormalEvent(int channel, quint64 timestampMs);
 
     // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
     void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);

@@ -115,14 +115,22 @@ int Database::getRiskLevelByCamera(int channel) {
     return level;
 }
 
-int Database::getCHById(int id){
+int Database::getCHById(const std::string& wearable_id){
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_) return -1;
 
+    /* device_id 는 MQTT 페이로드로 들어온 외부 입력이다. 정수 파라미터와 달리
+     * 문자열을 그대로 SQL 에 넣으면 인젝션이 성립하므로 반드시 이스케이프한다.
+     * 버퍼는 원문 길이의 2배 + 1 이 필요하다 (모든 문자가 이스케이프될 때). */
+    char esc[65];
+    if (wearable_id.size() > 32) return -1;   // 컬럼 정의(VARCHAR(32))를 넘으면 조회할 것도 없다
+    mysql_real_escape_string(conn_, esc, wearable_id.c_str(),
+                             (unsigned long)wearable_id.size());
+
     char sql[256];
     std::snprintf(sql, sizeof(sql),
-        "SELECT  camera_id"
-        "FROM residents WHERE wearable_id = %d", id);
+        "SELECT camera_id "
+        "FROM residents WHERE wearable_id = '%s'", esc);
 
     if (mysql_query(conn_, sql)) {
         std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
@@ -145,14 +153,19 @@ int Database::getCHById(int id){
     return ch;
 }
 
-int Database::getRoomById(int id){
+int Database::getRoomById(const std::string& wearable_id){
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_) return -1;
 
+    char esc[65];
+    if (wearable_id.size() > 32) return -1;
+    mysql_real_escape_string(conn_, esc, wearable_id.c_str(),
+                             (unsigned long)wearable_id.size());
+
     char sql[256];
     std::snprintf(sql, sizeof(sql),
-        "SELECT  room"
-        "FROM residents WHERE wearable_id = %d", id);
+        "SELECT room "
+        "FROM residents WHERE wearable_id = '%s'", esc);
 
     if (mysql_query(conn_, sql)) {
         std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
@@ -181,7 +194,7 @@ int Database::getRoomByCh(int channel){
 
     char sql[256];
     std::snprintf(sql, sizeof(sql),
-        "SELECT  room"
+        "SELECT room "
         "FROM residents WHERE camera_id = %d", channel);
 
     if (mysql_query(conn_, sql)) {

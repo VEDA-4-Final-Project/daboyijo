@@ -51,6 +51,7 @@ extern "C" {
 #define DBJ_EVT_MAGIC       0xDB4D  /* 이벤트 메시지 시작 식별자 */
 #define DBJ_EVT_FALL        0x01    /* 낙상 확정 (x,y = 발생 위치) */
 #define DBJ_EVT_EGRESS      0x02    /* 침상 이탈 확정 (x,y = 발생 위치) */
+#define DBJ_EVT_VITAL_ABNORMAL 0x03 /* 웨어러블 생체데이터 이상 (x,y 미사용, 0) */
 
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
 #define DBJ_CTRL_ROI_SET    0x01    /* 채널 ROI 설정 — 헤더 뒤에 점 배열이 옴 */

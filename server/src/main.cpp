@@ -235,7 +235,7 @@ int main(int argc, char* argv[]) {
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
     });
     // 웨어러블 기반 이벤트 발생
-    mqtt.setWearableCallback([&](int event, std::string device_id){
+    mqtt.setWearableCallback([&](AlarmEventType event, std::string device_id){
         int ch = db.getCHById(device_id);
         int room = db.getRoomById(device_id);
         if(ch < 2){
@@ -254,7 +254,7 @@ int main(int argc, char* argv[]) {
                 std::fprintf(stderr, "🚨 [ch%d] 생체데이터 이상!\n", ch + 1);
                 int64_t evt_ms = blackbox.trigger(ch, "VITAL_ABNORMAL");
                 stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f, evt_ms);
-                telegram.notifyVITAL_ABNORMAL(ch);
+                telegram.notifyVitalAbnormal(ch);
                 mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room);
             }
         } 

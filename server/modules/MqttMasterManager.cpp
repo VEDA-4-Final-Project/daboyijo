@@ -104,7 +104,9 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         if(data.is_fall_detected){
             wearable_callback_(AlarmEventType::FALL, data.device_id);
         }
-        if(data.temperature > 40 || data.heart_rate > 180 || data.spo2 < 90){
+        // 체온 조건은 제거했다 — WearableData 에서 temperature 필드가 사라졌다.
+        // 측정 하드웨어가 없어 항상 0 이었으므로 이 조건은 발동한 적이 없다.
+        if(data.heart_rate > 180 || data.spo2 < 90){
             wearable_callback_(AlarmEventType::VITAL_ABNORMAL, data.device_id);
         }
         

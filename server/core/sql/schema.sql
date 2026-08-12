@@ -3,14 +3,24 @@ CREATE DATABASE IF NOT EXISTS daboijo
 USE daboijo;
 
 -- 입소자 (사람당 한 줄)
+-- wearable_id 는 릴레이 노드가 보내는 device_id 문자열과 그대로 대응한다
+-- (relay-node.conf 의 device_id, 예: "wearable_01"). 웨어러블 이벤트가 올라오면
+-- 이 값으로 입소자를 찾아 camera_id / room 을 얻는다.
 CREATE TABLE IF NOT EXISTS residents (
     resident_id  INT AUTO_INCREMENT PRIMARY KEY,
     name         VARCHAR(50)  NOT NULL,
     room         VARCHAR(20)  NOT NULL,
     bed          VARCHAR(20)  NOT NULL,
     camera_id    INT,
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    wearable_id  VARCHAR(32),
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_wearable_id (wearable_id)
 );
+
+-- 이미 residents 가 만들어진 DB 를 위한 이관 구문.
+-- MariaDB 는 ADD COLUMN IF NOT EXISTS 를 지원한다.
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS wearable_id VARCHAR(32);
+ALTER TABLE residents ADD UNIQUE KEY IF NOT EXISTS uk_wearable_id (wearable_id);
 
 -- 케어로그 (세션마다 한 줄, camera_id 기준으로 기록)
 -- ★ duration_sec 는 실제로 요양사가 감지된 시간의 합이라 end_time - start_time 과
