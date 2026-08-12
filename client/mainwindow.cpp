@@ -134,15 +134,23 @@ const LoggedField kLoggedFields[] = {
 
 // 상태 판정 — 웨어러블이 실제로 보내오는 두 값(산소포화도·심박)만 본다.
 // SpO2 기준은 임상에서 널리 쓰는 구간: 95% 이상 정상, 90~94% 주의, 90% 미만 위험.
-// spo2 <= 0 은 "측정 실패/미수신"이라 판정에서 빼고 심박만 본다 — 0을 그대로
-// 넣으면 센서가 잠깐 못 읽은 것뿐인데 위험으로 뜬다.
+//
+// ★ 0은 "값 없음"이지 "이상"이 아니다. 웨어러블을 벗어두면 기기가 심박·SpO2를
+//   모두 0으로 보내는데, 이걸 그대로 넣으면 spo2 0 < 90, hr 0 <= 45 양쪽에 걸려
+//   미착용 상태 내내 '위험'이 뜬다. 두 값 각각 유효할 때만 판정에 쓴다.
 namespace {
 enum class VitalLevel { Normal, Warn, Critical };
 
+// 착용 중인지 — 둘 다 0이면 기기가 사람에게 붙어 있지 않다고 본다.
+bool vitalWorn(int spo2, int hr) { return spo2 > 0 || hr > 0; }
+
 VitalLevel vitalLevel(int spo2, int hr) {
     const bool hasSpo2 = spo2 > 0;
-    if ((hasSpo2 && spo2 < 90) || hr >= 110 || hr <= 45) return VitalLevel::Critical;
-    if ((hasSpo2 && spo2 < 95) || hr >= 100 || hr < 55)  return VitalLevel::Warn;
+    const bool hasHr   = hr > 0;
+    if ((hasSpo2 && spo2 < 90) || (hasHr && (hr >= 110 || hr <= 45)))
+        return VitalLevel::Critical;
+    if ((hasSpo2 && spo2 < 95) || (hasHr && (hr >= 100 || hr < 55)))
+        return VitalLevel::Warn;
     return VitalLevel::Normal;
 }
 }  // namespace
@@ -2908,8 +2916,11 @@ void MainWindow::updateVitals()
 
         const VitalSample v = vitals_.value(key);
         const bool fresh = v.received && (now - v.arrivedAtMs) <= kVitalStaleMs;
+        // 값은 오는데 전부 0 = 웨어러블 미착용. '신호 끊김'과도, '이상'과도 다른
+        // 제3의 상태라 따로 표시한다(요양사 대응이 "기기를 채우세요"로 달라진다).
+        const bool worn = vitalWorn(v.spo2, v.heartRate);
 
-        if (!fresh) {
+        if (!fresh || !worn) {
             const QString dim = kTextSub;
             spo2Lbl->setText(QStringLiteral("--"));
             spo2Lbl->setStyleSheet(QString("color:%1;").arg(dim));
@@ -2919,10 +2930,13 @@ void MainWindow::updateVitals()
             dotLbl->setStyleSheet(
                 QString("background:%1; border-radius:4px;").arg(dim));
 
-            // 한 번도 못 받은 것과 받다가 끊긴 것을 구분한다 — 대응이 다르다.
-            // (전자는 등록/배선 문제, 후자는 기기가 빠졌거나 중계 노드가 죽은 것)
-            badgeLbl->setText(v.received ? QStringLiteral("신호 끊김")
-                                         : QStringLiteral("대기"));
+            // 세 가지를 구분한다 — 대응이 각각 다르다.
+            //   대기      : 한 번도 안 옴 (등록/배선 문제)
+            //   신호 끊김 : 오다가 멈춤 (기기 방전·중계 노드 다운)
+            //   미착용    : 값은 오는데 전부 0 (기기를 안 차고 있음)
+            badgeLbl->setText(!fresh ? (v.received ? QStringLiteral("신호 끊김")
+                                                   : QStringLiteral("대기"))
+                                     : QStringLiteral("미착용"));
             badgeLbl->setStyleSheet(QString(
                 "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
                 " padding:1px 10px; font-size:11px; font-weight:800;")

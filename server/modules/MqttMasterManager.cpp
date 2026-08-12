@@ -120,12 +120,21 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         auto j = nlohmann::json::parse(payload);
         auto data = j.get<WearableData>();
 
+        if(!wearable_callback_) return;   // 콜백 미등록 시 호출하면 bad_function_call
+
         if(data.is_fall_detected){
             wearable_callback_(AlarmEventType::FALL, data.device_id);
         }
         // 체온 조건은 제거했다 — WearableData 에서 temperature 필드가 사라졌다.
         // 측정 하드웨어가 없어 항상 0 이었으므로 이 조건은 발동한 적이 없다.
-        if(data.heart_rate > 180 || data.spo2 < 90){
+        //
+        // ★ 미착용/측정실패는 0 으로 온다. 살아있는 사람의 심박·SpO2 가 0 일 수는
+        //   없으므로 0 은 "값 없음"이지 "이상"이 아니다. 이 가드가 없으면
+        //   spo2 == 0 이 <90 에 걸려 웨어러블을 벗어둔 내내 사이렌이 울린다.
+        const bool hr_valid   = data.heart_rate > 0;
+        const bool spo2_valid = data.spo2 > 0;
+
+        if((hr_valid && data.heart_rate > 180) || (spo2_valid && data.spo2 < 90)){
             wearable_callback_(AlarmEventType::VITAL_ABNORMAL, data.device_id);
         }
         

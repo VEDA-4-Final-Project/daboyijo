@@ -57,7 +57,8 @@ static std::string g_rx_buffer;
 void onSigint(int) { g_running = false; }
 
 std::string toLower(std::string s) {
-    for(char& c : s) c = std::tolower((unsigned char)c);
+    // tolower 는 int 를 돌려주지만 입력이 unsigned char 범위면 결과도 그 범위
+    for(char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
 
@@ -189,7 +190,9 @@ void consumeBuffer(std::string& buf, MqttClient_veda& client) {
         }
 
         // 걸음 수는 2바이트 리틀엔디안 (lo 먼저)
-        uint16_t steps = (uint8_t)buf[4] | ((uint16_t)(uint8_t)buf[5] << 8);
+        // | 연산에서 int 로 승격되므로 결과를 다시 uint16_t 로 좁힘 (8+8비트라 손실 없음)
+        uint16_t steps = static_cast<uint16_t>(
+            static_cast<uint8_t>(buf[4]) | (static_cast<uint8_t>(buf[5]) << 8));
         publishPacket(buf[1], buf[2], buf[3], steps, client);
         buf.erase(0, PKT_LEN);
     }
