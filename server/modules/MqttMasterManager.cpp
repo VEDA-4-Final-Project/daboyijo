@@ -3,6 +3,18 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 
+namespace {
+// 알람 발동 기준
+constexpr int kHrAlarmHigh   = 180;   // 심박 이 값 초과 → 이상
+constexpr int kSpo2AlarmLow  = 90;    // SpO2 이 값 미만 → 이상
+// 정상 복귀 기준 — 발동 기준보다 한 칸 안쪽으로 잡는다(히스테리시스).
+// 89 ↔ 90 을 오갈 때 알람이 껐다 켜졌다 하는 걸 막는다.
+constexpr int kHrClearHigh   = 175;
+constexpr int kSpo2ClearLow  = 93;
+// 한 번 튄 값으로 성급히 "정상 복귀"라고 하지 않도록 연속 N회를 요구한다.
+constexpr int kNormalStreakToClear = 3;
+}  // namespace
+
 MqttMasterManager::MqttMasterManager() {
         mqtt_client_ = std::make_unique<MqttClient_veda>("Main_Master_Module");
 }
@@ -122,9 +134,19 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
 
         if(!wearable_callback_) return;   // 콜백 미등록 시 호출하면 bad_function_call
 
+        AlarmLatch& latch = latches_[data.device_id];
+
+        // ── 낙상: 사건이다. 플래그가 false→true 로 바뀌는 순간에만 알린다.
+        //    기기가 플래그를 몇 초간 유지해도 사이렌은 한 번만 울린다.
         if(data.is_fall_detected){
-            wearable_callback_(AlarmEventType::FALL, data.device_id);
+            if(!latch.fall_alarming){
+                latch.fall_alarming = true;
+                wearable_callback_(AlarmEventType::FALL, data.device_id);
+            }
+        } else {
+            latch.fall_alarming = false;   // 플래그가 내려가면 다음 낙상을 받을 준비
         }
+
         // 체온 조건은 제거했다 — WearableData 에서 temperature 필드가 사라졌다.
         // 측정 하드웨어가 없어 항상 0 이었으므로 이 조건은 발동한 적이 없다.
         //
@@ -134,8 +156,31 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         const bool hr_valid   = data.heart_rate > 0;
         const bool spo2_valid = data.spo2 > 0;
 
-        if((hr_valid && data.heart_rate > 180) || (spo2_valid && data.spo2 < 90)){
-            wearable_callback_(AlarmEventType::VITAL_ABNORMAL, data.device_id);
+        // ── 생체신호: 상태다. 이상인 '동안'이 아니라 이상으로 '바뀔 때' 알린다.
+        const bool abnormal =
+            (hr_valid && data.heart_rate > kHrAlarmHigh) ||
+            (spo2_valid && data.spo2 < kSpo2AlarmLow);
+        // 복귀 판정은 더 빡빡하게(히스테리시스) — 경계값에서 알람이 떨리지 않게.
+        const bool back_to_normal =
+            (!hr_valid   || data.heart_rate <= kHrClearHigh) &&
+            (!spo2_valid || data.spo2 >= kSpo2ClearLow);
+
+        if(abnormal){
+            latch.normal_streak = 0;
+            if(!latch.vital_alarming){
+                latch.vital_alarming = true;
+                wearable_callback_(AlarmEventType::VITAL_ABNORMAL, data.device_id);
+            }
+            // 이미 알람 중이면 아무것도 하지 않는다 — 관제사가 해제한 경보를
+            // 다음 패킷에서 되살리지 않기 위한 핵심 지점이다.
+        } else if(back_to_normal && latch.vital_alarming){
+            if(++latch.normal_streak >= kNormalStreakToClear){
+                latch.vital_alarming = false;
+                latch.normal_streak = 0;
+                std::cout << "[MqttMasterManager] " << data.device_id
+                          << " 생체신호 정상 복귀 — 경보 래치 해제(다음 이상 시 다시 알림)"
+                          << std::endl;
+            }
         }
         
     } catch (const std::exception& e) {
