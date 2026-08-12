@@ -30,6 +30,12 @@ public:
     // 한 채널에 재원 입소자가 여럿이면 가장 높은 위험도(가장 안전한 쪽)를 반환.
     // 반환: 3(상)/2(중)/1(하), 재원 입소자가 없거나 실패 시 -1.
     int getRiskLevelByCamera(int channel);
+    // 웨어러블 device_id("wearable_01" 같은 문자열)로 조회한다.
+    // 릴레이가 보내는 WearableData.device_id 가 그대로 들어오며,
+    // residents.wearable_id 컬럼과 대응한다. 없으면 -1.
+    int getCHById(const std::string& wearable_id);
+    int getRoomById(const std::string& wearable_id);
+    int getRoomByCh(int channel);
     void close();
 private:
     std::mutex mutex_;  // conn_ 보호
