@@ -1,8 +1,10 @@
 // 중계 노드 — HM-10 BLE 수신 → MQTT 발행
 // STM32 → HM-10 → BLE → RPi4(이 코드) → 브로커 → master_node
 //
-// 수신 패킷 5바이트 (firmware/App/Drivers/hm10.h 와 동일 스펙, 1Hz)
-//   [0] 0xAA  [1] 심박  [2] SpO2  [3] 체온(정수°C)  [4] 낙상 0/1
+// 수신 패킷 7바이트 (firmware/App/Drivers/hm10.h 와 동일 스펙)
+//   [0] 0xAA  [1] 심박  [2] SpO2  [3] 낙상 0/1
+//   [4] 걸음 lo  [5] 걸음 hi   (uint16, 리틀엔디안)
+//   [6] 체크섬 — [0]~[5] 를 XOR
 
 #include "MqttClient_veda.hpp"
 #include <simpleble/SimpleBLE.h>
@@ -25,7 +27,7 @@ const std::string SVC_FFE0    = "0000ffe0-0000-1000-8000-00805f9b34fb";
 const std::string CHAR_FFE1   = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
 const uint8_t PKT_HEADER = 0xAA;
-const size_t  PKT_LEN    = 5;
+const size_t  PKT_LEN    = 7;
 const int QOS_VITAL      = 0;   // 바이탈: 빠르게 (유실 감수)
 const int QOS_FALL       = 1;   // 낙상: 반드시 전달
 
@@ -137,15 +139,19 @@ long long nowMs() {
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// 체크섬이 없어 필드 범위로 검증 — 하나라도 벗어나면 헤더 오정렬로 간주
-// 0 은 "측정 불가" 라 정상값
+// 프레이밍 검증 — 마지막 바이트가 앞 6바이트의 XOR 과 일치해야 함 (★ 펌웨어와 동일)
+// 범위 검사는 보조 — 오정렬이 우연히 체크섬을 통과할 때(약 1/256)를 한 번 더 거름
+// 심박엔 상한 없음 — 250 으로 자르면 251~255 구간 패킷이 낙상 플래그째 폐기됨
 bool packetIsValid(const std::string& buf) {
-    return (uint8_t)buf[1] <= 250 && (uint8_t)buf[2] <= 100 &&
-           (uint8_t)buf[3] <= 100 && (uint8_t)buf[4] <= 1;
+    uint8_t sum = 0;
+    for(size_t i = 0; i + 1 < PKT_LEN; i++) sum ^= (uint8_t)buf[i];
+    if(sum != (uint8_t)buf[PKT_LEN - 1]) return false;
+
+    return (uint8_t)buf[2] <= 100 && (uint8_t)buf[3] <= 1;
 }
 
 // 패킷 1개 → WearableData → JSON 발행
-void publishPacket(uint8_t hr, uint8_t spo2, uint8_t temp, uint8_t fall, MqttClient_veda& client) {
+void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall, uint16_t steps, MqttClient_veda& client) {
     // 펌웨어가 낙상 플래그를 5초 유지(HM10_FALL_HOLD_MS) — 그대로 흘리면 알람이 5~6번
     // 상승엣지만 낙상으로 침
     bool rising_edge = (fall == 1 && g_prev_fall == 0);
@@ -155,7 +161,7 @@ void publishPacket(uint8_t hr, uint8_t spo2, uint8_t temp, uint8_t fall, MqttCli
     data.device_id        = g_cfg.device_id;
     data.heart_rate       = hr;
     data.spo2             = spo2;
-    data.temperature      = temp;
+    data.steps            = steps;
     data.is_fall_detected = rising_edge;
     data.timestamp        = nowMs();   // 패킷에 시각 필드가 없어 수신 시점으로 대체
 
@@ -166,7 +172,7 @@ void publishPacket(uint8_t hr, uint8_t spo2, uint8_t temp, uint8_t fall, MqttCli
     std::cout << "[Relay Node] Published " << (rising_edge ? "FALL : " : "vital: ") << payload << std::endl;
 }
 
-// 조각난 데이터를 0xAA 헤더 기준 5바이트로 재조립
+// 조각난 데이터를 0xAA 헤더 기준 PKT_LEN 바이트로 재조립
 void consumeBuffer(std::string& buf, MqttClient_veda& client) {
     while(true) {
         size_t h = buf.find((char)PKT_HEADER);
@@ -179,7 +185,9 @@ void consumeBuffer(std::string& buf, MqttClient_veda& client) {
             continue;
         }
 
-        publishPacket(buf[1], buf[2], buf[3], buf[4], client);
+        // 걸음 수는 2바이트 리틀엔디안 (lo 먼저)
+        uint16_t steps = (uint8_t)buf[4] | ((uint16_t)(uint8_t)buf[5] << 8);
+        publishPacket(buf[1], buf[2], buf[3], steps, client);
         buf.erase(0, PKT_LEN);
     }
 }
