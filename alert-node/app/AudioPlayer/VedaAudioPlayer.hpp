@@ -30,6 +30,11 @@ class VedaAudioPlayer {
 private:
     snd_pcm_t *pcm_handle;
     std::string device_name;
+    // 지금 열려 있는 장치의 포맷. 다음 재생이 같은 포맷이면 다시 열지 않고 재사용한다
+    // (initPlayer 주석 참고 — 재생마다 열면 핸들이 샌다).
+    unsigned int     cur_rate_     = 0;
+    unsigned int     cur_channels_ = 0;
+    snd_pcm_format_t cur_format_   = SND_PCM_FORMAT_UNKNOWN;
 
     snd_mixer_t *mixer_handle;
     snd_mixer_elem_t *volume_elem;

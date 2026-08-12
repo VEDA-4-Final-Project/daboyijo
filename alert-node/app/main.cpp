@@ -38,6 +38,9 @@ struct Config {
     std::string audio_dir   = "sounds";
     std::string idle_text   = "감시 중";      // 평상시 표시 (64px 안에 들어갈 것)
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘린다
+    // 브로커 검증용 CA 인증서. 비어 있으면 TLS 없이 평문으로 붙는다
+    // (브로커의 1883 리스너가 살아 있는 동안의 폴백 겸, 롤백 손잡이).
+    std::string ca_path     = "";
 };
 
 /* 실행 파일이 있는 디렉터리. 현재 디렉터리를 쓰면 어디서 실행했느냐에 따라
@@ -93,6 +96,7 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
+        else if (k == "ca_path")     c.ca_path     = v;
     }
 }
 
@@ -171,14 +175,22 @@ int main(int argc, char* argv[])
         }
     });
 
+    /* ca.crt 도 conf 와 같은 이유로 실행 파일 기준으로 푼다 — systemd 는 작업
+     * 디렉터리가 / 라, 상대 경로 그대로 두면 손으로 실행할 때만 되고 서비스로
+     * 띄우면 tls_set 이 실패해 아래 종료 경로로 빠진다. */
+    if (!cfg.ca_path.empty() && cfg.ca_path[0] != '/')
+        cfg.ca_path = exeDir() + "/" + cfg.ca_path;
+    if (!cfg.ca_path.empty()) client.setTlsConfig(cfg.ca_path);
+
     /* 여기서 죽는 건 의도다. MqttClient_veda 는 재연결 시 구독을 다시 걸지 않아서,
      * 최초 연결에 실패한 채로 계속 돌면 브로커가 나중에 떠도 영영 아무것도 못 받는다.
      * 프로세스는 살아 있는데 알림만 안 오는 상태가 제일 발견하기 어려우므로,
      * 차라리 종료하고 systemd(Restart=always)가 다시 띄우게 둔다.
      * MQTT/MQTT_prod 쪽에 재구독이 붙으면 중계 노드처럼 버티는 쪽으로 바꿀 것. */
     if (!client.connectToBroker(cfg.broker_host, cfg.broker_port)) {
-        fprintf(stderr, "브로커 연결 실패: %s:%d - 종료 (systemd 가 재시작한다)\n",
-                cfg.broker_host.c_str(), cfg.broker_port);
+        fprintf(stderr, "브로커 연결 실패: %s:%d%s - 종료 (systemd 가 재시작한다)\n",
+                cfg.broker_host.c_str(), cfg.broker_port,
+                cfg.ca_path.empty() ? "" : " [TLS]");
         return 1;
     }
     client.startLoop();

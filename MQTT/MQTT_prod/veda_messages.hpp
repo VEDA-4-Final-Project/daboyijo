@@ -31,7 +31,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(WearableData, device_id, is_fall_detected, te
 struct AlarmCommand {
     // 대상
     std::string target_device;  // 알림 노드 id
-    int room;           // 호실
+    int         room;           // 호실 번호. 0 = 호실을 특정할 수 없음(알림 노드가
+                                // 이때만 server 가 준 message 를 그대로 띄운다)
 
     // 이벤트
     std::string type;           // FALL | EGRESS | VITAL_ABNORMAL | CONTROL

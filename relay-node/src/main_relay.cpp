@@ -39,6 +39,9 @@ struct Config {
     int         scan_ms      = 8000;
     int         reconnect_ms = 3000;
     bool        debug_hex    = false;                 // 원시 바이트 덤프
+    // 브로커 검증용 CA 인증서. 비어 있으면 TLS 없이 평문으로 붙는다
+    // (브로커의 1883 리스너가 살아 있는 동안의 폴백 겸, 롤백 손잡이).
+    std::string ca_path      = "";
 };
 
 static Config g_cfg;
@@ -121,6 +124,7 @@ void loadConfig(const std::string& path, Config& c) {
         else if(k == "scan_ms")      c.scan_ms      = toInt(k, v, c.scan_ms);
         else if(k == "reconnect_ms") c.reconnect_ms = toInt(k, v, c.reconnect_ms);
         else if(k == "debug_hex")    c.debug_hex    = (v != "0");
+        else if(k == "ca_path")      c.ca_path      = v;
         else if(k == "hm10_addr") {
             if(looksLikeMac(toLower(v))) c.hm10_addr = toLower(v);
             else std::cerr << "[설정] hm10_addr 이 MAC 형식이 아님: \"" << v
@@ -264,10 +268,30 @@ int main(int argc, char* argv[]) {
     // 중계 노드끼리 서로를 밀어낸다. 기기마다 다른 device_id 를 붙여 그걸 막는다.
     MqttClient_veda client("relay_" + g_cfg.device_id);
 
+    // ca.crt 도 conf 와 같은 이유로 실행 파일 기준으로 푼다 — systemd 는 작업
+    // 디렉터리가 / 라, 상대 경로 그대로 두면 손으로 실행할 때만 되고 서비스로
+    // 띄우면 tls_set 이 실패한다. 그 실패는 "평문도 TLS 도 아닌" 미연결이 된다.
+    if(!g_cfg.ca_path.empty() && g_cfg.ca_path[0] != '/')
+        g_cfg.ca_path = exeDir() + "/" + g_cfg.ca_path;
+    if(!g_cfg.ca_path.empty()) client.setTlsConfig(g_cfg.ca_path);
+
     std::cout << "[Relay Node] Connecting to Mqtt broker "
-              << g_cfg.broker_host << ":" << g_cfg.broker_port << "..." << std::endl;
+              << g_cfg.broker_host << ":" << g_cfg.broker_port
+              << (g_cfg.ca_path.empty() ? " (평문)" : " (TLS)") << "..." << std::endl;
     if(!client.connectToBroker(g_cfg.broker_host, g_cfg.broker_port)) {
-        // 죽이지 않는다 — 오프라인 큐에 쌓다가 자동 재연결되면 flush 된다
+        // TLS 를 쓰는데 실패했다면 인증서 문제일 가능성이 높고, 그건 저절로 낫지
+        // 않는다. tls_set 이 실패하면 mosquitto_connect 가 호출조차 안 돼 자동
+        // 재연결이 돌지 않고, 설정이 핸들에 안 올라갔으니 나중에 붙어봐야 평문으로
+        // 8883 을 두드릴 뿐이다. 그대로 두면 BLE 는 멀쩡히 돌면서 패킷은 오프라인
+        // 큐에만 무한정 쌓이는 "조용히 죽은" 상태가 된다 — 차라리 끊고 systemd 가
+        // 다시 띄우게 한다.
+        if(!g_cfg.ca_path.empty()) {
+            std::cerr << "[Relay Node] TLS 연결 실패 — ca_path 확인: " << g_cfg.ca_path
+                      << " (종료, systemd 가 재시작한다)" << std::endl;
+            return 1;
+        }
+        // 평문일 때는 기존대로 버틴다 — 브로커가 늦게 떠도 자동 재연결로 붙고,
+        // 그때 오프라인 큐가 flush 된다
         std::cerr << "[Relay Node] Mqtt connection failed! buffering until reconnect" << std::endl;
     }
     client.startLoop();
