@@ -3,6 +3,10 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QMqttSubscription>
+#include <QSslCertificate>
+#include <QSslConfiguration>
+#include <QSslError>
+#include <QSslSocket>
 #include <QTimer>
 #include <QUuid>
 
@@ -14,6 +18,11 @@ namespace {
 // 관제 앱은 끊긴 걸 사람이 알아야 하므로, 조용히 붙기만 하는 것보다
 // 시도 로그가 남는 편이 낫다.
 constexpr int kRetryIntervalMs = 5000;
+
+// 브로커 인증서에 적힌 이름(CN). MQTT/scripts/generate_certs.sh 의
+//   openssl req -new -key server.key ... -subj "/CN=DaboBroker"
+// 와 반드시 같아야 한다. 스크립트에서 이름을 바꾸면 여기도 바꾼다.
+constexpr const char* kBrokerCommonName = "DaboBroker";
 
 // 구조체의 timestamp 필드는 전부 Unix epoch 밀리초로 통일한다.
 long long nowMs()
@@ -56,7 +65,7 @@ MqttQtManager::MqttQtManager(QObject* parent)
     connect(m_retryTimer, &QTimer::timeout, this, [this] {
         if (m_client->state() == QMqttClient::Disconnected) {
             qInfo() << "[MQTT] 재연결 시도...";
-            m_client->connectToHost();
+            startConnection();   // 최초 접속과 같은 경로 — TLS 설정도 그대로 적용된다
         }
     });
 }
@@ -98,11 +107,83 @@ bool MqttQtManager::init(const QString& broker_ip, int port, const QString& clie
     m_client->setClientId(id);
 
     m_userDisconnect = false;
-    m_client->connectToHost();
+    startConnection();
     m_retryTimer->start();   // 첫 시도가 실패해도 계속 물고 늘어진다
 
-    qInfo() << "[MQTT] 접속 시도:" << broker_ip << ":" << port << "id =" << id;
+    qInfo() << "[MQTT] 접속 시도:" << broker_ip << ":" << port
+            << (m_caPath.isEmpty() ? "(평문)" : "(MQTTS)") << "id =" << id;
     return true;
+}
+
+void MqttQtManager::setTlsConfig(const QString& ca_path)
+{
+    m_caPath = ca_path;
+}
+
+void MqttQtManager::startConnection()
+{
+    if (m_caPath.isEmpty()) {
+        m_client->connectToHost();          // 평문 MQTT (1883)
+        return;
+    }
+
+    QSslConfiguration conf = QSslConfiguration::defaultConfiguration();
+
+    // 우리 브로커 인증서는 공인 CA 가 아니라 자체 CA(DavoCA)가 서명했다.
+    // 그 CA 를 신뢰 목록에 넣어주지 않으면 "서명한 곳을 모르겠다"며 끊긴다.
+    const QList<QSslCertificate> ca = QSslCertificate::fromPath(m_caPath);
+    if (ca.isEmpty()) {
+        // 여기서 멈추지 않고 진행하면 원인을 알 수 없는 핸드셰이크 실패가 되므로
+        // 경로 문제라는 걸 분명히 남긴다.
+        const QString reason =
+            QStringLiteral("CA 인증서를 읽지 못했습니다: %1").arg(m_caPath);
+        qWarning() << "[MQTT]" << reason;
+        emit connectionError(reason);
+        return;
+    }
+    conf.setCaCertificates(ca);
+    conf.setPeerVerifyMode(QSslSocket::VerifyPeer);   // 도장(CA 서명) 검증은 그대로 켠다
+
+    m_client->connectToHostEncrypted(conf);   // MQTTS (8883)
+
+    // 브로커 인증서에는 이름(CN=DaboBroker)만 있고 IP 는 안 적혀 있는데(SAN 확장
+    // 자체가 없다), 우리는 IP 로 접속한다. 그래서 Qt 가 "인증서 이름과 접속 주소가
+    // 다르다"(HostNameMismatch)며 핸드셰이크를 끊는다.
+    //
+    // QSslConfiguration 만으로는 "이름 검증만 빼고 나머지는 검증"을 고를 수 없다
+    // (setPeerVerifyMode 는 전부 켜거나 전부 끄는 것뿐). 그래서 방금
+    // connectToHostEncrypted() 가 내부에 만든 소켓을 붙잡아, 이 에러 하나만
+    // 직접 판단한다.
+    //
+    // 중요한 건 그냥 무시하지 않는다는 점이다. 인증서에 적힌 CN 을 읽어
+    // kBrokerCommonName 과 대조해서, 맞을 때만 넘어간다 — 즉 주소 대신 이름으로
+    // 신원을 확인한다. 이렇게 하면 같은 CA 가 발급한 다른 장비 인증서
+    // (예: CN=wearable_01)가 브로커 행세를 하는 것도 막힌다.
+    //
+    // 서명이 가짜거나 기간이 만료된 경우 등 나머지 에러는 목록에 넣지 않으므로
+    // 그대로 연결이 끊긴다.
+    if (auto* socket = qobject_cast<QSslSocket*>(m_client->transport())) {
+        connect(socket, &QSslSocket::sslErrors, this,
+                [socket](const QList<QSslError>& errors) {
+                    QList<QSslError> ignorable;
+                    for (const QSslError& e : errors) {
+                        if (e.error() != QSslError::HostNameMismatch) continue;
+
+                        const QStringList cn =
+                            e.certificate().subjectInfo(QSslCertificate::CommonName);
+                        if (cn.contains(QLatin1String(kBrokerCommonName))) {
+                            ignorable.append(e);
+                        } else {
+                            qWarning() << "[MQTT] 인증서 이름이 다릅니다. 기대:"
+                                       << kBrokerCommonName << "실제:" << cn;
+                        }
+                    }
+                    // 목록이 비면 아무것도 무시하지 않는다 = 원래대로 연결 실패.
+                    if (!ignorable.isEmpty()) socket->ignoreSslErrors(ignorable);
+                });
+    } else {
+        qWarning() << "[MQTT] 내부 SSL 소켓을 찾지 못했습니다. TLS 접속이 실패할 수 있습니다.";
+    }
 }
 
 void MqttQtManager::disconnectFromBroker()
@@ -159,7 +240,30 @@ bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_de
     //    이 명령을 보내도 현장 소리가 실제로 꺼지지 않는다.
     AlarmCommand cmd{};
     cmd.target_device = target_device.toStdString();
-    cmd.room          = room.toStdString();
+
+    // AlarmCommand::room 은 정수인데(veda_messages.hpp) DB 의 residents.room 은
+    // varchar 다. 여기가 그 경계라서 여기서 변환한다.
+    // "302호", "302 호" 처럼 숫자 뒤에 글자가 붙은 표기도 들어오므로 숫자만 뽑는다.
+    bool ok = false;
+    int roomNo = room.toInt(&ok);
+    if (!ok) {
+        QString digits;
+        for (const QChar c : room) {
+            if (c.isDigit()) digits.append(c);
+            else if (!digits.isEmpty()) break;   // 앞쪽 숫자 덩어리까지만
+        }
+        roomNo = digits.toInt(&ok);
+    }
+    if (!ok) {
+        // 0 을 보내면 알림 노드가 엉뚱한 호실을 띄운다. 조용히 넘기지 않는다.
+        const QString reason =
+            QStringLiteral("호실을 숫자로 읽을 수 없어 경보 해제를 보내지 못했습니다: \"%1\"")
+                .arg(room);
+        qWarning() << "[MQTT]" << reason;
+        emit connectionError(reason);
+        return false;
+    }
+    cmd.room = roomNo;
 
     cmd.type          = "CONTROL";
     cmd.message       = "경보 해제";

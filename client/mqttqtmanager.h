@@ -49,6 +49,14 @@ public:
     // 자세한 이유는 .cpp 의 소멸자 주석 참고.
     ~MqttQtManager() override;
 
+    // MQTTS(TLS) 설정. ca.crt 경로를 지정하면 그 다음 init() 부터 암호화 접속을
+    // 한다(기본 포트 8883). 비워두면 평문(1883)으로 붙는다.
+    //
+    // 라즈베리파이 노드의 MqttClient_veda::setTlsConfig 와 같은 역할이지만,
+    // 안쪽 구현은 다르다 — mosquitto 는 CA 파일 경로만 넘기면 되는데 Qt 는
+    // QSslConfiguration 객체를 만들어 connectToHostEncrypted 에 넘겨야 한다.
+    void setTlsConfig(const QString& ca_path);
+
     // 브로커 접속을 시작한다. 접속은 비동기라서 반환값은 "요청을 걸었다"는
     // 뜻일 뿐이다. 실제로 쓸 수 있게 되는 시점은 connected() 시그널이고,
     // 실패는 connectionError() 로 온다.
@@ -56,7 +64,7 @@ public:
     // client_id 를 비우면 겹치지 않는 값을 자동으로 만든다. 같은 id 두 개가 한
     // 브로커에 붙으면 나중에 온 쪽이 먼저 있던 쪽을 끊어버려서, 관제 PC 를 두 대
     // 띄웠을 때 서로를 밀어내는 사고가 난다.
-    bool init(const QString& broker_ip, int port = 1883,
+    bool init(const QString& broker_ip, int port = 8883,
               const QString& client_id = QString());
 
     // 사용자가 의도적으로 끊는다. 이 경우에는 자동 재연결을 멈춘다.
@@ -94,9 +102,15 @@ private slots:
 private:
     void subscribeAll();
 
+    // 접속을 실제로 거는 곳. TLS 설정 여부에 따라 평문/암호화를 고른다.
+    // 최초 접속과 재연결 타이머가 같이 쓴다 — 한쪽만 고치면 "처음엔 붙는데
+    // 끊겼다 붙을 때 실패" 하는 고약한 버그가 된다.
+    void startConnection();
+
     QMqttClient* m_client = nullptr;
     QTimer*      m_retryTimer = nullptr;      // QMqttClient 에는 자동 재연결이 없다
     bool         m_userDisconnect = false;    // 우리가 끊은 것인지, 사고인지 구분
+    QString      m_caPath;                    // 비어 있으면 TLS 미사용(평문)
 };
 
 // 지금은 시그널이 전부 메인 스레드에서 나가지만, 나중에 누가 큐 연결
