@@ -73,6 +73,8 @@
 #include "max30102.h"
 #include "fall_detection.h"
 #include "heart_rate_calc.h"
+#include "step_counter.h"
+#include "app_clock.h"
 #include "usbd_cdc_if.h"
 #include "hm10.h"
 /* USER CODE END Includes */
@@ -287,6 +289,8 @@ int main(void)
    * 부팅 시간 2초를 그대로 절약한다. */
   FallDetection_Init();
   HeartRateCalc_Init();
+  StepCounter_Init();
+  AppClock_Init();
 
   /* 3. 통신 라인 안전 초기화 */
   SPI2_DMA_Reset_Unlock();
@@ -358,6 +362,19 @@ int main(void)
       /* ------------------------------------------------------------------
        * [STAGE 3] HM-10 BLE 주기 송신 (HM10_VITAL_PERIOD_MS = 5초) — 바이탈 + 낙상 플래그
        * ------------------------------------------------------------------ */
+      /* 벽시계 진행 + 자정 처리.
+       * 걸음 수는 Reset() 이 아니라 SetSteps(0) 으로 지운다 — 자정에 걷고 있는
+       * 중일 수 있고, 그때 필터와 리듬 상태까지 날리면 진행 중이던 보행이
+       * 끊겨 다음 4걸음을 다시 검증해야 한다. 지울 것은 누적값뿐이다. */
+      AppClock_Service();
+
+      if (AppClock_ConsumeMidnight())
+      {
+          printf("[ CLOCK ] 자정 — 걸음 수 초기화 (%lu 걸음)\r\n",
+                 (unsigned long)StepCounter_GetSteps());
+          StepCounter_SetSteps(0);
+      }
+
       uint32_t now = HAL_GetTick();
 
       /* 낙상 플래그 유지 시간 경과 시 자동 해제 */
@@ -503,6 +520,11 @@ static void Process_IMU_Block(void)
     if (frames == 0) return;
 
     FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_IsWorn());
+
+    /* 만보기는 착용 판정을 거치지 않는다 — IMU 만으로 성립하는 기능에
+     * PPG 접촉 판정을 물리면 MAX30102 고장이 만보기까지 끌고 들어간다.
+     * (상세 근거는 step_counter.c 상단 '착용 판정을 쓰지 않는 이유') */
+    StepCounter_ProcessBlock(bmi_accel, frames);
 
     /* 버퍼 상한에 걸려 잘라 읽었다면 FIFO 에 아직 데이터가 남아있다.
      * INT 핀은 펄스 방식이라 새 엣지가 오지 않을 수 있으므로 스스로 재무장한다.
@@ -652,17 +674,21 @@ static void Enter_Idle(void)
     __enable_irq();
 }
 
-// 현재 바이탈 + 낙상 플래그를 HM-10 5바이트 패킷으로 송신
+// 현재 바이탈 + 낙상 플래그 + 걸음 수를 HM-10 7바이트 패킷으로 송신
 static void HM10_Send_Now(void)
 {
     uint32_t bpm  = HeartRateCalc_GetBPM();
     uint32_t spo2 = HeartRateCalc_GetSpO2();
     uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   // 심박 8bit 클램프
 
-    // 온도: temperature_calc 미구현 → 우선 0 더미
-    uint8_t temp = 0;
+    /* 걸음 수 16bit 포화.
+     * 자정마다 0 으로 돌아가므로 65535 를 넘길 일은 없지만, 시각 동기가 없어
+     * 자정 리셋이 걸리지 않은 채 며칠 켜져 있으면 도달할 수 있다. 그때
+     * 잘라내지 않으면 65536 에서 0 으로 되감겨 '갑자기 안 걸은 것' 처럼 보인다. */
+    uint32_t steps = StepCounter_GetSteps();
+    uint16_t steps16 = (steps > 65535U) ? 65535U : (uint16_t)steps;
 
-    hm10_send_packet(hr, (uint8_t)spo2, temp, g_fall_flag);
+    hm10_send_packet(hr, (uint8_t)spo2, g_fall_flag, steps16);
 }
 
 // 낙상 확정 시 호출 (fall_detection.c) → 플래그 세우고 즉시 1회 송신
