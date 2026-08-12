@@ -4,6 +4,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <map>
 #include "MqttClient_veda.hpp"
 
 enum class AlarmEventType {
@@ -41,6 +42,18 @@ private:
 
     WearableCallback wearable_callback_;
 
+    // ── 경보 래치 (웨어러블 1대당 1개) ─────────────────────────────
+    // 생체신호 이상은 "사건"이 아니라 "상태"다. 이상인 동안 매 패킷마다 알람을
+    // 내면 관제사가 해제해도 1초 뒤 다시 울린다 — 해제가 불가능해진다.
+    // 그래서 정상→이상으로 '바뀌는 순간'에만 알리고, 정상으로 확실히 돌아올
+    // 때까지 래치를 물고 있는다.
+    struct AlarmLatch {
+        bool vital_alarming = false;   // 생체 이상 알람을 이미 낸 상태
+        bool fall_alarming  = false;   // 낙상 플래그 엣지 판정용
+        int  normal_streak  = 0;       // 정상값 연속 횟수(복귀 확정용)
+    };
+    // 접근은 mosquitto 네트워크 스레드(onMessageReceived) 한 곳뿐이라 잠금 불필요.
+    std::map<std::string, AlarmLatch> latches_;   // device_id → 래치
 
     std::unique_ptr<MqttClient_veda> mqtt_client_;
 };
