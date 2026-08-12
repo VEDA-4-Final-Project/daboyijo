@@ -115,7 +115,7 @@ std::string toText(const AlarmCommand& c)
     const std::string room = std::to_string(c.room);
     if (c.type == "FALL")           return room + "호 낙상 발생";
     if (c.type == "EGRESS")         return room + "호 침상 이탈";
-    if (c.type == "VITAL_ABNORMAL") return room + "호 " + c.message;
+    if (c.type == "VITAL_ABNORMAL") return room + "호 생체 이상";
     return room + "호 " + c.message;
 }
 
