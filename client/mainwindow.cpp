@@ -183,7 +183,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.32.31").toString();
+    return s.value(kSettingsBrokerHost, "172.20.32.34").toString();
 }
 int brokerPort() {
     QSettings s;

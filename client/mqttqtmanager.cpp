@@ -235,9 +235,11 @@ bool MqttQtManager::sendAlarmCommand(const AlarmCommand& cmd, int qos)
 
 bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_device, int qos)
 {
-    // ⚠️ 알림 노드가 아직 audio_action == "PLAY" 만 처리한다
-    //    (MQTT/MQTT_dev/src/alarm_node/main_alarm.cpp). STOP 분기가 붙기 전까지는
-    //    이 명령을 보내도 현장 소리가 실제로 꺼지지 않는다.
+    // 알림 노드(alert-node/app/main.cpp)는 audio_action "STOP" 과
+    // matrix_action "CLEAR" 를 모두 처리한다. MQTT 콜백에서 소리를 즉시 끄고,
+    // 큐로도 넘겨 LED 지우기까지 간다.
+    // (구버전 MQTT/MQTT_dev/src/alarm_node/main_alarm.cpp 는 PLAY 만 처리하니,
+    //  현장 파이가 그쪽으로 돌고 있으면 소리가 안 꺼진다 — 노드 버전을 확인할 것)
     AlarmCommand cmd{};
     cmd.target_device = target_device.toStdString();
 
@@ -254,14 +256,16 @@ bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_de
         }
         roomNo = digits.toInt(&ok);
     }
-    if (!ok) {
-        // 0 을 보내면 알림 노드가 엉뚱한 호실을 띄운다. 조용히 넘기지 않는다.
-        const QString reason =
-            QStringLiteral("호실을 숫자로 읽을 수 없어 경보 해제를 보내지 못했습니다: \"%1\"")
-                .arg(room);
-        qWarning() << "[MQTT]" << reason;
-        emit connectionError(reason);
-        return false;
+    if (!ok || roomNo <= 0) {
+        // 호실을 몰라도 전송은 해야 한다. 경보 해제의 목적은 현장 소리를 끄는
+        // 것이고, 호실은 LED 문구에만 쓰인다. 여기서 막으면 입소자 정보에 호실이
+        // 안 채워졌다는 이유만으로 사이렌이 계속 울린다.
+        //
+        // 알림 노드도 0 을 "모름"으로 받게 돼 있다:
+        //   alert-node/app/main.cpp — if (c.room == 0) return c.message;
+        // 음수도 0 으로 눕혀야 한다. 안 그러면 "-5호 낙상 발생" 이 LED 에 뜬다.
+        qWarning() << "[MQTT] 호실을 읽지 못해 0(모름)으로 보냅니다:" << room;
+        roomNo = 0;
     }
     cmd.room = roomNo;
 
