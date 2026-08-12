@@ -16,7 +16,7 @@ MqttMasterManager::~MqttMasterManager() {
 bool MqttMasterManager::init(const std::string& broker_ip, int port) {
 
 
-    std::string ca_path = "../../MQTT/certs/ca.crt";
+    std::string ca_path = "../MQTT/certs/ca.crt";
     mqtt_client_->setTlsConfig(ca_path);
 
     // 콜백·구독은 연결보다 먼저 걸어둔다 — 연결 직후 들어오는 메시지를 놓치지 않고,
