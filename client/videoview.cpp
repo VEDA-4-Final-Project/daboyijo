@@ -7,6 +7,8 @@
 #include <QPainter>
 #include <QPainterPath>
 
+#include "theme.h"
+
 namespace {
 // ROI 오버레이 색 (브랜드 강조색 힐링 그린과 맞춤 · 어두운 영상 위라 밝게)
 const QColor kRoiLine(47, 158, 143);          // 힐링 그린 외곽선
@@ -62,6 +64,15 @@ void VideoView::setVitals(const QString& temp, const QString& hr, const QColor& 
     vitalHr_ = hr;
     vitalColor_ = color;
     hasVitals_ = true;
+    update();
+}
+
+void VideoView::setCornerRadius(int r) {
+    if (cornerRadius_ == r) return;
+    cornerRadius_ = r;
+    // 둥근 모서리는 바깥 네 귀퉁이를 안 칠하므로 부모 배경이 비쳐야 한다
+    // → 그때만 '위젯 전체를 내가 칠한다'는 최적화 속성을 끈다.
+    setAttribute(Qt::WA_OpaquePaintEvent, r <= 0);
     update();
 }
 
@@ -148,7 +159,16 @@ QPointF VideoView::toWidget(const QPointF& n) const {
 // ── 그리기 ───────────────────────────────────────────────────
 void VideoView::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    p.fillRect(rect(), Qt::black);
+    if (cornerRadius_ > 0) {
+        // 카드 radius에 맞춰 영상·오버레이 전부를 둥글게 잘라낸다.
+        QPainterPath clip;
+        clip.addRoundedRect(QRectF(rect()), cornerRadius_, cornerRadius_);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.fillPath(clip, Qt::black);
+        p.setClipPath(clip);
+    } else {
+        p.fillRect(rect(), Qt::black);
+    }
 
     if (!cameraConnected_) {
         p.setPen(QColor(139, 148, 158));
@@ -329,4 +349,54 @@ void VideoView::finishDraft() {
         emit roiCompleted(channel_, roi_);
     }
     setDrawMode(false);  // draft_ 비우고 커서 복원
+}
+
+// ── FramePreview (이미지 탭 적용 전/후 프리뷰) ────────────────
+FramePreview::FramePreview(const QString& placeholder, QWidget* parent)
+    : QWidget(parent), placeholder_(placeholder) {}
+
+void FramePreview::setFrame(const QPixmap& frame) {
+    frame_ = frame;
+    update();  // 다시 그리기만 예약 — 레이아웃은 건드리지 않는다
+}
+
+void FramePreview::clearFrame() {
+    if (frame_.isNull()) return;
+    frame_ = QPixmap();
+    update();
+}
+
+// 비율 유지(KeepAspectRatio) 레터박스 배치. 클릭 지점 초점 좌표 계산도 이 값을 쓴다.
+QRectF FramePreview::imageRect() const {
+    if (frame_.isNull()) return QRectF(rect());
+    QSizeF fs = frame_.size();
+    fs.scale(size(), Qt::KeepAspectRatio);
+    return QRectF((width() - fs.width()) / 2.0, (height() - fs.height()) / 2.0,
+                  fs.width(), fs.height());
+}
+
+void FramePreview::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    QPainterPath frameShape;
+    frameShape.addRoundedRect(box, 8, 8);
+    p.fillPath(frameShape, Qt::black);
+
+    if (frame_.isNull()) {
+        p.setPen(QColor(QString::fromLatin1(kTextSub)));
+        p.drawText(rect(), Qt::AlignCenter, placeholder_);
+    } else {
+        p.save();
+        p.setClipPath(frameShape);
+        // 스케일은 QPainter에 맡긴다 — 원본을 매번 CPU로 리샘플링하지 않는다.
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.drawPixmap(imageRect(), frame_, QRectF(frame_.rect()));
+        p.restore();
+    }
+
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(QString::fromLatin1(kBorder)), 1));
+    p.drawRoundedRect(box, 8, 8);
 }

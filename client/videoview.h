@@ -34,6 +34,10 @@ public:
     // NVR 스타일 오버레이 — 영상 위에 직접 그리는 정보.
     void setOverlayInfo(const QString& info);  // 좌하단 라벨(예: "201호-1 · 전승현")
     void setLive(bool on);                      // 우상단 LIVE/미연결 표시등
+    bool live() const { return live_; }
+    // 영상 모서리를 둥글게(0=직각). 카드(#videoCard/#camStage)의 radius와 맞춰
+    // 모서리에 검은 각이 삐져나오지 않게 한다.
+    void setCornerRadius(int r);
     // 우상단 웨어러블 바이탈 오버레이 (체온·심박). color는 상태색(정상/주의/위험).
     void setVitals(const QString& temp, const QString& hr, const QColor& color);
     void setRoi(const QPolygonF& normPts);    // 확정된 ROI(정규화) 주입
@@ -74,6 +78,7 @@ private:
     bool drawMode_ = false;
     bool roiVisible_ = true;
     bool cameraConnected_ = false;  // 카메라 연결 상태 (시작 시 미연결)
+    int cornerRadius_ = 0;          // 영상 모서리 반경(0=직각)
     QString overlayInfo_;           // 좌하단 오버레이 라벨(병상·이름)
     bool live_ = false;             // 우상단 LIVE 표시등 상태
     QString vitalTemp_, vitalHr_;   // 우상단 바이탈(체온·심박) 텍스트
@@ -85,6 +90,32 @@ private:
     QString alertLabel_ = QStringLiteral("🚨 낙상 감지");  // 상단 배너 문구
     QPointF alertPt_{-1, -1};     // 발생 위치(정규화 0~1), 음수면 미표시
     QTimer* alertTimer_ = nullptr;
+};
+
+// 이미지 탭의 '적용 전 / 적용 후' 비교 프리뷰 패널.
+//
+// QLabel + setPixmap(원본.scaled(...))을 쓰면 안 된다:
+//   · setPixmap이 sizeHint를 바꿔 매 프레임 전체 레이아웃이 무효화되고,
+//   · QPixmap::scaled(SmoothTransformation)는 원본 해상도를 GUI 스레드에서
+//     통째로 리샘플링한다.
+// 둘이 겹치면 GUI 스레드가 영상 수신 속도를 못 따라가 지연이 눈에 띄게 쌓인다.
+// 그래서 VideoView와 같이 원본을 그대로 들고 있다가 paintEvent에서 한 번
+// 그리기만 한다(레이아웃 무효화 없음).
+class FramePreview : public QWidget {
+public:
+    explicit FramePreview(const QString& placeholder, QWidget* parent = nullptr);
+
+    void setFrame(const QPixmap& frame);   // 새 프레임(원본 해상도 그대로 보관)
+    void clearFrame();                     // 비우고 안내 문구로 되돌림
+    bool hasFrame() const { return !frame_.isNull(); }
+    QRectF imageRect() const;              // 레터박스 여백 뺀 실제 영상 사각형
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+
+private:
+    QPixmap frame_;
+    QString placeholder_;
 };
 
 #endif  // VIDEOVIEW_H
