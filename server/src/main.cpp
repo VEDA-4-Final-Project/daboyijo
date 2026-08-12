@@ -231,7 +231,7 @@ int main(int argc, char* argv[]) {
         int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
         stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
         telegram.notifyEgress(ch);
-        int room ;
+        int room = db.getRoomByCh(ch);   // 낙상 콜백과 동일하게 채널로 호실을 찾는다
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
     });
     // 웨어러블 기반 이벤트 발생

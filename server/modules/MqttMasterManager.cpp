@@ -54,7 +54,7 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
 }
 
 
-void MqttMasterManager::(AlarmEventType event_type, int room ) {
+void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int room ) {
 
     AlarmCommand cmd;
     cmd.room = room;
@@ -64,11 +64,11 @@ void MqttMasterManager::(AlarmEventType event_type, int room ) {
         cmd.message = "room" + std::to_string(cmd.room) + " FALL";
         cmd.audio_file = "fall_alert.wav";
     }else if(event_type == AlarmEventType::EGRESS){
-        cmd.status = "EGRESS";
+        cmd.type = "EGRESS";
         cmd.message = "room" + std::to_string(cmd.room) + " EGRESS";
         cmd.audio_file = "egress_alert.wav";
     }else if(event_type == AlarmEventType::VITAL_ABNORMAL){
-        cmd.status = "VITAL_ABNORMAL";
+        cmd.type = "VITAL_ABNORMAL";
         cmd.message = "room"+ std::to_string(cmd.room) + " VITAL_ABNORMAL";
         cmd.audio_file = "vital_alert.wav";
     }
