@@ -10,14 +10,29 @@
 #include "theme.h"
 
 namespace {
-// ROI 오버레이 색 (브랜드 강조색 힐링 그린과 맞춤 · 어두운 영상 위라 밝게)
-const QColor kRoiLine(47, 158, 143);          // 힐링 그린 외곽선
-const QColor kRoiFill(47, 158, 143, 70);      // 반투명 채움
+// 침대 ROI 오버레이 색. 한 화면에 침대가 여럿이라 하나의 색으로는 구분이 안 돼
+// 번호별로 고정 배정한다 — 색이 매번 바뀌면 관제사가 "초록이 1번"으로 못 외운다.
+// 첫 색은 기존 단일 ROI와 같은 브랜드 강조색(힐링 그린)을 유지.
+const QColor kZoneColors[] = {
+    QColor(47, 158, 143),   // 힐링 그린
+    QColor(93, 143, 214),   // 블루
+    QColor(214, 149, 61),   // 앰버
+    QColor(178, 122, 201),  // 퍼플
+    QColor(96, 176, 96),    // 그린
+    QColor(214, 106, 122),  // 로즈
+    QColor(122, 176, 194),  // 틸
+    QColor(184, 160, 96),   // 카키
+};
 const QColor kDraftLine(224, 148, 43);        // 그리는 중(주황)
 const QColor kVertex(245, 247, 245);          // 꼭짓점 마커
 constexpr double kDupEps = 0.006;             // 더블클릭 중복 꼭짓점 제거 임계
 constexpr int kMaxPoints = 32;                // 프로토콜 DBJ_ROI_MAX_POINTS와 동일
 }  // namespace
+
+QColor VideoView::zoneColor(int id) {
+    const int n = int(sizeof(kZoneColors) / sizeof(kZoneColors[0]));
+    return kZoneColors[(id < 0 ? 0 : id) % n];
+}
 
 VideoView::VideoView(int channel, QWidget* parent)
     : QWidget(parent), channel_(channel) {
@@ -37,8 +52,9 @@ void VideoView::setChannel(int ch) {
     draft_.clear();
     hasHover_ = false;
     drawMode_ = false;
+    selectedZone_ = -1;
     setCursor(Qt::ArrowCursor);
-    update();  // roi_·frame_는 호출부(선택 슬롯)가 새 채널 값으로 채운다
+    update();  // zones_·frame_는 호출부(선택 슬롯)가 새 채널 값으로 채운다
 }
 
 void VideoView::setCameraConnected(bool on) {
@@ -76,14 +92,60 @@ void VideoView::setCornerRadius(int r) {
     update();
 }
 
-void VideoView::setRoi(const QPolygonF& normPts) {
-    roi_ = normPts;
+void VideoView::setZones(const QVector<RoiZone>& zones) {
+    zones_ = zones;
+    // 선택돼 있던 침대가 목록에서 사라졌으면 선택도 같이 푼다
+    if (selectedZone_ >= 0) {
+        bool found = false;
+        for (const auto& z : zones_) {
+            if (z.id == selectedZone_) { found = true; break; }
+        }
+        if (!found) selectedZone_ = -1;
+    }
     update();
 }
 
-void VideoView::clearRoi() {
-    roi_.clear();
+void VideoView::clearZones() {
+    zones_.clear();
+    selectedZone_ = -1;
     update();
+}
+
+void VideoView::removeZone(int id) {
+    for (int i = 0; i < zones_.size(); ++i) {
+        if (zones_[i].id != id) continue;
+        zones_.removeAt(i);
+        break;
+    }
+    if (selectedZone_ == id) selectedZone_ = -1;
+    update();
+}
+
+int VideoView::nextFreeZoneId() const {
+    for (int id = 0; id < kMaxRoiZones; ++id) {
+        bool used = false;
+        for (const auto& z : zones_) {
+            if (z.id == id) { used = true; break; }
+        }
+        if (!used) return id;
+    }
+    return -1;  // 침대가 상한까지 찼다
+}
+
+void VideoView::setSelectedZone(int id) {
+    if (selectedZone_ == id) return;
+    selectedZone_ = id;
+    update();
+}
+
+int VideoView::zoneAt(const QPointF& n) const {
+    // 겹쳐 그린 침대는 나중에 그린 쪽이 위에 보이므로, 보이는 것과 집히는 것을
+    // 맞추려면 역순으로 훑는다.
+    for (int i = zones_.size() - 1; i >= 0; --i) {
+        if (zones_[i].poly.size() >= 3 && zones_[i].poly.containsPoint(n, Qt::OddEvenFill))
+            return zones_[i].id;
+    }
+    return -1;
 }
 
 void VideoView::setDrawMode(bool on) {
@@ -183,16 +245,47 @@ void VideoView::paintEvent(QPaintEvent*) {
 
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    // 확정된 ROI (모니터링 오버레이)
-    if (roiVisible_ && roi_.size() >= 2) {
-        QPolygonF poly;
-        for (const auto& n : roi_) poly << toWidget(n);
-        QPainterPath path;
-        path.addPolygon(poly);
-        path.closeSubpath();
-        p.fillPath(path, kRoiFill);
-        p.setPen(QPen(kRoiLine, 2));
-        p.drawPolygon(poly);
+    // 확정된 침대 ROI들 (모니터링 오버레이)
+    if (roiVisible_) {
+        QFont zf = font();
+        zf.setBold(true);
+        zf.setPointSizeF(qMax(7.5, zf.pointSizeF() - 1));
+        const QFontMetrics zfm(zf);
+
+        for (const auto& z : zones_) {
+            if (z.poly.size() < 2) continue;
+            const bool sel = (z.id == selectedZone_);
+            const QColor line = zoneColor(z.id);
+            QColor fill = line;
+            fill.setAlpha(sel ? 105 : 70);   // 선택된 침대는 조금 더 진하게
+
+            QPolygonF poly;
+            for (const auto& n : z.poly) poly << toWidget(n);
+            QPainterPath path;
+            path.addPolygon(poly);
+            path.closeSubpath();
+            p.fillPath(path, fill);
+            p.setPen(QPen(line, sel ? 3 : 2));
+            p.drawPolygon(poly);
+
+            // 침대 이름표 — 다각형 중심에 얹는다. 침대가 여럿이면 어느 게
+            // 누구 자리인지 영상 위에서 바로 읽혀야 관제가 된다.
+            const QString text = z.label.isEmpty()
+                                     ? QStringLiteral("침대 %1").arg(z.id + 1)
+                                     : z.label;
+            const QPointF c = poly.boundingRect().center();
+            const int tw = zfm.horizontalAdvance(text);
+            const int th = zfm.height();
+            QRectF chip(c.x() - tw / 2.0 - 7, c.y() - th / 2.0 - 3, tw + 14, th + 6);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 165));
+            p.drawRoundedRect(chip, 5, 5);
+            p.setFont(zf);
+            p.setPen(line.lighter(135));
+            p.drawText(chip, Qt::AlignCenter, text);
+        }
+        p.setFont(font());
+        p.setBrush(Qt::NoBrush);
     }
 
     // 그리는 중인 다각형
@@ -264,11 +357,15 @@ void VideoView::paintEvent(QPaintEvent*) {
                    Qt::AlignVCenter | Qt::AlignLeft, st);
     }
 
-    // 그리기 모드 안내 배너
+    // 그리기 모드 안내 배너 — 지금 몇 번 침대를 그리는 중인지 같이 보여준다
     if (drawMode_) {
+        const int id = nextFreeZoneId();
         p.setPen(kDraftLine);
         p.drawText(QRectF(0, 6, width(), 20), Qt::AlignHCenter,
-                   QStringLiteral("침대 영역 클릭 · 더블클릭(또는 우클릭)으로 완료"));
+                   id < 0 ? QStringLiteral("침대가 가득 찼습니다 (최대 %1개)")
+                                .arg(kMaxRoiZones)
+                          : QStringLiteral("침대 %1 영역 클릭 · 더블클릭(또는 우클릭)으로 완료")
+                                .arg(id + 1));
     }
 
     // 낙상 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
@@ -304,6 +401,13 @@ void VideoView::paintEvent(QPaintEvent*) {
 
 void VideoView::mousePressEvent(QMouseEvent* e) {
     if (!drawMode_) {
+        // 그리기 중이 아니면 클릭은 "이 침대를 편집 대상으로 고른다"는 뜻.
+        // 빈 곳을 누르면 선택 해제(-1).
+        if (e->button() == Qt::LeftButton && !zones_.isEmpty()) {
+            const int hit = zoneAt(toNorm(e->position()));
+            setSelectedZone(hit);
+            emit zoneSelected(channel_, hit);
+        }
         QWidget::mousePressEvent(e);
         return;
     }
@@ -344,9 +448,14 @@ void VideoView::finishDraft() {
         else
             break;
     }
-    if (draft_.size() >= 3) {
-        roi_ = draft_;
-        emit roiCompleted(channel_, roi_);
+    const int id = nextFreeZoneId();
+    if (draft_.size() >= 3 && id >= 0) {
+        RoiZone z;
+        z.id = id;
+        z.poly = draft_;
+        zones_.push_back(z);       // 이름표는 호출부가 입소자를 지정하며 채운다
+        selectedZone_ = id;        // 방금 그린 침대를 바로 편집 대상으로
+        emit roiCompleted(channel_, id, z.poly);
     }
     setDrawMode(false);  // draft_ 비우고 커서 복원
 }

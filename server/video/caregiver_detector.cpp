@@ -79,8 +79,10 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
 
 // 프레임 전체 순회
 bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
-                                       const DetectionFrame& df) const {
+                                       const DetectionFrame& df,
+                                       std::vector<int>* caregiver_ids) const {
     if (frame.empty()) return false;
+    bool found = false;
     const int W = frame.cols;
     const int H = frame.rows;
 
@@ -110,8 +112,12 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
 
         cv::Rect box(x, y, w, h);
 
-        if (isCaregiver(frame(box))) return true;
+        if (!isCaregiver(frame(box))) continue;
 
+        found = true;
+        // 존재 여부만 물어본 호출이면 여기서 끝 — 나머지 사람은 볼 필요가 없다
+        if (!caregiver_ids) return true;
+        caregiver_ids->push_back(obj.object_id);
     }
-    return false;
+    return found;
 }

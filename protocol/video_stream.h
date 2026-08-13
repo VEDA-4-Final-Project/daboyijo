@@ -13,6 +13,7 @@
  *  - 같은 TCP 연결로 Qt가 침대 ROI 다각형을 서버에 보낸다.
  *  - 구조: [dbj_ctrl_header_t][dbj_roi_point_t × point_count]
  *  - magic이 DBJ_CTRL_MAGIC(0xDB4C)라 영상 프레임과 구분된다.
+ *  - 한 채널에 침대가 여러 개일 수 있어 ROI도 채널당 여러 개다(roi_id로 구분).
  *
  * Qt 수신 절차:
  *  1. 헤더 16바이트 수신 → magic/version 검증 (안 맞으면 연결 재수립)
@@ -47,6 +48,8 @@ extern "C" {
  * 영상 프레임과 같은 TCP 스트림에 끼어 내려온다(순서 보장).
  * Qt는 magic으로 영상(0xDB4B)/이벤트(0xDB4D)를 구분해 파싱한다.
  * 현재 용도: 낙상 확정 통보 → 해당 채널 강조 + 팝업.
+ * roi_id 로 "어느 침대(=누구)"인지가 같이 내려온다 — 서버가 추적 객체를 침대에
+ * 귀속시키지 못했으면 DBJ_ROI_ID_NONE 이 오고, Qt는 그때 "미상"으로 표시한다.
  */
 #define DBJ_EVT_MAGIC       0xDB4D  /* 이벤트 메시지 시작 식별자 */
 #define DBJ_EVT_FALL        0x01    /* 낙상 확정 (x,y = 발생 위치) */
@@ -54,8 +57,8 @@ extern "C" {
 #define DBJ_EVT_VITAL_ABNORMAL 0x03 /* 웨어러블 생체데이터 이상 (x,y 미사용, 0) */
 
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
-#define DBJ_CTRL_ROI_SET    0x01    /* 채널 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
-#define DBJ_CTRL_ROI_CLEAR  0x02    /* 채널 ROI 삭제 — 점 배열 없음 */
+#define DBJ_CTRL_ROI_SET    0x01    /* 침대 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
+#define DBJ_CTRL_ROI_CLEAR  0x02    /* 침대 ROI 삭제 — 점 배열 없음 */
 #define DBJ_CTRL_ALARM_CONFIRM 0x03  /* 통합 경보 해제 — 점 배열 없음 */
 #define DBJ_CTRL_RISK_UPDATE  0x04  /* 입소자 위험도 갱신*/
 /* 채널 카메라 런타임 연결/해제 — Qt에서 CCTV를 지정하면 서버가 그 RTSP를 연다.
@@ -78,6 +81,11 @@ extern "C" {
 #define DBJ_CTRL_FOCUS_SET    0x08  /* 채널 카메라 포커스 — 헤더 뒤 dbj_focus_t */
 #define DBJ_FOCUS_WHOLE       0     /* 전체 자동초점 (좌표 무시) */
 #define DBJ_FOCUS_AREA        1     /* 클릭 지점 영역 초점 */
+/* 침대 ROI ↔ 입소자 매핑 — 헤더 뒤에 dbj_roi_bind_t 1개.
+ * "이 채널의 N번 침대는 입소자 R의 자리다"를 서버에 알린다. 서버는 이 매핑을
+ * roi_zones 테이블에 남기고, 그 침대에서 태어난 추적 객체에 입소자를 귀속시킨다
+ * (core/identity_tracker.hpp). resident_id=0 이면 매핑 해제. */
+#define DBJ_CTRL_ROI_BIND     0x09  /* 침대 ↔ 입소자 매핑 — 헤더 뒤 dbj_roi_bind_t */
 
 #define DBJ_CAMERA_URL_MAX  512     /* CAMERA_SET URL 문자열 길이 상한 */
 
@@ -88,6 +96,26 @@ extern "C" {
 
 #define DBJ_ROI_MAX_POINTS  32      /* 다각형 꼭짓점 상한 */
 #define DBJ_ROI_COORD_SCALE 10000   /* 정규화 좌표 고정소수 배율 (0.0~1.0 → 0~10000) */
+
+/* ── 다중 침대 ROI (채널당 여러 개) ────────────────────────────
+ * 한 채널(=한 병실 시야)에 침대가 2개 이상이고, 침대마다 입소자가 다르다.
+ * 그래서 ROI는 채널당 1개가 아니라 roi_id로 구분되는 여러 개다.
+ *
+ * roi_id 는 dbj_ctrl_header_t.reserved 의 하위 8비트로 실어 보낸다
+ * (ROI_SET / ROI_CLEAR / RISK_UPDATE). 상위 8비트는 0.
+ * ★ 헤더 크기를 안 늘리려고 기존 reserved 를 재해석한 것이라, 예전 클라이언트가
+ *   보내던 reserved=0 은 자연히 roi_id=0("첫 번째 침대")이 되어 하위호환된다.
+ *   CAMERA_SET 만은 예전대로 reserved 전체가 URL 길이다(ROI 계열이 아님).
+ */
+#define DBJ_ROI_MAX_ZONES   8       /* 채널당 침대 ROI 상한 */
+/* roi_id 자리에 들어가는 특수값.
+ *  - ROI_CLEAR   : 그 채널의 ROI를 전부 삭제
+ *  - RISK_UPDATE : 그 채널의 모든 침대에 같은 위험도 일괄 적용
+ *  - 이벤트 헤더 : 발생 침대를 특정하지 못함(미상) */
+#define DBJ_ROI_ID_ALL      0xFF
+#define DBJ_ROI_ID_NONE     0xFF
+/* reserved ↔ roi_id 변환 (ROI_SET / ROI_CLEAR / RISK_UPDATE 전용) */
+#define DBJ_CTRL_ROI_ID(reserved_)  ((uint8_t)((reserved_) & 0xFF))
 
 #pragma pack(push, 1)
 
@@ -105,13 +133,20 @@ typedef struct {
     uint8_t  type;         /* DBJ_CTRL_* */
     uint8_t  channel;      /* 대상 채널 0~3 */
     uint8_t  point_count;  /* ROI_SET 시 점 개수(0~32) 또는 RISK_UPDATE 시 위험도 값(1~3) */
-    uint16_t reserved;     /* 기본 0. CAMERA_SET 시엔 이어지는 URL 문자열 바이트 길이 */
+    uint16_t reserved;     /* 기본 0. CAMERA_SET 시엔 이어지는 URL 문자열 바이트 길이.
+                            * ROI_SET/ROI_CLEAR/RISK_UPDATE 시엔 하위 8비트가 roi_id */
 } dbj_ctrl_header_t;       /* 8바이트, 이어서 point_count개의 dbj_roi_point_t 또는 reserved 바이트의 URL */
 
 typedef struct {
     uint16_t x;            /* 정규화 x × DBJ_ROI_COORD_SCALE (0~10000) */
     uint16_t y;            /* 정규화 y × DBJ_ROI_COORD_SCALE (0~10000) */
 } dbj_roi_point_t;         /* 4바이트 */
+
+typedef struct {
+    uint8_t  roi_id;       /* 이 채널 안의 침대 번호 0~7 */
+    uint8_t  reserved;     /* 0 */
+    uint32_t resident_id;  /* residents.resident_id (0 = 매핑 해제) */
+} dbj_roi_bind_t;          /* 6바이트, ROI_BIND 시 헤더 뒤에 1개 */
 
 typedef struct {
     uint8_t brightness;    /* 0~100 (서버가 카메라 실제 범위로 매핑) */
@@ -131,7 +166,7 @@ typedef struct {
     uint8_t  version;      /* DBJ_VS_VERSION */
     uint8_t  type;         /* DBJ_EVT_* */
     uint8_t  channel;      /* 발생 채널 0~3 */
-    uint8_t  reserved;     /* 0 */
+    uint8_t  roi_id;       /* 발생 침대 0~7. 어느 침대인지 못 밝히면 DBJ_ROI_ID_NONE */
     uint16_t x;            /* 발생 위치 정규화 x × DBJ_ROI_COORD_SCALE (없으면 0) */
     uint16_t y;            /* 발생 위치 정규화 y × DBJ_ROI_COORD_SCALE (없으면 0) */
     uint64_t timestamp_ms; /* 서버 Unix time (밀리초) */
