@@ -49,6 +49,11 @@
 /* 손목을 계속 들고 있어도 이 시간이 지나면 끈다 */
 #define DISPLAY_ON_MS        7000
 
+/* 켠 직후 이 시간 동안은 소등 판정을 하지 않는다.
+ * 점등 신호와 자세 판정은 서로 다른 조건이라, 켜자마자 자세가 '내림' 으로
+ * 읽히면 전체 렌더를 마치고 바로 끄는 헛수고가 생긴다. */
+#define DISPLAY_MIN_ON_MS    500
+
 /* 켜져 있는 동안 라벨 갱신 주기 */
 #define DISPLAY_LABEL_MS     1000
 
@@ -139,8 +144,10 @@ void DisplayService_Service(void)
      * 내렸는데도 화면이 한 번 더 켜진다. */
     (void)WristRaise_ConsumeRaiseEvent();
 
-    if (!s_always_on &&
-        (!WristRaise_IsRaised() || (now - s_on_since_ms) >= DISPLAY_ON_MS))
+    uint32_t on_for = now - s_on_since_ms;
+
+    if (!s_always_on && on_for >= DISPLAY_MIN_ON_MS &&
+        (!WristRaise_IsRaised() || on_for >= DISPLAY_ON_MS))
     {
         Display_PowerOff();
         return;

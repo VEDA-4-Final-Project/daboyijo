@@ -62,11 +62,31 @@ static uint8_t          s_rx_len = 0;                   /* 지금까지 모인 �
 static volatile uint8_t s_time_pending = 0;             /* 검증까지 끝난 시각이 대기 중 */
 static volatile uint8_t s_time_h = 0, s_time_m = 0, s_time_s = 0;
 
-void hm10_start_receive(void)
+/* 수신 바이트 누적 (진단용).
+ * ISR 에서 printf 를 부르면 안 된다 — _write() 가 USB CDC 가 밀릴 때 최대
+ * 2000회 재시도하며 도는데, 그게 ISR 안이면 시스템이 그 자리에서 멎는다.
+ * 그래서 여기서는 세기만 하고 출력은 메인 루프에 맡긴다. */
+static volatile uint32_t s_rx_count = 0;
+
+HAL_StatusTypeDef hm10_start_receive(void)
+{
+    if (s_huart == NULL) return HAL_ERROR;
+    s_rx_len = 0;
+    /* 결과를 삼키지 않고 돌려준다 — 무장에 실패하면 수신이 통째로 죽는데,
+     * 겉으로는 '시계가 안 맞는다' 로만 보여 원인을 찾기 어렵다. */
+    return HAL_UART_Receive_IT(s_huart, &s_rx_byte, 1);
+}
+
+void hm10_request_time(void)
 {
     if (s_huart == NULL) return;
-    s_rx_len = 0;
-    HAL_UART_Receive_IT(s_huart, &s_rx_byte, 1);
+
+    uint8_t pkt[HM10_REQ_LEN];
+    pkt[0] = HM10_REQ_HEADER;
+    pkt[1] = HM10_REQ_TIME;
+    pkt[2] = (uint8_t)(pkt[0] ^ pkt[1]);
+
+    HAL_UART_Transmit(s_huart, pkt, HM10_REQ_LEN, HM10_TX_TIMEOUT);
 }
 
 /**
@@ -80,6 +100,8 @@ void hm10_start_receive(void)
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (s_huart == NULL || huart->Instance != s_huart->Instance) return;
+
+    s_rx_count++;
 
     if (s_rx_len == 0)
     {
@@ -131,6 +153,11 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
     s_rx_len = 0;
     HAL_UART_Receive_IT(s_huart, &s_rx_byte, 1);
+}
+
+uint32_t hm10_get_rx_count(void)
+{
+    return s_rx_count;
 }
 
 uint8_t hm10_take_time(uint8_t *hour, uint8_t *minute, uint8_t *second)

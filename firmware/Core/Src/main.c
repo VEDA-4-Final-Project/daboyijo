@@ -160,6 +160,14 @@ volatile uint32_t g_fall_flag_ms = 0;
 /* 주기 송신 시각. 낙상 즉시 송신도 이 시각을 갱신해야 패킷이 겹치지 않는다. */
 static uint32_t g_last_vital_ms = 0;
 
+/* 시각 요청 재시도.
+ *
+ * 부팅 직후에는 BLE 가 아직 안 붙어 있을 수 있어 요청 한 번은 유실되기 쉽다.
+ * 동기가 설 때까지만 주기적으로 다시 묻고, 맞춰지면 스스로 멈춘다.
+ * 3바이트짜리라 몇 번 더 보내도 비용이 없다. */
+static uint32_t g_last_time_req_ms = 0;
+#define TIME_REQ_RETRY_MS   5000
+
 /* ── 독립 워치독(IWDG) ──────────────────────────────────────────────
  *
  * 어느 단계가 멎어도 BLE 송신만은 계속되는 상태가 가장 위험하다. 밖에서는
@@ -255,8 +263,9 @@ int main(void)
    *
    * 로그를 남기는 이유: 수신 경로는 아무것도 출력하지 않아서, 시각이 안 맞을 때
    * '펌웨어가 최신인가'를 가릴 근거가 없었다. 이 줄이 없으면 옛 펌웨어다. */
-  hm10_start_receive();
-  printf("[ HM10 ] 시각 수신 대기 (USART2 RX)\r\n");
+  HAL_StatusTypeDef rx_arm = hm10_start_receive();
+  printf("[ HM10 ] 시각 수신 %s (USART2 RX)\r\n",
+         (rx_arm == HAL_OK) ? "대기" : "무장 실패 — 수신 불가");
 
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
@@ -403,6 +412,21 @@ int main(void)
       }
 
       uint32_t now = HAL_GetTick();
+
+      /* 시각이 아직 안 맞았으면 릴레이에 요청한다.
+       * 릴레이의 10분 주기만 기다리면 그동안 화면에 빌드 시각이 남는데,
+       * MCU 만 리셋되고 BLE 링크는 살아있는 경우 릴레이는 아무 일도 없었다고
+       * 보기 때문에 특히 오래 걸린다. 먼저 물어보는 쪽이 확실하다. */
+      if (!AppClock_IsSynced() && (now - g_last_time_req_ms >= TIME_REQ_RETRY_MS))
+      {
+          g_last_time_req_ms = now;
+          hm10_request_time();
+
+          /* 수신 누적 바이트를 같이 찍는다. 이 숫자가 계속 0 이면 파싱을 볼
+           * 필요도 없이 물리 경로(HM-10 TX → PA3) 문제다. */
+          printf("[ HM10 ] 시각 요청 (수신 누적 %lu바이트)\r\n",
+                 (unsigned long)hm10_get_rx_count());
+      }
 
       /* 낙상 플래그 유지 시간 경과 시 자동 해제 */
       if (g_fall_flag && (now - g_fall_flag_ms >= HM10_FALL_HOLD_MS))

@@ -45,6 +45,17 @@ const uint8_t TIME_PKT_HEADER = 0x55;
 const size_t  TIME_PKT_LEN    = 5;
 const int     TIME_SYNC_MS    = 10 * 60 * 1000;   // 10분마다 (연결 직후에도 1회)
 
+// ── 시각 요청 (STM32 → RPi) ───────────────────────────────────────
+//   [0] 0xA5  [1] 0x01(시각)  [2] 체크섬([0]^[1])
+//
+// 웨어러블이 부팅하면 빌드 시각으로 시작한다. 위의 10분 주기만 기다리면
+// 그동안 화면에 틀린 시각이 남는데, MCU 만 리셋되고 BLE 링크는 살아있는 경우
+// 이쪽은 아무 일도 없었다고 보기 때문에 특히 오래 걸린다.
+// 웨어러블이 먼저 물어보면 그 자리에서 답해준다.
+const uint8_t REQ_HEADER   = 0xA5;
+const size_t  REQ_LEN      = 3;
+const uint8_t REQ_TIME     = 0x01;
+
 // 기기마다 달라지는 값 — relay-node.conf 에서 읽음
 struct Config {
     std::string broker_host  = "localhost";
@@ -65,6 +76,11 @@ static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용 — 세션 �
 // 조각난 notify 재조립 버퍼 — 전역인 이유는 수명
 // unsubscribe 가 실패하면 콜백이 남는데, 지역변수였다면 죽은 스택을 건드림
 static std::string g_rx_buffer;
+
+// 웨어러블이 시각을 요청했다. notify 콜백(BLE 스레드)이 세우고 runOnce 루프가 소비한다.
+// 콜백 안에서 곧바로 write 하지 않는 이유는 SimpleBLE 재진입을 피하기 위해서다 —
+// 펌웨어에서 ISR 이 플래그만 세우고 메인 루프가 처리하는 것과 같은 이유다.
+static std::atomic<bool> g_time_requested{false};
 
 void onSigint(int) { g_running = false; }
 
@@ -165,6 +181,12 @@ bool packetIsValid(const std::string& buf) {
     return (uint8_t)buf[2] <= 100 && (uint8_t)buf[3] <= 1;
 }
 
+// 시각 요청 검증 — 종류 바이트와 체크섬을 모두 본다.
+bool requestIsValid(const std::string& buf) {
+    return (uint8_t)buf[1] == REQ_TIME &&
+           (uint8_t)((uint8_t)buf[0] ^ (uint8_t)buf[1]) == (uint8_t)buf[2];
+}
+
 // 패킷 1개 → WearableData → JSON 발행
 void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall, uint16_t steps, MqttClient_veda& client) {
     // 펌웨어가 낙상 플래그를 5초 유지(HM10_FALL_HOLD_MS) — 그대로 흘리면 알람이 5~6번
@@ -188,25 +210,42 @@ void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall, uint16_t steps, MqttC
               << " (steps=" << steps << ")" << std::endl;
 }
 
-// 조각난 데이터를 0xAA 헤더 기준 PKT_LEN 바이트로 재조립
+// 조각난 데이터를 헤더 기준으로 재조립한다.
+// 웨어러블이 올려보내는 것은 두 종류다 — 바이탈(0xAA, 7B)과 시각 요청(0xA5, 3B).
+// 맨 앞 바이트를 보고 갈라내며, 어느 쪽 헤더도 아니면 1바이트씩 버려 재동기한다.
 void consumeBuffer(std::string& buf, MqttClient_veda& client) {
-    while(true) {
-        size_t h = buf.find((char)PKT_HEADER);
-        if(h == std::string::npos) { buf.clear(); return; }   // 헤더 없음
-        if(h > 0) buf.erase(0, h);                            // 앞쪽 쓰레기 버림
-        if(buf.size() < PKT_LEN) return;                      // 덜 모임 — 다음 notify 대기
+    while(!buf.empty()) {
+        const uint8_t head = (uint8_t)buf[0];
 
-        if(!packetIsValid(buf)) {
-            buf.erase(0, 1);   // 가짜 헤더 → 1바이트 밀고 재동기
+        if(head == PKT_HEADER) {                  // ── 바이탈 ──
+            if(buf.size() < PKT_LEN) return;      // 덜 모임 — 다음 notify 대기
+            if(!packetIsValid(buf)) {
+                buf.erase(0, 1);                  // 가짜 헤더 → 1바이트 밀고 재동기
+                continue;
+            }
+
+            // 걸음 수는 2바이트 리틀엔디안 (lo 먼저)
+            // | 연산에서 int 로 승격되므로 결과를 다시 uint16_t 로 좁힘 (8+8비트라 손실 없음)
+            uint16_t steps = static_cast<uint16_t>(
+                static_cast<uint8_t>(buf[4]) | (static_cast<uint8_t>(buf[5]) << 8));
+            publishPacket(buf[1], buf[2], buf[3], steps, client);
+            buf.erase(0, PKT_LEN);
             continue;
         }
 
-        // 걸음 수는 2바이트 리틀엔디안 (lo 먼저)
-        // | 연산에서 int 로 승격되므로 결과를 다시 uint16_t 로 좁힘 (8+8비트라 손실 없음)
-        uint16_t steps = static_cast<uint16_t>(
-            static_cast<uint8_t>(buf[4]) | (static_cast<uint8_t>(buf[5]) << 8));
-        publishPacket(buf[1], buf[2], buf[3], steps, client);
-        buf.erase(0, PKT_LEN);
+        if(head == REQ_HEADER) {                  // ── 시각 요청 ──
+            if(buf.size() < REQ_LEN) return;
+            if(!requestIsValid(buf)) {
+                buf.erase(0, 1);
+                continue;
+            }
+            // 실제 전송은 runOnce 루프가 한다 (위 g_time_requested 주석 참조)
+            g_time_requested = true;
+            buf.erase(0, REQ_LEN);
+            continue;
+        }
+
+        buf.erase(0, 1);   // 알 수 없는 바이트 — 헤더를 만날 때까지 버린다
     }
 }
 
@@ -285,6 +324,7 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
 
     g_prev_fall = 0;   // 끊긴 사이 상태를 모르므로 엣지 판정 초기화
     g_rx_buffer.clear();   // 이전 세션의 반쪽 패킷 폐기
+    g_time_requested = false;   // 끊기기 직전 요청이 남아 있으면 새 세션에서 헛 전송이 된다
 
     // client 만 캡처 — main 지역변수라 이 함수보다 오래 살고, 버퍼는 전역이라 불필요
     peripheral.notify(SVC_FFE0, CHAR_FFE1, [&client](SimpleBLE::ByteArray bytes) {
@@ -303,6 +343,15 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
 
     while(peripheral.is_connected() && g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        // 웨어러블이 물어보면 그 자리에서 답한다 (재부팅 직후가 대부분이다).
+        // exchange 로 꺼내야 요청 하나에 한 번만 응답한다.
+        if(g_time_requested.exchange(false)) {
+            std::cout << "[Relay Node] 웨어러블이 시각을 요청함" << std::endl;
+            sendTimeSync(peripheral);
+            last_sync = std::chrono::steady_clock::now();   // 방금 보냈으니 주기도 리셋
+            continue;
+        }
 
         auto now = std::chrono::steady_clock::now();
         if(std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sync).count()

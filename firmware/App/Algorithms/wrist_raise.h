@@ -14,8 +14,8 @@ void WristRaise_ProcessBlock(const BMI270_Data_t *accel, uint16_t count);
 /* 지금 손목이 들려 있는가 (히스테리시스 + 디바운스 적용된 상태) */
 uint8_t WristRaise_IsRaised(void);
 
-/* '방금 들어올렸다' 는 상승 엣지를 1회만 반환하고 스스로 지운다.
- * 화면 점등은 반드시 이 엣지로 해야 한다 — IsRaised() 로 켜면 타임아웃으로
+/* '방금 시계를 보려고 들었다' 는 신호를 1회만 반환하고 스스로 지운다.
+ * 화면 점등은 반드시 이것으로 해야 한다 — IsRaised() 로 켜면 타임아웃으로
  * 꺼진 직후 팔이 아직 올라가 있다는 이유로 곧바로 다시 켜진다. */
 uint8_t WristRaise_ConsumeRaiseEvent(void);
 
