@@ -236,22 +236,28 @@ int main(int argc, char* argv[])
         printf("[명령] type=%s room=%d audio=%s matrix=%s\n", cmd.type.c_str(),
                cmd.room, cmd.audio_action.c_str(), cmd.matrix_action.c_str());
 
-        // 테스트(matrix=SHOW)는 잠깐 보여주고 끝나면 평상시(base) 값으로 되돌린다.
-        // 적용(matrix!=SHOW, 값>0)은 그 값을 base 로 커밋해 계속 유지한다.
-        //   → 이벤트 알람(SHOW, 밝기/음량=0)은 base 그대로라 아무 영향 없음.
-        const bool transient = (cmd.matrix_action == "SHOW");
+        // "커밋할지"와 "끝나고 되돌릴지"는 서로 다른 질문이라 따로 판단한다.
+        //   커밋(shouldCommit) — 관제 앱 "적용"(matrix_action=NONE, 화면에 아무것도 안
+        //     띄우는 순수 설정 명령)일 때만 평상시(base) 값을 갱신한다. 실제 알람과
+        //     "테스트"는 둘 다 matrix_action=SHOW 라 여기서 자동으로 제외된다 — 알람
+        //     한 번 울렸다고 그 볼륨이 평상시 값으로 눌어붙으면 안 되기 때문.
+        //   되돌림(shouldRevert) — 관제 앱 "테스트"(cmd.is_test)일 때만, 보여준 뒤
+        //     평상시 값으로 되돌린다. 실제 알람은 여기 해당 안 됨 — loop=true 로 계속
+        //     재생 중인데 볼륨을 되돌리면 사이렌이 저절로 조용해지는 사고가 난다.
+        const bool shouldCommit = (cmd.matrix_action != "SHOW");
+        const bool shouldRevert = cmd.is_test;
 
-        // 밝기: 이 명령 동안 적용, 커밋이면 평상시 밝기로 승격.
+        // 밝기: 이 명령 동안 적용, 커밋 대상이면 평상시 밝기로 승격.
         if (cmd.brightness > 0) {
             display.setBrightness(cmd.brightness);
-            if (!transient) baseBrightness = cmd.brightness;
+            if (shouldCommit) baseBrightness = cmd.brightness;
         }
 
-        // 음량: 이번 재생에 쓸 값 결정. 커밋이면 믹서에 바로 반영하고 base 로 승격.
+        // 음량: 이번 재생에 쓸 값 결정. 커밋 대상이면 믹서에 바로 반영하고 base 로 승격.
         int playVolume = baseVolume;
         if (cmd.volume > 0) {
             playVolume = cmd.volume;
-            if (!transient) {
+            if (shouldCommit) {
                 std::lock_guard<std::mutex> lk(player_mutex);
                 player.setVolume(cmd.volume);   // 적용: 소리 없이도 믹서에 즉시 반영
                 baseVolume = cmd.volume;
@@ -277,9 +283,11 @@ int main(int argc, char* argv[])
         else if (cmd.matrix_action == "CLEAR")
             display.clear();
 
-        // 테스트 스크롤이 끝나면 평상시(base) 밝기·음량으로 복귀 —
+        // "테스트" 스크롤이 끝나면 평상시(base) 밝기·음량으로 복귀 —
         // 테스트로 올린 값이 idle "감시 중" 에 눌어붙지 않게(적용해야만 유지된다).
-        if (transient) {
+        // 실제 알람(shouldRevert=false)은 여기 안 타므로, loop=true 로 재생 중인 사이렌의
+        // 볼륨을 스크롤이 끝났다고 되돌리는 일이 없다.
+        if (shouldRevert) {
             display.setBrightness(baseBrightness);
             std::lock_guard<std::mutex> lk(player_mutex);
             player.setVolume(baseVolume);

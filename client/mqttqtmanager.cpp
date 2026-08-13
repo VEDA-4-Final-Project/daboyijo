@@ -329,6 +329,10 @@ bool MqttQtManager::sendAlarmTest(const QString& target_device,
     cmd.matrix_passes = 1;
     cmd.brightness    = brightness255;
 
+    // 노드가 "잠깐 보여주고 원래 밝기·음량으로 되돌릴" 명령임을 표시한다. 실제 알람도
+    // matrix_action=SHOW 를 쓰므로 이 필드가 없으면 노드가 둘을 구분 못 한다.
+    cmd.is_test       = true;
+
     cmd.timestamp     = nowMs();
 
     return sendAlarmCommand(cmd, qos);
