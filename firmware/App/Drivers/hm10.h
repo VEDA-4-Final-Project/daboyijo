@@ -52,9 +52,23 @@
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
 
-/* 패킷 상수 */
+/* 송신 패킷 상수 (STM32 → RPi) */
 #define HM10_PKT_HEADER   0xAA
 #define HM10_PKT_LEN      7
+
+/* ── 수신 패킷 (RPi → STM32) — 시각 동기 ────────────────────────
+ *   [0] 0x55       헤더
+ *   [1] hour       0~23
+ *   [2] minute     0~59
+ *   [3] second     0~59
+ *   [4] checksum   [0]~[3] 의 XOR
+ *
+ * 헤더를 송신용 0xAA 와 다른 값으로 둔 이유: UART 는 전이중이라 실제 충돌은
+ * 없지만, 로그를 볼 때 방향이 한눈에 구분되고 나중에 명령을 더 추가할 때
+ * 두 방향의 규격이 섞이지 않는다.
+ * ──────────────────────────────────────────────────────────── */
+#define HM10_RX_HEADER    0x55
+#define HM10_RX_PKT_LEN   5
 
 /* 낙상 의심 플래그 값 */
 #define HM10_FALL_NONE    0x00
@@ -70,5 +84,19 @@ void hm10_init(UART_HandleTypeDef *huart);
  *   steps     : 걸음 수 0~65535 (리틀엔디언 2바이트로 실린다)
  *  → 전송 예: AA 4E 62 01 E8 03 6C  (78bpm, 98%, 낙상의심, 1000걸음) */
 void hm10_send_packet(uint8_t hr, uint8_t spo2, uint8_t fall_flag, uint16_t steps);
+
+/* 수신 개시. hm10_init() 뒤에 한 번 부르면 이후에는 스스로 재무장한다.
+ * 1바이트씩 인터럽트로 받아 0x55 를 기준으로 패킷을 맞춘다 — 고정 길이로
+ * 통째로 받으면 바이트 하나만 유실돼도 이후 모든 패킷이 영구히 어긋난다. */
+void hm10_start_receive(void);
+
+/**
+  * 수신해 둔 시각을 꺼낸다 (있으면 1, 없으면 0).
+  *
+  * ISR 은 검증만 하고 값을 남겨두며, 실제 반영은 메인 루프가 이 함수로 꺼내
+  * AppClock_SetTime() 에 넘기는 방식이다. ISR 안에서 시계를 직접 만지지 않아
+  * 다른 인터럽트 처리와 뒤엉킬 여지를 없앤다.
+  */
+uint8_t hm10_take_time(uint8_t *hour, uint8_t *minute, uint8_t *second);
 
 #endif /* HM10_H */

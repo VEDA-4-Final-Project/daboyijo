@@ -256,6 +256,10 @@ void ST7789_DrawFilledCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color);
 /* Command functions */
 void ST7789_TearEffect(uint8_t tear);
 
+/* Power functions — 손목 들기 감지에 맞춰 화면을 껐다 켜는 데 쓴다 */
+void ST7789_Backlight(uint8_t on);
+void ST7789_Sleep(uint8_t sleep);
+
 /* Simple test function. */
 void ST7789_Test(void);
 

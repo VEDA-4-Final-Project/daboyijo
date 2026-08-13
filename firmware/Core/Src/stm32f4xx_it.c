@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_it.h"
+#include <stdio.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
@@ -92,7 +93,14 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  /* 기본 핸들러는 아무 말 없이 while(1) 로 멈춘다. 밖에서 보면 '로그가 끊긴 채
+   * 멈춘 기기' 일 뿐이라 원인을 좁힐 수 없다. 최소한 폴트라는 사실과
+   * 폴트 상태 레지스터는 남긴다.
+   *
+   * printf 는 ISR 안에서 부를 것이 못 되지만, 여기는 어차피 돌아갈 곳이 없는
+   * 종착지다. USB 가 살아있으면 한 줄이라도 건지는 쪽이 낫다. */
+  printf("\r\n[ FAULT ] HardFault — HFSR=0x%08lX CFSR=0x%08lX BFAR=0x%08lX\r\n",
+         (unsigned long)SCB->HFSR, (unsigned long)SCB->CFSR, (unsigned long)SCB->BFAR);
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {

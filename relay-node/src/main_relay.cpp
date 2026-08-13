@@ -15,8 +15,10 @@
 #include <cctype>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -32,6 +34,16 @@ const uint8_t PKT_HEADER = 0xAA;
 const size_t  PKT_LEN    = 7;
 const int QOS_VITAL      = 0;   // 바이탈: 빠르게 (유실 감수)
 const int QOS_FALL       = 1;   // 낙상: 반드시 전달
+
+// ── 시각 동기 (RPi → STM32) ───────────────────────────────────────
+//   [0] 0x55  [1] 시  [2] 분  [3] 초  [4] 체크섬([0]~[3] XOR)
+//
+// 웨어러블에는 RTC 도 백업 배터리도 없어 부팅하면 빌드 시각으로 시작한다.
+// NTP 로 맞춰진 이쪽 시각을 내려보내 화면의 시계와 자정 걸음수 리셋을 맞춘다.
+// 주기적으로 다시 보내 SysTick 드리프트(하루 약 2초)도 함께 잡는다.
+const uint8_t TIME_PKT_HEADER = 0x55;
+const size_t  TIME_PKT_LEN    = 5;
+const int     TIME_SYNC_MS    = 10 * 60 * 1000;   // 10분마다 (연결 직후에도 1회)
 
 // 기기마다 달라지는 값 — relay-node.conf 에서 읽음
 struct Config {
@@ -221,6 +233,37 @@ std::optional<SimpleBLE::Peripheral> findDevice(SimpleBLE::Adapter& adapter) {
 }
 
 // 연결 1회 세션 — 끊길 때까지 수신 후 정리
+// 현재 벽시계(로컬 타임)를 5바이트로 만들어 FFE1 에 write 한다.
+// write_command(=write without response)를 쓴다 — HM-10 투과모드는 응답을
+// 돌려주지 않으므로 write_request 로 보내면 확인 응답을 기다리다 타임아웃 난다.
+bool sendTimeSync(SimpleBLE::Peripheral& peripheral) {
+    std::time_t now = std::time(nullptr);
+    std::tm lt{};
+    if(!localtime_r(&now, &lt)) return false;
+
+    uint8_t pkt[TIME_PKT_LEN];
+    pkt[0] = TIME_PKT_HEADER;
+    pkt[1] = (uint8_t)lt.tm_hour;
+    pkt[2] = (uint8_t)lt.tm_min;
+    pkt[3] = (uint8_t)lt.tm_sec;
+
+    uint8_t sum = 0;
+    for(size_t i = 0; i + 1 < TIME_PKT_LEN; i++) sum ^= pkt[i];
+    pkt[TIME_PKT_LEN - 1] = sum;
+
+    try {
+        peripheral.write_command(SVC_FFE0, CHAR_FFE1,
+                                 SimpleBLE::ByteArray(pkt, pkt + TIME_PKT_LEN));
+    } catch (const std::exception& e) {
+        std::cerr << "[Relay Node] 시각 전송 실패: " << e.what() << std::endl;
+        return false;
+    }
+
+    std::printf("[Relay Node] 시각 동기 전송 %02d:%02d:%02d\n",
+                lt.tm_hour, lt.tm_min, lt.tm_sec);
+    return true;
+}
+
 void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     auto dev = findDevice(adapter);
     if(!dev) {
@@ -244,8 +287,19 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
         consumeBuffer(g_rx_buffer, client);
     });
 
+    // 연결 직후 곧바로 한 번 — 웨어러블이 재부팅했다면 빌드 시각으로 떠 있다.
+    sendTimeSync(peripheral);
+    auto last_sync = std::chrono::steady_clock::now();
+
     while(peripheral.is_connected() && g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        auto now = std::chrono::steady_clock::now();
+        if(std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sync).count()
+               >= TIME_SYNC_MS) {
+            last_sync = now;
+            sendTimeSync(peripheral);
+        }
     }
 
     // 정리 안 하면 HM-10 이 연결 상태로 남아 광고를 멈춰 다음 스캔에 안 잡힘

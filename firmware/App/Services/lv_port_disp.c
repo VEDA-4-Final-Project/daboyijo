@@ -6,8 +6,17 @@
 #define MY_DISP_VER_RES 280
 
 // 버퍼 크기 설정 (RGB565 기준: 240px * 20줄 * 2Bytes)
-#define BUF_SIZE_IN_BYTES (MY_DISP_HOR_RES * 20 * sizeof(lv_color_t))
-static uint8_t buf_1[BUF_SIZE_IN_BYTES];
+//
+// ⚠ sizeof(lv_color_t) 로 잡으면 안 된다. LVGL v9 의 lv_color_t 는 색 깊이와
+//   무관하게 RGB888 구조체(3바이트)라서, RGB565 화면인데 1.5배 크기가 잡힌다.
+//   실제로 쓰는 픽셀당 바이트 수를 그대로 적는다.
+#define MY_DISP_BYTES_PER_PX 2
+#define BUF_SIZE_IN_BYTES (MY_DISP_HOR_RES * 20 * MY_DISP_BYTES_PER_PX)
+
+// ⚠ 정렬을 지정하지 않으면 GCC 가 uint8_t 배열을 1바이트 경계에 놓는다.
+//   lv_display_set_buffers() 는 버퍼가 LV_DRAW_BUF_ALIGN 배수가 아니면
+//   assert 로 그 자리에서 멈춘다 ("buf1 is not aligned").
+static uint8_t buf_1[BUF_SIZE_IN_BYTES] __attribute__((aligned(LV_DRAW_BUF_ALIGN)));
 
 // LVGL v9.1 flush 콜백 함수
 static void disp_flush(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map)

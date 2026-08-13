@@ -74,12 +74,11 @@
 #include "fall_detection.h"
 #include "heart_rate_calc.h"
 #include "step_counter.h"
+#include "wrist_raise.h"
 #include "app_clock.h"
 #include "usbd_cdc_if.h"
 #include "hm10.h"
-#include "st7789.h"
-#include "lvgl.h"
-#include "ui.h"
+#include "display_service.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -251,6 +250,10 @@ int main(void)
   /* USER CODE BEGIN 2 */
   hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
 
+  /* 수신 개시 — RPi 가 BLE 로 내려주는 시각을 받는다.
+   * 이후에는 ISR 이 스스로 재무장하므로 여기서 한 번만 부르면 된다. */
+  hm10_start_receive();
+
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
   /* 1. 하드웨어 및 센서 초기화
@@ -292,6 +295,7 @@ int main(void)
   FallDetection_Init();
   HeartRateCalc_Init();
   StepCounter_Init();
+  WristRaise_Init();
   AppClock_Init();
 
   /* 3. 통신 라인 안전 초기화 */
@@ -326,6 +330,10 @@ int main(void)
          g_bmi270_ok ? "ok" : "OFF", g_max30102_ok ? "ok" : "OFF",
          LOWPOWER_STOP_MODE ? "STOP" : "WFI");
 
+  /* 디스플레이는 꺼진 채로 세운다. 손목을 들 때까지 켜지지 않는다.
+   * IWDG 보다 앞에 두는 이유는 내부 HAL_Delay 합계가 약 0.2초이기 때문이다. */
+  DisplayService_Init(g_bmi270_ok);
+
   /* 부팅 시퀀스(센서 재시도 / Blink_Error_Code 의 HAL_Delay)가 모두 끝난
    * 뒤에 켠다. 이 위치가 중요하다 — 앞에서 켜면 재부팅 루프가 된다. */
   IWDG_Start();
@@ -333,18 +341,6 @@ int main(void)
   /* 첫 송신을 한 주기 뒤로 맞춘다. 0 으로 두면 부팅에 이미 3초 남짓 쓴 상태라
    * 기준점이 어긋난 채 시작한다. */
   g_last_vital_ms = HAL_GetTick();
-
-
-  // 1. 디스플레이 초기화
-  ST7789_Init();
-
-  // 2. 백라이트 켜기
-  HAL_GPIO_WritePin(ST7789_BL_GPIO_Port, ST7789_BL_Pin, GPIO_PIN_SET);
-  // lvgl 연결
-  lv_init();
-  lv_port_disp_init();
-  //ui 생성
-  ui_init();
 
   /* USER CODE END 2 */
 
@@ -381,6 +377,18 @@ int main(void)
        * 걸음 수는 Reset() 이 아니라 SetSteps(0) 으로 지운다 — 자정에 걷고 있는
        * 중일 수 있고, 그때 필터와 리듬 상태까지 날리면 진행 중이던 보행이
        * 끊겨 다음 4걸음을 다시 검증해야 한다. 지울 것은 누적값뿐이다. */
+      /* RPi 가 내려준 시각이 있으면 반영한다.
+       * ISR 은 검증만 하고 값을 남겨두며, 시계를 실제로 미는 것은 여기다.
+       * AppClock_Service() 보다 먼저 부른다 — 시각을 갈아끼운 직후에 진행분을
+       * 더하면 방금 맞춘 값이 한 틱 어긋난 채로 시작한다. */
+      uint8_t sync_h, sync_m, sync_s;
+      if (hm10_take_time(&sync_h, &sync_m, &sync_s))
+      {
+          AppClock_SetTime(sync_h, sync_m, sync_s);
+          printf("[ CLOCK ] BLE 시각 동기 %02u:%02u:%02u\r\n",
+                 (unsigned)sync_h, (unsigned)sync_m, (unsigned)sync_s);
+      }
+
       AppClock_Service();
 
       if (AppClock_ConsumeMidnight())
@@ -408,32 +416,17 @@ int main(void)
       }
 
       /* ------------------------------------------------------------------
-       * [STAGE 4] 처리할 일이 없으면 잠든다.
+       * [STAGE 4] 화면. 손목을 들었을 때만 켜지고, 켜져 있는 동안만 LVGL 이 돈다.
+       * ------------------------------------------------------------------ */
+      DisplayService_Service();
+
+      /* ------------------------------------------------------------------
+       * [STAGE 5] 처리할 일이 없으면 잠든다.
        *   센서 인터럽트(EXTI) 또는 DMA 완료가 곧 기상 신호다.
+       *   SysTick 이 1ms 마다 깨우므로 화면이 켜져 있어도 LVGL 갱신 주기
+       *   (LV_DEF_REFR_PERIOD 33ms)를 놓치지 않는다.
        * ------------------------------------------------------------------ */
       Enter_Idle();
-      // ui  코드
-      /*
-       	  // 1. LVGL에 5ms 경과를 직접 알리고 타이머 처리
-	      lv_tick_inc(5);      // 💡 5ms 추가
-	      lv_timer_handler();  // LVGL 이벤트 처리
-	      HAL_Delay(5);        // 5ms 대기
-
-	      // 2. 1초(1000ms)마다 분(ui_Label3) 변경 테스트
-	      static uint32_t last_tick = 0;
-	      static int minute_count = 0;
-
-	      if (HAL_GetTick() - last_tick >= 1000) {
-	        last_tick = HAL_GetTick();
-
-	        minute_count++;
-	        if (minute_count >= 60) {
-	          minute_count = 0;
-	        }
-
-	        // 텍스트 업데이트
-	        lv_label_set_text_fmt(ui_timeMinute, "%02d", minute_count);
-       */
   }
     /* USER CODE END WHILE */
 
@@ -562,6 +555,11 @@ static void Process_IMU_Block(void)
      * PPG 접촉 판정을 물리면 MAX30102 고장이 만보기까지 끌고 들어간다.
      * (상세 근거는 step_counter.c 상단 '착용 판정을 쓰지 않는 이유') */
     StepCounter_ProcessBlock(bmi_accel, frames);
+
+    /* 손목 자세 판정 — 화면을 켤지 말지는 DisplayService 가 이 결과를 보고 정한다.
+     * 만보기와 같은 이유로 착용 판정을 거치지 않는다. PPG 가 고장 나도 화면은
+     * 켜져야 한다. */
+    WristRaise_ProcessBlock(bmi_accel, frames);
 
     /* 버퍼 상한에 걸려 잘라 읽었다면 FIFO 에 아직 데이터가 남아있다.
      * INT 핀은 펄스 방식이라 새 엣지가 오지 않을 수 있으므로 스스로 재무장한다.

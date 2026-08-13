@@ -1,4 +1,20 @@
 #include "st7789.h"
+#include <stdio.h>
+
+/* SPI/DMA 대기 상한.
+ *
+ * 원본 드라이버는 HAL_MAX_DELAY 와 조건 없는 while 루프로 기다린다. 이 함수들은
+ * IWDG 가 아직 돌지 않는 부팅 구간에서 불리므로, 한 번 물리면 워치독조차
+ * 구해주지 못하고 기기가 조용히 죽는다 (로그가 뚝 끊긴 채 멈춘다).
+ * 전송이 정상이면 수십 ms 안에 끝나므로 상한을 둬도 잃을 것이 없다. */
+#define ST7789_SPI_TIMEOUT_MS   100
+#define ST7789_DMA_TIMEOUT_MS   50   /* 최대 청크(14400B @12Mbit) 가 약 10ms 다 */
+
+/* DMA 가 한 번이라도 시간 안에 끝나지 않으면 이 플래그를 세우고, 이후로는
+ * 영영 블로킹 전송만 쓴다. 매 청크마다 타임아웃을 다시 기다리면 전체 화면
+ * 한 장에 수 초가 걸려 IWDG 에 걸린다. 블로킹 전송도 같은 12Mbit/s 라
+ * 잃는 것은 전송 중 CPU 시간뿐이다. */
+static uint8_t s_dma_broken = 0;
 
 #ifdef USE_DMA
 #include <string.h>
@@ -21,7 +37,7 @@ static void ST7789_WriteCommand(uint8_t cmd)
 {
 	ST7789_Select();
 	ST7789_DC_Clr();
-	HAL_SPI_Transmit(&ST7789_SPI_PORT, &cmd, sizeof(cmd), HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&ST7789_SPI_PORT, &cmd, sizeof(cmd), ST7789_SPI_TIMEOUT_MS);
 	ST7789_UnSelect();
 }
 
@@ -41,16 +57,32 @@ static void ST7789_WriteData(uint8_t *buff, size_t buff_size)
 	while (buff_size > 0) {
 		uint16_t chunk_size = buff_size > 65535 ? 65535 : buff_size;
 		#ifdef USE_DMA
-			if (DMA_MIN_SIZE <= buff_size)
+			if (!s_dma_broken && DMA_MIN_SIZE <= buff_size &&
+			    HAL_SPI_Transmit_DMA(&ST7789_SPI_PORT, buff, chunk_size) == HAL_OK)
 			{
-				HAL_SPI_Transmit_DMA(&ST7789_SPI_PORT, buff, chunk_size);
+				uint32_t start = HAL_GetTick();
 				while (ST7789_SPI_PORT.hdmatx->State != HAL_DMA_STATE_READY)
-				{}
+				{
+					/* DMA 요청 배선(스트림/채널)이 어긋나면 전송이 시작조차 되지
+					 * 않아 이 상태가 영영 풀리지 않는다. 원본 드라이버는 여기서
+					 * 무한 대기하며 부팅을 통째로 삼킨다. */
+					if ((HAL_GetTick() - start) > ST7789_DMA_TIMEOUT_MS)
+					{
+						HAL_SPI_DMAStop(&ST7789_SPI_PORT);
+						s_dma_broken = 1;
+						printf("[ LCD ] SPI1 DMA 응답 없음 — 블로킹 전송으로 전환합니다.\r\n");
+						printf("        DMA2_Stream2/Channel2(SPI1_TX) 설정을 확인하세요.\r\n");
+						HAL_SPI_Transmit(&ST7789_SPI_PORT, buff, chunk_size, ST7789_SPI_TIMEOUT_MS);
+						break;
+					}
+				}
 			}
 			else
-				HAL_SPI_Transmit(&ST7789_SPI_PORT, buff, chunk_size, HAL_MAX_DELAY);
+			{
+				HAL_SPI_Transmit(&ST7789_SPI_PORT, buff, chunk_size, ST7789_SPI_TIMEOUT_MS);
+			}
 		#else
-			HAL_SPI_Transmit(&ST7789_SPI_PORT, buff, chunk_size, HAL_MAX_DELAY);
+			HAL_SPI_Transmit(&ST7789_SPI_PORT, buff, chunk_size, ST7789_SPI_TIMEOUT_MS);
 		#endif
 		buff += chunk_size;
 		buff_size -= chunk_size;
@@ -67,7 +99,7 @@ static void ST7789_WriteSmallData(uint8_t data)
 {
 	ST7789_Select();
 	ST7789_DC_Set();
-	HAL_SPI_Transmit(&ST7789_SPI_PORT, &data, sizeof(data), HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&ST7789_SPI_PORT, &data, sizeof(data), ST7789_SPI_TIMEOUT_MS);
 	ST7789_UnSelect();
 }
 
@@ -206,7 +238,7 @@ void ST7789_Fill_Color(uint16_t color)
 		for (i = 0; i < ST7789_HEIGHT / HOR_LEN; i++)
 		{
 			memset(disp_buf, color, sizeof(disp_buf));
-			ST7789_WriteData(disp_buf, sizeof(disp_buf));
+			ST7789_WriteData((uint8_t *)disp_buf, sizeof(disp_buf));
 		}
 	#else
 		uint16_t j;
@@ -744,4 +776,39 @@ void ST7789_Test(void)
 	ST7789_Fill_Color(WHITE);
 	ST7789_DrawImage(0, 0, 128, 128, (uint16_t *)saber);
 	HAL_Delay(3000);
+}
+
+/**
+ * @brief 백라이트 on/off
+ * @note  화면을 끌 때는 백라이트를 먼저 내리고, 켤 때는 그릴 것을 다 그린
+ *        뒤에 마지막으로 올린다. 순서를 바꾸면 이전 프레임이 잠깐 보인다.
+ */
+void ST7789_Backlight(uint8_t on)
+{
+	HAL_GPIO_WritePin(BLK_PORT, BLK_PIN, on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+/**
+ * @brief 패널 슬립 진입(1) / 해제(0)
+ *
+ * 백라이트만 끄면 패널 구동 회로와 전하 펌프는 계속 돈다. 손목을 내린
+ * 대부분의 시간을 슬립으로 보내려면 DISPOFF + SLPIN 까지 내려야 한다.
+ *
+ * SLPOUT 뒤의 120ms 는 데이터시트가 요구하는 최소 대기다 (전하 펌프 안정화).
+ * 이 시간을 건너뛰면 첫 프레임이 얼룩덜룩하게 올라온다.
+ */
+void ST7789_Sleep(uint8_t sleep)
+{
+	if (sleep)
+	{
+		ST7789_WriteCommand(ST7789_DISPOFF);
+		ST7789_WriteCommand(ST7789_SLPIN);
+		HAL_Delay(5);
+	}
+	else
+	{
+		ST7789_WriteCommand(ST7789_SLPOUT);
+		HAL_Delay(120);
+		ST7789_WriteCommand(ST7789_DISPON);
+	}
 }

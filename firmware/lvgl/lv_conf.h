@@ -258,8 +258,11 @@
 #define LV_USE_ASSERT_OBJ           0   /*Check the object's type and existence (e.g. not deleted). (Slow)*/
 
 /*Add a custom handler when assert happens e.g. to restart the MCU*/
-#define LV_ASSERT_HANDLER_INCLUDE <stdint.h>
-#define LV_ASSERT_HANDLER while(1);   /*Halt by default*/
+/* 기본값인 while(1) 은 아무 흔적도 남기지 않는다. IWDG 기동 전에 걸리면
+ * 리셋조차 없어 '로그가 뚝 끊긴 채 멈춘 기기' 가 되고, 원인을 밖에서 알 방법이
+ * 사라진다. 최소한 무엇 때문에 멈췄는지는 남기고 멈춘다. */
+#define LV_ASSERT_HANDLER_INCLUDE <stdio.h>
+#define LV_ASSERT_HANDLER   { printf("\r\n[ LVGL ] ASSERT — 여기서 멈춥니다\r\n"); while(1); }
 
 /*-------------
  * Debug
