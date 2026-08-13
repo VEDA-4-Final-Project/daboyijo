@@ -374,6 +374,7 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     connect(mqtt, &MqttQtManager::connected,            this, &MainWindow::onMqttConnected);
     connect(mqtt, &MqttQtManager::disconnected,         this, &MainWindow::onMqttDisconnected);
     connect(mqtt, &MqttQtManager::connectionError,      this, &MainWindow::onMqttError);
+    connect(mqtt, &MqttQtManager::nodeOnlineChanged,    this, &MainWindow::onAlarmNodeStatus);
     connect(mqtt, &MqttQtManager::payloadRejected, this,
             [](const QString& topic, const QString& why) {
                 // 다른 노드가 형식을 바꿨을 때 조용히 묻히지 않게 남긴다.
@@ -3065,6 +3066,36 @@ void MainWindow::onMqttError(const QString& message)
     qWarning() << "[MQTT]" << message;
 }
 
+void MainWindow::onAlarmNodeStatus(const QString& node, bool online)
+{
+    alertNodeOnline_[node] = online;
+    if (alertNode_ && alertNode_->currentText() == node)
+        refreshAlertStatusBadge();
+}
+
+// 배지 3상태 — 카메라 인스펙터의 연결 배지(camInspPill)와 같은 스타일 규칙.
+//   미확인(회색, 아직 상태 토픽 못 받음) / 온라인(정상색) / 오프라인(위험색)
+void MainWindow::refreshAlertStatusBadge()
+{
+    if (!alertStatusBadge_ || !alertNode_) return;
+    const QString node = alertNode_->currentText();
+    QString text, color;
+    if (!alertNodeOnline_.contains(node)) {
+        text = QStringLiteral("상태 미확인");
+        color = QString::fromLatin1(kTextSub);
+    } else if (alertNodeOnline_.value(node)) {
+        text = QStringLiteral("온라인");
+        color = QString::fromLatin1(kNormal);
+    } else {
+        text = QStringLiteral("오프라인");
+        color = QString::fromLatin1(kCritical);
+    }
+    alertStatusBadge_->setText(text);
+    alertStatusBadge_->setStyleSheet(
+        QString("color:%1; border:1px solid %1; border-radius:9px;"
+                " padding:1px 9px; font-size:11px; font-weight:800;").arg(color));
+}
+
 // ═══════════════════════════════════════════════════════════
 //  케어 타임 대시보드 — 서버가 care_logs에 쌓는 실데이터를 채널별로 집계해 표시.
 //  (요양사 감지 → CareTimer 세션 종료 → insertCareLog가 채널·케어시간 기록)
@@ -3949,25 +3980,24 @@ QWidget* MainWindow::buildAlertSettingsTab()
     cl->setContentsMargins(18, 16, 18, 18);
     cl->setSpacing(14);
 
-    // 헤더 — 대상 노드 + 상태 배지(온라인 판정은 보류)
+    // 헤더 — 대상 노드 + 온라인 배지(카메라 인스펙터의 연결 배지와 같은 스타일)
     auto* head = new QHBoxLayout();
     head->setSpacing(8);
     auto* headTitle = new QLabel(QStringLiteral("대상 노드"));
     headTitle->setObjectName("camInspCh");
-    auto* statusPill = new QLabel(QStringLiteral("상태 미확인"));
-    statusPill->setObjectName("camPill");
+    alertStatusBadge_ = new QLabel(QStringLiteral("상태 미확인"));
+    alertStatusBadge_->setObjectName("camPill");
     head->addWidget(headTitle);
-    head->addWidget(statusPill);
+    head->addWidget(alertStatusBadge_);
     head->addStretch();
     cl->addLayout(head);
 
+    // 이벤트 필터(filterEventType)와 같은 어두운 테마 드롭다운으로 통일 — 기본
+    // QComboBox 는 이 컨테이너 안에서 스코프된 스타일을 못 받아 흰 배경으로 떴었다.
     alertNode_ = new QComboBox();
+    alertNode_->setObjectName("formEdit");
     alertNode_->addItem(QStringLiteral("alarm_rpi_01"));   // 정적 목록(추후 확장)
     cl->addWidget(alertNode_);
-
-    auto* topicLbl = new QLabel();
-    topicLbl->setObjectName("camInspIp");
-    cl->addWidget(topicLbl);
 
     auto* rule = new QFrame();
     rule->setObjectName("camRule");
@@ -4002,10 +4032,15 @@ QWidget* MainWindow::buildAlertSettingsTab()
     btnRow->addWidget(applyBtn);
     cl->addLayout(btnRow);
 
-    auto* hint = new QLabel(QStringLiteral("💡 테스트: 그 값으로 잠깐 보여주고 원래대로 · 적용: 그 밝기·음량으로 즉시 적용 + 저장"));
-    hint->setObjectName("camHint");
-    hint->setWordWrap(true);
-    cl->addWidget(hint);
+    // 카메라 이미지 탭의 초점 안내처럼 — 한 문장씩, 짧게.
+    auto* testHint = new QLabel(QStringLiteral("💡 테스트는 저장하지 않고 지금 값으로 잠깐 보여줍니다."));
+    testHint->setObjectName("camHint");
+    testHint->setWordWrap(true);
+    cl->addWidget(testHint);
+    auto* applyHint = new QLabel(QStringLiteral("💡 적용은 지금 값을 노드에 바로 반영하고 저장합니다."));
+    applyHint->setObjectName("camHint");
+    applyHint->setWordWrap(true);
+    cl->addWidget(applyHint);
 
     cl->addStretch();   // 내용은 위에서부터 — 카드는 스테이지 높이를 따라간다
 
@@ -4028,15 +4063,15 @@ QWidget* MainWindow::buildAlertSettingsTab()
         if (alertPreview_) alertPreview_->setBrightness(toPreviewB(v));
     });
 
-    // 노드별 저장값 로드 + 토픽 라벨 갱신 (기본: 밝기 70 / 음량 60)
-    auto loadForNode = [this, topicLbl, toPreviewB](const QString& node) {
+    // 노드별 저장값 로드 + 온라인 배지 갱신 (기본: 밝기 70 / 음량 60)
+    auto loadForNode = [this, toPreviewB](const QString& node) {
         QSettings s;
         const int b   = s.value(QStringLiteral("alarm/%1/brightness").arg(node), 70).toInt();
         const int vol = s.value(QStringLiteral("alarm/%1/volume").arg(node), 60).toInt();
         if (alertBright_) alertBright_->setValue(b);
         if (alertVol_)    alertVol_->setValue(vol);
         if (alertPreview_) alertPreview_->setBrightness(toPreviewB(b));
-        topicLbl->setText(QStringLiteral("veda/alarm/control → %1").arg(node));
+        refreshAlertStatusBadge();
     };
     connect(alertNode_, &QComboBox::currentTextChanged, this,
             [loadForNode](const QString& n) { loadForNode(n); });

@@ -15,6 +15,7 @@
 struct MqttMessage {
     std::string topic;
     std::string payload;
+    bool        retain = false;   // 오프라인 큐 재전송 시에도 retain 플래그를 잃지 않도록 보관
 };
 
 // 발행 결과 — "브로커로 실제로 나갔는지"와 "오프라인이라 큐에 담았을 뿐인지"를
@@ -49,8 +50,17 @@ public:
     // publish()  : 전송/큐적재/실패를 구분해 돌려준다(권장).
     // publishMessage() : 기존 호출부 호환용. "실제로 나갔을 때만" true —
     //                    예전엔 큐에 담기만 해도 true 라 호출부가 오해했다.
-    PublishResult publish(const std::string& topic, const std::string& payload, int qos = 0);
-    bool publishMessage(const std::string& topic, const std::string& payload, int qos = 0);
+    PublishResult publish(const std::string& topic, const std::string& payload, int qos = 0,
+                          bool retain = false);
+    bool publishMessage(const std::string& topic, const std::string& payload, int qos = 0,
+                        bool retain = false);
+
+    // Last Will — 브로커가 이 클라이언트와의 연결이 뚝 끊긴 걸 감지하면(정상 disconnect가
+    // 아니라 케이블이 빠지거나 프로세스가 죽는 경우) 대신 발행해주는 메시지. connectToBroker
+    // 전에 호출해야 한다. "노드 온라인 상태"를 보여주는 용도 — retain 을 켜서 나중에
+    // 구독하는 쪽(관제 앱)도 마지막 상태를 바로 받게 한다.
+    bool setWill(const std::string& topic, const std::string& payload, int qos = 1,
+                bool retain = true);
     // 구독 토픽은 기억해뒀다가 재접속할 때마다 자동으로 다시 건다.
     // (clean session 이라 끊기면 브로커 쪽 구독이 사라진다 — 안 걸어주면
     //  재접속 후 조용히 아무 메시지도 안 들어온다)

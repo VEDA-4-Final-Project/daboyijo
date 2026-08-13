@@ -100,7 +100,9 @@ severity toSeverity(const std::string& type)
 {
     if (type == "FALL" || type == "EGRESS") return SEV_CRIT;
     if (type == "VITAL_ABNORMAL")           return SEV_WARN;
-    return SEV_INFO;                        // CONTROL 등
+    // CONTROL(관제 앱 "테스트")도 주황 — Qt 미리보기와 색을 맞춘다(둘 다 SEV_WARN 색상).
+    if (type == "CONTROL")                  return SEV_WARN;
+    return SEV_INFO;
 }
 
 // 패널에 흘릴 문구 — 호실을 알면 노드가 조립, 모르면 서버 문구 사용
@@ -162,6 +164,15 @@ int main(int argc, char* argv[])
     { long v = player.getVolume(); if (v > 0) baseVolume = static_cast<int>(v); }
 
     MqttClient_veda client(cfg.node_id);
+
+    // 온라인 상태 — 관제 앱이 "대상 노드" 배지에 쓴다. retain 을 켜서 관제 앱이 이 노드보다
+    // 늦게 켜져도(구독 시점에) 마지막 상태를 바로 받는다.
+    //   Will(연결 끊기 전 등록) : 브로커가 죽음/케이블 뽑힘 등 "비정상" 단절을 감지하면 대신 발행
+    //   정상 종료 시 아래에서 "offline" 을 직접 한 번 더 보낸다 — clean disconnect 는 Will 이
+    //   발동하지 않기 때문(Ctrl+C 로 끈 것도 배지에 정확히 반영되도록)
+    const std::string statusTopic = "veda/alarm/" + cfg.node_id + "/status";
+    client.setWill(statusTopic, "offline", 1, true);
+
     client.setCallback([&](const std::string&, const std::string& payload) {
         try {
             auto cmd = nlohmann::json::parse(payload).get<AlarmCommand>();
@@ -199,6 +210,7 @@ int main(int argc, char* argv[])
     client.startLoop();
     // QoS 1 로 구독 — 실제 등급은 발행·구독 중 낮은 쪽이라 여기가 0 이면
     // 보내는 쪽이 1 로 보내도 마지막 구간에서 0 으로 깎임
+    client.publish(statusTopic, "online", 1, true);   // retain — 아직 연결 전이면 큐에 담겼다 뒤에 나간다
     if (!client.subscribeTopic(cfg.topic, 1)) {
         fprintf(stderr, "[MQTT] 구독 요청 실패: %s - 알람을 못 받는다\n", cfg.topic.c_str());
     }
@@ -274,6 +286,9 @@ int main(int argc, char* argv[])
         }
     }
 
+    // 정상 종료는 clean disconnect 라 Will 이 안 나간다 — 직접 offline 을 알린다.
+    // stopLoop() 전에 보내야 실제로 소켓에 나간다(멈추면 아무도 안 보낸다).
+    client.publish(statusTopic, "offline", 1, true);
     client.stopLoop();   // 먼저 멈춰야 아래 정리 중에 콜백이 끼어들지 않는다
     {
         std::lock_guard<std::mutex> lk(player_mutex);

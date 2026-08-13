@@ -195,6 +195,7 @@ private slots:
     void onMqttConnected();
     void onMqttDisconnected();
     void onMqttError(const QString& message);
+    void onAlarmNodeStatus(const QString& node, bool online);   // 알림 노드 온라인/오프라인
 
     // TAB2: 이벤트 기록
     void onLogRowActivated(int row, int column);
@@ -550,6 +551,9 @@ private:
     ClickSlider* alertVol_    = nullptr;     // 0~100
     QComboBox*   alertNode_   = nullptr;     // 대상 알림 노드 id
     QLabel*      alertApplied_ = nullptr;    // "마지막 적용 HH:MM:SS"
+    QLabel*      alertStatusBadge_ = nullptr;      // 대상 노드의 온라인/오프라인 배지
+    QMap<QString, bool> alertNodeOnline_;          // node_id → online(마지막으로 받은 상태)
+    void refreshAlertStatusBadge();                // 배지 텍스트·색을 alertNodeOnline_ 에 맞춰 갱신
 
     // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
     // 슬라이더 값을 IMAGE_SET 제어 메시지로 서버에 보내면, 서버가 ONVIF Imaging으로

@@ -48,6 +48,10 @@ public:
     // ⚠️ LED 폰트(hub75-font16)에 있는 글자만 보인다(숫자·"확인"은 있음).
     static constexpr const char* kAlertTestText = "1234 확인";
 
+    // 알림 노드 온라인 상태 — 노드가 veda/alarm/<node_id>/status 에 "online"/"offline"
+    // 을 retain 으로 올린다(Last-Will 포함). +는 노드 id 자리 와일드카드.
+    static constexpr const char* kTopicAlarmStatusFilter = "veda/alarm/+/status";
+
     explicit MqttQtManager(QObject* parent = nullptr);
 
     // 소멸 중에 나가는 시그널을 막는다. 이게 없으면 앱을 닫을 때 죽는다 —
@@ -106,6 +110,9 @@ signals:
 
     void wearableDataReceived(const WearableData& data);
     void alarmCommandReceived(const AlarmCommand& cmd);
+
+    // 알림 노드 온라인/오프라인 — kTopicAlarmStatusFilter 로 들어온 retain 상태.
+    void nodeOnlineChanged(const QString& node, bool online);
 
     // JSON 이 깨졌거나 필드가 빠진 경우. 버리기는 하되 조용히 버리지는 않는다.
     void payloadRejected(const QString& topic, const QString& reason);

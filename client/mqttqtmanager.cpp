@@ -342,6 +342,7 @@ void MqttQtManager::subscribeAll()
     const Sub subs[] = {
         { kTopicWearable, 0 },   // 주기 데이터 — 하나쯤 놓쳐도 다음 게 온다
         { kTopicAlarm,    1 },   // 알람 — 놓치면 안 된다
+        { kTopicAlarmStatusFilter, 1 },   // 노드 온라인 상태(retain) — 구독 즉시 마지막 값을 받는다
     };
 
     for (const Sub& s : subs) {
@@ -392,6 +393,17 @@ void MqttQtManager::onMessageReceived(const QByteArray& payload, const QMqttTopi
     // QMqttClient 는 Qt 이벤트 루프 위에서 돌기 때문에 여기는 이미 메인
     // 스레드다. libmosquitto 를 직접 쓸 때 필요했던 스레드 넘기기가 없다.
     const QString topicName = topic.name();
+
+    // 상태 토픽은 JSON 이 아니라 순수 텍스트("online"/"offline")라 아래 JSON 파싱과
+    // 별도로 처리한다. veda/alarm/<node>/status 패턴에서 <node> 만 뽑아낸다.
+    static const QString kPrefix = QStringLiteral("veda/alarm/");
+    static const QString kSuffix = QStringLiteral("/status");
+    if (topicName.startsWith(kPrefix) && topicName.endsWith(kSuffix)) {
+        const QString node = topicName.mid(kPrefix.size(),
+            topicName.size() - kPrefix.size() - kSuffix.size());
+        emit nodeOnlineChanged(node, payload == QByteArrayLiteral("online"));
+        return;
+    }
 
     try {
         const auto j = nlohmann::json::parse(payload.constData(),

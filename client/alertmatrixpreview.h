@@ -44,7 +44,8 @@ private:
 
     QTimer*  timer_ = nullptr;
     QString  text_;
-    QColor   accent_{255, 30, 30};   // sevColor(CRIT) 와 동일
+    // sevColor(SEV_WARN) 과 동일 — "테스트" 명령이 노드에서 SEV_WARN(주황)로 뜨므로 맞춘다.
+    QColor   accent_{255, 140, 0};
     int      brightness_ = 180;      // 0~255
     int      offset_ = 0;            // 스크롤 위치(px)
     int      span_ = 0;              // 한 바퀴 길이 = measureText + 64
