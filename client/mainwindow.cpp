@@ -192,8 +192,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.39";
-const char* kDefaultHostB  = "172.20.32.8";
+const char* kDefaultHostA  = "172.20.31.17";
+const char* kDefaultHostB  = "172.20.31.16";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -211,7 +211,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.32.39").toString();
+    return s.value(kSettingsBrokerHost, "172.20.31.17").toString();
 }
 int brokerPort() {
     QSettings s;
@@ -3538,13 +3538,18 @@ void MainWindow::loadRoiZonesFromDb()
     qDebug() << "침대 ROI 복원 완료";
 }
 
-// 이벤트 배너/로그에 쓸 "누구" 문구.
-// ★ 서버가 침대를 특정하지 못했으면(roiId<0) 반드시 "미상"이라고 말한다.
-//   추적 ID는 신원이 아니라서 오귀속이 원리적으로 가능하고, 틀린 이름은
-//   이름 없는 것보다 나쁘다(엉뚱한 보호자에게 연락이 간다).
+// 이벤트 배너에 쓸 "어디서 / 누가" 문구.
+//
+// 서버가 침대를 특정하지 못하면(roiId<0) 사람 대신 채널만 말한다.
+// ★ "신원 미상"이라고 쓰지 않는다 — 요양원에서 그 표현은 "모르는 사람이 들어왔다"
+//   (외부인 침입)로 읽힌다. 실제 의미는 "우리가 누군지 못 밝혔다"일 뿐이라
+//   알 수 있는 사실(어느 채널)만 말하는 쪽이 정확하고 오해도 없다.
+// ★ 반대로 추정한 이름을 억지로 붙이지도 않는다. 추적 ID는 신원이 아니라서
+//   오귀속이 원리적으로 가능하고, 틀린 이름은 이름 없는 것보다 나쁘다
+//   (엉뚱한 보호자에게 연락이 간다).
 QString MainWindow::eventWhoLabel(int channel, int roiId) const
 {
-    if (roiId < 0) return QStringLiteral("신원 미상");
+    if (roiId < 0) return QStringLiteral("채널 %1").arg(channel + 1);
     const QString name = zoneResidentName(channel, roiId);
     return name == QStringLiteral("미지정")
                ? QStringLiteral("침대 %1").arg(roiId + 1)

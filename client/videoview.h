@@ -69,6 +69,10 @@ public:
     int selectedZone() const { return selectedZone_; }
     void setSelectedZone(int id);             // -1이면 선택 해제
 
+    // 침대 번호별 오버레이 색 — 번호만 보고도 어느 침대인지 구분되게 고정 배정.
+    // 인스펙터의 침대 목록 배지도 같은 색을 써야 영상과 목록이 눈으로 짝지어진다.
+    static QColor zoneColor(int id);
+
     void setDrawMode(bool on);                // 그리기 시작/중단
     bool drawMode() const { return drawMode_; }
     void cancelDraft();                       // 그리던 것 버리고 그리기 종료
@@ -99,8 +103,6 @@ private:
     // 클릭 지점(정규화)이 어느 침대 안인지. 없으면 -1.
     // 겹쳐 그린 침대는 나중에 그린 쪽(뒤 원소)이 위에 보이므로 역순으로 찾는다.
     int zoneAt(const QPointF& normPt) const;
-    // 침대 번호별 오버레이 색 — 번호만 보고도 어느 침대인지 구분되게 고정 배정
-    static QColor zoneColor(int id);
 
     int channel_;
     QPixmap frame_;

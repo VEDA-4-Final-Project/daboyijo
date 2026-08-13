@@ -31,10 +31,18 @@ constexpr float kConfHandoverFactor = 0.8f;
 // 침대 안에서 계속 보이면 초당 이만큼 상승 (상한 kConfMax)
 constexpr float kConfGainPerSec = 0.02f;
 constexpr float kConfMax = 0.95f;
-// 침대 밖에 있으면 초당 이만큼 하강. 바닥(kConfFloor) 아래로는 안 내려간다 —
-// 완전히 0으로 만들면 오래 나가 있던 사람은 낙상해도 영영 미상이 된다.
-constexpr float kConfDecayPerSec = 0.01f;
-constexpr float kConfFloor = 0.30f;
+// 침대 밖에 있으면 초당 이만큼 하강. 바닥은 kConfFloor.
+// ★ 감쇠를 세게 걸면 안 된다. 낙상은 정의상 침대 밖에서 일어나고 화장실을 다녀오는
+//   데만 수 분이 걸리는데, 초당 0.01(=40초면 0.9→0.5)로 깎으면 정작 이름을 붙여야
+//   할 순간에 전부 "미상"이 되어 sticky 설계가 무의미해진다.
+//   오귀속의 진짜 원인은 흐른 시간이 아니라 사건(ID 스왑·침대 이동·인계)이고,
+//   그쪽은 kConfBedSwap / kConfHandoverFactor가 따로 떨군다. 시간은 약한 신호라
+//   기울기만 남기고 바닥을 이름 표기 임계(kMinNameConfidence) 위에 둔다.
+constexpr float kConfDecayPerSec = 0.002f;
+// 이름 표기 임계(0.5)보다 살짝 위 — 한 번 제대로 귀속된 트랙은 침대 밖에 아무리
+// 오래 있어도 이름을 유지한다. 반대로 인계를 여러 번 거쳤거나(0.8^3=0.46) 침대를
+// 옮긴(0.45) 트랙은 이 바닥보다 낮은 채로 남아 "미상"으로 알린다.
+constexpr float kConfFloor = 0.55f;
 
 float dist(float ax, float ay, float bx, float by) {
     const float dx = ax - bx, dy = ay - by;
@@ -112,8 +120,11 @@ void IdentityTracker::update(int channel, const std::vector<Detection>& dets,
         }
 
         if (zone_now == kNoZone) {
-            // ── ② 유지: 침대 밖 — 라벨은 그대로 두고 신뢰도만 서서히 깎는다
-            if (t.resident_id > 0) {
+            // ── ② 유지: 침대 밖 — 라벨은 그대로 두고 신뢰도만 서서히 깎는다.
+            // ★ 이미 바닥 이하인 트랙(침대 이동·다중 인계로 떨어진 것)은 건드리지
+            //   않는다. max(floor, ...)를 그냥 걸면 0.45짜리가 바닥값 0.55로
+            //   되올라가 미상이어야 할 트랙에 이름이 붙는다.
+            if (t.resident_id > 0 && t.confidence > kConfFloor) {
                 t.confidence = std::max(
                     kConfFloor, t.confidence - kConfDecayPerSec * static_cast<float>(dt));
             }
@@ -203,13 +214,15 @@ void IdentityTracker::markCaregivers(int channel, const std::vector<int>& object
     for (int id : object_ids) {
         // 메타데이터보다 프레임이 먼저 도착할 수 있어, 없으면 자리를 만들어 둔다.
         Trace& t = traces[id];
-        if (t.caregiver) continue;
+        if (t.caregiver) continue;   // 트랙당 한 번만 (sticky) — 로그도 한 번만 남는다
         t.caregiver = true;
         t.last_seen = std::chrono::steady_clock::now();
-        if (t.resident_id > 0) {
-            std::fprintf(stderr, "[id] ch%d obj%d 보호사 판정 — 입소자 %d 귀속 해제\n",
-                         channel + 1, id, t.resident_id);
-        }
+        // ★ 입소자가 안 붙은 트랙이어도 반드시 남긴다. 조용히 제외해 버리면
+        //   "왜 이름이 안 뜨지"를 로그로 추적할 방법이 사라진다 — 보호사 판정은
+        //   옷 색(HSV) 기반이라 오탐이 있고, 그게 이름 미표시의 흔한 원인이다.
+        std::fprintf(stderr, "[id] ch%d obj%d 보호사 판정 — 침대 귀속 제외%s\n",
+                     channel + 1, id,
+                     t.resident_id > 0 ? " (기존 입소자 매핑 해제)" : "");
         t.roi_id = kNoZone;
         t.resident_id = 0;
         t.confidence = 0.f;
