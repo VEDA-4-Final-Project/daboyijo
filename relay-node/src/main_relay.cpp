@@ -239,7 +239,11 @@ std::optional<SimpleBLE::Peripheral> findDevice(SimpleBLE::Adapter& adapter) {
 bool sendTimeSync(SimpleBLE::Peripheral& peripheral) {
     std::time_t now = std::time(nullptr);
     std::tm lt{};
-    if(!localtime_r(&now, &lt)) return false;
+    if(!localtime_r(&now, &lt)) {
+        // 조용히 빠져나가면 '왜 안 보내지'를 영영 알 수 없다
+        std::cerr << "[Relay Node] 시각 변환 실패 (localtime_r)" << std::endl;
+        return false;
+    }
 
     uint8_t pkt[TIME_PKT_LEN];
     pkt[0] = TIME_PKT_HEADER;
@@ -259,8 +263,12 @@ bool sendTimeSync(SimpleBLE::Peripheral& peripheral) {
         return false;
     }
 
-    std::printf("[Relay Node] 시각 동기 전송 %02d:%02d:%02d\n",
-                lt.tm_hour, lt.tm_min, lt.tm_sec);
+    // 파일 전체가 std::cout + std::endl 이라 여기도 맞춘다.
+    // printf 는 stdout 이 파이프에 물리면 버퍼에 남아 순서가 뒤엉킬 수 있다.
+    char hhmmss[16];
+    std::snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d",
+                  lt.tm_hour, lt.tm_min, lt.tm_sec);
+    std::cout << "[Relay Node] 시각 동기 전송 " << hhmmss << std::endl;
     return true;
 }
 
@@ -288,6 +296,8 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     });
 
     // 연결 직후 곧바로 한 번 — 웨어러블이 재부팅했다면 빌드 시각으로 떠 있다.
+    // 결과와 무관하게 시도했다는 사실을 남긴다. 이 줄조차 없으면 옛 바이너리다.
+    std::cout << "[Relay Node] 시각 동기 시도..." << std::endl;
     sendTimeSync(peripheral);
     auto last_sync = std::chrono::steady_clock::now();
 
