@@ -201,7 +201,7 @@ QString serverHost(int idx) {
                     : s.value(kSettingsHostB, kDefaultHostB).toString();
 }
 // 채널(0~3) → 담당 Pi의 호스트 (블랙박스 클립 URL 등 host가 필요한 곳용).
-// 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2,3→1).
+// 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2172.20.32.39,3→1).
 QString hostForChannel(int ch) { return serverHost(ch < 2 ? 0 : 1); }
 
 // MQTT 브로커 주소. 영상 서버와 같은 라즈베리에 띄우는 경우가 많아 기본값을
@@ -210,7 +210,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.32.34").toString();
+    return s.value(kSettingsBrokerHost, "172.20.31.17").toString();
 }
 int brokerPort() {
     QSettings s;
