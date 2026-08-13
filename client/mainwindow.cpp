@@ -383,15 +383,22 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
                 qWarning() << "[MQTT] 형식이 맞지 않는 메시지 무시:" << topic << why;
             });
     // TLS(MQTTS) 설정은 init() 보다 먼저 해야 첫 접속부터 암호화된다.
-    // ca.crt 가 없으면 경고만 남기고 평문(1883)으로 붙는다 — 인증서를 아직
+    // ca.crt 가 없으면 경고만 남기고 평문으로 붙는다 — 인증서를 아직
     // 못 받은 개발 PC 에서도 앱은 뜨게 하려는 의도다.
     const QString caPath = brokerCaPath();
+    int port = brokerPort();
     if (QFile::exists(caPath)) {
         mqtt->setTlsConfig(caPath);
     } else {
-        qWarning() << "[MQTT] CA 인증서가 없어 평문으로 접속합니다:" << caPath;
+        // 평문으로 내려갈 때는 포트도 같이 내려야 한다. 기본값 8883 은 TLS 전용이라
+        // 평문으로 말을 걸면 브로커가 핸드셰이크 없이 곧바로 끊고, 화면에는 원인을
+        // 알 수 없는 "네트워크 연결이 끊겼습니다"만 반복해서 뜬다.
+        // 사용자가 포트를 직접 지정해 둔 경우에는 그 뜻을 존중해 건드리지 않는다.
+        if (!QSettings().contains(kSettingsBrokerPort))
+            port = 1883;
+        qWarning() << "[MQTT] CA 인증서가 없어 평문(" << port << ")으로 접속합니다:" << caPath;
     }
-    mqtt->init(brokerHost(), brokerPort());
+    mqtt->init(brokerHost(), port);
 
     // 케어 타임 대시보드: 10초마다 care_logs를 재조회해 채널별 케어시간 갱신.
     connect(&careTimeTimer, &QTimer::timeout, this, &MainWindow::updateCareTime);
