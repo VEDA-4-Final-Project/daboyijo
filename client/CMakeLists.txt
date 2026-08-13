@@ -34,6 +34,9 @@ qt_add_executable(daboyijo
     signupdialog.h
     mqttqtmanager.cpp
     mqttqtmanager.h
+    alertmatrixpreview.cpp
+    alertmatrixpreview.h
+    hub75-font16.h
 )
 
 # veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치

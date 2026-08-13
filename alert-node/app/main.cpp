@@ -34,6 +34,7 @@ struct Config {
     std::string audio_dir   = "sounds";
     std::string idle_text   = "감시 중";      // 평상시 표시 — 64px 안에 들어갈 것
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
+    int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
 };
 
@@ -88,6 +89,7 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
+        else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
     }
 }
@@ -149,6 +151,15 @@ int main(int argc, char* argv[])
     // stop() 이 재생 스레드를 join 해서 동시에 부르면 같은 스레드를 두 번 join 함
     // 재생기 호출은 전부 이 뮤텍스를 잡고 함
     std::mutex player_mutex;
+
+    // 평상시(idle) 밝기·음량 = 관제 앱 "적용"으로 커밋된 값. 테스트(matrix=SHOW)는 잠깐
+    // 이 값을 벗어나 보여주고, 스크롤이 끝나면 이 값으로 되돌아온다 — 적용해야만 유지된다.
+    //   밝기 시작값: conf 의 matrix_brightness (시작 시 확정해 idle 을 예측 가능하게)
+    //   음량 시작값: 하드웨어 믹서의 현재 값, 못 읽으면 50 폴백
+    int baseBrightness = cfg.matrix_brightness;
+    display.setBrightness(baseBrightness);
+    int baseVolume = 50;
+    { long v = player.getVolume(); if (v > 0) baseVolume = static_cast<int>(v); }
 
     MqttClient_veda client(cfg.node_id);
     client.setCallback([&](const std::string&, const std::string& payload) {
@@ -213,16 +224,36 @@ int main(int argc, char* argv[])
         printf("[명령] type=%s room=%d audio=%s matrix=%s\n", cmd.type.c_str(),
                cmd.room, cmd.audio_action.c_str(), cmd.matrix_action.c_str());
 
+        // 테스트(matrix=SHOW)는 잠깐 보여주고 끝나면 평상시(base) 값으로 되돌린다.
+        // 적용(matrix!=SHOW, 값>0)은 그 값을 base 로 커밋해 계속 유지한다.
+        //   → 이벤트 알람(SHOW, 밝기/음량=0)은 base 그대로라 아무 영향 없음.
+        const bool transient = (cmd.matrix_action == "SHOW");
+
+        // 밝기: 이 명령 동안 적용, 커밋이면 평상시 밝기로 승격.
+        if (cmd.brightness > 0) {
+            display.setBrightness(cmd.brightness);
+            if (!transient) baseBrightness = cmd.brightness;
+        }
+
+        // 음량: 이번 재생에 쓸 값 결정. 커밋이면 믹서에 바로 반영하고 base 로 승격.
+        int playVolume = baseVolume;
+        if (cmd.volume > 0) {
+            playVolume = cmd.volume;
+            if (!transient) {
+                std::lock_guard<std::mutex> lk(player_mutex);
+                player.setVolume(cmd.volume);   // 적용: 소리 없이도 믹서에 즉시 반영
+                baseVolume = cmd.volume;
+            }
+        }
+
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
-            player.setVolume(cmd.volume);
+            player.setVolume(playVolume);   // 테스트=그 음량 / 이벤트=평상시 음량
             player.playWav(toAudioPath(cfg, cmd.audio_file), cmd.loop);   // 비동기
         } else if (cmd.audio_action == "STOP") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.stop();   // 대개 MQTT 콜백이 이미 껐다 — 두 번째 호출은 무해
         }
-
-        if (cmd.brightness > 0) display.setBrightness(cmd.brightness);
 
         if (cmd.matrix_action == "SHOW") {
             // 서버가 지정하면 그대로, 안 주면 노드 기본값
@@ -233,6 +264,14 @@ int main(int argc, char* argv[])
         }
         else if (cmd.matrix_action == "CLEAR")
             display.clear();
+
+        // 테스트 스크롤이 끝나면 평상시(base) 밝기·음량으로 복귀 —
+        // 테스트로 올린 값이 idle "감시 중" 에 눌어붙지 않게(적용해야만 유지된다).
+        if (transient) {
+            display.setBrightness(baseBrightness);
+            std::lock_guard<std::mutex> lk(player_mutex);
+            player.setVolume(baseVolume);
+        }
     }
 
     client.stopLoop();   // 먼저 멈춰야 아래 정리 중에 콜백이 끼어들지 않는다

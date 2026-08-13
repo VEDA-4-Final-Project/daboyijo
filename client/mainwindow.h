@@ -110,6 +110,7 @@ class QPushButton;
 
 class QTableWidget;
 class QComboBox;
+class AlertMatrixPreview;
 class QDateEdit;
 class QSlider;
 class QVBoxLayout;
@@ -530,6 +531,25 @@ private:
     QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
     QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
+
+    // ── 장치 설정 래퍼 (좌측 네비 "장치 설정" = 카메라 + 알림 서브탭) ──
+    // 카메라 설정(연결/ROI/이미지)과 알림 설정은 성격이 달라, 상단 [카메라][알림]
+    // 세그먼트로 나눈 한 페이지 안에 스택으로 담는다. index5 = 이 래퍼.
+    QWidget* buildDeviceSettingsTab();       // contentStack 의 장치 설정 페이지(1회)
+    QWidget* buildDeviceModeSegment();       // 상단 [카메라][알림] 세그먼트
+    QWidget* deviceSettingsTab_ = nullptr;
+    QStackedWidget* deviceStack_ = nullptr;  // 0=카메라 / 1=알림
+    QPushButton* deviceModeBtns_[2] = {};    // [0]카메라 [1]알림
+
+    // ── 알림 노드 설정 (장치 설정 → 알림 서브탭) ──
+    // veda/alarm/control 로 밝기(0~255)/음량(0~100)을 노드에 보낸다. 미리보기는
+    // 실제 64x32 패널을 흉내 내며 밝기 슬라이더에 즉시 반응한다.
+    QWidget* buildAlertSettingsTab();
+    AlertMatrixPreview* alertPreview_ = nullptr;
+    ClickSlider* alertBright_ = nullptr;     // 0~100 (→255 매핑해 전송)
+    ClickSlider* alertVol_    = nullptr;     // 0~100
+    QComboBox*   alertNode_   = nullptr;     // 대상 알림 노드 id
+    QLabel*      alertApplied_ = nullptr;    // "마지막 적용 HH:MM:SS"
 
     // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
     // 슬라이더 값을 IMAGE_SET 제어 메시지로 서버에 보내면, 서버가 ONVIF Imaging으로

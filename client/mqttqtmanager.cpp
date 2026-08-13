@@ -282,6 +282,58 @@ bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_de
     return sendAlarmCommand(cmd, qos);
 }
 
+bool MqttQtManager::sendAlarmConfig(const QString& target_device,
+                                    int brightness255, int volumePct, int qos)
+{
+    AlarmCommand cmd{};
+    cmd.target_device = target_device.toStdString();
+    cmd.room          = 0;
+
+    cmd.type          = "CONTROL";
+    cmd.message       = "설정 적용";
+
+    // matrix/audio 를 NONE 으로 둔 "순수 적용" — 스크롤·소리 없이 밝기/음량만 바로 바꾼다.
+    // 노드는 이 값을 평상시(base)로 커밋하므로 idle "감시 중" 이 즉시 이 밝기로 바뀌고 유지된다.
+    cmd.audio_action  = "NONE";
+    cmd.audio_file    = "";
+    cmd.volume        = volumePct;       // 0~100. 노드가 >0 이면 믹서에 적용·유지
+    cmd.loop          = false;
+
+    cmd.matrix_action = "NONE";
+    cmd.matrix_passes = 0;
+    cmd.brightness    = brightness255;   // 0~255. 노드가 >0 이면 sysfs 전역값에 적용·유지
+
+    cmd.timestamp     = nowMs();
+
+    return sendAlarmCommand(cmd, qos);
+}
+
+bool MqttQtManager::sendAlarmTest(const QString& target_device,
+                                  int brightness255, int volumePct, int qos)
+{
+    AlarmCommand cmd{};
+    cmd.target_device = target_device.toStdString();
+    cmd.room          = 0;               // 0 = 노드가 message 를 그대로 스크롤
+
+    cmd.type          = "CONTROL";
+    // 미리보기(AlertMatrixPreview)와 같은 문구를 쓰도록 상수로 한 곳에서 정의한다.
+    // ("알림 테스트"는 폰트에 글자가 없어 예전엔 빈칸으로 스크롤돼 안 보였다.)
+    cmd.message       = kAlertTestText;
+
+    cmd.audio_action  = "PLAY";
+    cmd.audio_file    = "fall_alert.wav";  // 노드 sounds/ 에 있는 파일
+    cmd.volume        = volumePct;
+    cmd.loop          = false;
+
+    cmd.matrix_action = "SHOW";
+    cmd.matrix_passes = 1;
+    cmd.brightness    = brightness255;
+
+    cmd.timestamp     = nowMs();
+
+    return sendAlarmCommand(cmd, qos);
+}
+
 void MqttQtManager::subscribeAll()
 {
     // MQTT 는 clean session 이면 재연결할 때 브로커가 구독 목록을 잊는다.
