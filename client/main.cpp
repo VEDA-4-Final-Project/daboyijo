@@ -24,6 +24,12 @@ int main(int argc, char *argv[])
     db.setDatabaseName("daboijo");
     db.setUserName("daboijo");
     db.setPassword("1234");
+    // 서버(172.20.31.17, MariaDB 10.5)는 TLS 없이 뜨는데, 클라이언트가 링크하는
+    // MariaDB Connector/C 3.4는 기본값이 "TLS 사용 + 서버 인증서 검증"이라
+    // "SSL is required, but the server does not support it"로 접속이 끊긴다.
+    // 이 커넥터에는 MYSQL_OPT_SSL_MODE가 없고 MYSQL_OPT_SSL_ENFORCE=0도 효과가 없으며,
+    // 아래 옵션만이 TLS 요구를 실제로 해제한다(사내망 평문 접속).
+    db.setConnectOptions("MYSQL_OPT_SSL_VERIFY_SERVER_CERT=0");
 
     if (db.open()) {
         qDebug() << "✅ DB 연결 성공!";

@@ -125,6 +125,202 @@ int Database::getRiskLevelByCamera(int channel) {
     return level;
 }
 
+// 침대에 매핑된 입소자 1명의 위험도. 채널 MAX 방식과 달리 그 사람 값만 본다.
+int Database::getRiskLevelByResident(int residentId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_ || residentId <= 0) return -1;
+
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT CASE risk_level "
+        "WHEN '상' THEN 3 WHEN '중' THEN 2 WHEN '하' THEN 1 ELSE 3 END "
+        "FROM residents WHERE resident_id = %d", residentId);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 입소자 위험도 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return -1;
+
+    int level = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    if (row && row[0]) level = std::atoi(row[0]);
+    mysql_free_result(res);
+    return level;
+}
+
+std::string Database::getResidentName(int residentId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_ || residentId <= 0) return std::string();
+
+    char sql[128];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT name FROM residents WHERE resident_id = %d", residentId);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 입소자 이름 조회 실패: " << mysql_error(conn_) << "\n";
+        return std::string();
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return std::string();
+
+    std::string name;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    if (row && row[0]) name = row[0];
+    mysql_free_result(res);
+    return name;
+}
+
+int Database::getRoomByResident(int residentId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_ || residentId <= 0) return -1;
+
+    char sql[128];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT room FROM residents WHERE resident_id = %d", residentId);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 입소자 호실 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return -1;
+
+    int room = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    if (row && row[0]) room = std::atoi(row[0]);
+    mysql_free_result(res);
+    return room;
+}
+
+// ── 침대 ROI 영속화 ──────────────────────────────────────────────
+// roi_points 는 [[x,y],[x,y],...] 형태의 JSON 배열(정규화 0~1)로 저장한다.
+bool Database::saveRoiZone(int cameraId, int roiId,
+                           const std::vector<std::pair<float, float>>& points) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return false;
+    if (points.size() < 3 || points.size() > 32) return false;  // 프로토콜 상한과 동일
+
+    // 좌표는 float라 인젝션 위험이 없다 — 문자열이 아니므로 이스케이프 대상도 아니다.
+    std::string json = "[";
+    char buf[64];
+    for (size_t i = 0; i < points.size(); ++i) {
+        std::snprintf(buf, sizeof(buf), "%s[%.4f,%.4f]", i ? "," : "",
+                      points[i].first, points[i].second);
+        json += buf;
+    }
+    json += "]";
+
+    // ★ INSERT ... ON DUPLICATE KEY UPDATE — 같은 침대를 다시 그리면 덮어쓴다.
+    //   resident_id는 건드리지 않는다(각도만 고쳐 그렸는데 사람이 떨어지면 안 됨).
+    std::string sql =
+        "INSERT INTO roi_zones (camera_id, roi_id, roi_name, roi_points) VALUES (" +
+        std::to_string(cameraId) + ", " + std::to_string(roiId) + ", '', '" + json +
+        "') ON DUPLICATE KEY UPDATE roi_points = VALUES(roi_points)";
+
+    if (mysql_query(conn_, sql.c_str())) {
+        std::cerr << "[DB] 침대 ROI 저장 실패: " << mysql_error(conn_) << "\n";
+        return false;
+    }
+    std::cout << "[DB] 침대 ROI 저장 (ch" << (cameraId + 1) << " 침대"
+              << (roiId + 1) << ", " << points.size() << "점)\n";
+    return true;
+}
+
+bool Database::bindRoiZoneResident(int cameraId, int roiId, int residentId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // 아직 ROI를 안 그린 침대에 사람만 먼저 지정할 수도 있어 INSERT ... ON DUPLICATE.
+    // 그 경우 roi_points는 빈 배열로 두고, 나중에 saveRoiZone이 채운다.
+    char sql[256];
+    if (residentId > 0) {
+        std::snprintf(sql, sizeof(sql),
+            "INSERT INTO roi_zones (camera_id, roi_id, roi_name, roi_points, resident_id) "
+            "VALUES (%d, %d, '', '[]', %d) "
+            "ON DUPLICATE KEY UPDATE resident_id = VALUES(resident_id)",
+            cameraId, roiId, residentId);
+    } else {
+        std::snprintf(sql, sizeof(sql),
+            "UPDATE roi_zones SET resident_id = NULL "
+            "WHERE camera_id = %d AND roi_id = %d", cameraId, roiId);
+    }
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 침대 입소자 매핑 실패: " << mysql_error(conn_) << "\n";
+        return false;
+    }
+    std::cout << "[DB] 침대 입소자 매핑 (ch" << (cameraId + 1) << " 침대"
+              << (roiId + 1) << " → 입소자 " << residentId << ")\n";
+    return true;
+}
+
+bool Database::deleteRoiZone(int cameraId, int roiId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    char sql[160];
+    if (roiId < 0) {
+        std::snprintf(sql, sizeof(sql),
+            "DELETE FROM roi_zones WHERE camera_id = %d", cameraId);
+    } else {
+        std::snprintf(sql, sizeof(sql),
+            "DELETE FROM roi_zones WHERE camera_id = %d AND roi_id = %d",
+            cameraId, roiId);
+    }
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 침대 ROI 삭제 실패: " << mysql_error(conn_) << "\n";
+        return false;
+    }
+    return true;
+}
+
+std::vector<RoiZoneRow> Database::loadRoiZones() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<RoiZoneRow> rows;
+    if (!conn_) return rows;
+
+    if (mysql_query(conn_,
+            "SELECT camera_id, roi_id, resident_id, roi_points FROM roi_zones "
+            "ORDER BY camera_id, roi_id")) {
+        std::cerr << "[DB] 침대 ROI 로드 실패: " << mysql_error(conn_) << "\n";
+        return rows;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return rows;
+
+    while (MYSQL_ROW row = mysql_fetch_row(res)) {
+        if (!row[0] || !row[1] || !row[3]) continue;
+        RoiZoneRow z;
+        z.camera_id = std::atoi(row[0]);
+        z.roi_id = std::atoi(row[1]);
+        z.resident_id = row[2] ? std::atoi(row[2]) : 0;
+
+        // roi_points는 우리가 쓴 형식([[x,y],...])이라 숫자만 순서대로 긁어
+        // 둘씩 묶으면 된다 — 이 컬럼에 다른 구조가 들어올 경로가 없다.
+        const char* p = row[3];
+        std::vector<float> nums;
+        while (*p) {
+            if ((*p >= '0' && *p <= '9') || *p == '-' || *p == '.') {
+                char* end = nullptr;
+                nums.push_back(std::strtof(p, &end));
+                p = (end && end != p) ? end : p + 1;
+            } else {
+                ++p;
+            }
+        }
+        for (size_t i = 0; i + 1 < nums.size(); i += 2) {
+            z.points.emplace_back(nums[i], nums[i + 1]);
+        }
+        rows.push_back(std::move(z));
+    }
+    mysql_free_result(res);
+    std::cout << "[DB] 침대 ROI " << rows.size() << "건 로드\n";
+    return rows;
+}
+
 int Database::getCHById(const std::string& wearable_id){
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_) return -1;

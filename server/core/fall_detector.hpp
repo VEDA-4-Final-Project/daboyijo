@@ -12,6 +12,7 @@
 //
 // 판정 흐름:
 //   ⓪ 침대 ROI 안이면 전부 무시(취침·뒤척임). ROI 밖이면 "관찰 대상".
+//      한 채널에 침대가 여러 개이므로 "어느 침대든 하나에라도 들어있으면 재실"이다.
 //   ① main.cpp가 매 비디오 프레임마다 observedTracks()로 관찰 대상(침대 밖
 //      사람)의 bbox 목록을 받아, WiseAI bbox로 크롭한 이미지를
 //      PoseEstimator(MoveNet)에 돌려 "누운 자세"인지 얻고 reportPose()로
@@ -26,8 +27,8 @@
 // "지금 누워있는가" 자체를 직접 보므로 이 사각지대를 없앤다.
 //
 // 침대 ROI는 Qt 관제 화면에서 그려 서버로 전송되며(protocol/video_stream.h),
-// update()에 채널별 정규화 다각형(0~1)으로 넘어온다. ROI가 없으면(폴백)
-// 게이트 없이 화면 전체를 관찰 대상으로 본다.
+// update()에 채널별 침대 목록(BedZone, 정규화 0~1 다각형)으로 넘어온다.
+// ROI가 하나도 없으면(폴백) 게이트 없이 화면 전체를 관찰 대상으로 본다.
 class FallDetector {
 public:
     using FallCallback = std::function<void(int channel, const Detection& at)>;
@@ -36,13 +37,13 @@ public:
     void setFallCallback(FallCallback cb) { on_fall_ = std::move(cb); }
 
     // 채널의 최신 감지 결과를 매 메타데이터 콜백(주기 ~5Hz)마다 전달.
-    // bed_roi: 이 채널의 침대 ROI(정규화 0~1 다각형, 3점 이상). 비어 있으면
+    // zones: 이 채널의 침대들(roi_id → BedZone). 비어 있거나 전부 무효(3점 미만)면
     // 침대 게이트 없이 화면 전체를 관찰 대상으로 본다(ROI 미설정 폴백).
     // 재실 판정 기준점은 bbox 하단 중앙("발끝") — Qt에서 ROI를 그릴 때는
     // 침대가 바닥에 차지하는 발자국+매트리스 면을 감싸게 그려야 한다.
     // 여기서는 ROI 게이팅과 bbox 캐시 갱신만 한다 — 낙상 확정은 reportPose()가 담당.
     void update(int channel, const std::vector<Detection>& detections,
-                const std::vector<std::pair<float, float>>& bed_roi);
+                const std::map<int, BedZone>& zones);
 
     // 현재 "관찰 대상"(침대 밖)인 사람들의 최신 bbox. main.cpp가 비디오
     // 프레임마다 이 목록으로 크롭 → MoveNet 추론 → reportPose() 순으로 호출한다.
@@ -61,6 +62,7 @@ private:
     // 사람(ObjectId) 1명의 추적 상태
     struct Track {
         bool in_bed = false;  // 직전 프레임에 침대 ROI 안이었는지 (이탈/재실 로그용)
+        int bed_id = kNoZone; // 재실 중인 침대의 roi_id (in_bed=false면 kNoZone)
         float left = 0, top = 0, right = 0, bottom = 0;  // 최신 bbox (크롭용)
         bool lying_active = false;  // 직전 자세 보고가 "누움"이었는지
         std::chrono::steady_clock::time_point lying_since;  // 누움이 시작된 시각

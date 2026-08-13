@@ -39,11 +39,28 @@ CREATE TABLE IF NOT EXISTS care_logs (
     FOREIGN KEY (resident_id) REFERENCES residents(resident_id)
 );
 
--- ROI 구역 (구역마다 한 줄)
+-- 침대 ROI (침대마다 한 줄)
+-- 한 채널(카메라 시야)에 침대가 여러 개이고 침대마다 입소자가 다르다.
+-- roi_id 는 그 채널 안에서의 침대 번호(0~7)로, Qt 화면·프로토콜·서버 판정이
+-- 모두 이 번호로 같은 침대를 가리킨다.
+-- resident_id 가 "이 침대는 누구 자리"라는 매핑이고, 서버는 이걸 앵커로
+-- 추적 객체에 사람 이름을 붙인다(core/identity_tracker.hpp).
 CREATE TABLE IF NOT EXISTS roi_zones (
     id           INT AUTO_INCREMENT PRIMARY KEY,
     camera_id    INT          NOT NULL,
-    roi_name     VARCHAR(30)  NOT NULL,
+    roi_id       INT          NOT NULL DEFAULT 0,
+    roi_name     VARCHAR(30)  NOT NULL DEFAULT '',
     roi_points   JSON         NOT NULL,
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    resident_id  INT          NULL,
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_camera_roi (camera_id, roi_id)
 );
+
+-- 이미 roi_zones 가 만들어진 DB 를 위한 이관 구문 (채널당 1개였던 시절 스키마).
+ALTER TABLE roi_zones ADD COLUMN IF NOT EXISTS roi_id INT NOT NULL DEFAULT 0;
+ALTER TABLE roi_zones ADD COLUMN IF NOT EXISTS resident_id INT NULL;
+ALTER TABLE roi_zones ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
+    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+ALTER TABLE roi_zones MODIFY COLUMN roi_name VARCHAR(30) NOT NULL DEFAULT '';
+ALTER TABLE roi_zones ADD UNIQUE KEY IF NOT EXISTS uk_camera_roi (camera_id, roi_id);
