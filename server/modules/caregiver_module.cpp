@@ -82,8 +82,12 @@ void CaregiverModule::processFrame(const AiJob& job) {
     df.objects = job.dets;
 
     // 매 프레임마다 raw_frame과 df(채널번호, 탐지된 객체 목록)을 전달하여
-    // detector가 detectInFrame을 실행하여 요양사 탐지
-    bool present = detector_.detectInFrame(job.raw_frame, df);
+    // detector가 detectInFrame을 실행하여 요양사 탐지.
+    // 콜백이 걸려 있으면 "누가" 보호사인지까지 받아 IdentityTracker에 넘긴다.
+    std::vector<int> caregiver_ids;
+    bool present = detector_.detectInFrame(job.raw_frame, df,
+                                           ids_cb_ ? &caregiver_ids : nullptr);
+    if (ids_cb_ && !caregiver_ids.empty()) ids_cb_(job.channel, caregiver_ids);
 
     //현재 카메라의 CareTimer찾음
     auto it = timers_.find(job.channel);

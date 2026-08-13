@@ -19,18 +19,26 @@
 // 파이프라인·다른 클라이언트에 영향을 안 줌 (차면 오래된 프레임부터 버림)
 class StreamServer {
 public:
-    // Qt 가 보낸 ROI 갱신 1건 — points 는 화면 대비 0~1 정규화 다각형
-    // clear=true 면 해당 채널 ROI 삭제 (points 는 빈 상태)
+    // Qt 가 보낸 침대 ROI 갱신 1건 — points 는 화면 대비 0~1 정규화 다각형.
+    // 한 채널에 침대가 여럿이라 roi_id 로 어느 침대인지 구분한다.
+    // clear=true 면 그 침대 ROI 삭제 (points 는 빈 상태),
+    // clear 이면서 roi_id==DBJ_ROI_ID_ALL 이면 그 채널 전부 삭제.
     struct RoiUpdate {
         int channel = 0;
+        int roi_id = 0;
         bool clear = false;
         std::vector<std::pair<float, float>> points;  // (x,y) 0~1
     };
     using RoiCallback = std::function<void(const RoiUpdate&)>;
+    // 침대 ↔ 입소자 매핑 — (채널, 침대, resident_id). resident_id=0 이면 해제
+    using RoiBindCallback =
+        std::function<void(int channel, int roi_id, int resident_id)>;
 
     using ConfirmCallback = std::function<void(int channel)>;
-    // 위험도 변경 콜백 — (채널, 위험도 레벨)
-    using RiskLevelCallback = std::function<void(int channel, int risk_level)>;
+    // 위험도 변경 콜백 — (채널, 침대, 위험도 레벨).
+    // 위험도는 사람에게 붙는 값이라 침대 단위다. roi_id==DBJ_ROI_ID_ALL 이면 채널 일괄.
+    using RiskLevelCallback =
+        std::function<void(int channel, int roi_id, int risk_level)>;
     // Qt 의 카메라 지정/해제 — url 은 채널의 전체 RTSP 주소
     // ★ 아래 콜백들은 전부 수신 스레드에서 불림 — 스레드 안전 + 블로킹 금지
     using CameraSetCallback = std::function<void(int channel, const std::string& url)>;
@@ -51,6 +59,7 @@ public:
 
     // ★ 콜백 등록은 전부 start() 전에 — 접속 즉시 수신 스레드가 뜸
     void setRoiCallback(RoiCallback cb) { on_roi_ = std::move(cb); }
+    void setRoiBindCallback(RoiBindCallback cb) { on_roi_bind_ = std::move(cb); }
     void setConfirmCallback(ConfirmCallback cb) { on_confirm_ = std::move(cb); }
     void setRiskLevelCallback(RiskLevelCallback cb) { on_risk_level_ = std::move(cb); }
     void setCameraSetCallback(CameraSetCallback cb) { on_camera_set_ = std::move(cb); }
@@ -66,11 +75,12 @@ public:
 
     // 접속한 모든 클라이언트에 이벤트(dbj_evt_header_t) 전송
     // type 은 DBJ_EVT_*, (x,y)는 발생 위치 정규화 0~1 (없으면 0,0)
+    // roi_id 는 발생 침대(=누구인지) — 특정 못 하면 DBJ_ROI_ID_NONE 을 넘길 것.
     // timestampMsOverride 가 0 이 아니면 그 값을 그대로 사용 — 블랙박스 클립
     // 파일명과 시각을 맞춰야 할 때 씀 (0 이면 서버 현재 시각)
     // 아무 스레드에서나 호출 가능 (낙상 콜백은 AI 워커 스레드)
     void broadcastEvent(int channel, uint8_t type, float x, float y,
-                        int64_t timestampMsOverride = 0);
+                        int roi_id, int64_t timestampMsOverride = 0);
 
     size_t clientCount();
 
@@ -102,6 +112,7 @@ private:
     std::vector<std::shared_ptr<Client>> clients_;
     
     RoiCallback on_roi_;
+    RoiBindCallback on_roi_bind_;
     ConfirmCallback on_confirm_;
     RiskLevelCallback on_risk_level_;
     CameraSetCallback on_camera_set_;

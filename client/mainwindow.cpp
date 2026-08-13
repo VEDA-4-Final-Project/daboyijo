@@ -26,6 +26,7 @@
 #include <QPropertyAnimation>
 #include <QPair>
 #include <QList>
+#include <algorithm>
 #include <cmath>
 #include <QPushButton>
 #include <QInputDialog>
@@ -191,8 +192,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.34";
-const char* kDefaultHostB  = "172.20.32.8";
+const char* kDefaultHostA  = "172.20.31.17";
+const char* kDefaultHostB  = "172.20.31.16";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -210,7 +211,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.32.34").toString();
+    return s.value(kSettingsBrokerHost, "172.20.31.17").toString();
 }
 int brokerPort() {
     QSettings s;
@@ -334,6 +335,10 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     // DB 입소자 목록(카드) 초기 로드 (main.cpp에서 연결을 이미 열어둠)
     refreshResidentCards();
 
+    // 침대 ROI·입소자 매핑 복원 — buildUi 이후여야 오버레이/목록 위젯이 존재한다.
+    // 서버도 부팅 때 같은 표를 읽으므로 양쪽이 같은 침대를 본다.
+    loadRoiZonesFromDb();
+
     // 이전 세션에서 연결해 둔 카메라 채널을 복원한다. 서버는 Qt 재시작과 무관하게
     // 스트리밍을 유지하므로, URL이 없어도 활성 채널을 알면 "해제"가 정상 동작한다.
     restoreCameraActive();
@@ -378,15 +383,22 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
                 qWarning() << "[MQTT] 형식이 맞지 않는 메시지 무시:" << topic << why;
             });
     // TLS(MQTTS) 설정은 init() 보다 먼저 해야 첫 접속부터 암호화된다.
-    // ca.crt 가 없으면 경고만 남기고 평문(1883)으로 붙는다 — 인증서를 아직
+    // ca.crt 가 없으면 경고만 남기고 평문으로 붙는다 — 인증서를 아직
     // 못 받은 개발 PC 에서도 앱은 뜨게 하려는 의도다.
     const QString caPath = brokerCaPath();
+    int port = brokerPort();
     if (QFile::exists(caPath)) {
         mqtt->setTlsConfig(caPath);
     } else {
-        qWarning() << "[MQTT] CA 인증서가 없어 평문으로 접속합니다:" << caPath;
+        // 평문으로 내려갈 때는 포트도 같이 내려야 한다. 기본값 8883 은 TLS 전용이라
+        // 평문으로 말을 걸면 브로커가 핸드셰이크 없이 곧바로 끊고, 화면에는 원인을
+        // 알 수 없는 "네트워크 연결이 끊겼습니다"만 반복해서 뜬다.
+        // 사용자가 포트를 직접 지정해 둔 경우에는 그 뜻을 존중해 건드리지 않는다.
+        if (!QSettings().contains(kSettingsBrokerPort))
+            port = 1883;
+        qWarning() << "[MQTT] CA 인증서가 없어 평문(" << port << ")으로 접속합니다:" << caPath;
     }
-    mqtt->init(brokerHost(), brokerPort());
+    mqtt->init(brokerHost(), port);
 
     // 케어 타임 대시보드: 10초마다 care_logs를 재조회해 채널별 케어시간 갱신.
     connect(&careTimeTimer, &QTimer::timeout, this, &MainWindow::updateCareTime);
@@ -1071,9 +1083,10 @@ void MainWindow::renderHelpTopic(int idx)
     case 6:
     default:
         title = QStringLiteral("카메라 설정");
-        body = li(QStringLiteral("채널 레일(CH1~4)"), QStringLiteral("상단에서 채널 선택. 연결·ROI 상태가 배지로 표시되고, 아래 컨트롤과 우측 영상이 그 채널로 묶입니다."))
+        body = li(QStringLiteral("채널 레일(CH1~4)"), QStringLiteral("상단에서 채널 선택. 연결 상태와 지정된 침대 수가 배지로 표시되고, 아래 컨트롤과 우측 영상이 그 채널로 묶입니다."))
              + li(QStringLiteral("연결"), QStringLiteral("CCTV IP·계정·비밀번호 입력 후 연결. ‘같은 망 카메라 검색’으로 자동 탐색."))
-             + li(QStringLiteral("ROI"), QStringLiteral("‘영역 지정 시작’ → 우측 영상 클릭으로 침대 영역을 그리고 더블클릭으로 완료. 이 영역이 낙상·침상이탈 판정 기준이 됩니다."))
+             + li(QStringLiteral("ROI(침대)"), QStringLiteral("‘침대 추가’ → 우측 영상 클릭으로 침대 영역을 그리고 더블클릭으로 완료. 한 채널에 침대를 여러 개(최대 8개) 지정할 수 있고, 각 침대가 낙상·침상이탈 판정 기준이 됩니다."))
+             + li(QStringLiteral("침대 · 입소자 매핑"), QStringLiteral("침대 목록에서 그 침대의 입소자를 지정하면, 그 침대에서 감지된 사람에게 이름이 붙어 낙상·이탈 알림에 ‘침대 2 김복순’처럼 표시됩니다. 서버가 사람을 특정하지 못하면 ‘신원 미상’으로 알립니다(추적 ID는 신원이 아니라서 확정할 수 없습니다)."))
              + li(QStringLiteral("이미지"), QStringLiteral("밝기·대비·채도 슬라이더 후 ‘적용’. 우측에 적용 전/적용 후(실시간) 비교. 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
         break;
     }
@@ -1149,7 +1162,7 @@ QWidget* MainWindow::buildVideoCard(int channel)
                 roiDrawing = on;
                 if (roiButton)
                     roiButton->setText(on ? QStringLiteral("취소")
-                                          : QStringLiteral("지정"));
+                                          : QStringLiteral("침대 추가"));
             });
     lay->addWidget(video, 1);
 
@@ -3154,13 +3167,17 @@ void MainWindow::onReadyRead()
             buffer.remove(0, sizeof(evt));
 
             if (evt.channel < 4) {
+                // roi_id = 서버가 밝힌 발생 침대(=누구). 못 밝혔으면 kRoiIdNone.
+                const int roiId = (evt.roi_id < kMaxRoiZones) ? int(evt.roi_id) : -1;
                 if (evt.type == kEvtFall) {
-                    handleFallEvent(evt.channel, evt.timestamp_ms,
+                    handleFallEvent(evt.channel, roiId, evt.timestamp_ms,
                                     evt.x / float(kRoiCoordScale),
                                     evt.y / float(kRoiCoordScale));
                 }
                 else if (evt.type == kEvtBedEgress) {
-                    handleBedEgressEvent(evt.channel, evt.timestamp_ms);
+                    handleBedEgressEvent(evt.channel, roiId, evt.timestamp_ms,
+                                         evt.x / float(kRoiCoordScale),
+                                         evt.y / float(kRoiCoordScale));
                 }
                 // 웨어러블 생체데이터 이상 — x,y 는 쓰지 않는다(서버가 0 으로 채움)
                 else if (evt.type == kEvtVitalAbnormal) {
@@ -3259,17 +3276,23 @@ void MainWindow::onReadyRead()
 // ═══════════════════════════════════════════════════════════
 //  낙상 이벤트 — 빨간색 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
-void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, float ny)
+void MainWindow::handleFallEvent(int channel, int roiId, quint64 timestampMs,
+                                 float nx, float ny)
 {
+    // 서버가 이 사람을 어느 침대 입소자로 귀속했는지 — 못 밝혔으면 roiId<0.
+    // 낙상자는 침대 밖이라 위치로는 알 수 없고, 서버 IdentityTracker의 추정이다.
+    const QString who = eventWhoLabel(channel, roiId);
+
     // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
         fallActive[channel] = true;
         if (channelViews[channel]) {
             // 서버가 보낸 낙상 발생 위치(정규화 0~1)에 십자 조준점 표시
-            channelViews[channel]->setAlert(true, QStringLiteral("🚨 낙상 감지"),
-                                            QPointF(nx, ny));
+            channelViews[channel]->setAlert(
+                true, QStringLiteral("🚨 낙상 감지 · %1").arg(who), QPointF(nx, ny));
         }
-        qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
+        qDebug() << "🚨 [낙상 감지] 채널" << (channel + 1) << who
+                 << "빨간 테두리 켜짐 (모자이크 자동 해제 상태)";
     }
     refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
     setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
@@ -3291,7 +3314,7 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, flo
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
         logTable->setItem(row, 0, dtItem);
-        logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+        logTable->setItem(row, 1, new QTableWidgetItem(eventPlaceLabel(channel, roiId)));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
 
@@ -3304,15 +3327,22 @@ void MainWindow::handleFallEvent(int channel, quint64 timestampMs, float nx, flo
 // ═══════════════════════════════════════════════════════════
 //  침상 이탈 이벤트 — 빨간색 테두리 활성화 및 로그 추가
 // ═══════════════════════════════════════════════════════════
-void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
+void MainWindow::handleBedEgressEvent(int channel, int roiId, quint64 timestampMs,
+                                      float nx, float ny)
 {
+    // 이탈은 "어느 침대에서 나갔는가"가 판정 자체라, 낙상과 달리 추정이 아니라
+    // 확정된 침대다. 그 침대에 매핑된 입소자가 곧 누구인지.
+    const QString who = eventWhoLabel(channel, roiId);
+
     // 1. 빨간 테두리 즉각 활성화!
     if (channel >= 0 && channel < 4) {
         bedEgressActive[channel] = true;
         if (channelViews[channel]) {
-            channelViews[channel]->setAlert(true, QStringLiteral("⚠️ 침대 이탈"));
+            channelViews[channel]->setAlert(
+                true, QStringLiteral("⚠️ 침대 이탈 · %1").arg(who),
+                (nx > 0 || ny > 0) ? QPointF(nx, ny) : QPointF(-1, -1));
         }
-        qDebug() << "⚠️ [침상 이탈 감지] 채널" << (channel + 1) << "빨간 테두리 켜짐";
+        qDebug() << "⚠️ [침상 이탈 감지] 채널" << (channel + 1) << who << "빨간 테두리 켜짐";
     }
     refreshAlarmButton();       // 경보 활성 → 해제 버튼 빨강 채움으로 강조
     setVideoFocus(channel);     // 감지 채널을 크게, 나머지는 작게(스포트라이트)
@@ -3335,7 +3365,7 @@ void MainWindow::handleBedEgressEvent(int channel, quint64 timestampMs)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
         logTable->setItem(row, 0, dtItem);
-        logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
+        logTable->setItem(row, 1, new QTableWidgetItem(eventPlaceLabel(channel, roiId)));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상 이탈"))); // 💡 이탈 분류로 등록
         logTable->setItem(row, 3, new QTableWidgetItem(QStringLiteral("미확인")));
 
@@ -3403,35 +3433,175 @@ void MainWindow::onRoiButtonClicked()
         roiEditorView->cancelDraft();
         return;
     }
-    // 팝업 편집기(현재 선택 채널)에 바로 그리기 시작 (좌클릭=점, 더블클릭=완료)
+    // 침대가 상한까지 찼으면 그리기를 시작하지 않는다 — 그려 놓고 "못 넣는다"고
+    // 하면 그린 노동이 그대로 버려진다.
+    if (roiEditorView->nextFreeZoneId() < 0) {
+        QMessageBox::information(
+            this, QStringLiteral("침대 추가"),
+            QStringLiteral("채널 %1에는 침대를 최대 %2개까지 지정할 수 있습니다.\n"
+                           "기존 침대를 제거한 뒤 다시 시도하세요.")
+                .arg(roiEditChannel + 1)
+                .arg(kMaxRoiZones));
+        return;
+    }
+    // 편집기(현재 선택 채널)에 바로 그리기 시작 (좌클릭=점, 더블클릭=완료)
     roiEditorView->setDrawMode(true);
 }
 
+// "침대 제거" — 선택된 침대 1개, 선택이 없으면 채널 전체.
 void MainWindow::onRoiClearClicked()
 {
     const int ch = roiEditChannel;
     if (roiEditorView && roiEditorView->drawMode()) roiEditorView->cancelDraft();
 
-    const bool hasRoi =
-        (channelViews[ch] && !channelViews[ch]->roi().isEmpty()) ||
-        (roiEditorView && !roiEditorView->roi().isEmpty());
-    if (!hasRoi) {
-        QMessageBox::information(this, QStringLiteral("ROI 제거"),
-                                 QStringLiteral("채널 %1에 제거할 ROI가 없습니다.").arg(ch + 1));
+    if (roiZones_[ch].isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("침대 제거"),
+                                 QStringLiteral("채널 %1에 제거할 침대가 없습니다.").arg(ch + 1));
         return;
     }
 
-    if (QMessageBox::question(
-            this, QStringLiteral("ROI 제거"),
-            QStringLiteral("채널 %1의 침대 ROI를 제거할까요?").arg(ch + 1))
-        != QMessageBox::Yes)
+    const int sel = roiEditorView ? roiEditorView->selectedZone() : -1;
+    const bool all = (sel < 0);
+    const QString what = all
+        ? QStringLiteral("채널 %1의 침대 %2개를 모두 제거할까요?")
+              .arg(ch + 1).arg(roiZones_[ch].size())
+        : QStringLiteral("채널 %1의 침대 %2(%3)를 제거할까요?")
+              .arg(ch + 1).arg(sel + 1).arg(zoneResidentName(ch, sel));
+
+    if (QMessageBox::question(this, QStringLiteral("침대 제거"), what) != QMessageBox::Yes)
         return;
 
-    sendRoi(ch, QPolygonF(), true);            // 서버에 삭제 통보
-    if (channelViews[ch]) channelViews[ch]->clearRoi();  // 메인 4분할 오버레이 제거
-    if (roiEditorView) roiEditorView->clearRoi();         // 편집기 오버레이 제거
-    refreshCamChannelStatus();                            // 레일 ROI 배지 갱신
-    qDebug() << "ROI 제거: ch" << ch;
+    // 서버에 삭제 통보 — roi_id에 kRoiIdAll을 실으면 그 채널 전체 삭제다.
+    sendRoi(ch, all ? kRoiIdAll : sel, QPolygonF(), true);
+
+    if (all) {
+        roiZones_[ch].clear();
+        roiResident_[ch].clear();
+    } else {
+        for (int i = 0; i < roiZones_[ch].size(); ++i) {
+            if (roiZones_[ch][i].id != sel) continue;
+            roiZones_[ch].removeAt(i);
+            break;
+        }
+        roiResident_[ch].remove(sel);
+    }
+    refreshRoiZones(ch);
+    qDebug() << "침대 제거: ch" << ch << (all ? -1 : sel);
+}
+
+// 침대 ROI를 DB(roi_zones)에서 읽어 화면에 복원한다.
+// 서버도 같은 표를 읽어 판정을 복원하므로(server/src/main.cpp), Qt를 껐다 켜도
+// 관제 화면과 서버가 같은 침대를 본다. 그리기 결과를 Qt 메모리에만 두면
+// 재시작 후 화면엔 침대가 없는데 서버는 판정 중인 상태가 되어 서로 어긋난다.
+void MainWindow::loadRoiZonesFromDb()
+{
+    for (int ch = 0; ch < 4; ++ch) {
+        roiZones_[ch].clear();
+        roiResident_[ch].clear();
+    }
+
+    QSqlQuery q;
+    if (!q.exec(QStringLiteral(
+            "SELECT camera_id, roi_id, resident_id, roi_points FROM roi_zones "
+            "ORDER BY camera_id, roi_id"))) {
+        qDebug() << "침대 ROI 조회 실패:" << q.lastError().text();
+        return;
+    }
+
+    while (q.next()) {
+        const int ch = q.value(0).toInt();
+        const int id = q.value(1).toInt();
+        if (ch < 0 || ch >= 4 || id < 0 || id >= kMaxRoiZones) continue;
+
+        const int rid = q.value(2).isNull() ? 0 : q.value(2).toInt();
+        if (rid > 0) roiResident_[ch][id] = rid;
+
+        // roi_points는 서버가 쓴 [[x,y],...] JSON. 숫자만 순서대로 긁어 둘씩 묶는다
+        // (이 컬럼에 다른 구조가 들어올 경로가 없다 — 쓰는 쪽이 서버 한 곳뿐).
+        const QString json = q.value(3).toString();
+        QVector<double> nums;
+        for (int i = 0; i < json.size();) {
+            const QChar c = json[i];
+            if (c.isDigit() || c == QLatin1Char('-') || c == QLatin1Char('.')) {
+                int j = i;
+                while (j < json.size() &&
+                       (json[j].isDigit() || json[j] == QLatin1Char('-') ||
+                        json[j] == QLatin1Char('.') || json[j] == QLatin1Char('e')))
+                    ++j;
+                nums.push_back(json.mid(i, j - i).toDouble());
+                i = j;
+            } else {
+                ++i;
+            }
+        }
+        RoiZone z;
+        z.id = id;
+        for (int i = 0; i + 1 < nums.size(); i += 2)
+            z.poly << QPointF(nums[i], nums[i + 1]);
+        if (z.poly.size() >= 3) roiZones_[ch].push_back(z);
+    }
+
+    for (int ch = 0; ch < 4; ++ch) refreshRoiZones(ch);
+    qDebug() << "침대 ROI 복원 완료";
+}
+
+// 이벤트 배너에 쓸 "어디서 / 누가" 문구.
+//
+// 서버가 침대를 특정하지 못하면(roiId<0) 사람 대신 채널만 말한다.
+// ★ "신원 미상"이라고 쓰지 않는다 — 요양원에서 그 표현은 "모르는 사람이 들어왔다"
+//   (외부인 침입)로 읽힌다. 실제 의미는 "우리가 누군지 못 밝혔다"일 뿐이라
+//   알 수 있는 사실(어느 채널)만 말하는 쪽이 정확하고 오해도 없다.
+// ★ 반대로 추정한 이름을 억지로 붙이지도 않는다. 추적 ID는 신원이 아니라서
+//   오귀속이 원리적으로 가능하고, 틀린 이름은 이름 없는 것보다 나쁘다
+//   (엉뚱한 보호자에게 연락이 간다).
+QString MainWindow::eventWhoLabel(int channel, int roiId) const
+{
+    if (roiId < 0) return QStringLiteral("채널 %1").arg(channel + 1);
+    const QString name = zoneResidentName(channel, roiId);
+    return name == QStringLiteral("미지정")
+               ? QStringLiteral("침대 %1").arg(roiId + 1)
+               : QStringLiteral("침대 %1 %2").arg(roiId + 1).arg(name);
+}
+
+// 이벤트 로그 '위치' 칸 문구 — 침대를 특정했으면 침대까지, 아니면 채널까지.
+QString MainWindow::eventPlaceLabel(int channel, int roiId) const
+{
+    if (channel < 0 || channel >= 4) return QString();
+    if (roiId < 0) return patients[channel].bed;
+    return QStringLiteral("%1 · 침대 %2").arg(patients[channel].bed).arg(roiId + 1);
+}
+
+// 이 침대에 매핑된 입소자 이름. 미지정이면 "미지정".
+QString MainWindow::zoneResidentName(int channel, int roiId) const
+{
+    if (channel < 0 || channel >= 4) return QStringLiteral("미지정");
+    const int rid = roiResident_[channel].value(roiId, 0);
+    if (rid <= 0) return QStringLiteral("미지정");
+    auto it = residentInfo_.constFind(rid);
+    return it == residentInfo_.constEnd() || it->name.isEmpty()
+               ? QStringLiteral("입소자 %1").arg(rid)
+               : it->name;
+}
+
+// 침대 목록(roiZones_/roiResident_)을 화면 전체에 다시 반영한다.
+// 오버레이 이름표·4분할 화면·인스펙터 목록·채널 배지가 한 소스를 보게 하는 지점.
+void MainWindow::refreshRoiZones(int channel)
+{
+    if (channel < 0 || channel >= 4) return;
+
+    // 이름표는 여기서 만든다 — 침대 번호만으로는 관제사가 누구 자리인지 모른다.
+    QVector<RoiZone> withLabels = roiZones_[channel];
+    for (auto& z : withLabels) {
+        z.label = QStringLiteral("침대 %1 · %2")
+                      .arg(z.id + 1)
+                      .arg(zoneResidentName(channel, z.id));
+    }
+
+    if (channelViews[channel]) channelViews[channel]->setZones(withLabels);
+    if (roiEditorView && roiEditChannel == channel) roiEditorView->setZones(withLabels);
+
+    rebuildBedList();            // 인스펙터의 침대 목록(입소자 콤보 포함)
+    refreshCamChannelStatus();   // 채널 타일 배지("침대 2")
 }
 
 void MainWindow::onRoiVisibilityToggled(bool on)
@@ -3444,20 +3614,48 @@ void MainWindow::onRoiVisibilityToggled(bool on)
                                     : QStringLiteral("표시 숨김"));
 }
 
-void MainWindow::onRoiCompleted(int channel, const QPolygonF& normPts)
+void MainWindow::onRoiCompleted(int channel, int roiId, const QPolygonF& normPts)
 {
-    sendRoi(channel, normPts);
-    // 팝업 편집기에서 그린 ROI를 메인 4분할 화면에도 반영한다.
-    if (channel >= 0 && channel < 4 && channelViews[channel])
-        channelViews[channel]->setRoi(normPts);
+    if (channel < 0 || channel >= 4) return;
+
+    sendRoi(channel, roiId, normPts);
+
+    // 로컬 목록에도 반영 — 같은 id가 이미 있으면(다시 그린 것) 좌표만 갈아끼운다.
+    bool replaced = false;
+    for (auto& z : roiZones_[channel]) {
+        if (z.id != roiId) continue;
+        z.poly = normPts;
+        replaced = true;
+        break;
+    }
+    if (!replaced) {
+        RoiZone z;
+        z.id = roiId;
+        z.poly = normPts;
+        roiZones_[channel].push_back(z);
+    }
+
     // 방금 그린 걸 볼 수 있도록 표시 토글이 꺼져 있으면 켠다
     if (roiToggleButton && !roiToggleButton->isChecked())
         roiToggleButton->setChecked(true);
-    refreshCamChannelStatus();   // 레일 ROI 배지 갱신
-    qDebug() << "ROI 전송: ch" << channel << "," << normPts.size() << "점";
+
+    refreshRoiZones(channel);
+    if (roiEditorView && roiEditChannel == channel)
+        roiEditorView->setSelectedZone(roiId);   // 바로 입소자를 지정하도록 선택 유지
+
+    qDebug() << "침대 ROI 전송: ch" << channel << "침대" << roiId
+             << "," << normPts.size() << "점";
 }
 
-void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
+// 침대를 클릭해 편집 대상으로 고름 — 인스펙터 목록의 강조를 맞춘다.
+void MainWindow::onRoiZoneSelected(int channel, int roiId)
+{
+    Q_UNUSED(channel);
+    Q_UNUSED(roiId);
+    rebuildBedList();
+}
+
+void MainWindow::sendRoi(int channel, int roiId, const QPolygonF& normPts, bool clear)
 {
     QTcpSocket* sock = socketForChannel(channel);   // 이 채널을 담당하는 Pi 소켓
     if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
@@ -3474,7 +3672,9 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
     h.type = clear ? kCtrlRoiClear : kCtrlRoiSet;
     h.channel = static_cast<uint8_t>(channel);
     h.point_count = static_cast<uint8_t>(n);
-    h.reserved = 0;
+    // reserved 하위 8비트가 침대 번호다 (프로토콜 DBJ_CTRL_ROI_ID 참조).
+    // 삭제 시 kRoiIdAll을 실으면 그 채널의 침대를 전부 지운다.
+    h.reserved = static_cast<uint16_t>(roiId & 0xFF);
 
     QByteArray pkt;
     pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
@@ -3488,6 +3688,40 @@ void MainWindow::sendRoi(int channel, const QPolygonF& normPts, bool clear)
     }
     sock->write(pkt);
     sock->flush();
+}
+
+// "이 침대는 이 사람 자리" 를 서버에 통보한다.
+// 서버는 이 매핑을 roi_zones에 남기고, 그 침대에서 생긴 추적 객체에 입소자를
+// 귀속시켜 낙상·이탈 알림에 이름을 붙인다(server/core/identity_tracker.hpp).
+void MainWindow::sendRoiBind(int channel, int roiId, int residentId)
+{
+    QTcpSocket* sock = socketForChannel(channel);
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        QMessageBox::warning(this, QStringLiteral("전송 실패"),
+                             QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlRoiBind;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = 0;
+
+    dbj_roi_bind_t b;
+    b.roi_id = static_cast<uint8_t>(roiId & 0xFF);
+    b.reserved = 0;
+    b.resident_id = static_cast<uint32_t>(residentId > 0 ? residentId : 0);
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    pkt.append(reinterpret_cast<const char*>(&b), sizeof(b));
+    sock->write(pkt);
+    sock->flush();
+    qDebug() << "침대 매핑 전송: ch" << channel << "침대" << roiId
+             << "→ 입소자" << residentId;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4186,13 +4420,14 @@ QWidget* MainWindow::buildCamRoiPage()
         row->addWidget(t, 1, Qt::AlignVCenter);
         sv->addLayout(row);
     };
-    addStep(QStringLiteral("1"), QStringLiteral("아래 ‘영역 지정 시작’을 누릅니다."));
+    addStep(QStringLiteral("1"), QStringLiteral("아래 ‘침대 추가’를 누릅니다."));
     addStep(QStringLiteral("2"), QStringLiteral("오른쪽 영상 위를 클릭해 침대 모서리를 찍습니다."));
     addStep(QStringLiteral("3"), QStringLiteral("더블클릭(또는 우클릭)으로 완료합니다."));
+    addStep(QStringLiteral("4"), QStringLiteral("아래 목록에서 그 침대의 입소자를 지정합니다."));
     roiV->addWidget(steps);
 
-    // 주 액션 — 지정 시작(그리는 중이면 '취소'로 토글). 전체 폭 강조 버튼.
-    roiButton = new QPushButton(QStringLiteral("영역 지정 시작"));
+    // 주 액션 — 침대 추가(그리는 중이면 '취소'로 토글). 전체 폭 강조 버튼.
+    roiButton = new QPushButton(QStringLiteral("침대 추가"));
     roiButton->setObjectName("roiPrimary");
     roiButton->setCursor(Qt::PointingHandCursor);
     roiButton->setMinimumHeight(38);
@@ -4200,7 +4435,7 @@ QWidget* MainWindow::buildCamRoiPage()
     roiV->addWidget(roiButton);
 
     // 보조 액션 — 제거 / 표시 토글
-    roiClearButton = new QPushButton(QStringLiteral("ROI 제거"));
+    roiClearButton = new QPushButton(QStringLiteral("침대 제거"));
     roiClearButton->setObjectName("roiClear");
     roiClearButton->setCursor(Qt::PointingHandCursor);
     connect(roiClearButton, &QPushButton::clicked, this, &MainWindow::onRoiClearClicked);
@@ -4215,8 +4450,119 @@ QWidget* MainWindow::buildCamRoiPage()
     roiBtnRow->addWidget(roiClearButton, 1);
     roiBtnRow->addWidget(roiToggleButton, 1);
     roiV->addLayout(roiBtnRow);
+
+    // ── 침대 목록 — 침대마다 "번호 · 입소자 콤보 · 삭제" 한 줄 ──
+    // 이 목록이 곧 "어느 침대가 누구 자리인가" 매핑이다. 서버는 이 매핑을 앵커로
+    // 추적 객체에 사람을 붙여 낙상·이탈 알림에 이름을 실어 보낸다.
+    auto* bedsTitle = new QLabel(QStringLiteral("침대 · 입소자 매핑"));
+    bedsTitle->setObjectName("roiStepText");
+    roiV->addWidget(bedsTitle);
+
+    auto* bedsBox = new QFrame();
+    bedsBox->setObjectName("roiSteps");
+    bedListLayout_ = new QVBoxLayout(bedsBox);
+    bedListLayout_->setContentsMargins(12, 10, 12, 10);
+    bedListLayout_->setSpacing(8);
+    bedListEmpty_ = new QLabel(
+        QStringLiteral("아직 지정된 침대가 없습니다.\n‘침대 추가’로 침대마다 영역을 그려 주세요."));
+    bedListEmpty_->setObjectName("roiStepText");
+    bedListEmpty_->setWordWrap(true);
+    bedListLayout_->addWidget(bedListEmpty_);
+    roiV->addWidget(bedsBox);
+
     roiV->addStretch();   // 남는 세로 공간은 아래로 — 단계/버튼이 벌어지지 않게
     return page;
+}
+
+// 인스펙터의 침대 목록을 현재 채널 기준으로 다시 만든다.
+// 침대가 늘거나 줄면 줄 개수 자체가 달라져서 글자만 갈아끼울 수 없다
+// (바이탈 카드 rebuildVitalCards와 같은 이유).
+void MainWindow::rebuildBedList()
+{
+    if (!bedListLayout_) return;
+
+    // 기존 줄 제거 — 안내 라벨(bedListEmpty_)은 살려 두고 재사용한다.
+    while (bedListLayout_->count() > 0) {
+        QLayoutItem* item = bedListLayout_->takeAt(0);
+        if (item->widget() && item->widget() != bedListEmpty_) item->widget()->deleteLater();
+        delete item;
+    }
+
+    const int ch = roiEditChannel;
+    auto zones = roiZones_[ch];
+    std::sort(zones.begin(), zones.end(),
+              [](const RoiZone& a, const RoiZone& b) { return a.id < b.id; });
+
+    if (zones.isEmpty()) {
+        bedListEmpty_->setVisible(true);
+        bedListLayout_->addWidget(bedListEmpty_);
+        return;
+    }
+    bedListEmpty_->setVisible(false);
+
+    const int selected = roiEditorView ? roiEditorView->selectedZone() : -1;
+
+    for (const RoiZone& z : zones) {
+        auto* row = new QWidget();
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        h->setSpacing(8);
+
+        // 침대 번호 배지 — 영상 오버레이와 같은 색을 써서 눈으로 짝지어진다.
+        auto* dot = new QLabel(QString::number(z.id + 1));
+        dot->setAlignment(Qt::AlignCenter);
+        dot->setFixedSize(22, 22);
+        const QColor c = VideoView::zoneColor(z.id);
+        dot->setStyleSheet(QStringLiteral("background:%1; color:#fff; border-radius:11px;"
+                                          "font-weight:700; font-size:11px;")
+                               .arg(c.name()));
+        h->addWidget(dot);
+
+        // 입소자 선택 — 이 채널에 배정된 재원 입소자만 후보로 올린다.
+        auto* combo = new QComboBox();
+        combo->addItem(QStringLiteral("미지정"), 0);
+        for (int rid : residentsByChannel_[ch]) {
+            auto it = residentInfo_.constFind(rid);
+            const QString name = (it != residentInfo_.constEnd() && !it->name.isEmpty())
+                                     ? it->name
+                                     : QStringLiteral("입소자 %1").arg(rid);
+            combo->addItem(name, rid);
+        }
+        const int bound = roiResident_[ch].value(z.id, 0);
+        int idx = combo->findData(bound);
+        if (idx < 0 && bound > 0) {
+            // 채널 배정이 바뀌어 후보에 없는 사람이 매핑돼 있는 경우 —
+            // 조용히 "미지정"으로 떨구면 매핑이 사라진 걸 아무도 모른다.
+            combo->addItem(QStringLiteral("입소자 %1 (채널 밖)").arg(bound), bound);
+            idx = combo->count() - 1;
+        }
+        combo->setCurrentIndex(qMax(0, idx));
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this, ch, id = z.id, combo](int i) {
+                    const int rid = combo->itemData(i).toInt();
+                    if (roiResident_[ch].value(id, 0) == rid) return;
+                    roiResident_[ch][id] = rid;
+                    sendRoiBind(ch, id, rid);
+                    refreshRoiZones(ch);
+                });
+        h->addWidget(combo, 1);
+
+        // 이 침대만 삭제
+        auto* del = new QPushButton(QStringLiteral("삭제"));
+        del->setObjectName("roiClear");
+        del->setCursor(Qt::PointingHandCursor);
+        connect(del, &QPushButton::clicked, this, [this, ch, id = z.id]() {
+            if (roiEditorView) roiEditorView->setSelectedZone(id);
+            onRoiClearClicked();
+        });
+        h->addWidget(del);
+
+        // 영상에서 고른 침대를 목록에서도 알아볼 수 있게 강조
+        if (z.id == selected)
+            row->setStyleSheet(QStringLiteral("background: rgba(255,255,255,0.06);"
+                                              "border-radius: 6px;"));
+        bedListLayout_->addWidget(row);
+    }
 }
 
 // 우측 스테이지 — 라이브/ROI 편집 영상(0) + 이미지 Before/After 프리뷰(1)를 스택으로.
@@ -4234,12 +4580,14 @@ QWidget* MainWindow::buildCamStagePanel()
         roiDrawing = on;
         if (roiButton) {
             roiButton->setText(on ? QStringLiteral("그리기 취소")
-                                  : QStringLiteral("영역 지정 시작"));
+                                  : QStringLiteral("침대 추가"));
             roiButton->setProperty("drawing", on);
             roiButton->style()->unpolish(roiButton);
             roiButton->style()->polish(roiButton);
         }
     });
+    // 영상 위에서 침대를 클릭하면 인스펙터 목록의 강조도 따라간다
+    connect(roiEditorView, &VideoView::zoneSelected, this, &MainWindow::onRoiZoneSelected);
     camStageStack->addWidget(roiEditorView);
 
     // 1) 이미지 Before/After 프리뷰
@@ -4331,9 +4679,10 @@ void MainWindow::refreshCamChannelStatus()
     for (int ch = 0; ch < 4; ++ch) {
         if (!camChannelStatus[ch]) continue;
         const bool connected = cameraActive_[ch];
-        const bool hasRoi = channelViews[ch] && !channelViews[ch]->roi().isEmpty();
+        const int beds = roiZones_[ch].size();
         QString txt = connected ? QStringLiteral("● 연결") : QStringLiteral("○ 미연결");
-        if (hasRoi) txt += QStringLiteral(" · ROI");
+        // 침대가 여러 개일 수 있으니 "ROI 있음"이 아니라 몇 개인지를 보여준다
+        if (beds > 0) txt += QStringLiteral(" · 침대 %1").arg(beds);
         camChannelStatus[ch]->setText(txt);
         camChannelStatus[ch]->setStyleSheet(
             QString("color:%1; font-size:11px; font-weight:700;")
@@ -4374,9 +4723,9 @@ void MainWindow::selectRoiChannel(int ch)
     if (channelViews[ch]) {
         roiEditorView->setCameraConnected(channelViews[ch]->cameraConnected());
         roiEditorView->setLive(channelViews[ch]->live());  // LIVE 표시등도 그 채널 상태로
-        roiEditorView->setRoi(channelViews[ch]->roi());    // 기존 ROI 로드
     }
     roiEditorView->setRoiVisible(!roiToggleButton || roiToggleButton->isChecked());
+    refreshRoiZones(ch);   // 이 채널의 침대들을 편집기·목록에 로드
     // 다음 프레임부터 onReadyRead가 이 편집기에 실시간 영상을 계속 넣어준다.
 }
 
@@ -4855,6 +5204,9 @@ void MainWindow::refreshPatientLabels()
         // 영상 오버레이는 "CH1"만 유지 — 병상·이름은 얹지 않는다.
         if (vitalNameLabels[ch]) vitalNameLabels[ch]->setText(patients[ch].name);
         if (vitalBedLabels[ch])  vitalBedLabels[ch]->setText(patients[ch].bed);
+        // 침대 이름표·매핑 콤보도 새 입소자 구성으로 다시 그린다 — 이름을 고치거나
+        // 퇴원시켰는데 침대 라벨만 옛 이름으로 남으면 관제사가 오판한다.
+        refreshRoiZones(ch);
     }
     rebuildVitalCards();
 }
@@ -5123,23 +5475,38 @@ void MainWindow::onSaveResident()
         else if (risk == QStringLiteral("중")) statusVal = 2;
         else if (risk == QStringLiteral("하")) statusVal = 1;
 
-        // 2. 프로토콜 공용 제어 헤더 조립
-        dbj_ctrl_header_t h;
-        h.magic = kCtrlMagic;                   // 0xDB4C
-        h.version = 0x01;
-        h.type = 0x04;
-        h.channel = static_cast<uint8_t>(cameraId);
-        h.point_count = statusVal;
-        h.reserved = 0;
+        // 2. 대상 침대 결정.
+        //    위험도는 사람에게 붙는 값이라 채널이 아니라 침대 단위로 보낸다 —
+        //    한 채널에 '상'과 '하'가 같이 누워 있으면 채널 일괄 적용은 둘 중
+        //    하나를 반드시 틀리게 만든다. 이 입소자에게 배정된 침대들만 골라
+        //    보내고, 아직 침대가 매핑돼 있지 않으면 예전처럼 채널 일괄로 보낸다.
+        QVector<int> targetBeds;
+        for (auto it = roiResident_[cameraId].constBegin();
+             it != roiResident_[cameraId].constEnd(); ++it) {
+            if (it.value() == selectedResidentId && selectedResidentId > 0)
+                targetBeds.push_back(it.key());
+        }
+        if (targetBeds.isEmpty()) targetBeds.push_back(kRoiIdAll);
 
-        // 3. 바이트 버퍼 생성 및 데이터 직렬화
-        QByteArray pkt;
-        pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+        for (int bed : targetBeds) {
+            // 3. 프로토콜 공용 제어 헤더 조립
+            dbj_ctrl_header_t h;
+            h.magic = kCtrlMagic;                   // 0xDB4C
+            h.version = 0x01;
+            h.type = 0x04;
+            h.channel = static_cast<uint8_t>(cameraId);
+            h.point_count = statusVal;
+            h.reserved = static_cast<uint16_t>(bed & 0xFF);  // 하위 8비트 = 침대 번호
 
-        // 4. 소켓 방출
-        riskSock->write(pkt);
-        riskSock->flush();
-        qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "번 환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
+            // 4. 바이트 버퍼 생성 및 데이터 직렬화 후 소켓 방출
+            QByteArray pkt;
+            pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+            riskSock->write(pkt);
+            riskSock->flush();
+            qDebug() << "➔ [Qt -> 서버] 채널" << (cameraId + 1) << "침대"
+                     << (bed == kRoiIdAll ? -1 : bed)
+                     << "환자 위험도 변경 패킷 전송 완료 (값:" << statusVal << ")";
+        }
     }
 
     refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
