@@ -329,8 +329,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     // (main.cpp에서 DB 연결을 이미 열어둬 buildUi 전에 조회 가능)
     loadPatientsFromDb();
 
-    buildUi();
+    // ClickSlider 등 생성 시점에 theme.h 전역 색 상수를 인라인 QSS로 굽는
+    // 위젯이 있으므로, buildUi()보다 먼저 팔레트를 확정해야 한다. 순서가
+    // 뒤바뀌면 다크로 시작해도 그런 위젯만 라이트 색으로 남는다.
     applyPalette(darkMode ? kDark : kLight);  // 기본 다크 팔레트로 시작
+    buildUi();
     applyTheme();
     if (themeToggleButton)
         themeToggleButton->setText(darkMode ? QStringLiteral("☀")
