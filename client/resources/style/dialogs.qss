@@ -35,7 +35,7 @@
         #authHint[ok="true"] { color: %(normal); font-weight: 600; }
         #authError { color: %(critical); font-size: 12px; font-weight: 600; }
 
-        #authPrimary { background: %(accent); color: #fff; border: none; border-radius: 8px;
+        #authPrimary { background: %(accent); color: %(onAccent); border: none; border-radius: 8px;
                        font-size: 15px; font-weight: 700; letter-spacing: 1px; }
         #authPrimary:hover { background: %(accentHover); }
         #authPrimary:disabled { background: %(border); color: %(sub); }

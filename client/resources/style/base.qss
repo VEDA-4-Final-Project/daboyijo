@@ -26,7 +26,8 @@
         #helpList { background: %(card); color: %(sub); border: none; outline: none;
                     border-right: 1px solid %(border); font-size: 13px; }
         #helpList::item { padding: 11px 16px; border: none; }
-        #helpList::item:selected { background: %(panel); color: %(accent); font-weight: 700; }
+        #helpList::item:selected { background: %(panel); color: %(text); font-weight: 700;
+                                    border-left: 3px solid %(accent); }
         #helpList::item:hover:!selected { color: %(text); }
 
         /* 도움말 창 — 본문 브라우저. renderHelpTopic()이 매번 다시 그리던
@@ -53,7 +54,7 @@
         /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
         #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
         #userChip:hover { border-color: %(accent); }
-        #userAvatar { background: %(accent); color: #fff; border-radius: 15px;
+        #userAvatar { background: %(accent); color: %(onAccent); border-radius: 15px;
                       font-size: 13px; font-weight: 800; }
         #userName { color: %(text); font-size: 13px; font-weight: 700; }
         #logoutButton { background: transparent; color: %(sub); border: none;
@@ -66,7 +67,7 @@
                   padding: 0 12px; text-align: left;
                   font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
         #navBtn:hover { background: %(card); color: %(text); }
-        #navBtn:checked { background: %(accent); color: #ffffff; font-weight: 800; }
+        #navBtn:checked { background: %(accent); color: %(onAccent); font-weight: 800; }
         /* 접힘 상태 — 라벨이 없으니 아이콘을 가운데로 */
         #navBtn[collapsed="true"] { padding: 0; text-align: center; }
         #navToggle { background: transparent; color: %(sub); border: none;
@@ -81,7 +82,7 @@
         #roiButton, #roiToggle, #roiClear { background: %(card); color: %(text); border: 1px solid %(border);
                                  border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
-        #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
+        #roiToggle:checked { background: %(accent); color: %(onAccent); border-color: %(accent); }
         #roiClear:hover { border-color: %(critical); color: %(critical); }
 
         /* ── 관제화면 ROI 세그먼트 그룹 ── */
@@ -92,7 +93,7 @@
             border-radius: 6px; padding: 5px 13px; font-size: 12px; font-weight: 600; }
         #segBtn:hover, #segBtnToggle:hover { background: %(card); }
         #segBtnDanger:hover { background: %(card); color: %(critical); }
-        #segBtnToggle:checked { background: %(accent); color: #fff; }
+        #segBtnToggle:checked { background: %(accent); color: %(onAccent); }
 
         #micButton { background: %(card); color: %(text); border: 1px solid %(border);
                      border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
@@ -168,14 +169,14 @@
         #reportCalendar QToolButton::menu-indicator { image: none; }
         #reportCalendar QAbstractItemView:enabled {
             background: %(card); color: %(text); outline: none;
-            selection-background-color: %(accent); selection-color: #ffffff; }
+            selection-background-color: %(accent); selection-color: %(onAccent); }
         /* 이번 달 밖의 날짜 + 미래 날짜(선택 불가) */
         #reportCalendar QAbstractItemView:disabled { color: %(border); }
         #reportCalendar QTableView QHeaderView::section {
             background: %(card); color: %(sub); border: none;
             font-size: 8pt; font-weight: 700; padding: 4px 0; }
-        #reportTodayBtn { background: transparent; color: %(accent);
-                          border: 1px solid %(border); border-radius: 8px;
+        #reportTodayBtn { background: transparent; color: %(text);
+                          border: 1px solid %(accent); border-radius: 8px;
                           padding: 6px 0; font-size: 12px; font-weight: 700; }
         #reportTodayBtn:hover { border-color: %(accent); background: %(panel); }
         /* 입소자 이름 탭 — 선택된 하나만 강조색으로 채운다 */
@@ -183,10 +184,10 @@
                        border: 1px solid %(border); border-radius: 14px;
                        padding: 5px 14px; font-size: 13px; font-weight: 700; }
         #residentTab:hover { color: %(text); border-color: %(sub); }
-        #residentTab:checked { background: %(accent); color: #ffffff; border-color: %(accent); }
+        #residentTab:checked { background: %(accent); color: %(onAccent); border-color: %(accent); }
         /* 지표 타일 */
         #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
-        #reportTileVal { color: %(accent); font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
+        #reportTileVal { color: %(text); font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                          font-size: 26px; font-weight: 800; }
 
         /* 스크롤바 — 세로/가로 모두 다크. 트랙(page)·코너의 기본 흰색을 없앤다 */
@@ -212,7 +213,7 @@
         #logTable QHeaderView::section { background: %(bgDeep); color: %(sub);
                                          border: none; border-bottom: 1px solid %(border);
                                          padding: 9px 8px; font-weight: 700; }
-        #logTable::item:selected { background: %(accent); color: #fff; }
+        #logTable::item:selected { background: %(accent); color: %(onAccent); }
 
 /* ── TAB3: DB 관리 ── */
 
@@ -226,7 +227,7 @@ QLabel {
 #searchEdit:focus { border-color: %(accent); }
 
 /* 주요 액션 버튼(신규 등록·저장) */
-#primaryButton { background: %(accent); color: #fff; border: none;
+#primaryButton { background: %(accent); color: %(onAccent); border: none;
                  border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
 #primaryButton:hover { background: %(accent); opacity: 0.9; }
 #dangerButton { background: transparent; color: %(critical); border: 1px solid %(critical);
@@ -234,7 +235,7 @@ QLabel {
 #dangerButton:hover { background: %(critical); color: #fff; }
 #iconButton { background: %(card); color: %(text); border: 1px solid %(border);
               border-radius: 8px; font-size: 16px; font-weight: 700; }
-#iconButton:hover { border-color: %(accent); color: %(accent); }
+#iconButton:hover { border-color: %(accent); color: %(text); background: %(bgDeep); }
 
 /* ── 입소자 관리: 상단 요약 통계 ── */
 #resStat { background: %(card); border: 1px solid %(border); border-radius: 14px; }
@@ -251,7 +252,7 @@ QLabel {
 #segTab { background: %(bgDeep); color: %(sub); border: 1px solid %(border);
           padding: 6px 0; font-size: 12px; font-weight: 700; }
 #segTab:hover { color: %(text); }
-#segTab:checked { background: %(accent); color: #fff; border-color: %(accent); }
+#segTab:checked { background: %(accent); color: %(onAccent); border-color: %(accent); }
 
 /* 목록 행 카드 */
 #resRow { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px;
@@ -291,13 +292,13 @@ QLabel {
 #camSegBtn { background: transparent; color: %(sub); border: none; border-radius: 9px;
              padding: 9px 0; font-size: 13px; font-weight: 700; }
 #camSegBtn:hover { color: %(text); }
-#camSegBtn:checked { background: %(accent); color: #fff; font-weight: 800; }
+#camSegBtn:checked { background: %(accent); color: %(onAccent); font-weight: 800; }
 
 #camSectionCap { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
                  border-left: 3px solid %(accent); padding-left: 8px; }
 #camHint { color: %(sub); font-size: 12px; }
 /* 그 페이지의 주 액션(연결/적용) — 채워진 악센트 */
-#camPrimary { background: %(accent); color: #fff; border: 1px solid %(accent);
+#camPrimary { background: %(accent); color: %(onAccent); border: 1px solid %(accent);
               border-radius: 10px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
 #camPrimary:hover { background: %(accentHover); border-color: %(accentHover); }
 /* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다 */
@@ -306,10 +307,10 @@ QLabel {
 
 /* ROI 페이지 — 단계 카드 + 주 액션 */
 #roiSteps { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-#roiStepNum { background: %(accent); color: #fff; border-radius: 11px;
+#roiStepNum { background: %(accent); color: %(onAccent); border-radius: 11px;
               font-size: 12px; font-weight: 800; }
 #roiStepText { color: %(text); font-size: 13px; }
-#roiPrimary { background: %(accent); color: #fff; border: none; border-radius: 10px;
+#roiPrimary { background: %(accent); color: %(onAccent); border: none; border-radius: 10px;
               font-size: 14px; font-weight: 800; }
 #roiPrimary:hover { background: %(accentHover); }
 #roiPrimary[drawing="true"] { background: %(critical); }
@@ -364,7 +365,7 @@ QTextEdit#formEdit:focus {
         QComboBox#formEdit QAbstractItemView {
             background: %(bgDeep); color: %(text);
             border: 1px solid %(border);
-            selection-background-color: %(accent); selection-color: #fff; }
+            selection-background-color: %(accent); selection-color: %(onAccent); }
         QComboBox#formEdit::drop-down { border: none; width: 20px; }
         QComboBox#formEdit::down-arrow { image: none; width: 0; height: 0;
             border-left: 4px solid transparent; border-right: 4px solid transparent;
@@ -375,7 +376,7 @@ QTextEdit#formEdit:focus {
         QCalendarWidget QWidget { background: %(panel); color: %(text); }
         QCalendarWidget QAbstractItemView {
             background: %(bgDeep); color: %(text);
-            selection-background-color: %(accent); selection-color: #fff;
+            selection-background-color: %(accent); selection-color: %(onAccent);
             outline: none; }
         QCalendarWidget QWidget#qt_calendar_navigationbar {
             background: %(card); border-bottom: 1px solid %(border); }
@@ -396,7 +397,7 @@ QTextEdit#formEdit:focus {
             min-width: 60px; }
         QMessageBox QPushButton:hover, QInputDialog QPushButton:hover { border-color: %(accent); }
         QMessageBox QPushButton:default, QInputDialog QPushButton:default {
-            background: %(accent); color: #fff; border-color: %(accent); }
+            background: %(accent); color: %(onAccent); border-color: %(accent); }
         QMenu { background: %(panel); color: %(text); border: 1px solid %(border); }
-        QMenu::item:selected { background: %(accent); color: #fff; }
+        QMenu::item:selected { background: %(accent); color: %(onAccent); }
         QToolTip { background: %(card); color: %(text); border: 1px solid %(border); }
