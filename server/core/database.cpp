@@ -27,54 +27,78 @@ bool Database::connect(const std::string& host, const std::string& user,
     return true;
 }
 
-long long Database::insertCareLog(int cameraId, int durationSec) {
+std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return 0;
+    std::vector<long long> ids;
+    if (!conn_) return ids;
 
-    // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
-    // (문자열 필드를 넣을 땐 반드시 이스케이프 필요 — 나중에 안내)
-    // end_time = 지금(NOW()), start_time = 거기서 duration만큼 역산.
-    char sql[256];
-    std::snprintf(sql, sizeof(sql),
-        "INSERT INTO care_logs (camera_id, duration_sec, start_time, end_time) "
-        "VALUES (%d, %d, NOW() - INTERVAL %d SECOND, NOW())",
-        cameraId, durationSec, durationSec);
+    // 그 방에 있는 재원자 전원. 요양사가 둘 중 누구를 돌봤는지는 영상에 없으므로
+    // 전원에게 같은 시간을 남긴다(헤더 주석 참고). 아무도 없으면 -1 하나를 넣어
+    // resident_id = NULL 로 한 행만 만든다 — 케어가 있었다는 사실은 지우지 않는다.
+    std::vector<int> residents = residentsByCameraLocked(cameraId);
+    if (residents.empty()) residents.push_back(-1);
 
-    if (mysql_query(conn_, sql)) {
-        std::cerr << "[DB] INSERT 실패: " << mysql_error(conn_) << "\n";
-        return 0;
+    for (int residentId : residents) {
+        // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
+        // (문자열 필드를 넣을 땐 반드시 이스케이프 필요)
+        // end_time = 지금(NOW()), start_time = 거기서 duration만큼 역산.
+        //
+        // resident_id 를 같이 박는 이유: 조회할 때마다 camera_id 로 조인하면
+        // 입소자가 방을 옮긴 뒤 과거 케어가 새 입주자 것으로 바뀐다.
+        // 기록 시점의 사람을 그대로 남긴다.
+        char resident[16];
+        if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
+        else                std::snprintf(resident, sizeof(resident), "NULL");
+
+        char sql[512];
+        std::snprintf(sql, sizeof(sql),
+            "INSERT INTO care_logs (camera_id, resident_id, duration_sec, start_time, end_time) "
+            "VALUES (%d, %s, %d, NOW() - INTERVAL %d SECOND, NOW())",
+            cameraId, resident, durationSec, durationSec);
+
+        if (mysql_query(conn_, sql)) {
+            std::cerr << "[DB] 케어로그 INSERT 실패: " << mysql_error(conn_) << "\n";
+            continue;   // 한 사람이 실패해도 나머지는 남긴다
+        }
+        // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
+        // INSERT 해서 남의 id를 집어올 수 있다.
+        ids.push_back(static_cast<long long>(mysql_insert_id(conn_)));
     }
-    // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
-    // INSERT 해서 남의 id를 집어올 수 있다.
-    const long long logId = static_cast<long long>(mysql_insert_id(conn_));
-    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1)
-              << ", " << durationSec << "초, log_id=" << logId << ")\n";
-    return logId;
+
+    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1) << ", "
+              << durationSec << "초, " << ids.size() << "명)\n";
+    return ids;
 }
 
-bool Database::addCareLogDuration(long long logId, int addSec) {
+bool Database::addCareLogDuration(const std::vector<long long>& logIds, int addSec) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return false;
+    if (!conn_ || logIds.empty()) return false;
 
-    char sql[256];
-    std::snprintf(sql, sizeof(sql),
-        "UPDATE care_logs SET duration_sec = duration_sec + %d, end_time = NOW() "
-        "WHERE log_id = %lld",
-        addSec, logId);
+    // 한 행이라도 못 붙이면 false 를 돌려준다. 일부만 합산되면 같은 방 사람끼리
+    // 케어시간이 어긋나므로, 호출자가 전원에게 새 행을 만드는 쪽이 낫다.
+    bool allOk = true;
+    for (long long logId : logIds) {
+        char sql[256];
+        std::snprintf(sql, sizeof(sql),
+            "UPDATE care_logs SET duration_sec = duration_sec + %d, end_time = NOW() "
+            "WHERE log_id = %lld",
+            addSec, logId);
 
-    if (mysql_query(conn_, sql)) {
-        std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
-        return false;
+        if (mysql_query(conn_, sql)) {
+            std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
+            allOk = false;
+            continue;
+        }
+        // 행이 안 맞았으면(누가 지웠다든지) 병합한 척하면 안 된다 — 케어시간이
+        // 통째로 사라진다. false 를 돌려주면 호출자가 새 행 INSERT 로 넘어간다.
+        if (mysql_affected_rows(conn_) == 0) {
+            std::cerr << "[DB] 케어로그 병합 대상 없음 (log_id=" << logId << ")\n";
+            allOk = false;
+        }
     }
-    // 행이 안 맞았으면(누가 지웠다든지) 병합한 척하면 안 된다 — 케어시간이 통째로
-    // 사라진다. false를 돌려주면 호출자가 새 행으로 INSERT 하는 쪽으로 넘어간다.
-    if (mysql_affected_rows(conn_) == 0) {
-        std::cerr << "[DB] 케어로그 병합 대상 없음 (log_id=" << logId << ")\n";
-        return false;
-    }
-    std::cout << "[DB] 케어로그 병합 (log_id=" << logId
-              << ", +" << addSec << "초)\n";
-    return true;
+    if (allOk)
+        std::cout << "[DB] 케어로그 병합 (" << logIds.size() << "행, +" << addSec << "초)\n";
+    return allOk;
 }
 
 // 부팅 시 위험도 복원 — 진짜 소스인 residents.risk_level에서 읽는다.
@@ -412,6 +436,259 @@ int Database::getRoomByCh(int channel){
     }
     mysql_free_result(res);
     return room;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  일일 리포트용 기록 (report_schema.sql)
+// ═══════════════════════════════════════════════════════════
+
+namespace {
+// 열거형 → ENUM 컬럼 문자열. report_schema.sql 의 ENUM 정의와 글자가
+// 하나라도 어긋나면 INSERT 가 실패한다 — 값을 늘릴 땐 양쪽을 같이 고칠 것.
+const char* toSql(EventType t) {
+    switch (t) {
+        case EventType::Fall:          return "FALL";
+        case EventType::BedEgress:     return "EGRESS";
+        case EventType::VitalAbnormal: return "VITAL_ABNORMAL";
+    }
+    return "FALL";   // 도달 불가 — 컴파일러 경고 억제용
+}
+const char* toSql(EventSource s) {
+    return s == EventSource::Wearable ? "WEARABLE" : "CAMERA";
+}
+}  // namespace
+
+// mutex_ 를 이미 쥔 상태에서만 부를 것 (헤더 주석 참고).
+// "이 카메라에 있는 재원자는 누구누구인가" 규칙은 여기 한 곳에만 둔다.
+std::vector<int> Database::residentsByCameraLocked(int channel) {
+    std::vector<int> ids;
+    if (!conn_) return ids;
+
+    // 퇴원자가 채널을 물고 있지 않게 재원자만 본다(getRiskLevelByCamera 와 같은 규칙).
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT resident_id FROM residents "
+        "WHERE camera_id = %d AND status = '재원' ORDER BY resident_id",
+        channel);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 입소자 조회 실패: " << mysql_error(conn_) << "\n";
+        return ids;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 입소자 결과셋 반환 실패: " << mysql_error(conn_) << "\n";
+        return ids;
+    }
+    while (MYSQL_ROW row = mysql_fetch_row(res))
+        if (row[0]) ids.push_back(std::atoi(row[0]));
+    mysql_free_result(res);
+    return ids;
+}
+
+int Database::residentByCameraLocked(int channel) {
+    const std::vector<int> ids = residentsByCameraLocked(channel);
+    if (ids.empty()) return -1;
+
+    // 한 사람만 고를 수 있는 기록(낙상 등)인데 방에 여럿이면 영상만으로는 정할 수
+    // 없다. 첫 사람으로 붙이되, 리포트가 틀렸을 때 여기부터 의심하도록 남긴다.
+    // (케어시간은 이 경로를 쓰지 않는다 — insertCareLogs 가 전원에게 기록한다)
+    if (ids.size() > 1) {
+        std::cerr << "[DB] ⚠ 카메라 " << (channel + 1) << " 에 재원자가 " << ids.size()
+                  << "명 — 기록을 resident_id=" << ids.front()
+                  << " 로 붙인다. 침대 ROI 로 사람을 특정하면 정확해진다.\n";
+    }
+    return ids.front();
+}
+
+int Database::getResidentByCamera(int channel) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return residentByCameraLocked(channel);
+}
+
+int Database::getResidentByWearable(const std::string& wearable_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    // device_id 는 MQTT 로 들어온 외부 입력이다 — 반드시 이스케이프(getCHById 와 동일).
+    if (wearable_id.size() > 32) return -1;   // VARCHAR(32) 를 넘으면 조회할 것도 없다
+    char esc[65];
+    mysql_real_escape_string(conn_, esc, wearable_id.c_str(),
+                             (unsigned long)wearable_id.size());
+
+    // wearable_id 에는 UNIQUE 제약이 걸려 있어(schema.sql) 여러 명이 나올 수 없다.
+    // 카메라 조회와 달리 경고 분기가 필요 없는 이유가 이것이다.
+    // status 를 따지지 않는 것도 의도적이다 — 퇴원 처리가 늦어도 웨어러블이
+    // 보내는 값은 그 사람 것이 맞다.
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT resident_id FROM residents WHERE wearable_id = '%s'", esc);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 웨어러블 입소자 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 웨어러블 결과셋 반환 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+    int id = -1;
+    MYSQL_ROW row = mysql_fetch_row(res);
+    if (row && row[0]) id = std::atoi(row[0]);
+    mysql_free_result(res);
+    return id;
+}
+
+long long Database::insertEvent(EventType type, EventSource source, int cameraId,
+                                long long occurredMs, const std::string& clipUrl,
+                                int residentId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return 0;
+
+    // 호출부가 이미 정확히 아는 경우(웨어러블 → getResidentByWearable)는 그 값을
+    // 쓰고, 아니면 카메라로 찾는다. 못 찾으면 NULL — 사람 없이라도 사건은 남긴다.
+    if (residentId < 0) residentId = residentByCameraLocked(cameraId);
+    char resident[16];
+    if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
+    else                std::snprintf(resident, sizeof(resident), "NULL");
+
+    // clip_url 은 채널·타임스탬프로 우리가 만든 문자열이지만, 문자열을 SQL 에
+    // 넣을 땐 예외 없이 이스케이프한다(길이 = 원문의 2배 + 1).
+    if (clipUrl.size() > 255) {   // VARCHAR(255) — 넘으면 잘려 들어가느니 버린다
+        std::cerr << "[DB] clip_url 이 너무 김 (" << clipUrl.size() << ") — NULL 로 기록\n";
+    }
+    char esc[512] = {};
+    const bool hasClip = !clipUrl.empty() && clipUrl.size() <= 255;
+    if (hasClip)
+        mysql_real_escape_string(conn_, esc, clipUrl.c_str(),
+                                 (unsigned long)clipUrl.size());
+
+    // occurred_at 은 DATETIME(3) — 밀리초까지 남긴다. Qt 와 서버가 주고받는
+    // timestamp 가 epoch ms 라 그대로 넣을 수 있다. 0 이하면 지금 시각.
+    char when[64];
+    if (occurredMs > 0)
+        std::snprintf(when, sizeof(when), "FROM_UNIXTIME(%lld/1000.0)", occurredMs);
+    else
+        std::snprintf(when, sizeof(when), "NOW(3)");
+
+    // resident_id 는 지금 값을 그대로 박는다(발생 시점 스냅샷 — 헤더 주석 참고).
+    char sql[1024];
+    std::snprintf(sql, sizeof(sql),
+        "INSERT INTO events "
+        "(occurred_at, camera_id, resident_id, event_type, source, clip_url) "
+        "VALUES (%s, %d, %s, '%s', '%s', %s%s%s)",
+        when, cameraId, resident, toSql(type), toSql(source),
+        hasClip ? "'" : "", hasClip ? esc : "NULL", hasClip ? "'" : "");
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 이벤트 기록 실패: " << mysql_error(conn_) << "\n";
+        return 0;
+    }
+    const long long eventId = static_cast<long long>(mysql_insert_id(conn_));
+    std::cout << "[DB] 이벤트 기록 (" << toSql(type) << ", 카메라 " << (cameraId + 1)
+              << ", event_id=" << eventId << ")\n";
+    return eventId;
+}
+
+long long Database::openBedSession(int cameraId, int residentId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return 0;
+
+    // 호출부가 ROI 매핑으로 이미 정확히 아는 경우엔 그 값을 그대로 쓴다.
+    if (residentId < 0) residentId = residentByCameraLocked(cameraId);
+    char resident[16];
+    if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
+    else                std::snprintf(resident, sizeof(resident), "NULL");
+
+    char sql[512];
+    std::snprintf(sql, sizeof(sql),
+        "INSERT INTO bed_sessions (camera_id, resident_id, in_at) "
+        "VALUES (%d, %s, NOW())",
+        cameraId, resident);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 재실 세션 시작 실패: " << mysql_error(conn_) << "\n";
+        return 0;
+    }
+    const long long sessionId = static_cast<long long>(mysql_insert_id(conn_));
+    std::cout << "[DB] 재실 시작 (카메라 " << (cameraId + 1)
+              << ", session_id=" << sessionId << ")\n";
+    return sessionId;
+}
+
+bool Database::closeBedSession(long long sessionId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_ || sessionId <= 0) return false;
+
+    // out_at IS NULL 조건이 핵심이다. 이게 없으면 같은 세션을 두 번 닫을 때
+    // out_at 이 뒤로 밀리면서 재실시간이 계속 늘어난다.
+    char sql[256];
+    std::snprintf(sql, sizeof(sql),
+        "UPDATE bed_sessions "
+        "SET out_at = NOW(), duration_sec = TIMESTAMPDIFF(SECOND, in_at, NOW()) "
+        "WHERE session_id = %lld AND out_at IS NULL",
+        sessionId);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 재실 세션 종료 실패: " << mysql_error(conn_) << "\n";
+        return false;
+    }
+    if (mysql_affected_rows(conn_) == 0) {
+        std::cerr << "[DB] 닫을 재실 세션 없음 (session_id=" << sessionId << ")\n";
+        return false;
+    }
+    std::cout << "[DB] 재실 종료 (session_id=" << sessionId << ")\n";
+    return true;
+}
+
+int Database::closeDanglingBedSessions() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return 0;
+
+    // 지어낸 시간을 남기지 않으려고 in_at 그대로 닫고 0초로 만든다(헤더 주석 참고).
+    if (mysql_query(conn_,
+            "UPDATE bed_sessions SET out_at = in_at, duration_sec = 0 "
+            "WHERE out_at IS NULL")) {
+        std::cerr << "[DB] 미종료 재실 세션 정리 실패: " << mysql_error(conn_) << "\n";
+        return 0;
+    }
+    const int n = static_cast<int>(mysql_affected_rows(conn_));
+    if (n > 0)
+        std::cout << "[DB] 재시작 전 미종료 재실 세션 " << n << "건 정리\n";
+    return n;
+}
+
+bool Database::upsertActivityMinute(int residentId, long long minuteEpochSec,
+                                    int stepsDelta, int stepsCum,
+                                    int hrAvg, int spo2Avg) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_ || residentId < 0) return false;
+
+    // 측정 실패(0)를 0bpm 으로 남기면 평균이 망가진다 — NULL 로 넣는다.
+    char hr[16], spo2[16];
+    if (hrAvg   > 0) std::snprintf(hr,   sizeof(hr),   "%d", hrAvg);
+    else             std::snprintf(hr,   sizeof(hr),   "NULL");
+    if (spo2Avg > 0) std::snprintf(spo2, sizeof(spo2), "%d", spo2Avg);
+    else             std::snprintf(spo2, sizeof(spo2), "NULL");
+
+    // 같은 분이 다시 오면 통째로 덮어쓴다(더하지 않는다). 호출부가 그 1분치
+    // 누적을 들고 있다가 넘기는 구조라, 더하면 이중 계산이 된다.
+    char sql[512];
+    std::snprintf(sql, sizeof(sql),
+        "INSERT INTO activity_minute "
+        "(resident_id, minute_ts, steps_delta, steps_cum, hr_avg, spo2_avg) "
+        "VALUES (%d, FROM_UNIXTIME(%lld), %d, %d, %s, %s) "
+        "ON DUPLICATE KEY UPDATE "
+        "steps_delta = VALUES(steps_delta), steps_cum = VALUES(steps_cum), "
+        "hr_avg = VALUES(hr_avg), spo2_avg = VALUES(spo2_avg)",
+        residentId, minuteEpochSec, stepsDelta, stepsCum, hr, spo2);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 활동량 기록 실패: " << mysql_error(conn_) << "\n";
+        return false;
+    }
+    return true;
 }
 
 void Database::close() {

@@ -135,6 +135,8 @@ class QTextBrowser;
 class QGridLayout;
 class QResizeEvent;
 class QPropertyAnimation;
+class QCalendarWidget;
+class QHBoxLayout;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -188,7 +190,11 @@ private slots:
     void connectToServer();      // 영상 서버 접속/재접속
     void updateClock();          // 상단 실시간 시계
     void updateVitals();         // 웨어러블 바이탈 갱신(현재는 시뮬레이션)
-    void updateCareTime();       // 케어 타임 대시보드 갱신(care_logs 재조회)
+    void updateCareTime();       // 선택한 날짜·입소자의 리포트 지표 재조회
+    // 달력에서 날짜를 고르면 그 날짜 리포트로 다시 조회한다.
+    void onReportDateChanged(const QDate& date);
+    // 상단 이름 탭에서 입소자를 고르면 그 사람 리포트로 전환한다.
+    void onReportResidentChanged(int residentId);
     void onRoiButtonClicked();   // "침대 추가" — 선택 채널에 새 침대 그리기 시작
     void onRoiClearClicked();    // "침대 제거" — 선택 침대(없으면 채널 전체) 삭제
     void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
@@ -333,13 +339,31 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
-    // 케어 타임 카드(채널당 1개) — 매 갱신마다 라벨 텍스트만 바꾼다(카드는 1회 생성).
-    QLabel* careNameLabels[4] = {};     // 환자 이름
-    QLabel* careMetaLabels[4] = {};     // "채널 N · 위치"
-    QLabel* careBigLabels[4] = {};      // 오늘 케어시간 큰 값 ("45분"/"30초")
-    QLabel* careSessionLabels[4] = {};  // "N회"
-    QLabel* careLastLabels[4] = {};     // "HH:mm" (최근 케어)
-    QWidget* buildCareTimeCard(int channel);
+    // ── 일일 리포트: 날짜 선택 ──────────────────────────────
+    // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
+    // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다
+    // (예전엔 CURDATE() 하드코딩이라 오늘치만 볼 수 있었다).
+    QCalendarWidget* reportCalendar = nullptr;
+    QLabel* reportDateLabel = nullptr;   // 우측 상단 "2026-08-13 (목)"
+    QDate   reportDate_ = QDate::currentDate();
+    QWidget* buildReportCalendar();      // 좌측 날짜 선택 칼럼
+
+    // ── 일일 리포트: 입소자 선택 + 지표 ────────────────────
+    // 리포트는 "날짜 + 사람" 한 명 단위다(PDF 한 장, AI 요약 한 문단이 그 단위).
+    // 채널이 아니라 입소자 단위로 두는 이유: 침대마다 사람을 매핑하면 한 채널에
+    // 여러 명이 들어와 채널 4칸 고정이 맞지 않는다.
+    QWidget* buildReportDetail();        // 우측: 이름 탭 + 지표 타일
+    void     reloadReportResidents();    // 재원 입소자로 이름 탭을 다시 만든다
+    QHBoxLayout*        residentTabLayout = nullptr;   // 이름 탭이 붙는 줄
+    QVector<QPushButton*> residentTabBtns;             // 탭 버튼(선택 표시 갱신용)
+    QVector<int>          residentTabIds;              // 버튼과 같은 순서의 resident_id
+    int      reportResidentId_ = -1;     // 지금 보고 있는 입소자 (-1 = 없음)
+    QLabel*  reportResidentMeta = nullptr;             // "101호 · 3번침대"
+    // 지표 타일 4개 — 큰 값 + 아래 보조 문구
+    QLabel* tileLyingVal = nullptr;    QLabel* tileLyingSub = nullptr;
+    QLabel* tileActivityVal = nullptr; QLabel* tileActivitySub = nullptr;
+    QLabel* tileCareVal = nullptr;     QLabel* tileCareSub = nullptr;
+    QLabel* tileEventVal = nullptr;    QLabel* tileEventSub = nullptr;
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
@@ -440,8 +464,8 @@ private:
     // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.
     void refreshEventLog();
 
-    // 케어 타임은 이벤트 기록에서 분리해 자체 탭(채널별 카드 그리드)으로 뺀다.
-    QWidget* buildCareTimeTab();
+    // 일일 리포트 — 날짜별/입소자별 지표(달력 + 상세).
+    QWidget* buildReportPage();
 
 
     // TAB3 빌드 헬퍼 (입소자 관리 — 마스터-디테일)

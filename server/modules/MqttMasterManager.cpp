@@ -132,6 +132,11 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         auto j = nlohmann::json::parse(payload);
         auto data = j.get<WearableData>();
 
+        // 알람 판정과 무관하게 원본을 먼저 흘려보낸다(활동량 집계 등).
+        // 아래 알람 로직보다 앞에 두는 이유: 여기서 return 되는 경로가 있어도
+        // 평상시 데이터는 빠짐없이 쌓여야 한다.
+        if(wearable_data_callback_) wearable_data_callback_(data);
+
         if(!wearable_callback_) return;   // 콜백 미등록 시 호출하면 bad_function_call
 
         AlarmLatch& latch = latches_[data.device_id];
@@ -190,4 +195,8 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
 
 void MqttMasterManager::setWearableCallback(WearableCallback cd){
     wearable_callback_ = cd;
+}
+
+void MqttMasterManager::setWearableDataCallback(WearableDataCallback cb){
+    wearable_data_callback_ = cb;
 }
