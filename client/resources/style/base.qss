@@ -134,6 +134,113 @@
         #severityDot[severity="info"] { background: %(info); }
         #severityDot[severity="normal"] { background: %(normal); }
 
+        /* ══════════════════════════════════════════════════════════════
+           심각도를 쓰는 위젯 9종 (02-03 Task1) — objectName 정리 후 신설.
+           severity 어휘는 #statusDot과 동일한 "critical"|"high"|"medium"|
+           "info"|"normal"이며, C++ 필드명 warn↔QSS 값 medium 불일치도
+           동일하게 승계한다(UI-SPEC §2.1). 세터 전환은 02-03 Task2·3.
+           ══════════════════════════════════════════════════════════════ */
+
+        /* DB 상태점(9×9) — 헤더 statusDot(7×7, 반지름 3)과 objectName을
+           분리한 위젯(정정 B). 반지름이 달라 별도 규칙이 필요하다. */
+        #dbStatusDot { background: %(sub); border-radius: 4px; }
+        #dbStatusDot[severity="critical"] { background: %(critical); border-radius: 4px; }
+        #dbStatusDot[severity="high"] { background: %(high); border-radius: 4px; }
+        #dbStatusDot[severity="medium"] { background: %(warn); border-radius: 4px; }
+        #dbStatusDot[severity="info"] { background: %(info); border-radius: 4px; }
+        #dbStatusDot[severity="normal"] { background: %(normal); border-radius: 4px; }
+
+        /* 바이탈 카드 상태점(9×9) */
+        #vitalDot { background: %(sub); border-radius: 5px; }
+        #vitalDot[severity="critical"] { background: %(critical); border-radius: 5px; }
+        #vitalDot[severity="high"] { background: %(high); border-radius: 5px; }
+        #vitalDot[severity="medium"] { background: %(warn); border-radius: 5px; }
+        #vitalDot[severity="info"] { background: %(info); border-radius: 5px; }
+        #vitalDot[severity="normal"] { background: %(normal); border-radius: 5px; }
+
+        /* 바이탈 상태 배지 — 배경은 기존 blendHex() 18% 혼합 대신 평평한
+           %(card)로 단순화한다. QSS는 색을 계산하지 못하므로 다섯 개 혼합값을
+           새로 정하는 대신 기존 토큰을 그대로 쓴다(차이는 미세하다). */
+        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 9px;
+                      padding: 1px 10px; font-size: 11px; font-weight: 800; color: %(sub); }
+        #vitalBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
+        #vitalBadge[severity="high"] { color: %(high); border-color: %(high); }
+        #vitalBadge[severity="medium"] { color: %(warn); border-color: %(warn); }
+        #vitalBadge[severity="info"] { color: %(info); border-color: %(info); }
+        #vitalBadge[severity="normal"] { color: %(normal); border-color: %(normal); }
+
+        /* SpO2·심박 값 라벨 — 기존 32px/800 모노스페이스 규칙(아래 #statValue)은
+           유지하고 전경색만 severity로 얹는다. */
+        #statValue[severity="critical"] { color: %(critical); }
+        #statValue[severity="high"] { color: %(high); }
+        #statValue[severity="medium"] { color: %(warn); }
+        #statValue[severity="info"] { color: %(info); }
+        #statValue[severity="normal"] { color: %(normal); }
+
+        /* 입소자 행 위험도 색 띠 — 글자가 없어 도형을 못 붙인다. 이 띠의 색 외
+           채널은 같은 행의 위험도 칩(#riskChip) 도형이다 — 이 짝짓기가 깨지지
+           않게 한다(D-09 중복 부호화는 행 단위로 성립). */
+        #riskBar { background: %(sub); border-radius: 2px; }
+        #riskBar[severity="critical"] { background: %(critical); }
+        #riskBar[severity="high"] { background: %(high); }
+        #riskBar[severity="medium"] { background: %(warn); }
+        #riskBar[severity="info"] { background: %(info); }
+        #riskBar[severity="normal"] { background: %(normal); }
+
+        /* 위험도 칩(목록 행) — 인라인 값 계승: 1px 9px 패딩, 11px/800, 반지름 9 */
+        #riskChip { color: %(sub); border: 1px solid %(sub); border-radius: 9px;
+                    padding: 1px 9px; font-size: 11px; font-weight: 800; background: transparent; }
+        #riskChip[severity="critical"] { color: %(critical); border-color: %(critical); }
+        #riskChip[severity="high"] { color: %(high); border-color: %(high); }
+        #riskChip[severity="medium"] { color: %(warn); border-color: %(warn); }
+        #riskChip[severity="info"] { color: %(info); border-color: %(info); }
+        #riskChip[severity="normal"] { color: %(normal); border-color: %(normal); }
+
+        /* 상세 편집 패널 — 위험도 배지. 인라인 값 계승: 3px 12px 패딩, 12px/800, 반지름 11 */
+        #dlgRiskBadge { color: %(sub); border: 1px solid %(sub); border-radius: 11px;
+                        padding: 3px 12px; font-size: 12px; font-weight: 800; background: transparent; }
+        #dlgRiskBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
+        #dlgRiskBadge[severity="high"] { color: %(high); border-color: %(high); }
+        #dlgRiskBadge[severity="medium"] { color: %(warn); border-color: %(warn); }
+        #dlgRiskBadge[severity="info"] { color: %(info); border-color: %(info); }
+        #dlgRiskBadge[severity="normal"] { color: %(normal); border-color: %(normal); }
+
+        /* 상세 편집 패널 — 상태 배지(재원/퇴원). 재원 여부는 등급이 아니라
+           분류라 severity 어휘를 쓰지 않는다(02-03 Task3) — 전용 속성
+           residency로만 재원 여부를 표시하고 도형은 붙이지 않는다.
+           인라인 값 계승: dlgRiskBadge와 같은 크기. */
+        #dlgStatusBadge { color: %(sub); border: 1px solid %(sub); border-radius: 11px;
+                          padding: 3px 12px; font-size: 12px; font-weight: 800; background: transparent; }
+        #dlgStatusBadge[residency="active"] { color: %(normal); border-color: %(normal); }
+
+        /* 알림 노드 온·오프라인 배지 — 카메라 인스펙터 배지(#camPill)와
+           objectName 분리(정정 C). 기본 규칙은 #camPill과 동일하게 맞춰
+           전환 전(Task1) 시점에 초기 렌더가 갈리지 않게 한다. */
+        #alertNodeBadge { color: %(sub); border: 1px solid %(border); border-radius: 9px;
+                          padding: 1px 9px; font-size: 11px; font-weight: 800; }
+        #alertNodeBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
+        #alertNodeBadge[severity="high"] { color: %(high); border-color: %(high); }
+        #alertNodeBadge[severity="medium"] { color: %(warn); border-color: %(warn); }
+        #alertNodeBadge[severity="info"] { color: %(info); border-color: %(info); }
+        #alertNodeBadge[severity="normal"] { color: %(normal); border-color: %(normal); }
+
+        /* 입소자 관리 요약 통계 — 심각도가 아니라 통계 카테고리(FOUND-06:
+           재원 카드가 accent를 26px 굵은 텍스트 색으로 쓰던 문제를 여기서
+           해소한다. accent는 큰 글씨 기준(3:1)조차 통과하지 못한다). */
+        #resStatVal[category="active"] { color: %(text); }
+        #resStatVal[category="danger-high"] { color: %(critical); }
+        #resStatVal[category="danger-mid"] { color: %(warn); }
+        #resStatVal[category="danger-low"] { color: %(normal); }
+        #resStatVal[category="channel"] { color: %(text); }
+
+        /* 무신호 상태(대기·신호 끊김·미착용) — severity와 분리된 vital 속성.
+           반드시 같은 objectName의 [severity=...] 규칙들보다 파일에서 뒤에
+           와야 한다 — QSS는 특이도가 같으면 나중 선언이 이기므로, 순서가
+           바뀌면 무신호인데도 이전 심각도 색이 살아남는다. */
+        #statValue[vital="stale"] { color: %(sub); }
+        #vitalDot[vital="stale"] { background: %(sub); border-radius: 5px; }
+        #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
+
         /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
         #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
         #userChip:hover { border-color: %(accent); }

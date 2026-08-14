@@ -179,6 +179,52 @@ QString vitalStatusLabel(int spo2, int hr) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  심각도(severity) 어휘 헬퍼 3종 — ISA-18.2 5단계(02-03-PLAN.md <severity_contract>).
+//
+//  등급 판정은 여기 한 곳에서만 한다. 색이 필요하면 severityColor(), 도형이
+//  필요하면 severityGlyph()를 쓴다. 임계값을 다른 곳에서 다시 판정하지 말 것 —
+//  판정 기준이 두 곳에서 갈라지면 같은 화면 안에서 등급이 어긋난다.
+// ═══════════════════════════════════════════════════════════
+
+// 바이탈 등급 판정 → QSS severity 속성값 문자열. 기존 vitalLevel()의 임계값을
+// 그대로 재사용한다 — 새 기준을 만들지 않는다. 바이탈은 3단계(정상/주의/위험)만
+// 판정하므로 "critical"/"medium"/"normal" 중 하나만 돌려준다.
+QString vitalSeverity(int spo2, int hr) {
+    switch (vitalLevel(spo2, hr)) {
+        case VitalLevel::Critical: return QStringLiteral("critical");
+        case VitalLevel::Warn:     return QStringLiteral("medium");
+        default:                   return QStringLiteral("normal");
+    }
+}
+
+// 등급 문자열 → theme.h 색 상수. QSS를 받지 않는 커스텀 페인트 위젯(Sparkline 등)
+// 전용 통로다 — 이 함수를 거치면 QSS 쪽 severityBadge/severityDot과 같은 등급
+// 판정에서 갈라지지 않는다. 알 수 없는 값(무신호 포함)은 중립색을 돌려준다.
+QColor severityColor(const QString& severity) {
+    if (severity == QStringLiteral("critical")) return QColor(QString::fromLatin1(kCritical));
+    if (severity == QStringLiteral("high"))     return QColor(QString::fromLatin1(kHigh));
+    if (severity == QStringLiteral("medium"))   return QColor(QString::fromLatin1(kWarn));
+    if (severity == QStringLiteral("info"))     return QColor(QString::fromLatin1(kInfo));
+    if (severity == QStringLiteral("normal"))   return QColor(QString::fromLatin1(kNormal));
+    return QColor(QString::fromLatin1(kTextSub));
+}
+
+// 등급 문자열 → 유니코드 도형(<severity_contract> 표). 색만으로는 다섯 등급의
+// 그레이스케일 명도가 0.035 폭으로 수렴해(theme_audit.py (c)) 구분이 안 되므로
+// 이 도형이 두 번째 채널이다(D-09). stale=true면 severity 값과 무관하게
+// 무신호 상태용 빈 원(○)을 돌려준다 — 대기·신호 끊김·미착용 세 상태가
+// 공유하는 "심각도가 아니다"라는 표시.
+QString severityGlyph(const QString& severity, bool stale = false) {
+    if (stale) return QStringLiteral("○");                                // ○ 무신호
+    if (severity == QStringLiteral("critical")) return QStringLiteral("✖"); // ✖ 위험
+    if (severity == QStringLiteral("high"))     return QStringLiteral("▲"); // ▲ 높음
+    if (severity == QStringLiteral("medium"))   return QStringLiteral("◆"); // ◆ 주의
+    if (severity == QStringLiteral("info"))     return QStringLiteral("●"); // ● 정보
+    if (severity == QStringLiteral("normal"))   return QStringLiteral("✓"); // ✓ 정상
+    return QStringLiteral("○");  // 알 수 없는 값 → 무신호와 같은 안전값
+}
+
 // 두 색을 f:(1-f) 비율로 섞는다. 배지 배경 tint 계산용.
 // (fg를 현재 카드색 bg와 섞으면 라이트/다크 어느 테마에서도 자연스러운 옅은 배경이 된다)
 QString blendHex(const QString& fg, const QString& bg, double f) {
@@ -1908,7 +1954,9 @@ QWidget* MainWindow::buildDbTab()
     titleRow->addWidget(title);
     titleRow->addStretch();
     dbStatusDot = new QLabel();
-    dbStatusDot->setObjectName("statusDot");
+    // 헤더 연결 상태등(7×7, #statusDot)과 objectName을 공유하면 그쪽의
+    // border-radius:3px 규칙이 이 9×9 위젯에도 번진다 — 02-03 정정 B로 분리.
+    dbStatusDot->setObjectName("dbStatusDot");
     dbStatusDot->setFixedSize(9, 9);
     dbStatusDot->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kNormal));
     dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
@@ -2084,7 +2132,9 @@ QWidget* MainWindow::buildResidentDetail()
     nameCol->addWidget(dlgNameBig);
     nameCol->addWidget(dlgSubMeta);
     dlgRiskBadge = new QLabel();
+    dlgRiskBadge->setObjectName("dlgRiskBadge");
     dlgStatusBadge = new QLabel();
+    dlgStatusBadge->setObjectName("dlgStatusBadge");
     hl->addWidget(dlgAvatar);
     hl->addLayout(nameCol);
     hl->addStretch();
@@ -2133,6 +2183,7 @@ QWidget* MainWindow::buildResidentDetail()
 namespace {
 QLabel* makeChip(const QString& text, const char* color) {
     auto* chip = new QLabel(text);
+    chip->setObjectName("riskChip");
     chip->setAttribute(Qt::WA_TransparentForMouseEvents);
     chip->setStyleSheet(QString(
         "color:%1; border:1px solid %1; border-radius:9px;"
@@ -2202,6 +2253,7 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
 
         // 위험도 색 띠
         auto* riskBar = new QLabel();
+        riskBar->setObjectName("riskBar");
         riskBar->setAttribute(Qt::WA_TransparentForMouseEvents);
         riskBar->setFixedWidth(4);
         riskBar->setStyleSheet(QString("background:%1; border-radius:2px;").arg(riskColor));
@@ -4127,7 +4179,10 @@ QWidget* MainWindow::buildAlertSettingsTab()
     auto* headTitle = new QLabel(QStringLiteral("대상 노드"));
     headTitle->setObjectName("camInspCh");
     alertStatusBadge_ = new QLabel(QStringLiteral("상태 미확인"));
-    alertStatusBadge_->setObjectName("camPill");
+    // 카메라 인스펙터 연결 배지(camInspPill, #camPill)와 objectName을 공유하면
+    // 서로 다른 속성 어휘(이쪽은 severity, 저쪽은 02-04의 연결 상태)가 섞인다
+    // — 02-03 정정 C로 분리.
+    alertStatusBadge_->setObjectName("alertNodeBadge");
     head->addWidget(headTitle);
     head->addWidget(alertStatusBadge_);
     head->addStretch();
