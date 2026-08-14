@@ -5,6 +5,8 @@
 
 #include <QApplication>
 #include <QLocale>
+#include <QStyle>
+#include <QStyleFactory>
 #include <QTranslator>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -13,6 +15,19 @@
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+
+    // Windows/macOS/Linux가 각자 다른 기본 위젯 스타일(플랫폼 스타일)을 쓰면
+    // 같은 QSS를 걸어도 스크롤바·콤보박스·체크박스·버튼 테두리 모양이 달라진다.
+    // Qt 내장 Fusion 스타일로 고정해 플랫폼 기본 스타일에 대한 의존을 끊는다(FOUND-02).
+    // 어떤 위젯도 만들어지기 전, 그리고 아래 ThemeManager::applyStylesheet() 호출보다
+    // 먼저여야 한다 — 늦으면 로그인 창이 플랫폼 기본 스타일로 잠깐 떴다가 바뀐다.
+    if (QStyle *fusion = QStyleFactory::create(QStringLiteral("Fusion"))) {
+        QApplication::setStyle(fusion);
+    } else {
+        // 표준 Qt 배포에서는 일어나지 않지만, 조용히 넘어가면 "특정 환경에서만
+        // 다르게 보임"이 원인 불명으로 남는다.
+        qWarning() << "[Style] Fusion 스타일을 로드할 수 없어 플랫폼 기본 스타일을 유지합니다.";
+    }
 
     // QSettings 저장 위치를 고정 — 카메라 연결 IP·계정 등 관제 PC 로컬 설정이
     // 기본 생성자 QSettings()로 일관되게 읽고 쓰이도록 조직/앱 이름을 지정한다.
