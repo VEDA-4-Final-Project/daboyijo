@@ -594,14 +594,7 @@ QPixmap navIconPixmap(int kind, const QColor& c, int px = 20)
             }
             break;
         }
-        case 3: {   // 케어 타임 — 시계
-            p.drawEllipse(QRectF(m, m, w, w));
-            const QPointF o(m + w / 2, m + w / 2);
-            p.drawLine(o, o + QPointF(0, -w * 0.27));
-            p.drawLine(o, o + QPointF(w * 0.19, 0));
-            break;
-        }
-        case 4: {   // 입소자 관리 — 사람
+        case 3: {   // 입소자 관리 — 사람
             p.drawEllipse(QRectF(m + w * 0.29, m + w * 0.04, w * 0.42, w * 0.42));
             p.drawArc(QRectF(m + w * 0.06, m + w * 0.54, w * 0.88, w * 0.84), 0, 180 * 16);
             break;
@@ -644,8 +637,8 @@ QWidget* MainWindow::buildNavRail()
 
     const QString names[kNavCount] = {
         QStringLiteral("실시간 관제"), QStringLiteral("이벤트 기록"),
-        QStringLiteral("일일 리포트"), QStringLiteral("케어 타임"),
-        QStringLiteral("입소자 관리"), QStringLiteral("장치 설정")};
+        QStringLiteral("일일 리포트"), QStringLiteral("입소자 관리"),
+        QStringLiteral("장치 설정")};
     for (int i = 0; i < kNavCount; ++i) {
         navBtns[i] = new QPushButton(names[i]);
         navBtns[i]->setObjectName("navBtn");
@@ -725,9 +718,8 @@ void MainWindow::buildUi()
 
     contentStack->addWidget(buildEventLogTab());        // 2: 이벤트 기록
     contentStack->addWidget(buildReportPage());         // 3: 일일 리포트
-    contentStack->addWidget(buildCareTimeTab());        // 4: 케어 타임
-    contentStack->addWidget(buildDbTab());              // 5: 입소자 관리
-    contentStack->addWidget(buildDeviceSettingsTab());  // 6: 장치 설정(카메라 + 알림)
+    contentStack->addWidget(buildDbTab());              // 4: 입소자 관리
+    contentStack->addWidget(buildDeviceSettingsTab());  // 5: 장치 설정(카메라 + 알림)
 
     auto* shell = new QHBoxLayout();
     shell->setContentsMargins(0, 0, 0, 0);
@@ -1011,7 +1003,6 @@ void MainWindow::onHelpClicked()
             QStringLiteral("실시간 관제 및 제어"),
             QStringLiteral("이벤트 기록"),
             QStringLiteral("일일 리포트"),
-            QStringLiteral("케어 타임"),
             QStringLiteral("입소자 관리"),
             QStringLiteral("장치 설정"),
         });
@@ -1057,7 +1048,7 @@ void MainWindow::renderHelpTopic(int idx)
             "실시간 영상 관제, 낙상·침상이탈 경보, 웨어러블 생체신호, 블랙박스 기록, "
             "입소자 관리, 장치 설정(카메라·알림)을 한 화면에서 다룹니다.</p>")
           + li(QStringLiteral("화면 구성"),
-               QStringLiteral("왼쪽 메뉴에서 실시간 관제 · 이벤트 기록 · 일일 리포트 · 케어 타임 · 입소자 관리 · 장치 설정으로 이동합니다. "
+               QStringLiteral("왼쪽 메뉴에서 실시간 관제 · 이벤트 기록 · 일일 리포트 · 입소자 관리 · 장치 설정으로 이동합니다. "
                               "메뉴 위 ☰ 버튼으로 접었다 펼 수 있습니다."))
           + li(QStringLiteral("사용 팁"),
                QStringLiteral("왼쪽 목록에서 주제를 고르면 해당 기능 설명이 여기에 표시됩니다."));
@@ -1090,17 +1081,13 @@ void MainWindow::renderHelpTopic(int idx)
              + li(QStringLiteral("지표"), QStringLiteral("누워있는 시간·활동량(만보기)·케어시간·이벤트 횟수. 서버가 쌓는 bed_sessions·activity_minute·care_logs·events 기준입니다."));
         break;
     case 5:
-        title = QStringLiteral("케어 타임");
-        body = li(QStringLiteral("채널별 카드"), QStringLiteral("오늘(00:00~) 채널별 누적 케어시간·세션 수·최근 케어 시각을 표시합니다. 서버가 쌓는 care_logs 기준으로 주기적으로 갱신됩니다."));
-        break;
-    case 6:
         title = QStringLiteral("입소자 관리");
         body = li(QStringLiteral("상단 요약"), QStringLiteral("재원 인원·위험도(상/중/하) 분포·채널 배정 수를 한눈에."))
              + li(QStringLiteral("재원/전체/퇴원 필터"), QStringLiteral("좌측 목록을 상태별로 전환. 이름 검색도 가능."))
              + li(QStringLiteral("목록 → 상세"), QStringLiteral("행을 클릭하면 우측에서 바로 편집(팝업 없음). 행 왼쪽 색 띠는 위험도(상=빨강/중=주황/하=초록)."))
              + li(QStringLiteral("＋ 신규 등록 / 저장 / 퇴원 처리"), QStringLiteral("입소자 추가·수정·퇴원(재입원). 변경 내역은 입원 이력에 기록됩니다."));
         break;
-    case 7:
+    case 6:
     default:
         title = QStringLiteral("장치 설정");
         body = li(QStringLiteral("상단 [카메라] / [알림] 전환"), QStringLiteral("카메라(연결·ROI·이미지)와 알림 노드 설정을 한 화면에서 서브탭으로 오갑니다."))
@@ -1493,36 +1480,6 @@ QWidget* MainWindow::buildReportPage()
 
     reloadReportResidents();            // 이름 탭 채우기 → 첫 입소자 자동 선택
     onReportDateChanged(reportDate_);   // 날짜 라벨 + 지표 초기 조회
-    return panel;
-}
-
-// 케어 타임 — 채널별 카드 2×2 그리드. 각 카드는 오늘 케어시간을 크게 보여준다.
-QWidget* MainWindow::buildCareTimeTab()
-{
-    auto* panel = new QFrame();
-    panel->setObjectName("panel");
-    auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(18, 16, 18, 16);
-    outer->setSpacing(6);
-
-    auto* title = new QLabel(QStringLiteral("케어 타임"));
-    title->setObjectName("panelTitle");
-    outer->addWidget(title);
-
-    auto* sub = new QLabel(
-        QStringLiteral("오늘(00:00~) 채널별 케어 누적시간 · 세션 수 · 최근 케어 시각"));
-    sub->setObjectName("subtitle");
-    outer->addWidget(sub);
-    outer->addSpacing(6);
-
-    // 채널 카드 2×2 그리드 — 남는 공간을 카드가 균등하게 나눠 채운다.
-    auto* grid = new QGridLayout();
-    grid->setSpacing(14);
-    for (int ch = 0; ch < 4; ++ch)
-        grid->addWidget(buildCareTimeCard(ch), ch / 2, ch % 2);
-    for (int c = 0; c < 2; ++c) grid->setColumnStretch(c, 1);
-    for (int r = 0; r < 2; ++r) grid->setRowStretch(r, 1);
-    outer->addLayout(grid, 1);
     return panel;
 }
 
@@ -1924,82 +1881,6 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlayer->setSource(QUrl());
     blackboxPlayer->setSource(QUrl(url));
     blackboxPlayer->play();
-}
-
-// 케어 타임 카드 1개(채널당) — 이름/통계 라벨만 멤버로 잡아두고, updateCareTime()이
-// 텍스트를 갱신한다. 실제 케어시간은 서버가 care_logs에 쌓는 값을 그대로 읽는다.
-QWidget* MainWindow::buildCareTimeCard(int channel)
-{
-    auto* card = new QFrame();
-    card->setObjectName("careCard");
-    applyCardShadow(card, 20, 5, 60);
-
-    auto* v = new QVBoxLayout(card);
-    v->setContentsMargins(18, 16, 18, 16);
-    v->setSpacing(10);
-
-    // ── 헤더: 채널 칩 + 이름 + 위치 ──
-    auto* head = new QHBoxLayout();
-    head->setSpacing(10);
-    auto* chip = new QLabel(QStringLiteral("CH %1").arg(channel + 1));
-    chip->setObjectName("careChip");
-    chip->setAlignment(Qt::AlignCenter);
-
-    auto* nameCol = new QVBoxLayout();
-    nameCol->setSpacing(0);
-    careNameLabels[channel] = new QLabel(QStringLiteral("—"));
-    careNameLabels[channel]->setObjectName("careName");
-    careMetaLabels[channel] = new QLabel(QStringLiteral("채널 %1").arg(channel + 1));
-    careMetaLabels[channel]->setObjectName("careMeta");
-    nameCol->addWidget(careNameLabels[channel]);
-    nameCol->addWidget(careMetaLabels[channel]);
-
-    head->addWidget(chip);
-    head->addLayout(nameCol);
-    head->addStretch();
-    v->addLayout(head);
-
-    v->addStretch();
-
-    // ── 큰 값: 오늘 누적 케어시간 ──
-    careBigLabels[channel] = new QLabel(QStringLiteral("0분"));
-    careBigLabels[channel]->setObjectName("careBig");
-    auto* bigCap = new QLabel(QStringLiteral("오늘 누적 케어시간"));
-    bigCap->setObjectName("careBigCap");
-    v->addWidget(careBigLabels[channel]);
-    v->addWidget(bigCap);
-
-    v->addStretch();
-
-    // ── 하단: 세션 수 · 최근 케어 시각 ──
-    auto* foot = new QHBoxLayout();
-    foot->setSpacing(0);
-    auto makeMini = [&](const QString& cap, QLabel*& valRef,
-                        const QString& initVal) {
-        auto* col = new QVBoxLayout();
-        col->setSpacing(1);
-        valRef = new QLabel(initVal);
-        valRef->setObjectName("careMiniVal");
-        auto* c = new QLabel(cap);
-        c->setObjectName("careMiniCap");
-        col->addWidget(valRef);
-        col->addWidget(c);
-        return col;
-    };
-    foot->addLayout(makeMini(QStringLiteral("세션"), careSessionLabels[channel],
-                             QStringLiteral("0회")));
-    auto* footSep = new QFrame();
-    footSep->setFrameShape(QFrame::VLine);
-    footSep->setObjectName("careFootSep");
-    footSep->setFixedHeight(30);
-    foot->addWidget(footSep);
-    foot->addSpacing(16);
-    foot->addLayout(makeMini(QStringLiteral("최근 케어"), careLastLabels[channel],
-                             QStringLiteral("—")));
-    foot->addStretch();
-    v->addLayout(foot);
-
-    return card;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2818,18 +2699,11 @@ void MainWindow::applyTheme()
         #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
-        /* ── 케어 타임 카드 ── */
+        /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */
         #careCard { background: %(card); border: 1px solid %(border); border-radius: 16px; }
-        #careChip { background: %(accent); color: #fff; border-radius: 9px;
-                    padding: 3px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.5px; }
-        #careName { color: %(text); font-size: 16px; font-weight: 800; }
         #careMeta { color: %(sub); font-size: 12px; }
-        #careBig { color: %(accent); font-family: "Consolas", "D2Coding", monospace;
-                   font-size: 40px; font-weight: 800; }
         #careBigCap { color: %(sub); font-size: 12px; font-weight: 600; }
-        #careMiniVal { color: %(text); font-size: 17px; font-weight: 800; }
         #careMiniCap { color: %(sub); font-size: 11px; font-weight: 600; }
-        #careFootSep { color: %(border); }
 
         /* ── 일일 리포트 ──
            QCalendarWidget은 내부가 네비게이션바 + QTableView로 되어 있어서
@@ -2839,9 +2713,19 @@ void MainWindow::applyTheme()
         #reportCalendar { background: %(card); border: none; }
         #reportCalendar QWidget#qt_calendar_navigationbar {
             background: %(card); border-bottom: 1px solid %(border); }
+        /* ★ 달력 안쪽 글자 크기는 px 가 아니라 pt 로 준다.
+           QFont 은 크기를 pt 나 px 중 하나로만 갖는데, px 로 정하면 pointSize()
+           가 -1("pt 로 정해지지 않음")을 돌려준다. QCalendarWidget 은 날짜 칸을
+           그릴 때 본문 폰트에서 pointSize 를 꺼내 계산하므로, 앱 전역의
+           QWidget{font-size:13px} 를 그대로 물려받으면 그 -1 을 다시
+           setPointSize 에 넣어 'Point size <= 0' 경고가 뜬다.
+           동작에는 지장이 없지만 날짜를 누를 때마다 콘솔이 더러워진다.
+           ※ 이 스타일시트 전체가 raw 문자열이라, 주석 안에서도 닫는 괄호
+             바로 뒤에 큰따옴표가 오면 문자열이 그 자리에서 끊긴다. 금지. */
+        #reportCalendar, #reportCalendar QAbstractItemView { font-size: 10pt; }
         #reportCalendar QToolButton {
             background: transparent; color: %(text); border: none;
-            font-size: 13px; font-weight: 700; padding: 4px 8px; }
+            font-size: 10pt; font-weight: 700; padding: 4px 8px; }
         #reportCalendar QToolButton:hover { background: %(panel); border-radius: 6px; }
         #reportCalendar QToolButton::menu-indicator { image: none; }
         #reportCalendar QAbstractItemView:enabled {
@@ -2851,7 +2735,7 @@ void MainWindow::applyTheme()
         #reportCalendar QAbstractItemView:disabled { color: %(border); }
         #reportCalendar QTableView QHeaderView::section {
             background: %(card); color: %(sub); border: none;
-            font-size: 11px; font-weight: 700; padding: 4px 0; }
+            font-size: 8pt; font-weight: 700; padding: 4px 0; }
         #reportTodayBtn { background: transparent; color: %(accent);
                           border: 1px solid %(border); border-radius: 8px;
                           padding: 6px 0; font-size: 12px; font-weight: 700; }
@@ -3398,15 +3282,24 @@ void MainWindow::refreshAlertStatusBadge()
 //  원천은 전부 서버가 쌓는다: care_logs / bed_sessions / activity_minute / events
 // ═══════════════════════════════════════════════════════════
 namespace {
-// 초 → "8시간 20분" / "42분" / "35초". 0이면 "—"로 비운다.
+// 초 → "8시간 20분 30초" / "4분 27초" / "35초". 0이면 "—"로 비운다.
+//
+// ★ 초를 버리지 않는다. 케어 세션은 수십 초짜리가 흔해서 분 단위로 자르면
+//   "4분 27초"가 "4분"이 되고, 하루치를 합산할 때 사람마다 최대 59초씩 사라진다.
+//   대신 값이 0인 자리는 빼서 "1시간 0분 30초" 같은 군더더기는 안 나오게 한다.
 QString humanDuration(int sec)
 {
     if (sec <= 0) return QStringLiteral("—");
-    if (sec < 60) return QStringLiteral("%1초").arg(sec);
-    const int m = sec / 60;
-    if (m < 60) return QStringLiteral("%1분").arg(m);
-    return m % 60 == 0 ? QStringLiteral("%1시간").arg(m / 60)
-                       : QStringLiteral("%1시간 %2분").arg(m / 60).arg(m % 60);
+
+    const int h = sec / 3600;
+    const int m = (sec % 3600) / 60;
+    const int s = sec % 60;
+
+    QStringList parts;
+    if (h > 0) parts << QStringLiteral("%1시간").arg(h);
+    if (m > 0) parts << QStringLiteral("%1분").arg(m);
+    if (s > 0) parts << QStringLiteral("%1초").arg(s);
+    return parts.join(QLatin1Char(' '));
 }
 }  // namespace
 

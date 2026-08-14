@@ -27,64 +27,78 @@ bool Database::connect(const std::string& host, const std::string& user,
     return true;
 }
 
-long long Database::insertCareLog(int cameraId, int durationSec) {
+std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return 0;
+    std::vector<long long> ids;
+    if (!conn_) return ids;
 
-    // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
-    // (문자열 필드를 넣을 땐 반드시 이스케이프 필요 — 나중에 안내)
-    // end_time = 지금(NOW()), start_time = 거기서 duration만큼 역산.
-    //
-    // resident_id 를 같이 박는다. 예전엔 camera_id 만 넣어 이 값이 항상 NULL
-    // 이었는데, 그러면 "환자별" 케어시간을 뽑을 때 매번 camera_id 로 조인해야
-    // 하고, 입소자가 방을 옮기면 과거 케어가 새 입주자 것으로 바뀐다.
-    // 기록 시점의 사람을 그대로 남긴다. (재원자가 없으면 NULL — 예전과 동일)
-    const int residentId = residentByCameraLocked(cameraId);
-    char resident[16];
-    if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
-    else                std::snprintf(resident, sizeof(resident), "NULL");
+    // 그 방에 있는 재원자 전원. 요양사가 둘 중 누구를 돌봤는지는 영상에 없으므로
+    // 전원에게 같은 시간을 남긴다(헤더 주석 참고). 아무도 없으면 -1 하나를 넣어
+    // resident_id = NULL 로 한 행만 만든다 — 케어가 있었다는 사실은 지우지 않는다.
+    std::vector<int> residents = residentsByCameraLocked(cameraId);
+    if (residents.empty()) residents.push_back(-1);
 
-    char sql[512];
-    std::snprintf(sql, sizeof(sql),
-        "INSERT INTO care_logs (camera_id, resident_id, duration_sec, start_time, end_time) "
-        "VALUES (%d, %s, %d, NOW() - INTERVAL %d SECOND, NOW())",
-        cameraId, resident, durationSec, durationSec);
+    for (int residentId : residents) {
+        // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
+        // (문자열 필드를 넣을 땐 반드시 이스케이프 필요)
+        // end_time = 지금(NOW()), start_time = 거기서 duration만큼 역산.
+        //
+        // resident_id 를 같이 박는 이유: 조회할 때마다 camera_id 로 조인하면
+        // 입소자가 방을 옮긴 뒤 과거 케어가 새 입주자 것으로 바뀐다.
+        // 기록 시점의 사람을 그대로 남긴다.
+        char resident[16];
+        if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
+        else                std::snprintf(resident, sizeof(resident), "NULL");
 
-    if (mysql_query(conn_, sql)) {
-        std::cerr << "[DB] INSERT 실패: " << mysql_error(conn_) << "\n";
-        return 0;
+        char sql[512];
+        std::snprintf(sql, sizeof(sql),
+            "INSERT INTO care_logs (camera_id, resident_id, duration_sec, start_time, end_time) "
+            "VALUES (%d, %s, %d, NOW() - INTERVAL %d SECOND, NOW())",
+            cameraId, resident, durationSec, durationSec);
+
+        if (mysql_query(conn_, sql)) {
+            std::cerr << "[DB] 케어로그 INSERT 실패: " << mysql_error(conn_) << "\n";
+            continue;   // 한 사람이 실패해도 나머지는 남긴다
+        }
+        // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
+        // INSERT 해서 남의 id를 집어올 수 있다.
+        ids.push_back(static_cast<long long>(mysql_insert_id(conn_)));
     }
-    // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
-    // INSERT 해서 남의 id를 집어올 수 있다.
-    const long long logId = static_cast<long long>(mysql_insert_id(conn_));
-    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1)
-              << ", " << durationSec << "초, log_id=" << logId << ")\n";
-    return logId;
+
+    std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1) << ", "
+              << durationSec << "초, " << ids.size() << "명)\n";
+    return ids;
 }
 
-bool Database::addCareLogDuration(long long logId, int addSec) {
+bool Database::addCareLogDuration(const std::vector<long long>& logIds, int addSec) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!conn_) return false;
+    if (!conn_ || logIds.empty()) return false;
 
-    char sql[256];
-    std::snprintf(sql, sizeof(sql),
-        "UPDATE care_logs SET duration_sec = duration_sec + %d, end_time = NOW() "
-        "WHERE log_id = %lld",
-        addSec, logId);
+    // 한 행이라도 못 붙이면 false 를 돌려준다. 일부만 합산되면 같은 방 사람끼리
+    // 케어시간이 어긋나므로, 호출자가 전원에게 새 행을 만드는 쪽이 낫다.
+    bool allOk = true;
+    for (long long logId : logIds) {
+        char sql[256];
+        std::snprintf(sql, sizeof(sql),
+            "UPDATE care_logs SET duration_sec = duration_sec + %d, end_time = NOW() "
+            "WHERE log_id = %lld",
+            addSec, logId);
 
-    if (mysql_query(conn_, sql)) {
-        std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
-        return false;
+        if (mysql_query(conn_, sql)) {
+            std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
+            allOk = false;
+            continue;
+        }
+        // 행이 안 맞았으면(누가 지웠다든지) 병합한 척하면 안 된다 — 케어시간이
+        // 통째로 사라진다. false 를 돌려주면 호출자가 새 행 INSERT 로 넘어간다.
+        if (mysql_affected_rows(conn_) == 0) {
+            std::cerr << "[DB] 케어로그 병합 대상 없음 (log_id=" << logId << ")\n";
+            allOk = false;
+        }
     }
-    // 행이 안 맞았으면(누가 지웠다든지) 병합한 척하면 안 된다 — 케어시간이 통째로
-    // 사라진다. false를 돌려주면 호출자가 새 행으로 INSERT 하는 쪽으로 넘어간다.
-    if (mysql_affected_rows(conn_) == 0) {
-        std::cerr << "[DB] 케어로그 병합 대상 없음 (log_id=" << logId << ")\n";
-        return false;
-    }
-    std::cout << "[DB] 케어로그 병합 (log_id=" << logId
-              << ", +" << addSec << "초)\n";
-    return true;
+    if (allOk)
+        std::cout << "[DB] 케어로그 병합 (" << logIds.size() << "행, +" << addSec << "초)\n";
+    return allOk;
 }
 
 // 부팅 시 위험도 복원 — 진짜 소스인 residents.risk_level에서 읽는다.
@@ -445,42 +459,46 @@ const char* toSql(EventSource s) {
 }  // namespace
 
 // mutex_ 를 이미 쥔 상태에서만 부를 것 (헤더 주석 참고).
-int Database::residentByCameraLocked(int channel) {
-    if (!conn_) return -1;
+// "이 카메라에 있는 재원자는 누구누구인가" 규칙은 여기 한 곳에만 둔다.
+std::vector<int> Database::residentsByCameraLocked(int channel) {
+    std::vector<int> ids;
+    if (!conn_) return ids;
 
-    // LIMIT 을 걸지 않는 게 핵심이다. 여러 명이 걸리는지 알아야 경고를 찍는다.
     // 퇴원자가 채널을 물고 있지 않게 재원자만 본다(getRiskLevelByCamera 와 같은 규칙).
     char sql[256];
     std::snprintf(sql, sizeof(sql),
-        "SELECT resident_id, name FROM residents "
+        "SELECT resident_id FROM residents "
         "WHERE camera_id = %d AND status = '재원' ORDER BY resident_id",
         channel);
 
     if (mysql_query(conn_, sql)) {
         std::cerr << "[DB] 입소자 조회 실패: " << mysql_error(conn_) << "\n";
-        return -1;
+        return ids;
     }
     MYSQL_RES* res = mysql_store_result(conn_);
     if (!res) {
         std::cerr << "[DB] 입소자 결과셋 반환 실패: " << mysql_error(conn_) << "\n";
-        return -1;
+        return ids;
     }
-
-    int id = -1;
-    MYSQL_ROW row = mysql_fetch_row(res);
-    if (row && row[0]) id = std::atoi(row[0]);
-
-    // 한 카메라에 재원자가 둘 이상이면 영상만으로는 누구 기록인지 정할 수 없다.
-    // 첫 번째 사람으로 붙이되, 리포트가 틀렸을 때 여기부터 의심할 수 있게 남긴다.
-    if (mysql_num_rows(res) > 1) {
-        std::cerr << "[DB] ⚠ 카메라 " << (channel + 1) << " 에 재원자가 "
-                  << mysql_num_rows(res) << "명 — 기록을 resident_id=" << id
-                  << " (" << (row && row[1] ? row[1] : "?")
-                  << ") 로 붙인다. 카메라 기반 기록(낙상·케어·재실)이 다른 사람 것으로"
-                     " 갈 수 있다. 1채널 1인으로 맞추거나 침대별 ROI 매핑이 필요하다.\n";
-    }
+    while (MYSQL_ROW row = mysql_fetch_row(res))
+        if (row[0]) ids.push_back(std::atoi(row[0]));
     mysql_free_result(res);
-    return id;
+    return ids;
+}
+
+int Database::residentByCameraLocked(int channel) {
+    const std::vector<int> ids = residentsByCameraLocked(channel);
+    if (ids.empty()) return -1;
+
+    // 한 사람만 고를 수 있는 기록(낙상 등)인데 방에 여럿이면 영상만으로는 정할 수
+    // 없다. 첫 사람으로 붙이되, 리포트가 틀렸을 때 여기부터 의심하도록 남긴다.
+    // (케어시간은 이 경로를 쓰지 않는다 — insertCareLogs 가 전원에게 기록한다)
+    if (ids.size() > 1) {
+        std::cerr << "[DB] ⚠ 카메라 " << (channel + 1) << " 에 재원자가 " << ids.size()
+                  << "명 — 기록을 resident_id=" << ids.front()
+                  << " 로 붙인다. 침대 ROI 로 사람을 특정하면 정확해진다.\n";
+    }
+    return ids.front();
 }
 
 int Database::getResidentByCamera(int channel) {

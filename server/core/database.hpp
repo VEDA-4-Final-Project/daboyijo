@@ -31,14 +31,24 @@ public:
                  const std::string& password, const std::string& dbname,
                  unsigned int port = 3306);
     // 케어 세션 한 건 기록: 카메라 채널 + 케어시간(초). 아무 스레드나 호출 가능.
-    // 반환: 새로 만들어진 log_id, 실패 시 0. 이 id 를 들고 있어야 요양사가 잠깐
-    // 자리를 비웠다 돌아왔을 때 아래 addCareLogDuration 으로 같은 행에 이어붙인다.
-    long long insertCareLog(int cameraId, int durationSec);
-    // 기존 케어로그에 케어시간을 더한다(자리 비움 후 복귀 → 세션 병합).
+    //
+    // ★ 그 채널의 재원자 "전원"에게 각각 한 행씩 만든다(2인실이면 2행).
+    //   영상만으로는 요양사가 둘 중 누구를 돌봤는지 알 수 없다 — 억지로 한 명을
+    //   고르면 절반이 조용히 틀린다. "요양사가 이 방에 N초 있었다"는 검증 가능한
+    //   사실이므로 방 안 전원에게 같은 시간을 남기고, 해석은 리포트가 한다.
+    //   (재원자가 하나도 없으면 resident_id = NULL 로 한 행만 남긴다 — 케어가
+    //    일어난 사실 자체는 지워지면 안 된다)
+    //
+    // 반환: 새로 만들어진 log_id 목록(사람 수만큼). 실패 시 빈 벡터.
+    //       이 id 들을 들고 있어야 요양사가 잠깐 자리를 비웠다 돌아왔을 때
+    //       아래 addCareLogDuration 으로 같은 행들에 이어붙인다.
+    std::vector<long long> insertCareLogs(int cameraId, int durationSec);
+    // 기존 케어로그들에 케어시간을 더한다(자리 비움 후 복귀 → 세션 병합).
     // duration_sec 는 SQL 안에서 더한다 — 읽어서 계산해 쓰면 그 사이에 끼어들 수 있다.
     // start_time 은 그대로 두고 end_time 만 지금으로 민다. 그래서 이 행은
     // end_time - start_time > duration_sec 가 된다(그 차이가 자리 비운 시간).
-    bool addCareLogDuration(long long logId, int addSec);
+    // 한 행이라도 병합에 실패하면 false — 호출자는 새 행으로 남기면 된다.
+    bool addCareLogDuration(const std::vector<long long>& logIds, int addSec);
     // 환자 위험도의 유일한 소스는 residents.risk_level(Qt가 직접 기록)이다.
     // 과거 patient_status 테이블 경로(get/updatePatientStatus)는 아무도 INSERT하지
     // 않아 항상 비어 있던 죽은 경로라 제거함 — 아래 getRiskLevelByCamera로 통일.
@@ -144,6 +154,9 @@ private:
     //   getResidentByCamera 를 안에서 다시 부르면 그 자리에서 교착한다.
     //   한 명 초과일 때 경고를 찍는 곳도 여기 하나뿐이다.
     int residentByCameraLocked(int channel);
+    // 그 채널의 재원자 "전원". 케어처럼 한 사건이 여러 사람에게 걸리는 기록용.
+    // 위 residentByCameraLocked 도 이걸 써서 첫 사람을 고른다(규칙을 한 곳에).
+    std::vector<int> residentsByCameraLocked(int channel);
 
     std::mutex mutex_;  // conn_ 보호
     MYSQL* conn_ = nullptr;

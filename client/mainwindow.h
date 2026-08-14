@@ -313,7 +313,7 @@ private:
 
     // ── TAB 구조 ──────────────────────────────────────────
     // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
-    static constexpr int kNavCount = 6;
+    static constexpr int kNavCount = 5;
     QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 5개 + 접기 토글)
     void     refreshNavIcons();       // 팔레트 전환 시 아이콘 색 재생성
     void     setNavCollapsed(bool on);// 접기/펼치기 (QSettings에 저장)
@@ -339,14 +339,6 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
-    // 케어 타임 카드(채널당 1개) — 매 갱신마다 라벨 텍스트만 바꾼다(카드는 1회 생성).
-    QLabel* careNameLabels[4] = {};     // 환자 이름
-    QLabel* careMetaLabels[4] = {};     // "채널 N · 위치"
-    QLabel* careBigLabels[4] = {};      // 오늘 케어시간 큰 값 ("45분"/"30초")
-    QLabel* careSessionLabels[4] = {};  // "N회"
-    QLabel* careLastLabels[4] = {};     // "HH:mm" (최근 케어)
-    QWidget* buildCareTimeCard(int channel);
-
     // ── 일일 리포트: 날짜 선택 ──────────────────────────────
     // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
     // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다
@@ -472,9 +464,7 @@ private:
     // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.
     void refreshEventLog();
 
-    // 케어 타임은 이벤트 기록에서 분리해 자체 탭(채널별 카드 그리드)으로 뺀다.
-    QWidget* buildCareTimeTab();
-    // 일일 리포트 — 날짜별/입소자별 지표(달력 + 상세). 케어 타임과는 별개 탭.
+    // 일일 리포트 — 날짜별/입소자별 지표(달력 + 상세).
     QWidget* buildReportPage();
 
 
