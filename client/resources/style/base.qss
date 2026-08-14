@@ -120,9 +120,12 @@
                          padding: 7px 16px; font-size: 13px; font-weight: 800; }
         #alarmToastBtn:hover { background: #ff6b62; }
 
-        /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
-        #videoCard { background: #000000; border: 1px solid %(border); border-radius: 12px; }
-        #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 12px; }
+        /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이.
+           배경은 팔레트가 아니라 영상 캔버스 전용 단일 출처 토큰을 참조한다(D-07/IA-02) —
+           videoview.cpp의 paintEvent()가 같은 상수(kVideoSurface)로 칠하는 영역과
+           반드시 같은 검정이어야 카드 테두리 안쪽과 실제 영상 영역의 색이 갈리지 않는다. */
+        #videoCard { background: %(videoSurface); border: 1px solid %(border); border-radius: 12px; }
+        #video { color: #9AA7B2; font-size: 13px; background: %(videoSurface); border-radius: 12px; }
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
@@ -301,8 +304,10 @@ QLabel {
 #camPrimary { background: %(accent); color: %(onAccent); border: 1px solid %(accent);
               border-radius: 10px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
 #camPrimary:hover { background: %(accentHover); border-color: %(accentHover); }
-/* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다 */
-#camStage { background: #000000; border: 1px solid %(border); border-radius: 14px; }
+/* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다.
+   배경은 영상 캔버스 전용 단일 출처 토큰을 참조한다(D-07/IA-02) —
+   FramePreview::paintEvent()의 kVideoSurface와 같은 검정이어야 한다. */
+#camStage { background: %(videoSurface); border: 1px solid %(border); border-radius: 14px; }
 #camStageCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
 
 /* ROI 페이지 — 단계 카드 + 주 액션 */
