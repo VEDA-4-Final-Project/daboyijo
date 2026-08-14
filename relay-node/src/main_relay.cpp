@@ -6,7 +6,7 @@
 //   [4] 걸음 lo  [5] 걸음 hi   (uint16, 리틀엔디안)
 //   [6] 체크섬 — [0]~[5] 를 XOR
 //
-// ⚠ 펌웨어와 반드시 동시에 배포할 것. 길이가 어긋나면 프레이밍이 깨진다.
+// ⚠ 펌웨어와 반드시 동시에 배포 — 길이가 어긋나면 프레이밍이 깨짐
 
 #include "MqttClient_veda.hpp"
 #include <simpleble/SimpleBLE.h>
@@ -82,7 +82,12 @@ static std::string g_rx_buffer;
 // 펌웨어에서 ISR 이 플래그만 세우고 메인 루프가 처리하는 것과 같은 이유다.
 static std::atomic<bool> g_time_requested{false};
 
-void onSigint(int) { g_running = false; }
+// 첫 신호는 정상 종료 요청, 두 번째는 강제 탈출
+// 플래그를 보는 곳이 스캔·연결 유지 루프뿐이라 DBus 안에 있으면 Ctrl+C 가 안 먹음
+void onSignal(int) {
+    if(!g_running) std::_Exit(1);   // 두 번째 신호 — 정리 포기
+    g_running = false;
+}
 
 std::string toLower(std::string s) {
     // tolower 는 int 를 돌려주지만 입력이 unsigned char 범위면 결과도 그 범위
@@ -368,7 +373,19 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
 }
 
 int main(int argc, char* argv[]) {
-    std::signal(SIGINT, onSigint);
+    // SIGTERM 도 등록 — systemctl stop 이 쓰는 신호, 안 잡으면 정리 없이 즉사
+    std::signal(SIGINT, onSignal);
+    std::signal(SIGTERM, onSignal);
+
+    // 종료 감시 — 신호 후 3초 안에 안 끝나면 강제 종료
+    // 멎는 지점이 SimpleBLE·mosquitto 내부라 우리가 못 고침
+    // 신호 직후부터 재야 함 — 루프 밖에서 재면 루프 안에서 멎었을 때 도달 불가
+    std::thread([] {
+        while(g_running) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        std::cerr << "[Relay Node] 정리가 3초 넘게 안 끝나 강제 종료" << std::endl;
+        std::_Exit(1);
+    }).detach();
 
     std::string confPath = exeDir() + "/relay-node.conf";
     if(argc >= 3 && std::strcmp(argv[1], "-c") == 0) confPath = argv[2];
@@ -419,5 +436,6 @@ int main(int argc, char* argv[]) {
     }
 
     client.stopLoop();
+    std::cout << "[Relay Node] 종료" << std::endl;
     return 0;
 }

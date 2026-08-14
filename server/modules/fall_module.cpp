@@ -50,19 +50,12 @@ void FallModule::addChannel(int channel) {
     channels_[channel] = std::move(state);
 }
 
-void FallModule::updateBedRoi(int channel, bool clear,
-                              std::vector<std::pair<float, float>> points) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (clear) rois_.erase(channel);
-    else rois_[channel] = std::move(points);
-}
-
 void FallModule::onMetadata(int channel, const std::vector<Detection>& dets) {
+    // 침대 스냅샷은 락 밖에서 뜬다 — zones_는 자체 락이라 mutex_와 겹쳐 잡을 이유가 없다.
+    // 미연결(setBedZones 안 함)이면 빈 목록 → 게이트 없이 화면 전체를 관찰(폴백).
+    const auto zones = zones_ ? zones_->zones(channel) : std::map<int, BedZone>{};
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<std::pair<float, float>> roi;
-    auto it = rois_.find(channel);
-    if (it != rois_.end()) roi = it->second;
-    fall_detector_.update(channel, dets, roi);
+    fall_detector_.update(channel, dets, zones);
 }
 
 void FallModule::processFrame(const AiJob& job) {

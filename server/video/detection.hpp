@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,35 @@ inline bool isFeetInRoi(const Detection& det, const std::vector<std::pair<float,
             (px < (xj - xi) * (py - yi) / (yj - yi) + xi))  // 그 선분과 만나는 x좌표보다 사람이 왼쪽에 있는가
             inside = !inside;
     }
-    
+
     return inside;
+}
+
+// 침대 1개 = ROI 1개. 한 채널(=한 병실 시야)에 침대가 여러 개라서 ROI도 여러
+// 개이고, 채널 안에서 roi_id로 구분한다. 침대마다 입소자가 다르므로
+// resident_id를 같이 들고 다닌다 — 이게 "이 침대는 누구 자리"라는 매핑이고,
+// IdentityTracker가 추적 객체에 사람 이름을 붙일 때의 앵커가 된다.
+struct BedZone {
+    int roi_id = 0;         // 채널 안 침대 번호 (0~DBJ_ROI_MAX_ZONES-1)
+    int resident_id = 0;    // residents.resident_id (0 = 아직 입소자 미지정)
+    std::vector<std::pair<float, float>> points;  // 정규화 0~1 다각형
+
+    // 다각형이 되려면 최소 3점. 2점 이하는 그리다 만 것으로 보고 무시한다.
+    bool valid() const { return points.size() >= 3; }
+};
+
+// 어느 침대에도 속하지 않음 (BedZone::roi_id 자리에 쓰는 센티널)
+constexpr int kNoZone = -1;
+
+// 사람의 발끝이 들어있는 침대의 roi_id. 어디에도 없으면 kNoZone.
+// 침대 ROI끼리 겹쳐 그려졌으면 roi_id가 작은 쪽이 이긴다(std::map은 키 오름차순
+// 순회 — 먼저 그린 침대 우선). 사람 하나가 두 침대에 동시에 속하면 이후의
+// 이탈/귀속 판정이 매 프레임 흔들리므로, 자의적이더라도 하나로 못박는다.
+inline int feetInWhichZone(const Detection& det,
+                           const std::map<int, BedZone>& zones) {
+    for (const auto& entry : zones) {
+        if (entry.second.valid() && isFeetInRoi(det, entry.second.points))
+            return entry.first;
+    }
+    return kNoZone;
 }

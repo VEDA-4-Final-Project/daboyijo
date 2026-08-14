@@ -12,10 +12,9 @@ constexpr double kTrackExpireSec = 6.0;   // 이만큼 안 보인 추적은 폐�
 }  // namespace
 
 void FallDetector::update(int channel, const std::vector<Detection>& detections,
-                          const std::vector<std::pair<float, float>>& bed_roi) {
+                          const std::map<int, BedZone>& zones) {
     auto& tracks = channels_[channel];
     auto now = std::chrono::steady_clock::now();
-    const bool has_bed = bed_roi.size() >= 3;  // 3점 미만이면 게이트 없음(폴백)
 
     for (const auto& d : detections) {
         // 사람만, 그리고 bbox 넓이 0인 요약 프레임(객체 소실 시 오는 것)은 제외
@@ -28,29 +27,31 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
         tr.right = d.right;
         tr.bottom = d.bottom;
 
-        // 침대 ROI 게이팅: 침대 안이면 관찰 대상에서 빠지고 상태 리셋.
-        // 판정 기준점은 무게중심(cx,cy)이 아니라 bbox 하단 중앙("발끝").
-        // 무게중심은 몸통 높이에 떠 있어 침대 "앞"에 선 사람도 2D 화면상
-        // ROI와 겹쳐 재실로 오판된다. 발끝은 바닥 평면에 붙은 점이라 화면
-        // y좌표가 실제 3D 위치를 반영 — 침대 앞이면 ROI 아래(밖), 침대에
+        // 침대 ROI 게이팅: 어느 침대든 하나에라도 들어있으면 관찰 대상에서
+        // 빠지고 상태 리셋. 판정 기준점은 무게중심(cx,cy)이 아니라 bbox 하단
+        // 중앙("발끝"). 무게중심은 몸통 높이에 떠 있어 침대 "앞"에 선 사람도
+        // 2D 화면상 ROI와 겹쳐 재실로 오판된다. 발끝은 바닥 평면에 붙은 점이라
+        // 화면 y좌표가 실제 3D 위치를 반영 — 침대 앞이면 ROI 아래(밖), 침대에
         // 누우면 ROI 안으로 갈린다. (ROI는 침대 발자국 기준으로 그릴 것)
-        const bool in_bed = has_bed && isFeetInRoi(d, bed_roi);
-        
-        if (in_bed) {
+        const int bed = feetInWhichZone(d, zones);  // 침대 없으면 kNoZone(폴백)
+
+        if (bed != kNoZone) {
             if (!tr.in_bed) {
-                std::fprintf(stderr, "[fall] ch%d obj%d 침상 재실 — 관찰 중단\n",
-                             channel + 1, d.object_id);
+                std::fprintf(stderr, "[fall] ch%d obj%d 침상%d 재실 — 관찰 중단\n",
+                             channel + 1, d.object_id, bed + 1);
             }
             tr.in_bed = true;
+            tr.bed_id = bed;
             tr.lying_active = false;
             tr.fired = false;
             continue;
         }
         if (tr.in_bed) {
-            std::fprintf(stderr, "[fall] ch%d obj%d 침상 이탈 → 관찰 시작\n",
-                         channel + 1, d.object_id);
+            std::fprintf(stderr, "[fall] ch%d obj%d 침상%d 이탈 → 관찰 시작\n",
+                         channel + 1, d.object_id, tr.bed_id + 1);
         }
         tr.in_bed = false;
+        tr.bed_id = kNoZone;
     }
 
     // 오래 안 보인 추적 정리
