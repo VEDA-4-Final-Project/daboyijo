@@ -43,6 +43,15 @@ public:
     static constexpr const char* kTopicWearable = "veda/wearable/data";
     static constexpr const char* kTopicAlarm    = "veda/alarm/control";
 
+    // "테스트" 버튼이 노드 LED 에 띄우는 문구. 관제 앱의 미리보기도 같은 값을 써서
+    // "미리보기 == 테스트 때 실제로 보이는 화면" 이 되도록 한 곳에서만 정의한다.
+    // ⚠️ LED 폰트(hub75-font16)에 있는 글자만 보인다(숫자·"확인"은 있음).
+    static constexpr const char* kAlertTestText = "1234 확인";
+
+    // 알림 노드 온라인 상태 — 노드가 veda/alarm/<node_id>/status 에 "online"/"offline"
+    // 을 retain 으로 올린다(Last-Will 포함). +는 노드 id 자리 와일드카드.
+    static constexpr const char* kTopicAlarmStatusFilter = "veda/alarm/+/status";
+
     explicit MqttQtManager(QObject* parent = nullptr);
 
     // 소멸 중에 나가는 시그널을 막는다. 이게 없으면 앱을 닫을 때 죽는다 —
@@ -83,6 +92,17 @@ public slots:
                         const QString& target_device = QStringLiteral("alarm_rpi_01"),
                         int qos = 1);
 
+    // 관제 앱의 "적용" — 밝기/음량을 스크롤·소리 없이 즉시 바꾼다. 노드가 이 값을 평상시(base)
+    // 로 커밋하므로 idle "감시 중" 이 바로 이 밝기가 되고 유지된다. 이후 이벤트가 0(유지)을
+    // 보내도 이 값이 쓰인다. (앱은 이 값을 QSettings 에 저장) 0 은 "유지" 라 0 을 보내면 무변화.
+    bool sendAlarmConfig(const QString& target_device,
+                         int brightness255, int volumePct, int qos = 1);
+
+    // 관제 앱의 "테스트" — 현재 값으로 잠깐 보여만 준다(저장·유지 안 함). 노드가 이 값으로
+    // 폰트 내 문구를 1회 스크롤 + 소리를 내고, 끝나면 평상시(base) 밝기·음량으로 되돌린다.
+    bool sendAlarmTest(const QString& target_device,
+                       int brightness255, int volumePct, int qos = 1);
+
 signals:
     void connected();
     void disconnected();
@@ -90,6 +110,9 @@ signals:
 
     void wearableDataReceived(const WearableData& data);
     void alarmCommandReceived(const AlarmCommand& cmd);
+
+    // 알림 노드 온라인/오프라인 — kTopicAlarmStatusFilter 로 들어온 retain 상태.
+    void nodeOnlineChanged(const QString& node, bool online);
 
     // JSON 이 깨졌거나 필드가 빠진 경우. 버리기는 하되 조용히 버리지는 않는다.
     void payloadRejected(const QString& topic, const QString& reason);

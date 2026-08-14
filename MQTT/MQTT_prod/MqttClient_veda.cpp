@@ -102,12 +102,13 @@ void MqttClient_veda::stopLoop() {
     }
 }
 
-PublishResult MqttClient_veda::publish(const std::string& topic, const std::string& payload, int qos) {
+PublishResult MqttClient_veda::publish(const std::string& topic, const std::string& payload, int qos,
+                                       bool retain) {
     if(!m_mosq) {
         return PublishResult::Failed;
     }
     if(m_isConnected) {
-        int rc = mosquitto_publish(m_mosq, nullptr , topic.c_str(), payload.length(), payload.c_str(), qos, false);
+        int rc = mosquitto_publish(m_mosq, nullptr , topic.c_str(), payload.length(), payload.c_str(), qos, retain);
 
         if(rc == MOSQ_ERR_SUCCESS) {
             return PublishResult::Sent;
@@ -116,8 +117,10 @@ PublishResult MqttClient_veda::publish(const std::string& topic, const std::stri
             return PublishResult::Failed;
         }
     }else {
-        // 네트워크 오류로 끊어진 상태면 오프라인 큐에 저장
-        MqttMessage msg{topic,payload};
+        // 네트워크 오류로 끊어진 상태면 오프라인 큐에 저장 (retain 플래그도 같이 보관 —
+        // 안 그러면 재전송 때 평문 발행으로 떨어져 상태 토픽처럼 retain 이 필요한
+        // 메시지가 나중에 구독하는 쪽에 안 보인다)
+        MqttMessage msg{topic, payload, retain};
 
         m_offlineQueue.push(msg);
 
@@ -130,8 +133,9 @@ PublishResult MqttClient_veda::publish(const std::string& topic, const std::stri
 
 // 하위호환 래퍼 — 큐에 담기만 한 경우는 false 다. 예전엔 여기서 true 를 돌려줘
 // 호출부가 "보냈다"고 로그를 찍는 원인이 됐다.
-bool MqttClient_veda::publishMessage(const std::string& topic, const std::string& payload, int qos) {
-    return publish(topic, payload, qos) == PublishResult::Sent;
+bool MqttClient_veda::publishMessage(const std::string& topic, const std::string& payload, int qos,
+                                     bool retain) {
+    return publish(topic, payload, qos, retain) == PublishResult::Sent;
 }
 
 // 실제 SUBSCRIBE 패킷만 보낸다(목록 기록은 호출부인 subscribeTopic/on_connect 담당).
@@ -207,7 +211,8 @@ void MqttClient_veda::on_connect(struct mosquitto *mosq, void *obj, int rc) {
             int flushed = 0;
             MqttMessage bufferedMessage;
             while (client->m_offlineQueue.tryPop(bufferedMessage)) {
-                if(client->publish(bufferedMessage.topic, bufferedMessage.payload)
+                if(client->publish(bufferedMessage.topic, bufferedMessage.payload, 0,
+                                   bufferedMessage.retain)
                        == PublishResult::Sent) {
                     ++flushed;
                 }
@@ -257,6 +262,18 @@ void MqttClient_veda::on_disconnect(struct mosquitto *mosq, void *obj, int rc) {
 }
 
 
+
+bool MqttClient_veda::setWill(const std::string& topic, const std::string& payload, int qos,
+                              bool retain) {
+    if(!m_mosq) return false;
+    // connectToBroker 전에만 의미가 있다(mosquitto_will_set 은 다음 connect 부터 적용).
+    int rc = mosquitto_will_set(m_mosq, topic.c_str(), payload.length(), payload.c_str(), qos, retain);
+    if(rc != MOSQ_ERR_SUCCESS) {
+        std::cerr << "[MQTT Client] Will 설정 실패: " << mosquitto_strerror(rc) << std::endl;
+        return false;
+    }
+    return true;
+}
 
 void MqttClient_veda::setTlsConfig(const std::string& ca_path) {
     m_use_tls = true;
