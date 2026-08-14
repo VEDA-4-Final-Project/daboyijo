@@ -39,6 +39,7 @@
 #include <QDateEdit>
 #include <QCalendarWidget>
 #include <QSlider>
+#include "activitychart.h"
 #include <QStyle>
 #include <QGroupBox>
 #include <QFormLayout>
@@ -1580,12 +1581,15 @@ QWidget* MainWindow::buildReportDetail()
     for (int c = 0; c < 4; ++c) tiles->setColumnStretch(c, 1);
     lay->addLayout(tiles);
 
-    // TODO(리포트): 이 아래에 24시간 활동량 그래프 · 이벤트 타임라인 · AI 요약이 온다.
-    auto* soon = new QLabel(
-        QStringLiteral("시간별 활동량 그래프 · 이벤트 타임라인 · AI 요약이 이 자리에 들어갑니다."));
-    soon->setObjectName("careMiniCap");
-    soon->setAlignment(Qt::AlignCenter);
-    lay->addWidget(soon, 1);
+    // ── 24시간 활동량 그래프 ──
+    auto* chartCap = new QLabel(QStringLiteral("시간별 활동량"));
+    chartCap->setObjectName("careBigCap");
+    lay->addWidget(chartCap);
+
+    activityChart = new ActivityChart();
+    lay->addWidget(activityChart, 1);
+
+    // TODO(리포트): 이 아래에 이벤트 타임라인 · AI 요약이 온다.
     return host;
 }
 
@@ -3314,6 +3318,7 @@ void MainWindow::updateCareTime()
             if (l) l->setText(QStringLiteral("—"));
         for (QLabel* l : {tileLyingSub, tileActivitySub, tileCareSub, tileEventSub})
             if (l) l->setText(QStringLiteral(" "));
+        if (activityChart) activityChart->clear();
         return;
     }
 
@@ -3393,6 +3398,32 @@ void MainWindow::updateCareTime()
         } else {
             qDebug() << "활동량 조회 실패:" << q.lastError().text();
         }
+    }
+
+    // ── 24시간 활동량 그래프 ──
+    // 분 단위로 쌓아둔 걸 시간으로 묶어서 24칸을 만든다. 심박은 합계가 아니라
+    // 평균이고, 측정 실패(0)는 평균에서 빼야 값이 통째로 내려앉지 않는다.
+    if (activityChart) {
+        QVector<int> stepsByHour(24, 0), hrByHour(24, 0);
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT HOUR(minute_ts), COALESCE(SUM(steps_delta),0), "
+            "       ROUND(AVG(NULLIF(hr_avg,0))) "
+            "FROM activity_minute WHERE resident_id=? AND DATE(minute_ts)=? "
+            "GROUP BY HOUR(minute_ts)"));
+        q.addBindValue(rid);
+        q.addBindValue(reportDate_);
+        if (q.exec()) {
+            while (q.next()) {
+                const int h = q.value(0).toInt();
+                if (h < 0 || h > 23) continue;
+                stepsByHour[h] = q.value(1).toInt();
+                hrByHour[h]    = q.value(2).toInt();   // NULL 이면 0 → 선이 끊긴다
+            }
+        } else {
+            qDebug() << "시간별 활동량 조회 실패:" << q.lastError().text();
+        }
+        activityChart->setData(stepsByHour, hrByHour);
     }
 
     // ── 이벤트 횟수 ──
