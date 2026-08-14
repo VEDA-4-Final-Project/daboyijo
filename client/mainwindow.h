@@ -122,6 +122,7 @@ class QPushButton;
 
 class QTableWidget;
 class QComboBox;
+class AlertMatrixPreview;
 class QDateEdit;
 class QSlider;
 class QVBoxLayout;
@@ -214,6 +215,7 @@ private slots:
     void onMqttConnected();
     void onMqttDisconnected();
     void onMqttError(const QString& message);
+    void onAlarmNodeStatus(const QString& node, bool online);   // 알림 노드 온라인/오프라인
 
     // TAB2: 이벤트 기록
     void onLogRowActivated(int row, int column);
@@ -311,7 +313,7 @@ private:
 
     // ── TAB 구조 ──────────────────────────────────────────
     // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
-    static constexpr int kNavCount = 5;
+    static constexpr int kNavCount = 6;
     QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 5개 + 접기 토글)
     void     refreshNavIcons();       // 팔레트 전환 시 아이콘 색 재생성
     void     setNavCollapsed(bool on);// 접기/펼치기 (QSettings에 저장)
@@ -472,6 +474,8 @@ private:
 
     // 케어 타임은 이벤트 기록에서 분리해 자체 탭(채널별 카드 그리드)으로 뺀다.
     QWidget* buildCareTimeTab();
+    // 일일 리포트 — 날짜별/입소자별 지표(달력 + 상세). 케어 타임과는 별개 탭.
+    QWidget* buildReportPage();
 
 
     // TAB3 빌드 헬퍼 (입소자 관리 — 마스터-디테일)
@@ -602,6 +606,28 @@ private:
     QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
     QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
+
+    // ── 장치 설정 래퍼 (좌측 네비 "장치 설정" = 카메라 + 알림 서브탭) ──
+    // 카메라 설정(연결/ROI/이미지)과 알림 설정은 성격이 달라, 상단 [카메라][알림]
+    // 세그먼트로 나눈 한 페이지 안에 스택으로 담는다. index5 = 이 래퍼.
+    QWidget* buildDeviceSettingsTab();       // contentStack 의 장치 설정 페이지(1회)
+    QWidget* buildDeviceModeSegment();       // 상단 [카메라][알림] 세그먼트
+    QWidget* deviceSettingsTab_ = nullptr;
+    QStackedWidget* deviceStack_ = nullptr;  // 0=카메라 / 1=알림
+    QPushButton* deviceModeBtns_[2] = {};    // [0]카메라 [1]알림
+
+    // ── 알림 노드 설정 (장치 설정 → 알림 서브탭) ──
+    // veda/alarm/control 로 밝기(0~255)/음량(0~100)을 노드에 보낸다. 미리보기는
+    // 실제 64x32 패널을 흉내 내며 밝기 슬라이더에 즉시 반응한다.
+    QWidget* buildAlertSettingsTab();
+    AlertMatrixPreview* alertPreview_ = nullptr;
+    ClickSlider* alertBright_ = nullptr;     // 0~100 (→255 매핑해 전송)
+    ClickSlider* alertVol_    = nullptr;     // 0~100
+    QComboBox*   alertNode_   = nullptr;     // 대상 알림 노드 id
+    QLabel*      alertApplied_ = nullptr;    // "마지막 적용 HH:MM:SS"
+    QLabel*      alertStatusBadge_ = nullptr;      // 대상 노드의 온라인/오프라인 배지
+    QMap<QString, bool> alertNodeOnline_;          // node_id → online(마지막으로 받은 상태)
+    void refreshAlertStatusBadge();                // 배지 텍스트·색을 alertNodeOnline_ 에 맞춰 갱신
 
     // ── 카메라 이미지 조절 (밝기/대비/채도) ──────────────────────
     // 슬라이더 값을 IMAGE_SET 제어 메시지로 서버에 보내면, 서버가 ONVIF Imaging으로

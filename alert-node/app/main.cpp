@@ -34,6 +34,7 @@ struct Config {
     std::string audio_dir   = "sounds";
     std::string idle_text   = "감시 중";      // 평상시 표시 — 64px 안에 들어갈 것
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
+    int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
 };
 
@@ -88,6 +89,7 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
+        else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
     }
 }
@@ -98,7 +100,9 @@ severity toSeverity(const std::string& type)
 {
     if (type == "FALL" || type == "EGRESS") return SEV_CRIT;
     if (type == "VITAL_ABNORMAL")           return SEV_WARN;
-    return SEV_INFO;                        // CONTROL 등
+    // CONTROL(관제 앱 "테스트")도 주황 — Qt 미리보기와 색을 맞춘다(둘 다 SEV_WARN 색상).
+    if (type == "CONTROL")                  return SEV_WARN;
+    return SEV_INFO;
 }
 
 // 패널에 흘릴 문구 — 호실을 알면 노드가 조립, 모르면 서버 문구 사용
@@ -150,7 +154,25 @@ int main(int argc, char* argv[])
     // 재생기 호출은 전부 이 뮤텍스를 잡고 함
     std::mutex player_mutex;
 
+    // 평상시(idle) 밝기·음량 = 관제 앱 "적용"으로 커밋된 값. 테스트(matrix=SHOW)는 잠깐
+    // 이 값을 벗어나 보여주고, 스크롤이 끝나면 이 값으로 되돌아온다 — 적용해야만 유지된다.
+    //   밝기 시작값: conf 의 matrix_brightness (시작 시 확정해 idle 을 예측 가능하게)
+    //   음량 시작값: 하드웨어 믹서의 현재 값, 못 읽으면 50 폴백
+    int baseBrightness = cfg.matrix_brightness;
+    display.setBrightness(baseBrightness);
+    int baseVolume = 50;
+    { long v = player.getVolume(); if (v > 0) baseVolume = static_cast<int>(v); }
+
     MqttClient_veda client(cfg.node_id);
+
+    // 온라인 상태 — 관제 앱이 "대상 노드" 배지에 쓴다. retain 을 켜서 관제 앱이 이 노드보다
+    // 늦게 켜져도(구독 시점에) 마지막 상태를 바로 받는다.
+    //   Will(연결 끊기 전 등록) : 브로커가 죽음/케이블 뽑힘 등 "비정상" 단절을 감지하면 대신 발행
+    //   정상 종료 시 아래에서 "offline" 을 직접 한 번 더 보낸다 — clean disconnect 는 Will 이
+    //   발동하지 않기 때문(Ctrl+C 로 끈 것도 배지에 정확히 반영되도록)
+    const std::string statusTopic = "veda/alarm/" + cfg.node_id + "/status";
+    client.setWill(statusTopic, "offline", 1, true);
+
     client.setCallback([&](const std::string&, const std::string& payload) {
         try {
             auto cmd = nlohmann::json::parse(payload).get<AlarmCommand>();
@@ -188,6 +210,7 @@ int main(int argc, char* argv[])
     client.startLoop();
     // QoS 1 로 구독 — 실제 등급은 발행·구독 중 낮은 쪽이라 여기가 0 이면
     // 보내는 쪽이 1 로 보내도 마지막 구간에서 0 으로 깎임
+    client.publish(statusTopic, "online", 1, true);   // retain — 아직 연결 전이면 큐에 담겼다 뒤에 나간다
     if (!client.subscribeTopic(cfg.topic, 1)) {
         fprintf(stderr, "[MQTT] 구독 요청 실패: %s - 알람을 못 받는다\n", cfg.topic.c_str());
     }
@@ -213,16 +236,42 @@ int main(int argc, char* argv[])
         printf("[명령] type=%s room=%d audio=%s matrix=%s\n", cmd.type.c_str(),
                cmd.room, cmd.audio_action.c_str(), cmd.matrix_action.c_str());
 
+        // "커밋할지"와 "끝나고 되돌릴지"는 서로 다른 질문이라 따로 판단한다.
+        //   커밋(shouldCommit) — 관제 앱 "적용"(matrix_action=NONE, 화면에 아무것도 안
+        //     띄우는 순수 설정 명령)일 때만 평상시(base) 값을 갱신한다. 실제 알람과
+        //     "테스트"는 둘 다 matrix_action=SHOW 라 여기서 자동으로 제외된다 — 알람
+        //     한 번 울렸다고 그 볼륨이 평상시 값으로 눌어붙으면 안 되기 때문.
+        //   되돌림(shouldRevert) — 관제 앱 "테스트"(cmd.is_test)일 때만, 보여준 뒤
+        //     평상시 값으로 되돌린다. 실제 알람은 여기 해당 안 됨 — loop=true 로 계속
+        //     재생 중인데 볼륨을 되돌리면 사이렌이 저절로 조용해지는 사고가 난다.
+        const bool shouldCommit = (cmd.matrix_action != "SHOW");
+        const bool shouldRevert = cmd.is_test;
+
+        // 밝기: 이 명령 동안 적용, 커밋 대상이면 평상시 밝기로 승격.
+        if (cmd.brightness > 0) {
+            display.setBrightness(cmd.brightness);
+            if (shouldCommit) baseBrightness = cmd.brightness;
+        }
+
+        // 음량: 이번 재생에 쓸 값 결정. 커밋 대상이면 믹서에 바로 반영하고 base 로 승격.
+        int playVolume = baseVolume;
+        if (cmd.volume > 0) {
+            playVolume = cmd.volume;
+            if (shouldCommit) {
+                std::lock_guard<std::mutex> lk(player_mutex);
+                player.setVolume(cmd.volume);   // 적용: 소리 없이도 믹서에 즉시 반영
+                baseVolume = cmd.volume;
+            }
+        }
+
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
-            player.setVolume(cmd.volume);
+            player.setVolume(playVolume);   // 테스트=그 음량 / 이벤트=평상시 음량
             player.playWav(toAudioPath(cfg, cmd.audio_file), cmd.loop);   // 비동기
         } else if (cmd.audio_action == "STOP") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.stop();   // 대개 MQTT 콜백이 이미 껐다 — 두 번째 호출은 무해
         }
-
-        if (cmd.brightness > 0) display.setBrightness(cmd.brightness);
 
         if (cmd.matrix_action == "SHOW") {
             // 서버가 지정하면 그대로, 안 주면 노드 기본값
@@ -233,8 +282,21 @@ int main(int argc, char* argv[])
         }
         else if (cmd.matrix_action == "CLEAR")
             display.clear();
+
+        // "테스트" 스크롤이 끝나면 평상시(base) 밝기·음량으로 복귀 —
+        // 테스트로 올린 값이 idle "감시 중" 에 눌어붙지 않게(적용해야만 유지된다).
+        // 실제 알람(shouldRevert=false)은 여기 안 타므로, loop=true 로 재생 중인 사이렌의
+        // 볼륨을 스크롤이 끝났다고 되돌리는 일이 없다.
+        if (shouldRevert) {
+            display.setBrightness(baseBrightness);
+            std::lock_guard<std::mutex> lk(player_mutex);
+            player.setVolume(baseVolume);
+        }
     }
 
+    // 정상 종료는 clean disconnect 라 Will 이 안 나간다 — 직접 offline 을 알린다.
+    // stopLoop() 전에 보내야 실제로 소켓에 나간다(멈추면 아무도 안 보낸다).
+    client.publish(statusTopic, "offline", 1, true);
     client.stopLoop();   // 먼저 멈춰야 아래 정리 중에 콜백이 끼어들지 않는다
     {
         std::lock_guard<std::mutex> lk(player_mutex);
