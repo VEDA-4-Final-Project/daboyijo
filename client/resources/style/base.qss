@@ -37,6 +37,19 @@
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 13px; }
         #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
 
+        /* 상태등(statusDot) — ISA-18.2 5단계 severity 동적 속성으로 색을 받는다.
+           속성 없는 기본 규칙은 아직 severity가 설정되지 않은 순간과, 아직
+           전환되지 않은 다른 statusDot 위젯을 위한 안전망이다.
+           주의: C++ 필드명은 warn을 그대로 계승하지만 QSS 속성값은 "medium"이다
+           (UI-SPEC §2.1의 의도된 불일치 — %(warn) 참조가 이미 여러 곳에 박혀
+           있어 필드명을 바꾸면 치환 실패 위험만 생긴다). */
+        #statusDot { background: %(sub); border-radius: 3px; }
+        #statusDot[severity="critical"] { background: %(critical); border-radius: 3px; }
+        #statusDot[severity="high"] { background: %(high); border-radius: 3px; }
+        #statusDot[severity="medium"] { background: %(warn); border-radius: 3px; }
+        #statusDot[severity="info"] { background: %(info); border-radius: 3px; }
+        #statusDot[severity="normal"] { background: %(normal); border-radius: 3px; }
+
         /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
         #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
         #userChip:hover { border-color: %(accent); }

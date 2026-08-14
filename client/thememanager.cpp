@@ -32,9 +32,15 @@ QString ThemeManager::substitute(QString qss, const Palette& p, bool darkMode)
         .replace("%(sub)", p.sub)
         .replace("%(normal)", p.normal)
         .replace("%(warn)", p.warn)
+        .replace("%(high)", p.high)
+        .replace("%(info)", p.info)
+        // videoSurface는 darkMode와 무관하게 항상 같은 값이어야 IA-02가 성립하므로
+        // p.가 아니라 전역 상수 kVideoSurface를 넣는다.
+        .replace("%(videoSurface)", kVideoSurface)
         // accentHover는 accent의 부분문자열이라 반드시 accent보다 먼저 치환.
         .replace("%(accentHover)", darkMode ? "#3AD4C4" : "#3AD1C3")
         .replace("%(accent)", p.accent)
+        .replace("%(onAccent)", p.onAccent)
         .replace("%(critical)", p.critical);
 }
 
@@ -53,5 +59,6 @@ QString ThemeManager::dialogStyleSheet()
         // accentHover는 accent의 부분문자열이라 반드시 accent보다 먼저 치환.
         .replace("%(accentHover)", "#3AD4C4")   // accent(#17C7B6)보다 한 단계 밝은 톤
         .replace("%(accent)", kDark.accent)
+        .replace("%(onAccent)", kDark.onAccent)
         .replace("%(critical)", kDark.critical);
 }

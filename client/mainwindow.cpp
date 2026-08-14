@@ -2584,8 +2584,11 @@ void MainWindow::applyTheme()
     // 같은 시트를 받아야 로그인 창까지 한 경로로 스타일이 흐른다.
     ThemeManager::applyStylesheet(darkMode ? kDark : kLight, darkMode);
 
-    // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
-    statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
+    // statusDot의 색은 severity 동적 속성 + QSS[severity="..."]가 결정한다
+    // (base.qss #statusDot 규칙). 예전에는 여기서 매번 kCritical로 인라인
+    // 스타일을 다시 구웠지만, 그 인라인 값이 앱 전역 QSS 재적용에 지워지기
+    // 때문에 존재했던 보상 코드였다 — severity 속성은 QSS가 스스로 유지하므로
+    // 더 이상 필요 없다.
     // 카드는 입소자 수만큼 있으므로 채널 인덱스로 돌면 안 된다(해시에 0~3 키가 없다).
     // 여기서 일단 흐리게 깔고, 아래 updateVitals()가 값 있는 카드만 상태색을 다시 입힌다.
     for (QLabel* dot : vitalStatusDots)
@@ -2604,11 +2607,9 @@ void MainWindow::toggleTheme()
         themeToggleButton->setText(darkMode ? QStringLiteral("☀")
                                             : QStringLiteral("🌙"));
 
-    // applyTheme가 상태등을 기본값(빨강/회색)으로 리셋하므로 현재 상태를 즉시 복원한다.
-    bool connected = true;
-    for (int i = 0; i < kNumServers; ++i)
-        if (sockets[i]->state() != QAbstractSocket::ConnectedState) connected = false;
-    setConnectionState(connected, statusText->text());
+    // statusDot은 severity 동적 속성으로 색을 유지하므로 applyTheme() 뒤에
+    // 다시 훑어 복원할 필요가 없다 — 예전엔 인라인 스타일이 지워지는 것을
+    // 막기 위한 보상 블록이 여기 있었다.
     updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
     // 카드의 아바타/칩은 인라인 색이라 QSS 재적용만으론 안 바뀐다 → 다시 그린다.
     refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
@@ -2617,8 +2618,12 @@ void MainWindow::toggleTheme()
 void MainWindow::setConnectionState(bool connected, const QString& text)
 {
     if (!statusDot) return;
-    const char* color = connected ? kNormal : kCritical;
-    statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(color));
+    // collapsed/active 선례와 같은 4단계: 속성 설정 → unpolish → polish → update.
+    // QSS 선택자가 문자열로 비교하는 값이므로 severity는 정확한 리터럴이어야 한다.
+    statusDot->setProperty("severity", connected ? "normal" : "critical");
+    statusDot->style()->unpolish(statusDot);
+    statusDot->style()->polish(statusDot);
+    statusDot->update();
     statusText->setText(text);
 }
 
