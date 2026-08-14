@@ -485,12 +485,18 @@ QLabel {
 #camTile:hover { background: %(bgDeep); border-color: %(border); }
 #camTile:checked { background: %(bgDeep); border-color: %(accent); }
 #camTileCh { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px; }
+/* connected 속성 — 심각도가 아니라 연결 여부다. 텍스트의 ●/○ 접두(ALERT-02)와
+   함께 같은 갱신 경로에서 설정돼야 색과 모양이 어긋나지 않는다. */
 #camChStatus { font-size: 11px; font-weight: 700; }
+#camChStatus[connected="true"] { color: %(normal); }
+#camChStatus[connected="false"] { color: %(sub); }
 
 #camControlPanel { background: %(card); border: 1px solid %(border); border-radius: 16px; }
 #camInspCh { color: %(text); font-size: 19px; font-weight: 800; letter-spacing: 0.5px; }
 #camPill { color: %(sub); border: 1px solid %(border); border-radius: 9px;
            padding: 1px 9px; font-size: 11px; font-weight: 800; }
+#camPill[connected="true"] { color: %(normal); border: 1px solid %(normal); }
+#camPill[connected="false"] { color: %(sub); border: 1px solid %(sub); }
 #camInspIp { color: %(sub); font-size: 11px; font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace; }
 #camRule { background: %(border); }
 
@@ -524,6 +530,12 @@ QLabel {
 #roiPrimary:hover { background: %(accentHover); }
 #roiPrimary[drawing="true"] { background: %(critical); }
 #roiPrimary[drawing="true"]:hover { background: #ff6b62; }
+
+/* 인스펙터 침대 목록 행 — 영상에서 고른 침대를 선택 강조로 알아볼 수 있게 한다.
+   %(card)는 라이트·다크 두 팔레트 모두에서 주변 표면과 구분되는 톤이라
+   어두운 배경을 전제한 반투명 흰색과 달리 라이트 테마에서도 보인다. */
+#roiBedRow { background: transparent; border-radius: 6px; }
+#roiBedRow[selected="true"] { background: %(card); }
 
 /* 편집기 프로필 헤더 */
 #dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }

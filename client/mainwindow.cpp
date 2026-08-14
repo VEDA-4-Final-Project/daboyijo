@@ -4794,6 +4794,7 @@ void MainWindow::rebuildBedList()
 
     for (const RoiZone& z : zones) {
         auto* row = new QWidget();
+        row->setObjectName("roiBedRow");
         auto* h = new QHBoxLayout(row);
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(8);
@@ -4803,9 +4804,12 @@ void MainWindow::rebuildBedList()
         dot->setAlignment(Qt::AlignCenter);
         dot->setFixedSize(22, 22);
         const QColor c = VideoView::zoneColor(z.id);
-        dot->setStyleSheet(QStringLiteral("background:%1; color:#fff; border-radius:11px;"
+        // 의도적 잔류(clickslider.cpp와 같은 이유): 배경이 VideoView::zoneColor()의
+        // 8색 배열이라 영상 오버레이와 출처를 공유해야 하므로 QSS로 옮기지 않는다.
+        // 전경색만 흰색→본문색 토큰(대비 개선)으로 바꿨다.
+        dot->setStyleSheet(QStringLiteral("background:%1; color:%2; border-radius:11px;"
                                           "font-weight:700; font-size:11px;")
-                               .arg(c.name()));
+                               .arg(c.name(), QString::fromLatin1(kTextMain)));
         h->addWidget(dot);
 
         // 입소자 선택 — 이 채널에 배정된 재원 입소자만 후보로 올린다.
@@ -4847,10 +4851,10 @@ void MainWindow::rebuildBedList()
         });
         h->addWidget(del);
 
-        // 영상에서 고른 침대를 목록에서도 알아볼 수 있게 강조
-        if (z.id == selected)
-            row->setStyleSheet(QStringLiteral("background: rgba(255,255,255,0.06);"
-                                              "border-radius: 6px;"));
+        // 영상에서 고른 침대를 목록에서도 알아볼 수 있게 강조 — 팔레트 토큰(selected
+        // 속성)을 써서 라이트 테마에서도 보인다. 목록 재빌드마다 새로 만들어지므로
+        // 목록 행 아바타와 같은 이유로 repolish 없이 생성 직후 속성 설정만으로 충분하다.
+        row->setProperty("selected", z.id == selected);
         bedListLayout_->addWidget(row);
     }
 }
@@ -4974,9 +4978,12 @@ void MainWindow::refreshCamChannelStatus()
         // 침대가 여러 개일 수 있으니 "ROI 있음"이 아니라 몇 개인지를 보여준다
         if (beds > 0) txt += QStringLiteral(" · 침대 %1").arg(beds);
         camChannelStatus[ch]->setText(txt);
-        camChannelStatus[ch]->setStyleSheet(
-            QString("color:%1; font-size:11px; font-weight:700;")
-                .arg(connected ? kNormal : kTextSub));
+        // ●/○ 접두는 ALERT-02의 색 외 채널이라 지우지 않는다 — connected 속성과
+        // 같은 갱신 경로에서 함께 설정해 색과 모양이 어긋나지 않게 한다.
+        camChannelStatus[ch]->setProperty("connected", connected);
+        camChannelStatus[ch]->style()->unpolish(camChannelStatus[ch]);
+        camChannelStatus[ch]->style()->polish(camChannelStatus[ch]);
+        camChannelStatus[ch]->update();
     }
 
     // 인스펙터 헤더 — 지금 만지는 채널의 번호·연결 상태·주소.
@@ -4984,11 +4991,12 @@ void MainWindow::refreshCamChannelStatus()
     if (camInspCh) camInspCh->setText(QStringLiteral("CH %1").arg(cur + 1));
     if (camInspPill) {
         const bool on = cameraActive_[cur];
-        camInspPill->setText(on ? QStringLiteral("연결됨") : QStringLiteral("미연결"));
-        camInspPill->setStyleSheet(
-            QString("color:%1; border:1px solid %1; border-radius:9px;"
-                    " padding:1px 9px; font-size:11px; font-weight:800;")
-                .arg(on ? kNormal : kTextSub));
+        // 채널 상태 텍스트와 같은 어휘(●/○)를 붙여 두 배지의 표기를 통일한다.
+        camInspPill->setText(on ? QStringLiteral("● 연결됨") : QStringLiteral("○ 미연결"));
+        camInspPill->setProperty("connected", on);
+        camInspPill->style()->unpolish(camInspPill);
+        camInspPill->style()->polish(camInspPill);
+        camInspPill->update();
     }
     if (camInspIp) {
         // URL에는 계정·비밀번호가 들어 있으므로 호스트만 보여준다.
