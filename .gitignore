@@ -5,6 +5,8 @@ CLAUDE.md
 CLAUDE.local.md
 .cursor/
 .aider*
+.planning/
+skills-lock.json
 
 # ===== 빌드 산출물 =====
 build/
