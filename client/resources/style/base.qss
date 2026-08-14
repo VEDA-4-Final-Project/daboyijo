@@ -1,5 +1,5 @@
 
-        QWidget { color: %(text); font-family: "Segoe UI", "맑은 고딕", sans-serif; font-size: 13px; }
+        QWidget { color: %(text); font-family: "Segoe UI", "맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; font-size: 13px; }
         QMainWindow, #centralwidget { background: %(bgDeep); }
 
         #header { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -119,7 +119,7 @@
         #vitalBed { color: %(sub); font-size: 12px; }
         #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
         #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
-        #statValue { font-family: "Consolas", "D2Coding", monospace;
+        #statValue { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                      font-size: 32px; font-weight: 800; }
         #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
@@ -173,7 +173,7 @@
         #residentTab:checked { background: %(accent); color: #ffffff; border-color: %(accent); }
         /* 지표 타일 */
         #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
-        #reportTileVal { color: %(accent); font-family: "Consolas", "D2Coding", monospace;
+        #reportTileVal { color: %(accent); font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                          font-size: 26px; font-weight: 800; }
 
         /* 스크롤바 — 세로/가로 모두 다크. 트랙(page)·코너의 기본 흰색을 없앤다 */
@@ -226,7 +226,7 @@ QLabel {
 /* ── 입소자 관리: 상단 요약 통계 ── */
 #resStat { background: %(card); border: 1px solid %(border); border-radius: 14px; }
 /* 큰 숫자가 세로로 잘리지 않도록 라벨에 충분한 높이를 준다 */
-#resStatVal { font-family: "Consolas", "D2Coding", monospace;
+#resStatVal { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
               font-size: 26px; font-weight: 800; min-height: 34px; padding: 0; }
 #resStatCap { color: %(sub); font-size: 12px; font-weight: 700; }
 
@@ -270,7 +270,7 @@ QLabel {
 #camInspCh { color: %(text); font-size: 19px; font-weight: 800; letter-spacing: 0.5px; }
 #camPill { color: %(sub); border: 1px solid %(border); border-radius: 9px;
            padding: 1px 9px; font-size: 11px; font-weight: 800; }
-#camInspIp { color: %(sub); font-size: 11px; font-family: "Consolas", "D2Coding", monospace; }
+#camInspIp { color: %(sub); font-size: 11px; font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace; }
 #camRule { background: %(border); }
 
 /* 연결·ROI·이미지 세그먼트 — 트랙(#camSeg) 안에 얹힌 알약 버튼 */

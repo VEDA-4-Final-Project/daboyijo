@@ -1103,7 +1103,7 @@ void MainWindow::renderHelpTopic(int idx)
     }
 
     const QString html = QStringLiteral(
-        "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",sans-serif; font-size:14px; color:%1;'>"
+        "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",\"Malgun Gothic\",\"Apple SD Gothic Neo\",\"Noto Sans CJK KR\",\"Noto Sans KR\",sans-serif; font-size:14px; color:%1;'>"
         "<h1 style='color:%2; margin:0 0 10px;'>%3</h1>"
         "<hr style='border:none; border-top:1px solid %4;'>"
         "<div style='line-height:155%;'>%5</div></div>")

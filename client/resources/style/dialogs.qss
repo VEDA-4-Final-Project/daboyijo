@@ -12,7 +12,7 @@
  */
         QDialog { background: %(bgDeep); }
         #authCard { background: %(panel); }
-        QLabel { color: %(text); font-family: "Segoe UI", "맑은 고딕", sans-serif; }
+        QLabel { color: %(text); font-family: "Segoe UI", "맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; }
 
         #authLogo { color: %(accent); font-size: 34px; font-weight: 800; letter-spacing: 3px; }
         #authTitle { color: %(text); font-size: 20px; font-weight: 800; }
