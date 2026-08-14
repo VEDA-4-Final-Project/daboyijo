@@ -137,6 +137,7 @@ class QResizeEvent;
 class QPropertyAnimation;
 class QCalendarWidget;
 class QHBoxLayout;
+class ActivityChart;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -364,6 +365,8 @@ private:
     QLabel* tileActivityVal = nullptr; QLabel* tileActivitySub = nullptr;
     QLabel* tileCareVal = nullptr;     QLabel* tileCareSub = nullptr;
     QLabel* tileEventVal = nullptr;    QLabel* tileEventSub = nullptr;
+    // 24시간 활동량 그래프 (걸음 막대 + 심박 선). 값은 updateCareTime()이 넣는다.
+    ActivityChart* activityChart = nullptr;
 
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
