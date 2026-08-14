@@ -235,9 +235,11 @@ bool MqttQtManager::sendAlarmCommand(const AlarmCommand& cmd, int qos)
 
 bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_device, int qos)
 {
-    // ⚠️ 알림 노드가 아직 audio_action == "PLAY" 만 처리한다
-    //    (MQTT/MQTT_dev/src/alarm_node/main_alarm.cpp). STOP 분기가 붙기 전까지는
-    //    이 명령을 보내도 현장 소리가 실제로 꺼지지 않는다.
+    // 알림 노드(alert-node/app/main.cpp)는 audio_action "STOP" 과
+    // matrix_action "CLEAR" 를 모두 처리한다. MQTT 콜백에서 소리를 즉시 끄고,
+    // 큐로도 넘겨 LED 지우기까지 간다.
+    // (구버전 MQTT/MQTT_dev/src/alarm_node/main_alarm.cpp 는 PLAY 만 처리하니,
+    //  현장 파이가 그쪽으로 돌고 있으면 소리가 안 꺼진다 — 노드 버전을 확인할 것)
     AlarmCommand cmd{};
     cmd.target_device = target_device.toStdString();
 
@@ -254,14 +256,16 @@ bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_de
         }
         roomNo = digits.toInt(&ok);
     }
-    if (!ok) {
-        // 0 을 보내면 알림 노드가 엉뚱한 호실을 띄운다. 조용히 넘기지 않는다.
-        const QString reason =
-            QStringLiteral("호실을 숫자로 읽을 수 없어 경보 해제를 보내지 못했습니다: \"%1\"")
-                .arg(room);
-        qWarning() << "[MQTT]" << reason;
-        emit connectionError(reason);
-        return false;
+    if (!ok || roomNo <= 0) {
+        // 호실을 몰라도 전송은 해야 한다. 경보 해제의 목적은 현장 소리를 끄는
+        // 것이고, 호실은 LED 문구에만 쓰인다. 여기서 막으면 입소자 정보에 호실이
+        // 안 채워졌다는 이유만으로 사이렌이 계속 울린다.
+        //
+        // 알림 노드도 0 을 "모름"으로 받게 돼 있다:
+        //   alert-node/app/main.cpp — if (c.room == 0) return c.message;
+        // 음수도 0 으로 눕혀야 한다. 안 그러면 "-5호 낙상 발생" 이 LED 에 뜬다.
+        qWarning() << "[MQTT] 호실을 읽지 못해 0(모름)으로 보냅니다:" << room;
+        roomNo = 0;
     }
     cmd.room = roomNo;
 
@@ -282,6 +286,62 @@ bool MqttQtManager::sendAlarmClear(const QString& room, const QString& target_de
     return sendAlarmCommand(cmd, qos);
 }
 
+bool MqttQtManager::sendAlarmConfig(const QString& target_device,
+                                    int brightness255, int volumePct, int qos)
+{
+    AlarmCommand cmd{};
+    cmd.target_device = target_device.toStdString();
+    cmd.room          = 0;
+
+    cmd.type          = "CONTROL";
+    cmd.message       = "설정 적용";
+
+    // matrix/audio 를 NONE 으로 둔 "순수 적용" — 스크롤·소리 없이 밝기/음량만 바로 바꾼다.
+    // 노드는 이 값을 평상시(base)로 커밋하므로 idle "감시 중" 이 즉시 이 밝기로 바뀌고 유지된다.
+    cmd.audio_action  = "NONE";
+    cmd.audio_file    = "";
+    cmd.volume        = volumePct;       // 0~100. 노드가 >0 이면 믹서에 적용·유지
+    cmd.loop          = false;
+
+    cmd.matrix_action = "NONE";
+    cmd.matrix_passes = 0;
+    cmd.brightness    = brightness255;   // 0~255. 노드가 >0 이면 sysfs 전역값에 적용·유지
+
+    cmd.timestamp     = nowMs();
+
+    return sendAlarmCommand(cmd, qos);
+}
+
+bool MqttQtManager::sendAlarmTest(const QString& target_device,
+                                  int brightness255, int volumePct, int qos)
+{
+    AlarmCommand cmd{};
+    cmd.target_device = target_device.toStdString();
+    cmd.room          = 0;               // 0 = 노드가 message 를 그대로 스크롤
+
+    cmd.type          = "CONTROL";
+    // 미리보기(AlertMatrixPreview)와 같은 문구를 쓰도록 상수로 한 곳에서 정의한다.
+    // ("알림 테스트"는 폰트에 글자가 없어 예전엔 빈칸으로 스크롤돼 안 보였다.)
+    cmd.message       = kAlertTestText;
+
+    cmd.audio_action  = "PLAY";
+    cmd.audio_file    = "fall_alert.wav";  // 노드 sounds/ 에 있는 파일
+    cmd.volume        = volumePct;
+    cmd.loop          = false;
+
+    cmd.matrix_action = "SHOW";
+    cmd.matrix_passes = 1;
+    cmd.brightness    = brightness255;
+
+    // 노드가 "잠깐 보여주고 원래 밝기·음량으로 되돌릴" 명령임을 표시한다. 실제 알람도
+    // matrix_action=SHOW 를 쓰므로 이 필드가 없으면 노드가 둘을 구분 못 한다.
+    cmd.is_test       = true;
+
+    cmd.timestamp     = nowMs();
+
+    return sendAlarmCommand(cmd, qos);
+}
+
 void MqttQtManager::subscribeAll()
 {
     // MQTT 는 clean session 이면 재연결할 때 브로커가 구독 목록을 잊는다.
@@ -290,6 +350,7 @@ void MqttQtManager::subscribeAll()
     const Sub subs[] = {
         { kTopicWearable, 0 },   // 주기 데이터 — 하나쯤 놓쳐도 다음 게 온다
         { kTopicAlarm,    1 },   // 알람 — 놓치면 안 된다
+        { kTopicAlarmStatusFilter, 1 },   // 노드 온라인 상태(retain) — 구독 즉시 마지막 값을 받는다
     };
 
     for (const Sub& s : subs) {
@@ -340,6 +401,17 @@ void MqttQtManager::onMessageReceived(const QByteArray& payload, const QMqttTopi
     // QMqttClient 는 Qt 이벤트 루프 위에서 돌기 때문에 여기는 이미 메인
     // 스레드다. libmosquitto 를 직접 쓸 때 필요했던 스레드 넘기기가 없다.
     const QString topicName = topic.name();
+
+    // 상태 토픽은 JSON 이 아니라 순수 텍스트("online"/"offline")라 아래 JSON 파싱과
+    // 별도로 처리한다. veda/alarm/<node>/status 패턴에서 <node> 만 뽑아낸다.
+    static const QString kPrefix = QStringLiteral("veda/alarm/");
+    static const QString kSuffix = QStringLiteral("/status");
+    if (topicName.startsWith(kPrefix) && topicName.endsWith(kSuffix)) {
+        const QString node = topicName.mid(kPrefix.size(),
+            topicName.size() - kPrefix.size() - kSuffix.size());
+        emit nodeOnlineChanged(node, payload == QByteArrayLiteral("online"));
+        return;
+    }
 
     try {
         const auto j = nlohmann::json::parse(payload.constData(),

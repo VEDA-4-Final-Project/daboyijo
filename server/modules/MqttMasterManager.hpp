@@ -32,8 +32,14 @@ public:
     // device_id 로 residents.wearable_id 를 조회해 채널/호실을 얻는다.
     using WearableCallback = std::function<void(AlarmEventType, std::string)>;
 
-    // 함수 정의 하는 함수 
+    // 함수 정의 하는 함수
     void setWearableCallback(WearableCallback cb);
+
+    // 알람과 무관하게 "들어온 패킷 전부" 를 그대로 넘기는 통로.
+    // 위 WearableCallback 은 이상이 있을 때만 불리므로 활동량(만보기)처럼
+    // 평상시 값이 필요한 기능은 이쪽을 쓴다. [일일 리포트 → ActivityModule]
+    using WearableDataCallback = std::function<void(const WearableData&)>;
+    void setWearableDataCallback(WearableDataCallback cb);
 
 
 private:
@@ -41,6 +47,7 @@ private:
     void onMessageReceived(const std::string& topic, const std::string& payload);
 
     WearableCallback wearable_callback_;
+    WearableDataCallback wearable_data_callback_;   // 매 패킷 (알람 여부 무관)
 
     // ── 경보 래치 (웨어러블 1대당 1개) ─────────────────────────────
     // 생체신호 이상은 "사건"이 아니라 "상태"다. 이상인 동안 매 패킷마다 알람을

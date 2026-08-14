@@ -48,12 +48,14 @@ private:
     // 채널별 케어 타이머. addChannel은 메인 스레드에서 AI 워커 시작 전에만
     // 호출되고, 이후 각 항목은 그 채널의 워커 스레드 전용이라 락 불필요.
     std::map<int, CareTimer> timers_;
-    // 채널별로 마지막에 기록한 care_logs.log_id (0 = 아직 없음/기록 실패).
-    // 요양사가 잠깐 자리를 비웠다 돌아오면 새 행 대신 이 행에 이어붙인다.
+    // 채널별로 마지막에 기록한 care_logs.log_id 목록 (빈 목록 = 아직 없음/기록 실패).
+    // 요양사가 잠깐 자리를 비웠다 돌아오면 새 행 대신 이 행들에 이어붙인다.
+    // ★ 목록인 이유: 한 방에 재원자가 여럿이면 케어 한 건이 사람 수만큼의 행이
+    //   된다(요양사가 누구를 돌봤는지는 영상에 없어 방 단위로 남긴다).
     // ★ timers_ 와 같은 규칙 — addChannel 에서 미리 채워 런타임 삽입이 없게
     //   하므로 각 항목은 그 채널의 워커 스레드 전용이고 락이 필요 없다.
-    std::map<int, long long> lastLogId_;
+    std::map<int, std::vector<long long>> lastLogIds_;
     // 보호사 ObjectId 통보 콜백. 등록은 AI 워커 시작 전 1회뿐이라 락이 필요 없다.
     CaregiverIdsCallback ids_cb_;
-    Database& db_;  // insertCareLog는 내부 뮤텍스로 보호됨 (database.hpp)
+    Database& db_;  // insertCareLogs는 내부 뮤텍스로 보호됨 (database.hpp)
 };

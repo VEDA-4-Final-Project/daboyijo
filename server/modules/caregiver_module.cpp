@@ -51,25 +51,28 @@ void CaregiverModule::addChannel(int channel) {
 
     // 병합용 log_id 자리를 여기서 미리 만들어 둔다 — 워커 스레드들이 도는 중에
     // map 에 삽입이 일어나지 않게 해서 락 없이 쓰기 위함(헤더 주석 참고).
-    lastLogId_[channel] = 0;
+    // ★ 한 방에 여러 명이면 케어 한 건이 사람 수만큼의 행이 되므로 목록이다.
+    lastLogIds_[channel].clear();
 
     result.first->second.onSessionEnd([channel, this](int dur, double gap) {
         std::fprintf(stderr, "[ch%d] 케어 세션 종료: %d초\n", channel + 1, dur);
 
-        long long& lastId = lastLogId_[channel];
+        std::vector<long long>& lastIds = lastLogIds_[channel];
 
-        // 직전 기록이 있고 그 뒤 공백이 3분 이내면 같은 행에 이어붙인다.
-        // log_id 를 그대로 들고 있으므로 계속 들락거려도 한 행에 누적된다.
-        if (lastId > 0 && gap >= 0.0 && gap <= kMergeWindowSec
-            && db_.addCareLogDuration(lastId, dur)) {
-            std::fprintf(stderr, "[ch%d] 자리 비움 %.0f초 → 직전 케어에 합산\n",
-                         channel + 1, gap);
+        // 직전 기록이 있고 그 뒤 공백이 3분 이내면 같은 행들에 이어붙인다.
+        // log_id 들을 그대로 들고 있으므로 계속 들락거려도 한 행에 누적된다.
+        if (!lastIds.empty() && gap >= 0.0 && gap <= kMergeWindowSec
+            && db_.addCareLogDuration(lastIds, dur)) {
+            std::fprintf(stderr, "[ch%d] 자리 비움 %.0f초 → 직전 케어에 합산 (%zu명)\n",
+                         channel + 1, gap, lastIds.size());
             return;
         }
 
         // 새 케어이거나, 병합하려다 실패한 경우(대상 행이 없거나 DB 오류).
         // 실패했을 때 그냥 버리면 케어시간이 사라지므로 새 행으로 남긴다.
-        lastId = db_.insertCareLog(channel, dur);   // 실패 시 0 — 다음 병합은 자동 포기
+        // 방 안 재원자 전원에게 각각 한 행씩 — 요양사가 둘 중 누구를 돌봤는지는
+        // 영상에 없으므로 방 단위로 남기고 해석은 리포트에 맡긴다.
+        lastIds = db_.insertCareLogs(channel, dur);   // 실패 시 빈 목록 → 다음 병합 자동 포기
     });
 }
 

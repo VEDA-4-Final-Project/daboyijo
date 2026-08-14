@@ -50,6 +50,7 @@
 #include "gemini_client.hpp"
 #include "care_qa.hpp"
 #include "MqttMasterManager.hpp"
+#include "activity_module.hpp"
 
 namespace {
 
@@ -117,6 +118,7 @@ int main(int argc, char* argv[]) {
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
+    ActivityModule activity(db);    // [일일 리포트] 만보기 → activity_minute
     MqttMasterManager mqtt;         // [mqtt]
     // 실패해도 서버는 계속 뜬다(영상·낙상 판정은 MQTT와 무관) — 다만 그 사이
     // 알람은 알림 노드에 닿지 않으므로, 조용히 넘기지 말고 크게 남긴다.
@@ -278,6 +280,11 @@ int main(int argc, char* argv[]) {
         int room = who.named() ? db.getRoomByResident(who.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(ch);
         mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송
+        // [일일 리포트] 이벤트 원장에 기록. clip 은 파일명만 남긴다 —
+        // 서버는 자기 외부 IP 를 모르고, Qt 는 채널별 호스트를 이미 안다.
+        char clip[64];
+        std::snprintf(clip, sizeof(clip), "ch%d_%lld_FALL.mp4", ch, (long long)evt_ms);
+        db.insertEvent(EventType::Fall, EventSource::Camera, ch, evt_ms, clip);
     });
     // CCTV 기반 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](const EgressEvent& e) {
@@ -297,6 +304,20 @@ int main(int argc, char* argv[]) {
         if (room < 0) room = db.getRoomByCh(e.channel);
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
     });
+    // 이 서버가 담당하는 채널인가 — cameras.conf 에 적힌 채널만 처리한다.
+    //
+    // 예전엔 여기가 ch < 2 하드코딩이라 두 가지가 동시에 깨져 있었다:
+    //   · 채널 2·3 입소자의 웨어러블 낙상·생체이상이 통째로 무시됐다(알람도 DB도 없음).
+    //   · 미등록 웨어러블은 getCHById 가 -1 을 주는데 -1 < 2 가 참이라 ch=-1 로
+    //     처리가 진행됐다(broadcastEvent 에서 채널이 255 로 뭉개짐).
+    // conf 기준으로 바꾸면 2-Pi 분할에서도 각 Pi 가 자기 채널만 맡아, 같은 브로커를
+    // 둘이 구독해도 이벤트가 DB 에 두 번 들어가지 않는다.
+    auto handlesChannel = [&config](int ch) {
+        for (const auto& cam : config.cameras)
+            if (cam.channel == ch) return true;
+        return false;
+    };
+
     // 요양보호사로 판정된 객체 → 귀속기에 표시(침대에 들어가도 환자로 안 침).
     caregiver.setCaregiverIdsCallback([&](int ch, const std::vector<int>& ids) {
         identity.markCaregivers(ch, ids);
@@ -305,7 +326,15 @@ int main(int argc, char* argv[]) {
     mqtt.setWearableCallback([&](AlarmEventType event, std::string device_id){
         int ch = db.getCHById(device_id);
         int room = db.getRoomById(device_id);
-        if(ch < 2){
+        // [일일 리포트] 웨어러블은 사람마다 다르므로 카메라와 달리 입소자를
+        // 정확히 특정할 수 있다. 아래 insertEvent 에 이 값을 넘긴다.
+        int rid = db.getResidentByWearable(device_id);
+        // 남의 Pi 담당 채널이면 조용히 넘기는 게 맞지만, 미등록 웨어러블(ch=-1)은
+        // 설정 실수라 알려야 한다 — 조용히 버리면 "왜 알람이 안 오지"로 며칠 샌다.
+        if(ch < 0)
+            std::fprintf(stderr, "[main] ⚠ 등록되지 않은 웨어러블 '%s' — 이벤트 무시."
+                                 " residents.wearable_id 를 확인하세요.\n", device_id.c_str());
+        if(handlesChannel(ch)){
             // 웨어러블 기반 낙상 판정 -> 블러 전체 해제 + 블랙박스 클립 저장 + Qt 경보
             if(event == AlarmEventType::FALL){
                 std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (웨어러블 판정)\n", ch + 1);
@@ -317,6 +346,13 @@ int main(int argc, char* argv[]) {
                 telegram.notifyFall(ch);
                 care_qa.reportFall(ch);
                 mqtt.sendAlarmCommand(AlarmEventType::FALL,room);
+                // ★ 같은 낙상이 카메라 경로로도 들어오면 두 줄이 남는다. 일부러
+                //   지우지 않는다 — source 로 구분되고, 어느 쪽이 먼저 잡았는지가
+                //   튜닝에 필요하다. 리포트에서 "낙상 N회" 를 셀 때 짧은 시간창
+                //   안의 같은 사람 건은 1회로 합칠 것.
+                char clip[64];
+                std::snprintf(clip, sizeof(clip), "ch%d_%lld_FALL.mp4", ch, (long long)evt_ms);
+                db.insertEvent(EventType::Fall, EventSource::Wearable, ch, evt_ms, clip, rid);
             }
             // 웨어러블 기반 생체데이터 이상 -> 블랙박스 클립 저장 + Qt 경보
             else if(event == AlarmEventType::VITAL_ABNORMAL){
@@ -326,9 +362,16 @@ int main(int argc, char* argv[]) {
                                              DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyVitalAbnormal(ch);
                 mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room);
+                char clip[64];
+                std::snprintf(clip, sizeof(clip), "ch%d_%lld_VITAL_ABNORMAL.mp4",
+                              ch, (long long)evt_ms);
+                db.insertEvent(EventType::VitalAbnormal, EventSource::Wearable,
+                               ch, evt_ms, clip, rid);
             }
-        } 
+        }
     });
+    // [일일 리포트] 만보기 활동량 — 알람과 무관하게 모든 패킷을 받아 1분 단위로 집계.
+    mqtt.setWearableDataCallback([&](const WearableData& d){ activity.onWearableData(d); });
     // AI 워커에 분석 프로세서 등록 (실행 순서 = 등록 순서)
     ai_worker.addProcessor([&](const AiJob& job) { caregiver.processFrame(job); });
     ai_worker.addProcessor([&](const AiJob& job) { fall.processFrame(job); });
@@ -418,6 +461,7 @@ int main(int argc, char* argv[]) {
     telegram.stopPolling();  // [케어봇] 폴링 스레드 join (curl_global_cleanup 전에)
     ai_worker.stop();     // AI 스레드 join
     caregiver.flush();    // 열린 케어 세션 마감 → DB 기록
+    activity.flushAll();  // 아직 안 쓴 마지막 1분치 활동량 저장
     blackbox.flushAll();  // 저장 중이던 클립 마무리 (유실 방지)
     for (auto& client : clients) {
         client->stop();
