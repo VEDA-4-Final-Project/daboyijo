@@ -1,0 +1,385 @@
+
+        QWidget { color: %(text); font-family: "Segoe UI", "맑은 고딕", sans-serif; font-size: 13px; }
+        QMainWindow, #centralwidget { background: %(bgDeep); }
+
+        #header { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                     stop:0 %(panel), stop:1 %(card));
+                  border-bottom: 1px solid %(border); }
+        #brandDot { background: %(accent); border-radius: 5px; }
+        #logo { color: %(text); font-size: 23px; font-weight: 800; letter-spacing: 0.5px; }
+        #subtitle { color: %(sub); font-size: 13px; }
+        #clock { color: %(text); font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
+                 padding: 0 6px; }
+
+        /* 라이트/다크 테마 토글 — 원형 아이콘 버튼 */
+        #themeToggle { background: transparent; border: 1px solid %(border); border-radius: 16px;
+                       min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
+                       font-size: 15px; }
+        #themeToggle:hover { border-color: %(accent); background: %(card); }
+
+        /* 도움말 버튼 — 원형 물음표 아이콘 + "도움말" 텍스트 (필 형태) */
+        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 15px;
+                   padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
+        #helpBtn:hover { background: %(card); color: %(text); }
+
+        /* 도움말 창 — 좌측 주제 목록 */
+        #helpList { background: %(card); color: %(sub); border: none; outline: none;
+                    border-right: 1px solid %(border); font-size: 13px; }
+        #helpList::item { padding: 11px 16px; border: none; }
+        #helpList::item:selected { background: %(panel); color: %(accent); font-weight: 700; }
+        #helpList::item:hover:!selected { color: %(text); }
+
+        /* 연결 상태 pill 배지 */
+        #statusPill { background: %(card); border: 1px solid %(border); border-radius: 13px; }
+        #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
+
+        /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
+        #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
+        #userChip:hover { border-color: %(accent); }
+        #userAvatar { background: %(accent); color: #fff; border-radius: 15px;
+                      font-size: 13px; font-weight: 800; }
+        #userName { color: %(text); font-size: 13px; font-weight: 700; }
+        #logoutButton { background: transparent; color: %(sub); border: none;
+                        border-radius: 14px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+        #logoutButton:hover { background: %(critical); color: #fff; }
+
+        /* ── 좌측 네비 레일 ── */
+        #navRail { background: %(panel); border-right: 1px solid %(border); }
+        #navBtn { background: transparent; color: %(sub); border: none; border-radius: 10px;
+                  padding: 0 12px; text-align: left;
+                  font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
+        #navBtn:hover { background: %(card); color: %(text); }
+        #navBtn:checked { background: %(accent); color: #ffffff; font-weight: 800; }
+        /* 접힘 상태 — 라벨이 없으니 아이콘을 가운데로 */
+        #navBtn[collapsed="true"] { padding: 0; text-align: center; }
+        #navToggle { background: transparent; color: %(sub); border: none;
+                     border-radius: 8px; font-size: 15px; }
+        #navToggle:hover { background: %(card); color: %(text); }
+
+        #panel { background: %(panel); border: 1px solid %(border); border-radius: 16px; }
+        /* 섹션 제목: 좌측 굵은 청록 악센트 바 + 큼직한 타이틀 */
+        #panelTitle { color: %(text); font-size: 17px; font-weight: 800; letter-spacing: 0.3px;
+                      border-left: 4px solid %(accent); padding: 1px 0 1px 12px; }
+
+        #roiButton, #roiToggle, #roiClear { background: %(card); color: %(text); border: 1px solid %(border);
+                                 border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
+        #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
+        #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
+        #roiClear:hover { border-color: %(critical); color: %(critical); }
+
+        /* ── 관제화면 ROI 세그먼트 그룹 ── */
+        #segGroup { background: %(bgDeep); border: 1px solid %(border); border-radius: 9px; }
+        #segCaption { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
+        #segBtn, #segBtnDanger, #segBtnToggle {
+            background: transparent; color: %(text); border: none;
+            border-radius: 6px; padding: 5px 13px; font-size: 12px; font-weight: 600; }
+        #segBtn:hover, #segBtnToggle:hover { background: %(card); }
+        #segBtnDanger:hover { background: %(card); color: %(critical); }
+        #segBtnToggle:checked { background: %(accent); color: #fff; }
+
+        #micButton { background: %(card); color: %(text); border: 1px solid %(border);
+                     border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
+        #micButton:hover { border-color: %(accent); }
+        #micButton[active="true"] { color: #fff; border-color: %(critical);
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #ff6b62, stop:1 %(critical)); }
+
+        /* 경보 해제 — 평상시엔 차분한 아웃라인, 경보 활성 시(active=true)에만 빨강 그라데이션 */
+        #alarmButton { background: %(card); color: %(sub); border: 1px solid %(border);
+                       border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 700; }
+        #alarmButton:hover { border-color: %(critical); color: %(critical); }
+        #alarmButton[active="true"] { color: #fff; border-color: %(critical); font-weight: 800;
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #ff6b62, stop:1 %(critical)); }
+        #alarmButton[active="true"]:hover { background: #ff6b62; }
+
+        /* 경보 토스트 — 상단에서 내려오는 떠 있는 알림 카드 */
+        #alarmToast { background: %(card); border: 1px solid %(border);
+                      border-left: 4px solid %(critical); border-radius: 12px; }
+        #alarmDot { background: %(critical); border-radius: 4px; }
+        #alarmToastText { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.2px; }
+        #alarmToastBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
+                         padding: 7px 16px; font-size: 13px; font-weight: 800; }
+        #alarmToastBtn:hover { background: #ff6b62; }
+
+        /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
+        #videoCard { background: #000000; border: 1px solid %(border); border-radius: 12px; }
+        #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 12px; }
+
+        #vitalScroll { background: transparent; }
+        #vitalScroll > QWidget > QWidget { background: transparent; }
+        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+        #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
+                     border-top-left-radius: 14px; border-top-right-radius: 14px; }
+        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
+        #vitalBed { color: %(sub); font-size: 12px; }
+        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        #statValue { font-family: "Consolas", "D2Coding", monospace;
+                     font-size: 32px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
+        #vitalUpdated { color: %(sub); font-size: 11px; }
+
+        /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */
+        #careCard { background: %(card); border: 1px solid %(border); border-radius: 16px; }
+        #careMeta { color: %(sub); font-size: 12px; }
+        #careBigCap { color: %(sub); font-size: 12px; font-weight: 600; }
+        #careMiniCap { color: %(sub); font-size: 11px; font-weight: 600; }
+
+        /* ── 일일 리포트 ──
+           QCalendarWidget은 내부가 네비게이션바 + QTableView로 되어 있어서
+           위젯 하나에 색을 줘도 안쪽이 기본 흰색으로 남는다. 다크에서 이 부분만
+           하얗게 튀므로 내부 위젯을 이름으로 하나씩 눌러준다. */
+        #reportDate { color: %(text); font-size: 16px; font-weight: 800; }
+        #reportCalendar { background: %(card); border: none; }
+        #reportCalendar QWidget#qt_calendar_navigationbar {
+            background: %(card); border-bottom: 1px solid %(border); }
+        /* ★ 달력 안쪽 글자 크기는 px 가 아니라 pt 로 준다.
+           QFont 은 크기를 pt 나 px 중 하나로만 갖는데, px 로 정하면 pointSize()
+           가 -1("pt 로 정해지지 않음")을 돌려준다. QCalendarWidget 은 날짜 칸을
+           그릴 때 본문 폰트에서 pointSize 를 꺼내 계산하므로, 앱 전역의
+           QWidget{font-size:13px} 를 그대로 물려받으면 그 -1 을 다시
+           setPointSize 에 넣어 'Point size <= 0' 경고가 뜬다.
+           동작에는 지장이 없지만 날짜를 누를 때마다 콘솔이 더러워진다.
+           ※ 이 스타일시트 전체가 raw 문자열이라, 주석 안에서도 닫는 괄호
+             바로 뒤에 큰따옴표가 오면 문자열이 그 자리에서 끊긴다. 금지. */
+        #reportCalendar, #reportCalendar QAbstractItemView { font-size: 10pt; }
+        #reportCalendar QToolButton {
+            background: transparent; color: %(text); border: none;
+            font-size: 10pt; font-weight: 700; padding: 4px 8px; }
+        #reportCalendar QToolButton:hover { background: %(panel); border-radius: 6px; }
+        #reportCalendar QToolButton::menu-indicator { image: none; }
+        #reportCalendar QAbstractItemView:enabled {
+            background: %(card); color: %(text); outline: none;
+            selection-background-color: %(accent); selection-color: #ffffff; }
+        /* 이번 달 밖의 날짜 + 미래 날짜(선택 불가) */
+        #reportCalendar QAbstractItemView:disabled { color: %(border); }
+        #reportCalendar QTableView QHeaderView::section {
+            background: %(card); color: %(sub); border: none;
+            font-size: 8pt; font-weight: 700; padding: 4px 0; }
+        #reportTodayBtn { background: transparent; color: %(accent);
+                          border: 1px solid %(border); border-radius: 8px;
+                          padding: 6px 0; font-size: 12px; font-weight: 700; }
+        #reportTodayBtn:hover { border-color: %(accent); background: %(panel); }
+        /* 입소자 이름 탭 — 선택된 하나만 강조색으로 채운다 */
+        #residentTab { background: transparent; color: %(sub);
+                       border: 1px solid %(border); border-radius: 14px;
+                       padding: 5px 14px; font-size: 13px; font-weight: 700; }
+        #residentTab:hover { color: %(text); border-color: %(sub); }
+        #residentTab:checked { background: %(accent); color: #ffffff; border-color: %(accent); }
+        /* 지표 타일 */
+        #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+        #reportTileVal { color: %(accent); font-family: "Consolas", "D2Coding", monospace;
+                         font-size: 26px; font-weight: 800; }
+
+        /* 스크롤바 — 세로/가로 모두 다크. 트랙(page)·코너의 기본 흰색을 없앤다 */
+        QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+        QScrollBar::handle:vertical { background: %(border); border-radius: 5px; min-height: 30px; }
+        QScrollBar::handle:vertical:hover { background: %(sub); }
+        QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+        QScrollBar::handle:horizontal { background: %(border); border-radius: 5px; min-width: 30px; }
+        QScrollBar::handle:horizontal:hover { background: %(sub); }
+        QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; background: transparent; }
+        QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+        QAbstractScrollArea::corner { background: transparent; }
+
+        /* ── 이벤트 기록 ── */
+        #filterBar QLabel { color: %(sub); font-size: 12px; }
+        #filterBar QComboBox, #filterBar QDateEdit {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 8px; padding: 5px 10px; }
+        #logTable { background: %(panel); color: %(text); gridline-color: transparent;
+                    border: 1px solid %(border); border-radius: 12px;
+                    alternate-background-color: %(card); }
+        #logTable::item { padding: 4px 8px; border: none; }
+        #logTable QHeaderView::section { background: %(bgDeep); color: %(sub);
+                                         border: none; border-bottom: 1px solid %(border);
+                                         padding: 9px 8px; font-weight: 700; }
+        #logTable::item:selected { background: %(accent); color: #fff; }
+
+/* ── TAB3: DB 관리 ── */
+
+QLabel {
+    color: %(text);
+}
+
+/* 검색창 */
+#searchEdit { background: %(card); color: %(text); border: 1px solid %(border);
+              border-radius: 17px; padding: 4px 14px; font-size: 13px; }
+#searchEdit:focus { border-color: %(accent); }
+
+/* 주요 액션 버튼(신규 등록·저장) */
+#primaryButton { background: %(accent); color: #fff; border: none;
+                 border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
+#primaryButton:hover { background: %(accent); opacity: 0.9; }
+#dangerButton { background: transparent; color: %(critical); border: 1px solid %(critical);
+                border-radius: 8px; padding: 6px 16px; font-size: 13px; font-weight: 700; }
+#dangerButton:hover { background: %(critical); color: #fff; }
+#iconButton { background: %(card); color: %(text); border: 1px solid %(border);
+              border-radius: 8px; font-size: 16px; font-weight: 700; }
+#iconButton:hover { border-color: %(accent); color: %(accent); }
+
+/* ── 입소자 관리: 상단 요약 통계 ── */
+#resStat { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+/* 큰 숫자가 세로로 잘리지 않도록 라벨에 충분한 높이를 준다 */
+#resStatVal { font-family: "Consolas", "D2Coding", monospace;
+              font-size: 26px; font-weight: 800; min-height: 34px; padding: 0; }
+#resStatCap { color: %(sub); font-size: 12px; font-weight: 700; }
+
+/* ── 입소자 관리: 좌측 목록(마스터) ── */
+#listPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+#cardHost { background: transparent; }
+
+/* 재원/전체/퇴원 세그먼트 탭 */
+#segTab { background: %(bgDeep); color: %(sub); border: 1px solid %(border);
+          padding: 6px 0; font-size: 12px; font-weight: 700; }
+#segTab:hover { color: %(text); }
+#segTab:checked { background: %(accent); color: #fff; border-color: %(accent); }
+
+/* 목록 행 카드 */
+#resRow { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px;
+          text-align: left; }
+#resRow:hover { border-color: %(accent); }
+#resRow[selected="true"] { border: 2px solid %(accent); background: %(panel); }
+#resRow[inactive="true"] { background: transparent; }
+#resName { color: %(text); font-size: 15px; font-weight: 800; }
+#resMeta { color: %(sub); font-size: 12px; }
+
+/* ── 입소자 관리: 우측 디테일(인라인 편집) ── */
+#detailPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+#detailPlaceholder { color: %(sub); font-size: 14px; }
+
+/* ── 카메라 설정: [채널 스트립] │ [스테이지] │ [인스펙터] 3단 워크스페이스 ── */
+#camStrip { background: %(card); border: 1px solid %(border); border-radius: 16px; }
+#camRailCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 2px;
+              padding-left: 2px; }
+/* 채널 타일 — 썸네일을 품은 체크 버튼. 선택은 '테두리 + 바탕'으로만 표시해서
+   썸네일(진짜 정보)이 색에 묻히지 않게 한다. */
+#camTile { background: transparent; border: 2px solid transparent;
+           border-radius: 12px; padding: 0; text-align: left; }
+#camTile:hover { background: %(bgDeep); border-color: %(border); }
+#camTile:checked { background: %(bgDeep); border-color: %(accent); }
+#camTileCh { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px; }
+#camChStatus { font-size: 11px; font-weight: 700; }
+
+#camControlPanel { background: %(card); border: 1px solid %(border); border-radius: 16px; }
+#camInspCh { color: %(text); font-size: 19px; font-weight: 800; letter-spacing: 0.5px; }
+#camPill { color: %(sub); border: 1px solid %(border); border-radius: 9px;
+           padding: 1px 9px; font-size: 11px; font-weight: 800; }
+#camInspIp { color: %(sub); font-size: 11px; font-family: "Consolas", "D2Coding", monospace; }
+#camRule { background: %(border); }
+
+/* 연결·ROI·이미지 세그먼트 — 트랙(#camSeg) 안에 얹힌 알약 버튼 */
+#camSeg { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+#camSegBtn { background: transparent; color: %(sub); border: none; border-radius: 9px;
+             padding: 9px 0; font-size: 13px; font-weight: 700; }
+#camSegBtn:hover { color: %(text); }
+#camSegBtn:checked { background: %(accent); color: #fff; font-weight: 800; }
+
+#camSectionCap { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
+                 border-left: 3px solid %(accent); padding-left: 8px; }
+#camHint { color: %(sub); font-size: 12px; }
+/* 그 페이지의 주 액션(연결/적용) — 채워진 악센트 */
+#camPrimary { background: %(accent); color: #fff; border: 1px solid %(accent);
+              border-radius: 10px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
+#camPrimary:hover { background: %(accentHover); border-color: %(accentHover); }
+/* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다 */
+#camStage { background: #000000; border: 1px solid %(border); border-radius: 14px; }
+#camStageCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
+
+/* ROI 페이지 — 단계 카드 + 주 액션 */
+#roiSteps { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+#roiStepNum { background: %(accent); color: #fff; border-radius: 11px;
+              font-size: 12px; font-weight: 800; }
+#roiStepText { color: %(text); font-size: 13px; }
+#roiPrimary { background: %(accent); color: #fff; border: none; border-radius: 10px;
+              font-size: 14px; font-weight: 800; }
+#roiPrimary:hover { background: %(accentHover); }
+#roiPrimary[drawing="true"] { background: %(critical); }
+#roiPrimary[drawing="true"]:hover { background: #ff6b62; }
+
+/* 편집기 프로필 헤더 */
+#dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+#dlgName { color: %(text); font-size: 19px; font-weight: 800; }
+#dlgSub  { color: %(sub); font-size: 13px; }
+
+QGroupBox#formGroup {
+    color: %(text);
+    border: 1px solid %(border);
+    border-radius: 8px;
+    margin-top: 10px;
+    padding: 14px 10px 10px 10px;
+    font-weight: 700;
+}
+
+QGroupBox#formGroup::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 6px;
+    color: %(text);
+    background: %(card);
+}
+
+QGroupBox#formGroup QLabel {
+    color: %(text);
+    font-weight: 600;
+    font-size: 13px;
+    min-width: 90px;
+}
+
+QLineEdit#formEdit,
+QTextEdit#formEdit,
+QComboBox#formEdit,
+QDateEdit#formEdit {
+    background: %(panel);
+    color: %(text);
+    border: 1px solid %(border);
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+
+QLineEdit#formEdit:focus,
+QTextEdit#formEdit:focus {
+    border-color: %(accent);
+}
+
+        QComboBox#formEdit QAbstractItemView {
+            background: %(bgDeep); color: %(text);
+            border: 1px solid %(border);
+            selection-background-color: %(accent); selection-color: #fff; }
+        QComboBox#formEdit::drop-down { border: none; width: 20px; }
+        QComboBox#formEdit::down-arrow { image: none; width: 0; height: 0;
+            border-left: 4px solid transparent; border-right: 4px solid transparent;
+            border-top: 5px solid %(sub); margin-right: 8px; }
+
+
+        /* ── 캘린더 팝업 (QDateEdit) ── */
+        QCalendarWidget QWidget { background: %(panel); color: %(text); }
+        QCalendarWidget QAbstractItemView {
+            background: %(bgDeep); color: %(text);
+            selection-background-color: %(accent); selection-color: #fff;
+            outline: none; }
+        QCalendarWidget QWidget#qt_calendar_navigationbar {
+            background: %(card); border-bottom: 1px solid %(border); }
+        QCalendarWidget QToolButton {
+            background: transparent; color: %(text); border: none; padding: 4px 8px; }
+        QCalendarWidget QToolButton:hover { background: %(border); border-radius: 4px; }
+        QCalendarWidget QSpinBox {
+            background: %(bgDeep); color: %(text); border: 1px solid %(border); }
+        QCalendarWidget QAbstractItemView:disabled { color: %(sub); }
+
+        /* ── 공용 다이얼로그·메시지박스·메뉴 ──
+           기본 스타일이 흰 배경으로 떠서 밝은 글씨가 안 보이는 것 방지 */
+        QMessageBox, QInputDialog, QDialog { background: %(panel); }
+        QMessageBox QLabel, QInputDialog QLabel { color: %(text); }
+        QMessageBox QPushButton, QInputDialog QPushButton {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 6px; padding: 5px 16px; font-size: 12px; font-weight: 600;
+            min-width: 60px; }
+        QMessageBox QPushButton:hover, QInputDialog QPushButton:hover { border-color: %(accent); }
+        QMessageBox QPushButton:default, QInputDialog QPushButton:default {
+            background: %(accent); color: #fff; border-color: %(accent); }
+        QMenu { background: %(panel); color: %(text); border: 1px solid %(border); }
+        QMenu::item:selected { background: %(accent); color: #fff; }
+        QToolTip { background: %(card); color: %(text); border: 1px solid %(border); }
