@@ -1,6 +1,7 @@
 #include "auth.h"
 #include "logindialog.h"
 #include "mainwindow.h"
+#include "thememanager.h"
 
 #include <QApplication>
 #include <QLocale>
@@ -17,6 +18,14 @@ int main(int argc, char *argv[])
     // 기본 생성자 QSettings()로 일관되게 읽고 쓰이도록 조직/앱 이름을 지정한다.
     QApplication::setOrganizationName(QStringLiteral("daboyijo"));
     QApplication::setApplicationName(QStringLiteral("gvm-client"));
+
+    // 앱 전역 스타일시트를 첫 창이 뜨기 전에 한 번 건다.
+    // MainWindow의 darkMode 기본값이 true이므로 여기서도 kDark로 맞춘다 —
+    // 두 값이 어긋나면 로그인에서 관제로 넘어가는 순간 화면이 한 번 튄다.
+    //
+    // applyPalette()는 여기서 부르지 않는다. 팔레트 전역(kBgDeep 등)은
+    // MainWindow 생성자가 buildUi() 뒤에 세팅하는 기존 순서를 그대로 둔다.
+    ThemeManager::applyStylesheet(kDark, /*darkMode=*/true);
 
     QSqlDatabase db = QSqlDatabase::addDatabase("QMARIADB");
     db.setHostName("172.20.32.51");
@@ -57,6 +66,11 @@ int main(int argc, char *argv[])
     // 로그아웃할 때마다 MainWindow를 통째로 새로 만들어, 이전 사용자의
     // 화면 상태(경보, 선택된 입소자, 그리던 ROI 등)가 남지 않게 한다.
     while (true) {
+        // 재로그인 경로 보정: 직전 세션에서 라이트로 토글하고 로그아웃했다면
+        // qApp에는 라이트 시트가 남아 있다. 두 번째 로그인 창이 첫 번째와
+        // 다르게 보이지 않도록 여기서 다시 다크로 되돌린다.
+        ThemeManager::applyStylesheet(kDark, /*darkMode=*/true);
+
         LoginDialog login;
         if (login.exec() != QDialog::Accepted)
             break;              // 로그인 창을 닫음 → 앱 종료

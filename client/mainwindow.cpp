@@ -2582,12 +2582,9 @@ void MainWindow::showChangeLogDialog(int admissionId)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::applyTheme()
 {
-    const QString qss = ThemeManager::substitute(
-        ThemeManager::loadQss(":/style/base.qss"),
-        darkMode ? kDark : kLight,
-        darkMode);
-
-    this->setStyleSheet(qss);
+    // 적용 주체는 이 위젯이 아니라 qApp이다 — 이 창 하나가 아니라 앱 전체가
+    // 같은 시트를 받아야 로그인 창까지 한 경로로 스타일이 흐른다.
+    ThemeManager::applyStylesheet(darkMode ? kDark : kLight, darkMode);
 
     // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
     statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));

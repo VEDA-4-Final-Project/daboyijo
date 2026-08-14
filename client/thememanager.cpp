@@ -1,8 +1,14 @@
 #include "thememanager.h"
 
+#include <QApplication>
 #include <QDebug>
 #include <QFile>
 #include <QTextStream>
+
+void ThemeManager::applyStylesheet(const Palette& p, bool darkMode)
+{
+    qApp->setStyleSheet(substitute(loadQss(":/style/base.qss"), p, darkMode));
+}
 
 QString ThemeManager::loadQss(const QString& resourcePath)
 {
