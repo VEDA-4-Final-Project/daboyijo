@@ -29,6 +29,10 @@
         #helpList::item:selected { background: %(panel); color: %(accent); font-weight: 700; }
         #helpList::item:hover:!selected { color: %(text); }
 
+        /* 도움말 창 — 본문 브라우저. renderHelpTopic()이 매번 다시 그리던
+           setStyleSheet 호출을 여기로 옮겼다(정적 규칙, 실시간 값 없음). */
+        QTextBrowser#helpBrowser { background: %(panel); border: none; padding: 20px 22px; }
+
         /* 연결 상태 pill 배지 */
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 13px; }
         #statusText { color: %(sub); font-size: 12px; font-weight: 600; }

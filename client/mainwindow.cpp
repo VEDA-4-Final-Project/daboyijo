@@ -1035,7 +1035,6 @@ void MainWindow::renderHelpTopic(int idx)
     const QString A  = QString::fromLatin1(kAccent);
     const QString T  = QString::fromLatin1(kTextMain);
     const QString S  = QString::fromLatin1(kTextSub);
-    const QString BG = QString::fromLatin1(kPanel);
     const QString BD = QString::fromLatin1(kBorder);
 
     auto li = [](const QString& k, const QString& d) {
@@ -1110,8 +1109,7 @@ void MainWindow::renderHelpTopic(int idx)
         "<div style='line-height:155%;'>%5</div></div>")
         .arg(T, A, title, BD, body);
     helpBrowser->setHtml(html);
-    helpBrowser->setStyleSheet(
-        QString("QTextBrowser#helpBrowser{background:%1; border:none; padding:20px 22px;}").arg(BG));
+    // 배경/여백은 base.qss의 QTextBrowser#helpBrowser 규칙이 담당한다(테마 토글 시 자동 갱신).
 }
 
 // ═══════════════════════════════════════════════════════════
