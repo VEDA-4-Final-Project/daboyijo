@@ -2639,16 +2639,11 @@ void MainWindow::applyTheme()
     // 같은 시트를 받아야 로그인 창까지 한 경로로 스타일이 흐른다.
     ThemeManager::applyStylesheet(darkMode ? kDark : kLight, darkMode);
 
-    // statusDot의 색은 severity 동적 속성 + QSS[severity="..."]가 결정한다
-    // (base.qss #statusDot 규칙). 예전에는 여기서 매번 kCritical로 인라인
-    // 스타일을 다시 구웠지만, 그 인라인 값이 앱 전역 QSS 재적용에 지워지기
-    // 때문에 존재했던 보상 코드였다 — severity 속성은 QSS가 스스로 유지하므로
-    // 더 이상 필요 없다.
-    // 카드는 입소자 수만큼 있으므로 채널 인덱스로 돌면 안 된다(해시에 0~3 키가 없다).
-    // 여기서 일단 흐리게 깔고, 아래 updateVitals()가 값 있는 카드만 상태색을 다시 입힌다.
-    for (QLabel* dot : vitalStatusDots)
-        if (dot) dot->setStyleSheet(
-            QString("background:%1; border-radius:5px;").arg(kTextSub));
+    // statusDot·vitalDot·vitalBadge·statValue 등은 전부 severity/vital 동적
+    // 속성 + QSS[severity=...]/[vital=...] 규칙이 색을 결정한다. 예전엔
+    // 여기서 vitalStatusDots를 매번 흐리게 인라인으로 리셋했는데, 그 인라인
+    // 값이 앱 전역 QSS 재적용에 지워지기 때문에 있던 보상 코드였다 — 이제
+    // QSS가 속성 값을 스스로 기억하므로 리셋할 필요가 없다(02-03 Task2).
 }
 
 void MainWindow::toggleTheme()
@@ -2662,10 +2657,13 @@ void MainWindow::toggleTheme()
         themeToggleButton->setText(darkMode ? QStringLiteral("☀")
                                             : QStringLiteral("🌙"));
 
-    // statusDot은 severity 동적 속성으로 색을 유지하므로 applyTheme() 뒤에
-    // 다시 훑어 복원할 필요가 없다 — 예전엔 인라인 스타일이 지워지는 것을
-    // 막기 위한 보상 블록이 여기 있었다.
-    updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
+    // statusDot·vitalDot 등은 severity 동적 속성으로 색을 유지하므로
+    // applyTheme() 뒤에 따로 복원할 필요가 없다.
+    // 그래도 updateVitals()는 지우면 안 된다 — Sparkline은 QSS를 받지 않는
+    // 커스텀 페인트 위젯이라 setLineColor()로 주입한 QColor를 그대로 들고
+    // 있다. 여기서 다시 부르지 않으면 테마를 토글해도 스파크라인 선 색만
+    // 이전 팔레트로 남는다.
+    updateVitals();
     // 카드의 아바타/칩은 인라인 색이라 QSS 재적용만으론 안 바뀐다 → 다시 그린다.
     refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
 }
@@ -2756,6 +2754,12 @@ void MainWindow::updateVitals()
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
+    // 4단계 관용구(setProperty→unpolish→polish→update)를 카드 하나당 네 위젯
+    // (SpO2 값, 심박 값, 상태점, 상태 배지)에 개별로 건다. unpolish/polish는
+    // 자식으로 재귀하지 않으므로 부모 카드 하나에만 걸면 안 된다 — SpO2/심박
+    // 값 라벨이 같은 objectName(statValue)을 공유해도 물리적으로 다른
+    // 위젯이라 각각 호출해야 한다.
+
     // 카드 단위로 돈다. 키는 입소자면 resident_id, 미배정 채널이면 음수 —
     // 음수 키는 vitals_ 에 값이 없어 기본값(received=false)이 잡히고 "대기"로 뜬다.
     for (auto it = vitalNameLabels.constBegin(); it != vitalNameLabels.constEnd(); ++it) {
@@ -2774,55 +2778,93 @@ void MainWindow::updateVitals()
         const bool worn = vitalWorn(v.spo2, v.heartRate);
 
         if (!fresh || !worn) {
-            const QString dim = kTextSub;
+            // 무신호 상태(대기·신호 끊김·미착용) — severity가 아니라 vital="stale"로
+            // 표현한다(<severity_contract>). severity는 비워 ISA 5단계 규칙이 걸리지
+            // 않게 한다.
             spo2Lbl->setText(QStringLiteral("--"));
-            spo2Lbl->setStyleSheet(QString("color:%1;").arg(dim));
-            hrLbl->setText(QStringLiteral("--"));
-            hrLbl->setStyleSheet(QString("color:%1;").arg(dim));
+            spo2Lbl->setProperty("severity", "");
+            spo2Lbl->setProperty("vital", "stale");
+            spo2Lbl->style()->unpolish(spo2Lbl);
+            spo2Lbl->style()->polish(spo2Lbl);
+            spo2Lbl->update();
 
-            dotLbl->setStyleSheet(
-                QString("background:%1; border-radius:4px;").arg(dim));
+            hrLbl->setText(QStringLiteral("--"));
+            hrLbl->setProperty("severity", "");
+            hrLbl->setProperty("vital", "stale");
+            hrLbl->style()->unpolish(hrLbl);
+            hrLbl->style()->polish(hrLbl);
+            hrLbl->update();
+
+            dotLbl->setProperty("severity", "");
+            dotLbl->setProperty("vital", "stale");
+            dotLbl->style()->unpolish(dotLbl);
+            dotLbl->style()->polish(dotLbl);
+            dotLbl->update();
 
             // 세 가지를 구분한다 — 대응이 각각 다르다.
             //   대기      : 한 번도 안 옴 (등록/배선 문제)
             //   신호 끊김 : 오다가 멈춤 (기기 방전·중계 노드 다운)
             //   미착용    : 값은 오는데 전부 0 (기기를 안 차고 있음)
-            badgeLbl->setText(!fresh ? (v.received ? QStringLiteral("신호 끊김")
-                                                   : QStringLiteral("대기"))
-                                     : QStringLiteral("미착용"));
-            badgeLbl->setStyleSheet(QString(
-                "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
-                " padding:1px 10px; font-size:11px; font-weight:800;")
-                .arg(dim, blendHex(dim, kCard, 0.18)));
+            // 도형(○)은 색 없이도 "이 카드는 심각도 등급이 아니라 신호가
+            // 없는 상태"임을 알리는 채널 — 세 상태를 구분하는 건 텍스트다.
+            const QString label = !fresh ? (v.received ? QStringLiteral("신호 끊김")
+                                                        : QStringLiteral("대기"))
+                                          : QStringLiteral("미착용");
+            badgeLbl->setText(severityGlyph(QString(), /*stale=*/true)
+                               + QStringLiteral(" ") + label);
+            badgeLbl->setProperty("severity", "");
+            badgeLbl->setProperty("vital", "stale");
+            badgeLbl->style()->unpolish(badgeLbl);
+            badgeLbl->style()->polish(badgeLbl);
+            badgeLbl->update();
 
-            if (spark) spark->setLineColor(QColor(dim));
+            // 커스텀 페인트 위젯은 QSS를 못 받으므로 색 헬퍼를 거쳐 중립색을
+            // 직접 받는다 — 전역 상수를 여기서 다시 읽지 않는다.
+            if (spark) spark->setLineColor(severityColor(QString()));
             continue;
         }
 
         const int spo2 = v.spo2;
         const int hr   = v.heartRate;
-        const QString color = vitalColor(spo2, hr);
+        const QString severity = vitalSeverity(spo2, hr);
 
         // 센서가 못 읽어 0이 오면 숫자 대신 "--" — 0%를 그대로 띄우면 오독한다.
         spo2Lbl->setText(spo2 > 0 ? QString::number(spo2)   // 단위(%)는 별도 라벨
                                   : QStringLiteral("--"));
-        spo2Lbl->setStyleSheet(QString("color:%1;").arg(color));
+        spo2Lbl->setProperty("severity", severity);
+        spo2Lbl->setProperty("vital", "live");
+        spo2Lbl->style()->unpolish(spo2Lbl);
+        spo2Lbl->style()->polish(spo2Lbl);
+        spo2Lbl->update();
+
         hrLbl->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
-        hrLbl->setStyleSheet(QString("color:%1;").arg(color));
+        hrLbl->setProperty("severity", severity);
+        hrLbl->setProperty("vital", "live");
+        hrLbl->style()->unpolish(hrLbl);
+        hrLbl->style()->polish(hrLbl);
+        hrLbl->update();
 
-        dotLbl->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
+        dotLbl->setProperty("severity", severity);
+        dotLbl->setProperty("vital", "live");
+        dotLbl->style()->unpolish(dotLbl);
+        dotLbl->style()->polish(dotLbl);
+        dotLbl->update();
 
+        // 상태 배지에만 등급 도형을 접두한다 — SpO2/심박 값 라벨엔 붙이지
+        // 않는다(숫자 판독 방해 + 배지가 이미 도형을 들고 있어 중복 부호화는
+        // 이미 충족된다).
         const QString status = vitalStatusLabel(spo2, hr);
-        badgeLbl->setText(status);
-        badgeLbl->setStyleSheet(QString(
-            "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
-            " padding:1px 10px; font-size:11px; font-weight:800;")
-            .arg(color, blendHex(color, kCard, 0.18)));
+        badgeLbl->setText(severityGlyph(severity) + QStringLiteral(" ") + status);
+        badgeLbl->setProperty("severity", severity);
+        badgeLbl->setProperty("vital", "live");
+        badgeLbl->style()->unpolish(badgeLbl);
+        badgeLbl->style()->polish(badgeLbl);
+        badgeLbl->update();
 
         // 그래프에 점을 찍는 건 여기가 아니라 onWearableData 다. 이 함수는 2초마다
         // 불리는데 여기서 addValue 를 하면 새 값이 없어도 같은 값이 계속 쌓여
         // 실제 측정 간격이 그래프에서 사라진다.
-        if (spark) spark->setLineColor(QColor(color));
+        if (spark) spark->setLineColor(severityColor(severity));
     }
 }
 
