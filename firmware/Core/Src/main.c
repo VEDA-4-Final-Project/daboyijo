@@ -260,12 +260,12 @@ int main(void)
 
   /* 수신 개시 — RPi 가 BLE 로 내려주는 시각을 받는다.
    * 이후에는 ISR 이 스스로 재무장하므로 여기서 한 번만 부르면 된다.
-   *
-   * 로그를 남기는 이유: 수신 경로는 아무것도 출력하지 않아서, 시각이 안 맞을 때
-   * '펌웨어가 최신인가'를 가릴 근거가 없었다. 이 줄이 없으면 옛 펌웨어다. */
-  HAL_StatusTypeDef rx_arm = hm10_start_receive();
-  printf("[ HM10 ] 시각 수신 %s (USART2 RX)\r\n",
-         (rx_arm == HAL_OK) ? "대기" : "무장 실패 — 수신 불가");
+   * 실패는 조용히 넘기지 않는다 — 수신이 통째로 죽는데 겉으로는
+   * '시계가 안 맞는다' 로만 보여 원인을 찾기 어렵다. */
+  if (hm10_start_receive() != HAL_OK)
+  {
+      printf("[ HM10 ] 시각 수신 무장 실패 — 시각 동기 사용 불가\r\n");
+  }
 
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
@@ -421,11 +421,6 @@ int main(void)
       {
           g_last_time_req_ms = now;
           hm10_request_time();
-
-          /* 수신 누적 바이트를 같이 찍는다. 이 숫자가 계속 0 이면 파싱을 볼
-           * 필요도 없이 물리 경로(HM-10 TX → PA3) 문제다. */
-          printf("[ HM10 ] 시각 요청 (수신 누적 %lu바이트)\r\n",
-                 (unsigned long)hm10_get_rx_count());
       }
 
       /* 낙상 플래그 유지 시간 경과 시 자동 해제 */

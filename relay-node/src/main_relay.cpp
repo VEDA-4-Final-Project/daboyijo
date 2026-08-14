@@ -336,8 +336,6 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     });
 
     // 연결 직후 곧바로 한 번 — 웨어러블이 재부팅했다면 빌드 시각으로 떠 있다.
-    // 결과와 무관하게 시도했다는 사실을 남긴다. 이 줄조차 없으면 옛 바이너리다.
-    std::cout << "[Relay Node] 시각 동기 시도..." << std::endl;
     sendTimeSync(peripheral);
     auto last_sync = std::chrono::steady_clock::now();
 
@@ -347,7 +345,6 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
         // 웨어러블이 물어보면 그 자리에서 답한다 (재부팅 직후가 대부분이다).
         // exchange 로 꺼내야 요청 하나에 한 번만 응답한다.
         if(g_time_requested.exchange(false)) {
-            std::cout << "[Relay Node] 웨어러블이 시각을 요청함" << std::endl;
             sendTimeSync(peripheral);
             last_sync = std::chrono::steady_clock::now();   // 방금 보냈으니 주기도 리셋
             continue;
