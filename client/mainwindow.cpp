@@ -36,6 +36,7 @@
 #include <QHeaderView>
 #include <QComboBox>
 #include <QDateEdit>
+#include <QCalendarWidget>
 #include <QSlider>
 #include <QStyle>
 #include <QGroupBox>
@@ -192,8 +193,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.31.17";
-const char* kDefaultHostB  = "172.20.31.16";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -211,7 +212,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.31.17").toString();
+    return s.value(kSettingsBrokerHost, "172.20.32.51").toString();
 }
 int brokerPort() {
     QSettings s;
@@ -632,7 +633,7 @@ QWidget* MainWindow::buildNavRail()
 
     const QString names[kNavCount] = {
         QStringLiteral("실시간 관제"), QStringLiteral("이벤트 기록"),
-        QStringLiteral("케어 타임"),   QStringLiteral("입소자 관리"),
+        QStringLiteral("일일 리포트"), QStringLiteral("입소자 관리"),
         QStringLiteral("카메라 설정")};
     for (int i = 0; i < kNavCount; ++i) {
         navBtns[i] = new QPushButton(names[i]);
@@ -997,7 +998,7 @@ void MainWindow::onHelpClicked()
             QStringLiteral("상단 헤더"),
             QStringLiteral("실시간 관제 및 제어"),
             QStringLiteral("이벤트 기록"),
-            QStringLiteral("케어 타임"),
+            QStringLiteral("일일 리포트"),
             QStringLiteral("입소자 관리"),
             QStringLiteral("카메라 설정"),
         });
@@ -1043,7 +1044,7 @@ void MainWindow::renderHelpTopic(int idx)
             "실시간 영상 관제, 낙상·침상이탈 경보, 웨어러블 생체신호, 블랙박스 기록, "
             "입소자 관리, 카메라 설정을 한 화면에서 다룹니다.</p>")
           + li(QStringLiteral("화면 구성"),
-               QStringLiteral("왼쪽 메뉴에서 실시간 관제 · 이벤트 기록 · 케어 타임 · 입소자 관리 · 카메라 설정으로 이동합니다. "
+               QStringLiteral("왼쪽 메뉴에서 실시간 관제 · 이벤트 기록 · 일일 리포트 · 입소자 관리 · 카메라 설정으로 이동합니다. "
                               "메뉴 위 ☰ 버튼으로 접었다 펼 수 있습니다."))
           + li(QStringLiteral("사용 팁"),
                QStringLiteral("왼쪽 목록에서 주제를 고르면 해당 기능 설명이 여기에 표시됩니다."));
@@ -1070,8 +1071,10 @@ void MainWindow::renderHelpTopic(int idx)
              + li(QStringLiteral("블랙박스 재생"), QStringLiteral("표의 이벤트를 더블클릭하면 우측 플레이어에서 그 시점 영상을 바로 재생하고 ‘확인’ 처리됩니다."));
         break;
     case 4:
-        title = QStringLiteral("케어 타임");
-        body = li(QStringLiteral("채널별 카드"), QStringLiteral("오늘(00:00~) 채널별 누적 케어시간·세션 수·최근 케어 시각을 표시합니다. 서버가 쌓는 care_logs 기준으로 주기적으로 갱신됩니다."));
+        title = QStringLiteral("일일 리포트");
+        body = li(QStringLiteral("날짜 선택"), QStringLiteral("좌측 달력에서 날짜를 고르면 그 날의 기록을 조회합니다. 자료가 없는 미래 날짜는 선택되지 않으며, ‘오늘’ 버튼으로 돌아옵니다."))
+             + li(QStringLiteral("입소자 탭"), QStringLiteral("상단 이름 탭으로 사람을 전환합니다. 리포트는 ‘날짜 + 입소자’ 한 명 단위입니다."))
+             + li(QStringLiteral("지표"), QStringLiteral("누워있는 시간·활동량(만보기)·케어시간·이벤트 횟수. 서버가 쌓는 bed_sessions·activity_minute·care_logs·events 기준입니다."));
         break;
     case 5:
         title = QStringLiteral("입소자 관리");
@@ -1429,7 +1432,11 @@ QWidget* MainWindow::buildEventLogTab()
     return panel;
 }
 
-// 케어 타임 — 채널별 카드 2×2 그리드. 각 카드는 오늘 케어시간을 크게 보여준다.
+// 일일 리포트 — [좌: 달력] | [우: 이름 탭 + 그 사람의 그 날 지표]
+//
+// 예전엔 "오늘" 만 볼 수 있는 케어 타임 대시보드였다. 리포트는 지난 날짜를
+// 되짚어 보는 게 본질이라 날짜 선택을 앞에 세운다. 채널이 아니라 입소자 단위인
+// 이유: 침대마다 사람을 매핑하면 한 채널에 여러 명이 들어와 4칸 고정이 안 맞는다.
 QWidget* MainWindow::buildCareTimeTab()
 {
     auto* panel = new QFrame();
@@ -1438,25 +1445,222 @@ QWidget* MainWindow::buildCareTimeTab()
     outer->setContentsMargins(18, 16, 18, 16);
     outer->setSpacing(6);
 
-    auto* title = new QLabel(QStringLiteral("케어 타임"));
+    auto* title = new QLabel(QStringLiteral("일일 리포트"));
     title->setObjectName("panelTitle");
     outer->addWidget(title);
 
     auto* sub = new QLabel(
-        QStringLiteral("오늘(00:00~) 채널별 케어 누적시간 · 세션 수 · 최근 케어 시각"));
+        QStringLiteral("날짜를 선택하면 그 날의 입소자별 기록을 조회합니다"));
     sub->setObjectName("subtitle");
     outer->addWidget(sub);
-    outer->addSpacing(6);
+    outer->addSpacing(10);
 
-    // 채널 카드 2×2 그리드 — 남는 공간을 카드가 균등하게 나눠 채운다.
-    auto* grid = new QGridLayout();
-    grid->setSpacing(14);
-    for (int ch = 0; ch < 4; ++ch)
-        grid->addWidget(buildCareTimeCard(ch), ch / 2, ch % 2);
-    for (int c = 0; c < 2; ++c) grid->setColumnStretch(c, 1);
-    for (int r = 0; r < 2; ++r) grid->setRowStretch(r, 1);
-    outer->addLayout(grid, 1);
+    // ── 좌우 2단: 달력(고정 폭) | 리포트 본문(남는 공간 전부) ──
+    auto* body = new QHBoxLayout();
+    body->setSpacing(16);
+    body->addWidget(buildReportCalendar(), 0);
+
+    auto* right = new QVBoxLayout();
+    right->setSpacing(10);
+    // 선택한 날짜를 우측에도 크게 — 달력에서 눈을 떼도 어느 날 자료인지 보이게.
+    reportDateLabel = new QLabel();
+    reportDateLabel->setObjectName("reportDate");
+    right->addWidget(reportDateLabel);
+    right->addWidget(buildReportDetail(), 1);
+
+    body->addLayout(right, 1);
+    outer->addLayout(body, 1);
+
+    reloadReportResidents();            // 이름 탭 채우기 → 첫 입소자 자동 선택
+    onReportDateChanged(reportDate_);   // 날짜 라벨 + 지표 초기 조회
     return panel;
+}
+
+// 좌측 날짜 선택 칼럼 — 달력 + (앞으로) PDF·AI 요약 버튼이 붙을 자리.
+QWidget* MainWindow::buildReportCalendar()
+{
+    auto* col = new QFrame();
+    col->setObjectName("careCard");
+    col->setFixedWidth(320);
+    auto* lay = new QVBoxLayout(col);
+    lay->setContentsMargins(14, 14, 14, 14);
+    lay->setSpacing(10);
+
+    auto* cap = new QLabel(QStringLiteral("날짜 선택"));
+    cap->setObjectName("careBigCap");
+    lay->addWidget(cap);
+
+    reportCalendar = new QCalendarWidget();
+    reportCalendar->setObjectName("reportCalendar");
+    reportCalendar->setGridVisible(false);
+    reportCalendar->setVerticalHeaderFormat(QCalendarWidget::NoVerticalHeader);  // 주차 번호 숨김
+    reportCalendar->setHorizontalHeaderFormat(QCalendarWidget::ShortDayNames);
+    reportCalendar->setSelectedDate(reportDate_);
+    // 미래 날짜는 볼 자료가 없다 — 아예 못 고르게 막는다.
+    reportCalendar->setMaximumDate(QDate::currentDate());
+    lay->addWidget(reportCalendar);
+
+    // 오늘로 되돌아오는 버튼 — 과거를 뒤지다 보면 오늘 찾아 돌아오기가 번거롭다.
+    auto* today = new QPushButton(QStringLiteral("오늘"));
+    today->setObjectName("reportTodayBtn");
+    today->setCursor(Qt::PointingHandCursor);
+    connect(today, &QPushButton::clicked, this, [this] {
+        reportCalendar->setSelectedDate(QDate::currentDate());
+    });
+    lay->addWidget(today);
+
+    // TODO(리포트): 이 아래에 [PDF 내보내기] [AI 요약] 버튼이 들어간다.
+    lay->addStretch(1);
+
+    connect(reportCalendar, &QCalendarWidget::selectionChanged, this, [this] {
+        onReportDateChanged(reportCalendar->selectedDate());
+    });
+    return col;
+}
+
+// 우측 상세 — [이름 탭] + [지표 타일 4개] + (앞으로) 그래프·이벤트 표·AI 요약.
+QWidget* MainWindow::buildReportDetail()
+{
+    auto* host = new QFrame();
+    host->setObjectName("careCard");
+    auto* lay = new QVBoxLayout(host);
+    lay->setContentsMargins(16, 14, 16, 16);
+    lay->setSpacing(12);
+
+    // ── 입소자 이름 탭 ──
+    // 버튼은 reloadReportResidents()가 DB를 보고 만든다. 여기선 담을 줄만 잡는다.
+    auto* tabRow = new QWidget();
+    residentTabLayout = new QHBoxLayout(tabRow);
+    residentTabLayout->setContentsMargins(0, 0, 0, 0);
+    residentTabLayout->setSpacing(6);
+    residentTabLayout->addStretch(1);   // 버튼은 이 스트레치 앞에 끼워 넣는다
+    lay->addWidget(tabRow);
+
+    reportResidentMeta = new QLabel(QStringLiteral("—"));
+    reportResidentMeta->setObjectName("careMeta");
+    lay->addWidget(reportResidentMeta);
+
+    // ── 지표 타일 4개 ──
+    // 큰 숫자 + 아래 보조 문구. 라벨만 멤버로 잡아두고 갱신 때 텍스트만 바꾼다.
+    auto makeTile = [](const QString& cap, QLabel** val, QLabel** sub) {
+        auto* tile = new QFrame();
+        tile->setObjectName("reportTile");
+        auto* v = new QVBoxLayout(tile);
+        v->setContentsMargins(14, 12, 14, 12);
+        v->setSpacing(2);
+        auto* c = new QLabel(cap);
+        c->setObjectName("careBigCap");
+        *val = new QLabel(QStringLiteral("—"));
+        (*val)->setObjectName("reportTileVal");
+        *sub = new QLabel(QStringLiteral(" "));
+        (*sub)->setObjectName("careMiniCap");
+        v->addWidget(c);
+        v->addWidget(*val);
+        v->addWidget(*sub);
+        return tile;
+    };
+
+    auto* tiles = new QGridLayout();
+    tiles->setSpacing(12);
+    tiles->addWidget(makeTile(QStringLiteral("누워있는 시간"),
+                              &tileLyingVal, &tileLyingSub), 0, 0);
+    tiles->addWidget(makeTile(QStringLiteral("활동량"),
+                              &tileActivityVal, &tileActivitySub), 0, 1);
+    tiles->addWidget(makeTile(QStringLiteral("케어시간"),
+                              &tileCareVal, &tileCareSub), 0, 2);
+    tiles->addWidget(makeTile(QStringLiteral("이벤트"),
+                              &tileEventVal, &tileEventSub), 0, 3);
+    for (int c = 0; c < 4; ++c) tiles->setColumnStretch(c, 1);
+    lay->addLayout(tiles);
+
+    // TODO(리포트): 이 아래에 24시간 활동량 그래프 · 이벤트 타임라인 · AI 요약이 온다.
+    auto* soon = new QLabel(
+        QStringLiteral("시간별 활동량 그래프 · 이벤트 타임라인 · AI 요약이 이 자리에 들어갑니다."));
+    soon->setObjectName("careMiniCap");
+    soon->setAlignment(Qt::AlignCenter);
+    lay->addWidget(soon, 1);
+    return host;
+}
+
+// 재원 입소자로 이름 탭을 다시 만든다. 입소자 관리에서 사람이 바뀌면 다시 부른다.
+//
+// ※ 지금은 "현재 재원"만 본다. 과거 날짜를 보면서 그 시점 재원자로 목록을 맞추려면
+//   admissions(입원 에피소드)를 조회해야 하는데, 그건 리포트가 자리 잡은 뒤에.
+void MainWindow::reloadReportResidents()
+{
+    if (!residentTabLayout) return;
+
+    for (auto* b : residentTabBtns) { residentTabLayout->removeWidget(b); b->deleteLater(); }
+    residentTabBtns.clear();
+    residentTabIds.clear();
+
+    QSqlQuery q;
+    if (!q.exec(QStringLiteral(
+            "SELECT resident_id, name FROM residents WHERE status='재원' "
+            "ORDER BY camera_id, bed, resident_id"))) {
+        qDebug() << "리포트 입소자 목록 조회 실패:" << q.lastError().text();
+        return;
+    }
+    while (q.next()) {
+        const int id = q.value(0).toInt();
+        auto* b = new QPushButton(q.value(1).toString());
+        b->setObjectName("residentTab");
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        connect(b, &QPushButton::clicked, this, [this, id] { onReportResidentChanged(id); });
+        // 마지막 stretch 앞에 끼워 넣어 버튼들이 왼쪽으로 몰리게 한다.
+        residentTabLayout->insertWidget(residentTabLayout->count() - 1, b);
+        residentTabBtns.push_back(b);
+        residentTabIds.push_back(id);
+    }
+
+    // 보던 사람이 목록에서 사라졌으면 첫 사람으로 되돌린다.
+    if (!residentTabIds.contains(reportResidentId_))
+        reportResidentId_ = residentTabIds.isEmpty() ? -1 : residentTabIds.first();
+    onReportResidentChanged(reportResidentId_);
+}
+
+void MainWindow::onReportResidentChanged(int residentId)
+{
+    reportResidentId_ = residentId;
+
+    // 선택된 탭만 눌린 상태로 — QButtonGroup 없이 직접 맞춘다(탭이 매번 재생성됨).
+    for (int i = 0; i < residentTabBtns.size(); ++i)
+        residentTabBtns[i]->setChecked(residentTabIds.value(i) == residentId);
+
+    if (reportResidentMeta) {
+        QString meta = QStringLiteral("—");
+        if (residentId > 0) {
+            QSqlQuery q;
+            q.prepare(QStringLiteral(
+                "SELECT room, bed, COALESCE(risk_level,'—') FROM residents WHERE resident_id=?"));
+            q.addBindValue(residentId);
+            if (q.exec() && q.next())
+                meta = QStringLiteral("%1호 · %2 · 위험도 %3")
+                           .arg(q.value(0).toString(), q.value(1).toString(),
+                                q.value(2).toString());
+        }
+        reportResidentMeta->setText(meta);
+    }
+    updateCareTime();
+}
+
+// 날짜가 바뀌면 라벨을 고치고 그 날짜로 집계를 다시 돌린다.
+void MainWindow::onReportDateChanged(const QDate& date)
+{
+    if (!date.isValid()) return;
+    reportDate_ = date;
+
+    if (reportDateLabel) {
+        static const char* kDow[] = {"월", "화", "수", "목", "금", "토", "일"};
+        const QString when = QStringLiteral("%1 (%2)")
+                                 .arg(date.toString(QStringLiteral("yyyy-MM-dd")))
+                                 .arg(QString::fromUtf8(kDow[date.dayOfWeek() - 1]));
+        reportDateLabel->setText(date == QDate::currentDate()
+                                     ? QStringLiteral("%1 · 오늘").arg(when)
+                                     : when);
+    }
+    updateCareTime();
 }
 
 QWidget* MainWindow::buildSearchFilters()
@@ -2577,6 +2781,42 @@ void MainWindow::applyTheme()
         #careMiniCap { color: %(sub); font-size: 11px; font-weight: 600; }
         #careFootSep { color: %(border); }
 
+        /* ── 일일 리포트 ──
+           QCalendarWidget은 내부가 네비게이션바 + QTableView로 되어 있어서
+           위젯 하나에 색을 줘도 안쪽이 기본 흰색으로 남는다. 다크에서 이 부분만
+           하얗게 튀므로 내부 위젯을 이름으로 하나씩 눌러준다. */
+        #reportDate { color: %(text); font-size: 16px; font-weight: 800; }
+        #reportCalendar { background: %(card); border: none; }
+        #reportCalendar QWidget#qt_calendar_navigationbar {
+            background: %(card); border-bottom: 1px solid %(border); }
+        #reportCalendar QToolButton {
+            background: transparent; color: %(text); border: none;
+            font-size: 13px; font-weight: 700; padding: 4px 8px; }
+        #reportCalendar QToolButton:hover { background: %(panel); border-radius: 6px; }
+        #reportCalendar QToolButton::menu-indicator { image: none; }
+        #reportCalendar QAbstractItemView:enabled {
+            background: %(card); color: %(text); outline: none;
+            selection-background-color: %(accent); selection-color: #ffffff; }
+        /* 이번 달 밖의 날짜 + 미래 날짜(선택 불가) */
+        #reportCalendar QAbstractItemView:disabled { color: %(border); }
+        #reportCalendar QTableView QHeaderView::section {
+            background: %(card); color: %(sub); border: none;
+            font-size: 11px; font-weight: 700; padding: 4px 0; }
+        #reportTodayBtn { background: transparent; color: %(accent);
+                          border: 1px solid %(border); border-radius: 8px;
+                          padding: 6px 0; font-size: 12px; font-weight: 700; }
+        #reportTodayBtn:hover { border-color: %(accent); background: %(panel); }
+        /* 입소자 이름 탭 — 선택된 하나만 강조색으로 채운다 */
+        #residentTab { background: transparent; color: %(sub);
+                       border: 1px solid %(border); border-radius: 14px;
+                       padding: 5px 14px; font-size: 13px; font-weight: 700; }
+        #residentTab:hover { color: %(text); border-color: %(sub); }
+        #residentTab:checked { background: %(accent); color: #ffffff; border-color: %(accent); }
+        /* 지표 타일 */
+        #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+        #reportTileVal { color: %(accent); font-family: "Consolas", "D2Coding", monospace;
+                         font-size: 26px; font-weight: 800; }
+
         /* 스크롤바 — 세로/가로 모두 다크. 트랙(page)·코너의 기본 흰색을 없앤다 */
         QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
         QScrollBar::handle:vertical { background: %(border); border-radius: 5px; min-height: 30px; }
@@ -3074,54 +3314,143 @@ void MainWindow::onMqttError(const QString& message)
 }
 
 // ═══════════════════════════════════════════════════════════
-//  케어 타임 대시보드 — 서버가 care_logs에 쌓는 실데이터를 채널별로 집계해 표시.
-//  (요양사 감지 → CareTimer 세션 종료 → insertCareLog가 채널·케어시간 기록)
+//  일일 리포트 지표 — 선택한 날짜 + 선택한 입소자의 4개 값을 채운다.
+//  원천은 전부 서버가 쌓는다: care_logs / bed_sessions / activity_minute / events
 // ═══════════════════════════════════════════════════════════
+namespace {
+// 초 → "8시간 20분" / "42분" / "35초". 0이면 "—"로 비운다.
+QString humanDuration(int sec)
+{
+    if (sec <= 0) return QStringLiteral("—");
+    if (sec < 60) return QStringLiteral("%1초").arg(sec);
+    const int m = sec / 60;
+    if (m < 60) return QStringLiteral("%1분").arg(m);
+    return m % 60 == 0 ? QStringLiteral("%1시간").arg(m / 60)
+                       : QStringLiteral("%1시간 %2분").arg(m / 60).arg(m % 60);
+}
+}  // namespace
+
 void MainWindow::updateCareTime()
 {
-    // 채널별 오늘(00:00~) 케어시간 합계·세션수·최근 종료시각.
-    int totalSec[4] = {};
-    int sessions[4] = {};
-    QString lastSeen[4];
+    const int rid = reportResidentId_;
+    if (!tileCareVal) return;              // 아직 화면이 만들어지기 전
 
+    // 입소자가 없으면(전원 퇴원 등) 전부 비운다 — 남의 숫자가 남아 있으면 안 된다.
+    if (rid <= 0) {
+        for (QLabel* l : {tileLyingVal, tileActivityVal, tileCareVal, tileEventVal})
+            if (l) l->setText(QStringLiteral("—"));
+        for (QLabel* l : {tileLyingSub, tileActivitySub, tileCareSub, tileEventSub})
+            if (l) l->setText(QStringLiteral(" "));
+        return;
+    }
+
+    const QDateTime dayStart(reportDate_, QTime(0, 0));
+    const QDateTime dayEnd = dayStart.addDays(1);
+
+    // ── 케어시간 ──
     // ★ 하루 구분은 end_time 이 아니라 start_time 기준이다. 서버가 요양사의 잠깐
     //   자리 비움 후 복귀를 직전 행에 합산하면서 end_time 을 뒤로 미는데,
     //   end_time 으로 자르면 자정 직전에 시작한 케어가 통째로 다음 날로 넘어간다.
-    //   케어는 시작한 날의 것으로 센다.
-    QSqlQuery q;
-    if (q.exec(QStringLiteral(
-            "SELECT camera_id, COALESCE(SUM(duration_sec),0), COUNT(*), MAX(end_time) "
-            "FROM care_logs WHERE DATE(start_time)=CURDATE() GROUP BY camera_id"))) {
-        while (q.next()) {
-            const int ch = q.value(0).toInt();
-            if (ch < 0 || ch >= 4) continue;   // 4채널 밖 기록은 무시
-            totalSec[ch] = q.value(1).toInt();
-            sessions[ch] = q.value(2).toInt();
-            const QDateTime end = q.value(3).toDateTime();
-            if (end.isValid()) lastSeen[ch] = end.toString(QStringLiteral("HH:mm"));
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT COALESCE(SUM(duration_sec),0), COUNT(*), MAX(end_time) "
+            "FROM care_logs WHERE resident_id=? AND DATE(start_time)=?"));
+        q.addBindValue(rid);
+        q.addBindValue(reportDate_);
+        if (q.exec() && q.next()) {
+            tileCareVal->setText(humanDuration(q.value(0).toInt()));
+            const QDateTime last = q.value(2).toDateTime();
+            tileCareSub->setText(
+                q.value(1).toInt() == 0
+                    ? QStringLiteral("기록 없음")
+                    : QStringLiteral("%1회 · 마지막 %2")
+                          .arg(q.value(1).toInt())
+                          .arg(last.isValid() ? last.toString(QStringLiteral("HH:mm"))
+                                              : QStringLiteral("—")));
+        } else {
+            qDebug() << "케어로그 조회 실패:" << q.lastError().text();
         }
-    } else {
-        qDebug() << "케어로그 조회 실패:" << q.lastError().text();
     }
 
-    for (int ch = 0; ch < 4; ++ch) {
-        if (careNameLabels[ch])
-            careNameLabels[ch]->setText(patients[ch].name);
-        if (careMetaLabels[ch])
-            careMetaLabels[ch]->setText(QStringLiteral("채널 %1 · %2")
-                                            .arg(ch + 1).arg(patients[ch].bed));
-        if (!careBigLabels[ch]) continue;
+    // ── 누워있는 시간 ──
+    // ★ 재실 세션은 자정을 넘기는 게 정상이다(23시 취침 → 익일 7시 기상). "시작한
+    //   날"로 몰면 안 되고 이 날짜 구간과의 교집합만 세야 한다. 그래서 GREATEST/LEAST
+    //   로 양끝을 자른다. 아직 안 닫힌 세션(out_at IS NULL)은 지금 시각까지로 본다.
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, GREATEST(in_at, ?), "
+            "                                  LEAST(COALESCE(out_at, NOW()), ?))), 0), "
+            "       COUNT(*) "
+            "FROM bed_sessions WHERE resident_id=? "
+            "  AND in_at < ? AND COALESCE(out_at, NOW()) > ?"));
+        q.addBindValue(dayStart);
+        q.addBindValue(dayEnd);
+        q.addBindValue(rid);
+        q.addBindValue(dayEnd);
+        q.addBindValue(dayStart);
+        if (q.exec() && q.next()) {
+            tileLyingVal->setText(humanDuration(q.value(0).toInt()));
+            const int n = q.value(1).toInt();
+            tileLyingSub->setText(n == 0 ? QStringLiteral("기록 없음")
+                                         : QStringLiteral("재실 %1회").arg(n));
+        } else {
+            qDebug() << "재실 세션 조회 실패:" << q.lastError().text();
+        }
+    }
 
-        // 1분 미만 세션도 "0분"으로 묻히지 않게 60초 미만은 초로 표기.
-        const int total = totalSec[ch];
-        const QString dur = total >= 60 ? QStringLiteral("%1분").arg(total / 60)
-                                        : QStringLiteral("%1초").arg(total);
-        careBigLabels[ch]->setText(dur);
-        if (careSessionLabels[ch])
-            careSessionLabels[ch]->setText(QStringLiteral("%1회").arg(sessions[ch]));
-        if (careLastLabels[ch])
-            careLastLabels[ch]->setText(
-                lastSeen[ch].isEmpty() ? QStringLiteral("—") : lastSeen[ch]);
+    // ── 활동량(만보기) ──
+    // 걸음 수는 누적값이라 서버가 1분치 증가분(steps_delta)으로 눌러 담는다.
+    // "활동한 분"은 그 분에 10걸음 이상 늘어난 분의 개수다.
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT COALESCE(SUM(steps_delta),0), COALESCE(SUM(steps_delta>=10),0) "
+            "FROM activity_minute WHERE resident_id=? AND DATE(minute_ts)=?"));
+        q.addBindValue(rid);
+        q.addBindValue(reportDate_);
+        if (q.exec() && q.next()) {
+            const int steps = q.value(0).toInt();
+            const int activeMin = q.value(1).toInt();
+            tileActivityVal->setText(steps > 0 ? QStringLiteral("%1걸음").arg(steps)
+                                               : QStringLiteral("—"));
+            tileActivitySub->setText(steps > 0 ? QStringLiteral("활동 %1분").arg(activeMin)
+                                               : QStringLiteral("기록 없음"));
+        } else {
+            qDebug() << "활동량 조회 실패:" << q.lastError().text();
+        }
+    }
+
+    // ── 이벤트 횟수 ──
+    // 종류별로 세서 "3회 (낙상1·이탈2)"처럼 내역까지 보여준다. 숫자만 있으면
+    // 무슨 일이 있었는지 알 수 없어 리포트로 쓸모가 떨어진다.
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT event_type, COUNT(*) FROM events "
+            "WHERE resident_id=? AND DATE(occurred_at)=? GROUP BY event_type"));
+        q.addBindValue(rid);
+        q.addBindValue(reportDate_);
+        int total = 0;
+        QStringList parts;
+        if (q.exec()) {
+            while (q.next()) {
+                const QString t = q.value(0).toString();
+                const int n = q.value(1).toInt();
+                total += n;
+                const QString label = t == QLatin1String("FALL")   ? QStringLiteral("낙상")
+                                    : t == QLatin1String("EGRESS") ? QStringLiteral("이탈")
+                                                                   : QStringLiteral("생체");
+                parts << QStringLiteral("%1%2").arg(label).arg(n);
+            }
+        } else {
+            qDebug() << "이벤트 조회 실패:" << q.lastError().text();
+        }
+        tileEventVal->setText(total > 0 ? QStringLiteral("%1회").arg(total)
+                                        : QStringLiteral("—"));
+        tileEventSub->setText(parts.isEmpty() ? QStringLiteral("이벤트 없음")
+                                              : parts.join(QStringLiteral(" · ")));
     }
 }
 
