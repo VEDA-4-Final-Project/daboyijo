@@ -50,7 +50,7 @@ qt_add_executable(daboyijo
 qt_add_resources(daboyijo "appstyle"
     PREFIX "/style"
     BASE "resources/style"
-    FILES resources/style/base.qss
+    FILES resources/style/base.qss resources/style/dialogs.qss
 )
 
 # veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치

@@ -28,6 +28,10 @@ public:
     // %(accentHover)는 %(accent)의 부분 문자열이라 반드시 %(accent)보다 먼저
     // 치환해야 한다 — 순서를 바꾸면 정확한 accentHover 자리까지 accent로 덮인다.
     static QString substitute(QString qss, const Palette& p, bool darkMode);
+
+    // 로그인·회원가입 창 전용 시트. 앱 테마와 무관하게 항상 다크 팔레트로 굳는다.
+    // qApp이 아니라 각 다이얼로그가 자기 자신에게 직접 적용한다 (dialogs.qss 상단 주석 참조).
+    static QString dialogStyleSheet();
 };
 
 #endif  // THEMEMANAGER_H
