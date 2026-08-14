@@ -1958,7 +1958,14 @@ QWidget* MainWindow::buildDbTab()
     // border-radius:3px 규칙이 이 9×9 위젯에도 번진다 — 02-03 정정 B로 분리.
     dbStatusDot->setObjectName("dbStatusDot");
     dbStatusDot->setFixedSize(9, 9);
-    dbStatusDot->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kNormal));
+    // 사전 존재 결함(DYNAMIC-STYLE-INVENTORY.md #1, A-9): 이 점은 생성 시
+    // 한 번 "정상" 색으로 칠해질 뿐, 실제 DB 연결 상태를 반영해 갱신하는
+    // 호출부가 코드에 없다. 이 계획은 표시 메커니즘만 속성 기반으로 옮긴다
+    // — 실제 DB 이벤트 배선은 새 기능이라 이 단계 요구사항 범위 밖이다.
+    dbStatusDot->setProperty("severity", "normal");
+    dbStatusDot->style()->unpolish(dbStatusDot);
+    dbStatusDot->style()->polish(dbStatusDot);
+    dbStatusDot->update();
     dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
     dbStatusText->setObjectName("statusText");
     titleRow->addWidget(dbStatusDot);
@@ -1986,7 +1993,11 @@ QWidget* MainWindow::buildResidentSummary()
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(12);
 
-    auto makeStat = [&](const QString& caption, const char* color, QLabel*& ref) {
+    // category는 심각도가 아니라 통계 카테고리다 — resStatVal[category=...]
+    // 규칙(base.qss)이 색을 결정한다. "재원" 카드는 이 전환으로 accent 텍스트
+    // 색(FOUND-06 위반, 3:1 큰 글씨 기준조차 미달)에서 %(text)로 바뀐다 —
+    // 의도된 시각 변화다.
+    auto makeStat = [&](const QString& caption, const QString& category, QLabel*& ref) {
         auto* card = new QFrame();
         card->setObjectName("resStat");
         auto* v = new QVBoxLayout(card);
@@ -1994,8 +2005,7 @@ QWidget* MainWindow::buildResidentSummary()
         v->setSpacing(3);
         ref = new QLabel(QStringLiteral("0"));
         ref->setObjectName("resStatVal");
-        // 색만 인라인으로 — 폰트/여백은 QSS(#resStatVal)가 담당.
-        ref->setStyleSheet(QString("color:%1;").arg(color));
+        ref->setProperty("category", category);
         auto* c = new QLabel(caption);
         c->setObjectName("resStatCap");
         v->addWidget(ref);
@@ -2003,11 +2013,11 @@ QWidget* MainWindow::buildResidentSummary()
         row->addWidget(card, 1);
     };
 
-    makeStat(QStringLiteral("재원"),     kAccent,   resSumActive);
-    makeStat(QStringLiteral("위험 상"),  kCritical, resSumHigh);
-    makeStat(QStringLiteral("위험 중"),  kWarn,     resSumMid);
-    makeStat(QStringLiteral("위험 하"),  kNormal,   resSumLow);
-    makeStat(QStringLiteral("채널 배정"), kTextMain, resSumCam);
+    makeStat(QStringLiteral("재원"),     QStringLiteral("active"),      resSumActive);
+    makeStat(QStringLiteral("위험 상"),  QStringLiteral("danger-high"), resSumHigh);
+    makeStat(QStringLiteral("위험 중"),  QStringLiteral("danger-mid"),  resSumMid);
+    makeStat(QStringLiteral("위험 하"),  QStringLiteral("danger-low"),  resSumLow);
+    makeStat(QStringLiteral("채널 배정"), QStringLiteral("channel"),    resSumCam);
     return host;
 }
 
@@ -2180,15 +2190,20 @@ QWidget* MainWindow::buildResidentDetail()
 }
 
 // 위험도/상태 텍스트를 색상 칩으로 만드는 헬퍼(파일 로컬).
+// severity가 비어 있으면(예: "퇴원") 등급이 아니므로 도형을 붙이지 않고
+// #riskChip 기본 규칙(중립색)에 맡긴다 — 상태 칩은 심각도가 아니다.
+// 위젯이 아직 화면에 붙기 전에 만들어지므로(목록 재렌더마다 새로 생성) repolish
+// 없이 속성만 설정해도 첫 표시 시 QSS가 적용된다 — #resRow의 inactive/selected
+// 선례와 같다.
 namespace {
-QLabel* makeChip(const QString& text, const char* color) {
-    auto* chip = new QLabel(text);
+QLabel* makeChip(const QString& text, const QString& severity) {
+    const QString label = severity.isEmpty()
+        ? text
+        : severityGlyph(severity) + QStringLiteral(" ") + text;
+    auto* chip = new QLabel(label);
     chip->setObjectName("riskChip");
     chip->setAttribute(Qt::WA_TransparentForMouseEvents);
-    chip->setStyleSheet(QString(
-        "color:%1; border:1px solid %1; border-radius:9px;"
-        " padding:1px 9px; font-size:11px; font-weight:800; background:transparent;")
-        .arg(color));
+    chip->setProperty("severity", severity);
     return chip;
 }
 }  // namespace
@@ -2235,10 +2250,11 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         const QString risk    = q.value(6).toString();
         const QString status  = q.value(7).toString();
         const bool    active  = (status == QStringLiteral("재원"));
-        const char* riskColor = risk == QStringLiteral("상") ? kCritical
-                              : risk == QStringLiteral("중") ? kWarn : kNormal;
+        const QString riskSeverity = risk == QStringLiteral("상") ? QStringLiteral("critical")
+                                   : risk == QStringLiteral("중") ? QStringLiteral("medium")
+                                                                  : QStringLiteral("normal");
 
-        // 행 = 클릭 가능한 버튼. 좌측에 위험도 색 띠(riskColor)로 위험도를 시각화.
+        // 행 = 클릭 가능한 버튼. 좌측에 위험도 색 띠(riskSeverity)로 위험도를 시각화.
         auto* rowBtn = new QPushButton();
         rowBtn->setObjectName("resRow");
         rowBtn->setProperty("inactive", !active);
@@ -2251,12 +2267,13 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         rl->setContentsMargins(8, 8, 12, 8);
         rl->setSpacing(10);
 
-        // 위험도 색 띠
+        // 위험도 색 띠 — 글자가 없어 도형을 못 붙인다. 이 띠의 색 외 채널은
+        // 같은 행의 위험도 칩(아래) 도형이다 — 이 짝짓기를 깨지 말 것(D-09).
         auto* riskBar = new QLabel();
         riskBar->setObjectName("riskBar");
         riskBar->setAttribute(Qt::WA_TransparentForMouseEvents);
         riskBar->setFixedWidth(4);
-        riskBar->setStyleSheet(QString("background:%1; border-radius:2px;").arg(riskColor));
+        riskBar->setProperty("severity", riskSeverity);
         rl->addWidget(riskBar);
 
         // 아바타
@@ -2285,13 +2302,13 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         nameCol->addWidget(metaLbl);
         rl->addLayout(nameCol, 1);
 
-        // 우측: 위험도 칩(퇴원 행은 상태 칩)
+        // 우측: 위험도 칩(퇴원 행은 상태 칩 — 심각도가 아니므로 severity를 비운다)
         if (active)
             rl->addWidget(makeChip(QStringLiteral("위험 %1")
                                        .arg(risk.isEmpty() ? QStringLiteral("-") : risk),
-                                   riskColor));
+                                   riskSeverity));
         else
-            rl->addWidget(makeChip(QStringLiteral("퇴원"), kTextSub));
+            rl->addWidget(makeChip(QStringLiteral("퇴원"), QString()));
 
         box->addWidget(rowBtn);
         ++n;
@@ -2443,19 +2460,28 @@ void MainWindow::refreshResidentDialogHeader()
     dlgSubMeta->setText(cam.isEmpty() ? QStringLiteral("채널 미지정")
                                       : QStringLiteral("채널 %1").arg(cam));
 
-    auto styleBadge = [](QLabel* b, const QString& text, const char* color) {
-        b->setText(text);
-        b->setStyleSheet(QString(
-            "color:%1; border:1px solid %1; border-radius:11px;"
-            " padding:3px 12px; font-size:12px; font-weight:800; background:transparent;")
-            .arg(color));
-    };
+    // 이 함수는 콤보박스 값이 바뀔 때마다 다시 불리므로(생성 시 1회가 아니다)
+    // 매번 repolish가 필요하다.
     const QString risk = editRiskLevel->currentText();
-    const char* riskColor = risk == QStringLiteral("상") ? kCritical
-                          : risk == QStringLiteral("중") ? kWarn : kNormal;
-    styleBadge(dlgRiskBadge, QStringLiteral("위험 %1").arg(risk), riskColor);
-    styleBadge(dlgStatusBadge, active ? QStringLiteral("재원") : QStringLiteral("퇴원"),
-               active ? kNormal : kTextSub);
+    const QString riskSeverity = risk == QStringLiteral("상") ? QStringLiteral("critical")
+                                : risk == QStringLiteral("중") ? QStringLiteral("medium")
+                                                                : QStringLiteral("normal");
+    dlgRiskBadge->setText(severityGlyph(riskSeverity) + QStringLiteral(" ")
+                           + QStringLiteral("위험 %1").arg(risk));
+    dlgRiskBadge->setProperty("severity", riskSeverity);
+    dlgRiskBadge->style()->unpolish(dlgRiskBadge);
+    dlgRiskBadge->style()->polish(dlgRiskBadge);
+    dlgRiskBadge->update();
+
+    // 상태 배지(재원/퇴원)는 심각도가 아니다 — 재원 여부는 등급이 아니라
+    // 분류다. severity를 쓰지 않고 별도 속성 residency로만 다루며 도형도
+    // 붙이지 않는다.
+    dlgStatusBadge->setText(active ? QStringLiteral("재원") : QStringLiteral("퇴원"));
+    dlgStatusBadge->setProperty("residency", active ? "active" : "discharged");
+    dlgStatusBadge->style()->unpolish(dlgStatusBadge);
+    dlgStatusBadge->style()->polish(dlgStatusBadge);
+    dlgStatusBadge->update();
+
     dlgRiskBadge->setVisible(!isNew);
     dlgStatusBadge->setVisible(!isNew);
 
@@ -2962,27 +2988,29 @@ void MainWindow::onAlarmNodeStatus(const QString& node, bool online)
         refreshAlertStatusBadge();
 }
 
-// 배지 3상태 — 카메라 인스펙터의 연결 배지(camInspPill)와 같은 스타일 규칙.
-//   미확인(회색, 아직 상태 토픽 못 받음) / 온라인(정상색) / 오프라인(위험색)
+// 배지 3상태 — severity 속성 + #alertNodeBadge QSS 규칙.
+//   미확인(도형 ○, severity 없음) / 온라인(✓, normal) / 오프라인(✖, critical)
 void MainWindow::refreshAlertStatusBadge()
 {
     if (!alertStatusBadge_ || !alertNode_) return;
     const QString node = alertNode_->currentText();
-    QString text, color;
+    QString text, severity;
     if (!alertNodeOnline_.contains(node)) {
         text = QStringLiteral("상태 미확인");
-        color = QString::fromLatin1(kTextSub);
+        severity = QString();  // 심각도 어느 값에도 걸리지 않는 중립 상태
     } else if (alertNodeOnline_.value(node)) {
         text = QStringLiteral("온라인");
-        color = QString::fromLatin1(kNormal);
+        severity = QStringLiteral("normal");
     } else {
         text = QStringLiteral("오프라인");
-        color = QString::fromLatin1(kCritical);
+        severity = QStringLiteral("critical");
     }
-    alertStatusBadge_->setText(text);
-    alertStatusBadge_->setStyleSheet(
-        QString("color:%1; border:1px solid %1; border-radius:9px;"
-                " padding:1px 9px; font-size:11px; font-weight:800;").arg(color));
+    alertStatusBadge_->setText(severityGlyph(severity, severity.isEmpty())
+                                + QStringLiteral(" ") + text);
+    alertStatusBadge_->setProperty("severity", severity);
+    alertStatusBadge_->style()->unpolish(alertStatusBadge_);
+    alertStatusBadge_->style()->polish(alertStatusBadge_);
+    alertStatusBadge_->update();
 }
 
 // ═══════════════════════════════════════════════════════════
