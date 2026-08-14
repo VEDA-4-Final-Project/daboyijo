@@ -2131,6 +2131,7 @@ QWidget* MainWindow::buildResidentDetail()
     hl->setContentsMargins(16, 12, 16, 12);
     hl->setSpacing(14);
     dlgAvatar = new QLabel();
+    dlgAvatar->setObjectName("dlgAvatar");
     dlgAvatar->setFixedSize(52, 52);
     dlgAvatar->setAlignment(Qt::AlignCenter);
     auto* nameCol = new QVBoxLayout();
@@ -2276,14 +2277,15 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         riskBar->setProperty("severity", riskSeverity);
         rl->addWidget(riskBar);
 
-        // 아바타
+        // 아바타 — active 속성으로 색을 받는다(재원 여부, 심각도 아님).
+        // 이 위젯은 목록 재렌더마다 새로 만들어지고 아직 화면에 붙기 전이므로
+        // 같은 행의 resRow와 동일하게 생성 직후 속성 설정만으로 충분하다.
         auto* avatar = new QLabel(name.left(1));
+        avatar->setObjectName("resAvatar");
         avatar->setAttribute(Qt::WA_TransparentForMouseEvents);
         avatar->setAlignment(Qt::AlignCenter);
         avatar->setFixedSize(38, 38);
-        avatar->setStyleSheet(QString(
-            "background:%1; color:#fff; border-radius:19px;"
-            " font-size:16px; font-weight:800;").arg(active ? kAccent : kTextSub));
+        avatar->setProperty("active", active);
         rl->addWidget(avatar);
 
         // 이름 + 채널
@@ -2449,9 +2451,11 @@ void MainWindow::refreshResidentDialogHeader()
     const bool active  = (editStatus->currentText() == QStringLiteral("재원"));
 
     dlgAvatar->setText(name.isEmpty() ? QStringLiteral("＋") : name.left(1));
-    dlgAvatar->setStyleSheet(QString(
-        "background:%1; color:#fff; border-radius:26px;"
-        " font-size:22px; font-weight:800;").arg(active && !isNew ? kAccent : kTextSub));
+    // 목록 행 아바타와 달리 이 위젯은 편집 중 반복 갱신되므로 repolish가 필요하다.
+    dlgAvatar->setProperty("active", active && !isNew);
+    dlgAvatar->style()->unpolish(dlgAvatar);
+    dlgAvatar->style()->polish(dlgAvatar);
+    dlgAvatar->update();
 
     dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
                               : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));

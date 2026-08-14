@@ -456,6 +456,20 @@ QLabel {
 #resName { color: %(text); font-size: 15px; font-weight: 800; }
 #resMeta { color: %(sub); font-size: 12px; }
 
+/* 아바타(목록 행/상세 편집 패널) — active 속성(재원 여부)으로 배경·전경이 갈린다.
+   심각도가 아니므로 severity 어휘를 쓰지 않는다.
+   비활성 배경에 보조 텍스트색(%(sub))을 쓰지 않는다 — 라이트는 %(sub)가 중간 톤,
+   다크는 밝은 톤이라 두 팔레트가 정반대 전경색을 요구하게 되어 한쪽이 반드시
+   AA를 어긴다. 테두리색 배경 + 본문색 전경은 두 팔레트 모두 같은 방향(라이트:
+   밝은 배경+어두운 글씨 / 다크: 어두운 배경+밝은 글씨)으로 움직여 10:1대를 유지한다.
+   이 두 규칙을 한 줄로 묶지 말 것 — active/inactive는 서로 다른 전경색이 필요하다. */
+#resAvatar { border-radius: 19px; font-size: 16px; font-weight: 800; }
+#resAvatar[active="true"] { background: %(accent); color: %(onAccent); }
+#resAvatar[active="false"] { background: %(border); color: %(text); }
+#dlgAvatar { border-radius: 26px; font-size: 22px; font-weight: 800; }
+#dlgAvatar[active="true"] { background: %(accent); color: %(onAccent); }
+#dlgAvatar[active="false"] { background: %(border); color: %(text); }
+
 /* ── 입소자 관리: 우측 디테일(인라인 편집) ── */
 #detailPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
 #detailPlaceholder { color: %(sub); font-size: 14px; }
