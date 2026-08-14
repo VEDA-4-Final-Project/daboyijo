@@ -93,7 +93,7 @@ D-08: 다크 전체 감사는 이 단계의 범위가 아니다. onAccent만 이
 
 ## (d) 토큰 배선 감사 — QSS %(token) ↔ 치환 목록
 
-- base.qss가 쓰는 토큰 13개, substitute()의 치환 목록 15개
+- base.qss가 쓰는 토큰 15개, substitute()의 치환 목록 15개
 - PASS: base.qss의 모든 %(token)이 substitute()에서 치환된다
-- dialogs.qss가 쓰는 토큰 9개, dialogStyleSheet()의 치환 목록 10개
+- dialogs.qss가 쓰는 토큰 10개, dialogStyleSheet()의 치환 목록 10개
 - PASS: dialogs.qss의 모든 %(token)이 dialogStyleSheet()에서 치환된다
