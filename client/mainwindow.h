@@ -55,6 +55,12 @@ struct dbj_roi_point_t {
     uint16_t x;             // 정규화 x × 10000 (0~10000)
     uint16_t y;             // 정규화 y × 10000 (0~10000)
 };
+// 침대 ↔ 입소자 매핑 — ROI_BIND 헤더 뒤 1개.
+struct dbj_roi_bind_t {
+    uint8_t  roi_id;        // 채널 안 침대 번호 0~7
+    uint8_t  reserved;      // 0
+    uint32_t resident_id;   // residents.resident_id (0 = 매핑 해제)
+};                          // 6B
 // 카메라 이미지 파라미터 (밝기/대비/채도) — IMAGE_SET 헤더 뒤 1개. 0~100.
 struct dbj_image_params_t {
     uint8_t brightness;     // 0~100 (서버가 카메라 실제 범위로 매핑)
@@ -76,7 +82,7 @@ struct dbj_evt_header_t {
     uint8_t  version;       // 1B (0x01)
     uint8_t  type;          // 1B (0x01 = 낙상 확정)
     uint8_t  channel;       // 1B (0~3, 발생 채널)
-    uint8_t  reserved;      // 1B (0)
+    uint8_t  roi_id;        // 1B (발생 침대 0~7, 특정 못 하면 kRoiIdNone)
     uint16_t x;             // 2B (발생 위치 정규화 x ×10000)
     uint16_t y;             // 2B (발생 위치 정규화 y ×10000)
     uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
@@ -91,9 +97,14 @@ static constexpr uint8_t kCtrlCameraSet = 0x05;    // 채널 카메라 연결 (�
 static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr uint8_t kCtrlImageSet = 0x07;     // 카메라 이미지 파라미터 (헤더 뒤 dbj_image_params_t)
 static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤더 뒤 dbj_focus_t)
+static constexpr uint8_t kCtrlRoiBind = 0x09;      // 침대 ↔ 입소자 매핑 (헤더 뒤 dbj_roi_bind_t)
 static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
 static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;
+// roi_id 자리의 특수값 — 삭제 시 "그 채널 전부", 이벤트에선 "침대 미상".
+// (서버 DBJ_ROI_ID_ALL / DBJ_ROI_ID_NONE 과 같은 값으로 유지할 것)
+static constexpr int kRoiIdAll = 0xFF;
+static constexpr int kRoiIdNone = 0xFF;
 static constexpr int kCameraUrlMax = 512;          // DBJ_CAMERA_URL_MAX
 
 // 이벤트 메시지 상수 (서버 스펙)
@@ -102,7 +113,8 @@ static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 static constexpr uint8_t kEvtVitalAbnormal = 0x03;  // 웨어러블 생체데이터 이상 (x,y 미사용)
 
-class VideoView;     // 영상+ROI 오버레이 위젯 (videoview.h)
+#include "videoview.h"   // RoiZone / kMaxRoiZones — 침대 목록을 값으로 들고 있어 필요
+
 class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
@@ -177,10 +189,12 @@ private slots:
     void updateClock();          // 상단 실시간 시계
     void updateVitals();         // 웨어러블 바이탈 갱신(현재는 시뮬레이션)
     void updateCareTime();       // 케어 타임 대시보드 갱신(care_logs 재조회)
-    void onRoiButtonClicked();   // "ROI 지정" — 채널 선택 후 그리기 시작
-    void onRoiClearClicked();    // "ROI 제거" — 로컬 + 서버 판정 영역 삭제
+    void onRoiButtonClicked();   // "침대 추가" — 선택 채널에 새 침대 그리기 시작
+    void onRoiClearClicked();    // "침대 제거" — 선택 침대(없으면 채널 전체) 삭제
     void onRoiVisibilityToggled(bool on);  // "ROI 표시" 토글
-    void onRoiCompleted(int channel, const QPolygonF& normPts);  // 그리기 완료 → 전송
+    // 그리기 완료 → 서버 전송 + 로컬 목록 반영
+    void onRoiCompleted(int channel, int roiId, const QPolygonF& normPts);
+    void onRoiZoneSelected(int channel, int roiId);  // 영상에서 침대 클릭 → 목록 강조
     void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
     void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
     void onAlarmClearClicked();  // 경보 해제
@@ -463,15 +477,41 @@ private:
                     const QMap<QString, QString>& after,
                     const QString& changeType);        // 달라진 필드만 INSERT
 
-    // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
-    void handleFallEvent(int channel, quint64 timestampMs, float nx, float ny);
+    // 낙상 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동.
+    // roiId는 서버가 밝힌 발생 침대(=누구). 특정 못 했으면 -1.
+    void handleFallEvent(int channel, int roiId, quint64 timestampMs,
+                         float nx, float ny);
 
     // 침상 이탈 이벤트 처리 — 빨간색 테두리 + 비상 로그 추가 + 블랙박스 연동
-    void handleBedEgressEvent(int channel, quint64 timestampMs);
+    void handleBedEgressEvent(int channel, int roiId, quint64 timestampMs,
+                              float nx, float ny);
+
+    // 이벤트 표시용 문구 — 침대를 특정 못 했으면 "신원 미상"으로 정직하게 쓴다
+    QString eventWhoLabel(int channel, int roiId) const;
+    QString eventPlaceLabel(int channel, int roiId) const;
     void handleVitalAbnormalEvent(int channel, quint64 timestampMs);
 
-    // ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지.
-    void sendRoi(int channel, const QPolygonF& normPts, bool clear = false);
+    // ── 침대 ROI (채널당 여러 개) ──────────────────────────────
+    // 한 채널에 침대가 여럿이고 침대마다 입소자가 다르다. 화면 표시의 진짜 소스는
+    // 여기이고, VideoView들에는 refreshRoiZones()가 이름표를 붙여 밀어 넣는다.
+    QVector<RoiZone> roiZones_[4];       // 채널 → 침대 목록(라벨은 비워 둔 원본)
+    QHash<int, int>  roiResident_[4];    // 채널 → (침대 번호 → resident_id)
+
+    // 침대 ROI 다각형(정규화 0~1)을 서버로 전송. clear=true면 삭제 메시지이고,
+    // 그때 roiId에 kRoiIdAll을 주면 그 채널의 침대를 전부 지운다.
+    void sendRoi(int channel, int roiId, const QPolygonF& normPts, bool clear = false);
+    // 침대 ↔ 입소자 매핑을 서버로 전송 (residentId=0이면 해제).
+    void sendRoiBind(int channel, int roiId, int residentId);
+    // 침대 목록을 오버레이·4분할·인스펙터·배지에 다시 반영
+    void refreshRoiZones(int channel);
+    // roi_zones 표에서 침대·입소자 매핑을 복원 (서버도 같은 표를 읽는다)
+    void loadRoiZonesFromDb();
+    // 그 침대에 매핑된 입소자 이름 (없으면 "미지정")
+    QString zoneResidentName(int channel, int roiId) const;
+    // 인스펙터의 침대 목록(번호 · 입소자 콤보 · 삭제)을 다시 만든다
+    void rebuildBedList();
+    QVBoxLayout* bedListLayout_ = nullptr;   // 침대 목록이 붙는 컨테이너
+    QLabel*      bedListEmpty_ = nullptr;    // "아직 침대가 없습니다" 안내
 
     // 카메라 연결/해제를 서버로 전송 (CAMERA_SET/CLEAR).
     // sendCamera는 해당 채널 담당 Pi로 RTSP URL을 보낸다. 성공 시 true.

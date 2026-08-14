@@ -27,12 +27,14 @@
 #include <curl/curl.h>
 
 #include "ai_worker.hpp"
+#include "bed_zones.hpp"
 #include "blackbox_module.hpp"
 #include "caregiver_module.hpp"
 #include "config.hpp"
 #include "database.hpp"
 #include "detection_store.hpp"
 #include "fall_module.hpp"
+#include "identity_tracker.hpp"
 #include "frame_queue.hpp"
 #include "privacy_masker.hpp"
 #include "protocol/video_stream.h"
@@ -98,8 +100,17 @@ int main(int argc, char* argv[]) {
     Database db;
 
     // ── 기능 모듈 생성 ───────────────────────────────────────────
+    // 침대 ROI는 낙상·침상이탈·객체 귀속이 같은 값을 봐야 해서 여기 한 곳에만 둔다.
+    // 한 채널(=한 병실 시야)에 침대가 여럿이고, 침대마다 입소자가 다르다.
+    BedZoneStore bed_zones;
+    // 추적 객체(object_id) ↔ 침대 ↔ 입소자 귀속 — 알림에 "누가"를 붙이는 근거.
+    // 원리와 한계는 core/identity_tracker.hpp 머리 주석 참조.
+    IdentityTracker identity;
+
     FallModule fall;                // [낙상감지]
     BedEgressModule bed_egress;     // [침상탈출]
+    fall.setBedZones(&bed_zones);
+    bed_egress.setBedZones(&bed_zones);
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
@@ -133,10 +144,31 @@ int main(int argc, char* argv[]) {
     });
 
     // ── 모듈 간 배선 ─────────────────────────────────────────────
-    // Qt가 그린 침대 ROI → 낙상 및 침상 탈출 판정기
+    // Qt가 그린 침대 ROI → 공용 보관소(낙상·침상탈출·귀속이 같이 본다) + DB 영속화.
+    // ★ DB에도 남기는 이유: 침대에 입소자까지 매핑하는 지금은 서버를 재시작할 때마다
+    //   관리자가 4채널 침대를 다시 그리고 사람을 다시 지정할 수 없다.
     stream_server.setRoiCallback([&](const StreamServer::RoiUpdate& up) {
-        fall.updateBedRoi(up.channel, up.clear, up.points);
-        bed_egress.updateBedRoi(up.channel, up.clear, up.points);
+        const bool all = (up.roi_id == BedZoneStore::kRoiIdAll);
+        bed_zones.update(up.channel, up.roi_id, up.clear, up.points);
+        if (up.clear) {
+            bed_egress.resetZoneState(up.channel, up.roi_id);
+            db.deleteRoiZone(up.channel, all ? -1 : up.roi_id);
+            std::printf("ch%d 침대 %s 삭제\n", up.channel + 1,
+                        all ? "전체" : ("#" + std::to_string(up.roi_id + 1)).c_str());
+        } else {
+            db.saveRoiZone(up.channel, up.roi_id, up.points);
+            std::printf("ch%d 침대%d ROI 갱신 (%zu점)\n", up.channel + 1,
+                        up.roi_id + 1, up.points.size());
+        }
+    });
+    // Qt의 "이 침대는 이 사람 자리" 지정 → 귀속 앵커 갱신 + DB 영속화.
+    stream_server.setRoiBindCallback([&](int ch, int roi_id, int resident_id) {
+        bed_zones.bind(ch, roi_id, resident_id);
+        db.bindRoiZoneResident(ch, roi_id, resident_id);
+        // 사람이 바뀌면 위험도도 그 사람 것으로 따라가야 한다.
+        int level = db.getRiskLevelByResident(resident_id);
+        if (level >= 1 && level <= 3) bed_egress.updatePatientStatus(ch, roi_id, level);
+        std::printf("ch%d 침대%d ← 입소자 %d 매핑\n", ch + 1, roi_id + 1, resident_id);
     });
     // Qt의 낙상 확인 신호 → 블러 원상복구
     stream_server.setConfirmCallback([&](int ch) {
@@ -146,8 +178,8 @@ int main(int argc, char* argv[]) {
     //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신(인메모리).
     //  DB 영속화는 Qt가 residents.risk_level에 직접 기록하므로 서버는 하지 않는다
     //  (부팅 시 bed_egress.initializeFromDb → getRiskLevelByCamera로 복원).
-    stream_server.setRiskLevelCallback([&](int ch, int patient_status) {
-        bed_egress.updatePatientStatus(ch, patient_status);
+    stream_server.setRiskLevelCallback([&](int ch, int roi_id, int patient_status) {
+        bed_egress.updatePatientStatus(ch, roi_id, patient_status);
     });
     // Qt의 "카메라 연결" 신호 → 해당 채널 RTSP 워커를 이 URL로 (재)연결.
     // (client_by_channel은 아래 채널 슬롯 구성 루프에서 채워지며, 이 콜백은 Qt가
@@ -222,24 +254,52 @@ int main(int argc, char* argv[]) {
         });
     // CCTV 기반 낙상 판정  → 블러 부분 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
-        std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (CCTV 판정) obj=%d cx=%.2f cy=%.2f\n",
-                     ch + 1, at.object_id, at.cx, at.cy);
+        // 낙상한 사람은 정의상 침대 밖이라 "지금 어느 침대 안인가"로는 누구인지
+        // 알 수 없다. 그래서 이 트랙이 원래 어느 침대 사람이었는지를 물어본다.
+        const auto who = identity.identify(ch, at.object_id);
+        const int roi_id = who.named() ? who.roi_id : -1;
+        const std::string name =
+            who.named() ? db.getResidentName(who.resident_id) : std::string();
+
+        std::fprintf(stderr,
+                     "🚨 [ch%d] 낙상 의심! (CCTV 판정) obj=%d cx=%.2f cy=%.2f — %s\n",
+                     ch + 1, at.object_id, at.cx, at.cy,
+                     name.empty()
+                         ? "신원 미상"
+                         : (name + " (침대" + std::to_string(roi_id + 1) + ", 신뢰도 " +
+                            std::to_string(int(who.confidence * 100)) + "%)").c_str());
+
         privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
-        stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, evt_ms);
+        stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, roi_id, evt_ms);
         telegram.notifyFall(ch);      // 즉시 기본 알림
         care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
-        int room = db.getRoomByCh(ch);
-        mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송 
+        // 호실은 사람이 특정되면 그 사람 것, 아니면 예전처럼 채널 대표값.
+        int room = who.named() ? db.getRoomByResident(who.resident_id) : -1;
+        if (room < 0) room = db.getRoomByCh(ch);
+        mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송
     });
     // CCTV 기반 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
-    bed_egress.setAlarmCallback([&](int ch, int obj_id) {
-        std::fprintf(stderr, "⚠️ [ch%d] 환자 침상 탈출 감지! (obj: %d)\n", ch + 1, obj_id);
-        int64_t evt_ms = blackbox.trigger(ch, "EGRESS");
-        stream_server.broadcastEvent(ch, DBJ_EVT_EGRESS, 0.0f, 0.0f, evt_ms);
-        telegram.notifyEgress(ch);
-        int room = db.getRoomByCh(ch);   // 낙상 콜백과 동일하게 채널로 호실을 찾는다
+    bed_egress.setAlarmCallback([&](const EgressEvent& e) {
+        // 이탈은 "어느 침대에서 나갔는지"가 판정 자체에 들어 있어서, 그 침대에
+        // 매핑된 입소자가 곧 누구인지다 — 낙상과 달리 추정이 필요 없다.
+        const std::string name =
+            e.resident_id > 0 ? db.getResidentName(e.resident_id) : std::string();
+        std::fprintf(stderr, "⚠️ [ch%d] 침대%d %s 침상 탈출 감지! (obj: %d)\n",
+                     e.channel + 1, e.roi_id + 1,
+                     name.empty() ? "미지정 입소자" : name.c_str(), e.object_id);
+
+        int64_t evt_ms = blackbox.trigger(e.channel, "EGRESS");
+        stream_server.broadcastEvent(e.channel, DBJ_EVT_EGRESS, e.x, e.y, e.roi_id,
+                                     evt_ms);
+        telegram.notifyEgress(e.channel);
+        int room = e.resident_id > 0 ? db.getRoomByResident(e.resident_id) : -1;
+        if (room < 0) room = db.getRoomByCh(e.channel);
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
+    });
+    // 요양보호사로 판정된 객체 → 귀속기에 표시(침대에 들어가도 환자로 안 침).
+    caregiver.setCaregiverIdsCallback([&](int ch, const std::vector<int>& ids) {
+        identity.markCaregivers(ch, ids);
     });
     // 웨어러블 기반 이벤트 발생
     mqtt.setWearableCallback([&](AlarmEventType event, std::string device_id){
@@ -251,7 +311,9 @@ int main(int argc, char* argv[]) {
                 std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (웨어러블 판정)\n", ch + 1);
                 // privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy); 블러 해제(원본) 추가 예정
                 int64_t evt_ms = blackbox.trigger(ch, "FALL");
-                stream_server.broadcastEvent(ch, DBJ_EVT_FALL, 0.0f, 0.0f, evt_ms);
+                // 웨어러블은 화면 좌표도 침대 번호도 모른다 — 미상으로 내려보낸다
+                stream_server.broadcastEvent(ch, DBJ_EVT_FALL, 0.0f, 0.0f,
+                                             DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyFall(ch);
                 care_qa.reportFall(ch);
                 mqtt.sendAlarmCommand(AlarmEventType::FALL,room);
@@ -260,7 +322,8 @@ int main(int argc, char* argv[]) {
             else if(event == AlarmEventType::VITAL_ABNORMAL){
                 std::fprintf(stderr, "🚨 [ch%d] 생체데이터 이상!\n", ch + 1);
                 int64_t evt_ms = blackbox.trigger(ch, "VITAL_ABNORMAL");
-                stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f, evt_ms);
+                stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f,
+                                             DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyVitalAbnormal(ch);
                 mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room);
             }
@@ -275,6 +338,18 @@ int main(int argc, char* argv[]) {
     blackbox.startHttp();
     telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
     db.connect(config.db_host, "daboijo", "1234", "daboijo");
+
+    // 침대 ROI·입소자 매핑 복원 — Qt가 다시 접속하지 않아도 판정이 바로 돈다.
+    // ★ 위험도 로드보다 먼저다: initializeFromDb가 침대에 매핑된 입소자에게서
+    //   위험도를 읽으므로 침대가 먼저 서 있어야 한다.
+    for (const auto& z : db.loadRoiZones()) {
+        if (z.camera_id < 0 || z.camera_id >= 4) continue;
+        if (z.resident_id > 0) bed_zones.bind(z.camera_id, z.roi_id, z.resident_id);
+        if (z.points.size() >= 3)
+            bed_zones.update(z.camera_id, z.roi_id, false, z.points);
+        std::fprintf(stderr, "[main] 침대 복원: ch%d 침대%d (%zu점, 입소자 %d)\n",
+                     z.camera_id + 1, z.roi_id + 1, z.points.size(), z.resident_id);
+    }
     bed_egress.initializeFromDb(db);
 
     for (const auto& cam : config.cameras) {
@@ -288,6 +363,9 @@ int main(int argc, char* argv[]) {
             std::make_unique<RtspAvClient>(cam.channel, cam.url, cam_queue);
         client->setDetectionCallback([&](int ch, std::vector<Detection> dets,
                                          std::chrono::steady_clock::time_point cap) {
+            // 귀속을 먼저 — 아래 판정들이 낸 이벤트에 "누구"를 붙이려면 이 프레임의
+            // 귀속 결과가 이미 반영돼 있어야 한다.
+            identity.update(ch, dets, bed_zones.zones(ch));
             fall.onMetadata(ch, dets);             // 낙상: ROI 게이팅 + bbox 캐시
             bed_egress.processDetections(ch, dets);// 침상
             detections.push(ch, std::move(dets), cap);  // 공용: 시간 매칭용 이력 저장

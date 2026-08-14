@@ -58,6 +58,23 @@ target_link_libraries(daboyijo
 if(WIN32)
     target_link_libraries(daboyijo PRIVATE dwmapi)  # 네이티브 다크 타이틀바
 endif()
+
+# 브로커 검증용 CA 인증서를 실행 파일 옆 certs/ 로 복사한다.
+# 앱은 applicationDirPath()/certs/ca.crt 를 보는데(mainwindow.cpp brokerCaPath),
+# 윈도우는 exe 옆에 두면 그만이지만 macOS 는 그 경로가 번들 안
+# (daboyijo.app/Contents/MacOS)이라 손으로 넣기 쉽게 빠뜨린다. 그러면 앱이 TLS 를
+# 포기하고 평문으로 8883 에 붙었다가 브로커에 즉시 끊긴다.
+# ca.crt 는 .gitignore 대상이라 새로 받은 저장소에는 없다 → 있을 때만 복사한다.
+set(VEDA_CA_CERT ${CMAKE_CURRENT_SOURCE_DIR}/../MQTT/certs/ca.crt)
+if(EXISTS ${VEDA_CA_CERT})
+    add_custom_command(TARGET daboyijo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:daboyijo>/certs
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${VEDA_CA_CERT} $<TARGET_FILE_DIR:daboyijo>/certs/ca.crt
+        COMMENT "MQTT CA 인증서를 실행 파일 옆 certs/ 로 복사")
+else()
+    message(WARNING "MQTT CA 인증서가 없습니다(${VEDA_CA_CERT}) — MQTTS 대신 평문으로 접속하게 됩니다.")
+endif()
 install(TARGETS daboyijo
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

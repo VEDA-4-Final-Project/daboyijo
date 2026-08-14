@@ -200,6 +200,8 @@ void StreamServer::receiverLoop(Client& client) {
                 need += sizeof(dbj_image_params_t);  // 헤더 뒤에 이미지 파라미터
             } else if (h.type == DBJ_CTRL_FOCUS_SET) {
                 need += sizeof(dbj_focus_t);         // 헤더 뒤에 포커스 파라미터
+            } else if (h.type == DBJ_CTRL_ROI_BIND) {
+                need += sizeof(dbj_roi_bind_t);      // 헤더 뒤에 침대↔입소자 매핑
             }
             if (buf.size() - off < need) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
@@ -212,8 +214,18 @@ void StreamServer::receiverLoop(Client& client) {
                         if (on_roi_) {
                             RoiUpdate up;
                             up.channel = h.channel;
+                            // reserved 하위 8비트 = 침대 번호 (예전 클라의 0 은 0번 침대)
+                            up.roi_id = DBJ_CTRL_ROI_ID(h.reserved);
                             up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
-                            
+
+                            // 삭제가 아닌데 침대 번호가 범위를 벗어나면 버린다 —
+                            // 잘못된 번호로 만든 침대는 Qt 화면에 안 보여서 지울 수도 없다.
+                            if (!up.clear && up.roi_id >= DBJ_ROI_MAX_ZONES) {
+                                std::cerr << "[stream] ROI 침대 번호 범위 초과: "
+                                          << up.roi_id << std::endl;
+                                break;
+                            }
+
                             // ROI 지정일 때만 뒤따라오는 꼭짓점 점 데이터 파싱
                             if (h.type == DBJ_CTRL_ROI_SET) {
                                 const uint8_t* pts =
@@ -242,7 +254,26 @@ void StreamServer::receiverLoop(Client& client) {
                     case DBJ_CTRL_RISK_UPDATE: {
                         if (on_risk_level_) {
                             int risk_level = h.point_count;
-                            on_risk_level_(h.channel, risk_level);
+                            // 위험도는 사람에게 붙는 값 → 침대 단위.
+                            // reserved 하위 8비트가 침대 번호(0xFF = 채널 일괄).
+                            on_risk_level_(h.channel, DBJ_CTRL_ROI_ID(h.reserved),
+                                           risk_level);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_ROI_BIND: {
+                        if (on_roi_bind_) {
+                            dbj_roi_bind_t b;
+                            std::memcpy(&b, buf.data() + off + sizeof(dbj_ctrl_header_t),
+                                        sizeof(b));
+                            if (b.roi_id >= DBJ_ROI_MAX_ZONES) {
+                                std::cerr << "[stream] 매핑 침대 번호 범위 초과: "
+                                          << (int)b.roi_id << std::endl;
+                                break;
+                            }
+                            on_roi_bind_(h.channel, b.roi_id,
+                                         static_cast<int>(b.resident_id));
                         }
                         break;
                     }
@@ -324,12 +355,16 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
 }
 
 void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y,
-                                  int64_t timestampMsOverride) {
+                                  int roi_id, int64_t timestampMsOverride) {
     dbj_evt_header_t evt{};
     evt.magic = DBJ_EVT_MAGIC;
     evt.version = DBJ_VS_VERSION;
     evt.type = type;
     evt.channel = static_cast<uint8_t>(channel);
+    // 침대를 특정 못 한 이벤트(웨어러블 발 알람 등)는 미상으로 내려보낸다
+    evt.roi_id = (roi_id >= 0 && roi_id < DBJ_ROI_MAX_ZONES)
+                     ? static_cast<uint8_t>(roi_id)
+                     : DBJ_ROI_ID_NONE;
     evt.x = static_cast<uint16_t>(x * DBJ_ROI_COORD_SCALE);
     evt.y = static_cast<uint16_t>(y * DBJ_ROI_COORD_SCALE);
     evt.timestamp_ms = timestampMsOverride != 0
