@@ -1288,7 +1288,7 @@ QWidget* MainWindow::buildVitalsPanel()
     panel->setObjectName("panel");
     // 바이탈 패널은 폭 고정 → 창을 키우면 남는 폭이 전부 영상 월로 간다.
     panel->setMinimumWidth(300);
-    panel->setMaximumWidth(340);
+    panel->setMaximumWidth(316);
 
     auto* outer = new QVBoxLayout(panel);
     outer->setContentsMargins(16, 14, 16, 16);
