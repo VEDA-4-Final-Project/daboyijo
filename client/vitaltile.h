@@ -49,9 +49,6 @@ private:
     QLabel* spo2Value_ = nullptr;
     QLabel* hrValue_ = nullptr;
     Sparkline* spark_ = nullptr;
-    // 스파크라인을 감싼 컨테이너 — 무신호일 때 이것째로 숨긴다.
-    // spark_만 숨기면 감싼 레이아웃의 아래 여백(7px)이 남아 빈 띠가 보인다.
-    QWidget* sparkRow_ = nullptr;
 
     // setIdentity() 멱등 가드용 보관값.
     QString name_;
