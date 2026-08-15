@@ -349,6 +349,16 @@
         /* 사용자 판단으로 v1 형태 복원(2026-08-15): 계기판 톤 재설계보다
            기존 카드형이 낫다는 결정. #vitalRail은 함께 제거했다. */
         #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+        /* 타일 헤더 상태등 — 9px. 경보용 #severityDot(24px)과 별개다:
+           24px를 여기 쓰면 헤더 행이 밀려 옆 배지가 세로로 늘어난다. */
+        #vitalDot { min-width: 9px; max-width: 9px; min-height: 9px; max-height: 9px;
+                    border-radius: 4px; background: %(sub); }
+        #vitalDot[severity="critical"] { background: %(critical); }
+        #vitalDot[severity="high"]     { background: %(high); }
+        #vitalDot[severity="medium"]   { background: %(warn); }
+        #vitalDot[severity="info"]     { background: %(info); }
+        #vitalDot[severity="normal"]   { background: %(normal); }
+        #vitalDot[vital="stale"]       { background: %(border); }
         #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
                      border-top-left-radius: 14px; border-top-right-radius: 14px; }
         /* 사용자 판단으로 v1 형태 복원(2026-08-15) — 이모지 캡션 + statBox 카드형. */

@@ -23,9 +23,12 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     hl->setContentsMargins(14, 7, 12, 7);
     hl->setSpacing(8);
     dot_ = new QLabel();
-    // #vitalDot이 아니라 공용 #severityDot — base.qss의 24px 원거리 계약을
-    // 처음으로 실제 소비하는 위젯이 된다(9px 고정 크기는 승계하지 않는다).
-    dot_->setObjectName("severityDot");
+    // #severityDot(24px)이 아니라 #vitalDot(9px)로 되돌린다.
+    // 24px는 "몇 미터 밖에서 보이는" 경보 스케일이고, 이 타일은 가까이서
+    // 읽는 요소다 — 알림 스케일이 데스크 요소로 새어 나온 사례였다(IA-03).
+    // 실제 증상: 24px 점이 헤더 행 높이를 밀어올려 옆의 상태 배지가 세로로
+    // 늘어났다.
+    dot_->setObjectName("vitalDot");
     nameLbl_ = new QLabel();
     nameLbl_->setObjectName("vitalName");
     bedLbl_ = new QLabel();
@@ -37,7 +40,8 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     hl->addWidget(nameLbl_);
     hl->addWidget(bedLbl_);
     hl->addStretch();
-    hl->addWidget(badgeLbl_);
+    // 세로 가운데 정렬 — 명시하지 않으면 배지가 행 높이만큼 늘어난다.
+    hl->addWidget(badgeLbl_, 0, Qt::AlignVCenter);
     lay->addWidget(head);
 
     // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──

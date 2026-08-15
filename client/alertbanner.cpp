@@ -49,10 +49,16 @@ void AlertBanner::setActiveAlerts(const QList<AlertItem>& items)
     QString overallSeverity;
 
     if (items.isEmpty()) {
-        // 0건 고정 카피(PD-07) — 도형까지 포함한 리터럴 문자열이며 계산 결과가
-        // 아니다.
-        lineTexts << QStringLiteral("✓ 활성 경보 없음 · 모든 침대 정상 범위");
-        overallSeverity = QStringLiteral("normal");
+        // 사용자 결정(2026-08-15): 경보가 없으면 배너를 아예 숨긴다.
+        // 이전에는 "✓ 활성 경보 없음 · 모든 침대 정상 범위" 줄을 상시 노출했는데
+        // 평시 화면 상단을 차지하기만 하고 정보 가치가 없었다.
+        //
+        // ⚠ ROADMAP의 ALERT-03/성공기준 2는 "조작 없이도 활성 경보 목록이 상시
+        // 보인다"를 요구한다. 경보가 실제로 있을 때는 여전히 상시 보이므로
+        // 요구의 핵심(놓치지 않음)은 유지되지만, "0건일 때도 영역이 보인다"는
+        // 문자 그대로의 해석과는 어긋난다 — 의도된 이탈로 기록해 둔다.
+        hide();
+        return;
     } else {
         // ① 배경색을 정하는 overallSeverity는 상한 적용 전 전체 items에서
         // 고른다 — 접힌 항목의 등급이 배경색에 반영되지 않는 실패를 막는다.
@@ -115,4 +121,7 @@ void AlertBanner::setActiveAlerts(const QList<AlertItem>& items)
     style()->unpolish(this);
     style()->polish(this);
     update();
+
+    // 5. 경보가 있으므로 보인다(0건 경로에서 hide()된 뒤 다시 뜨는 길).
+    show();
 }
