@@ -26,6 +26,8 @@ qt_add_executable(daboyijo
     wintheme.h
     sparkline.cpp
     sparkline.h
+    vitaltile.cpp
+    vitaltile.h
     activitychart.cpp
     activitychart.h
     clickslider.cpp

@@ -150,14 +150,6 @@
         #dbStatusDot[severity="info"] { background: %(info); border-radius: 4px; }
         #dbStatusDot[severity="normal"] { background: %(normal); border-radius: 4px; }
 
-        /* 바이탈 카드 상태점(9×9) */
-        #vitalDot { background: %(sub); border-radius: 5px; }
-        #vitalDot[severity="critical"] { background: %(critical); border-radius: 5px; }
-        #vitalDot[severity="high"] { background: %(high); border-radius: 5px; }
-        #vitalDot[severity="medium"] { background: %(warn); border-radius: 5px; }
-        #vitalDot[severity="info"] { background: %(info); border-radius: 5px; }
-        #vitalDot[severity="normal"] { background: %(normal); border-radius: 5px; }
-
         /* 바이탈 상태 배지 — 배경은 기존 blendHex() 18% 혼합 대신 평평한
            %(card)로 단순화한다. QSS는 색을 계산하지 못하므로 다섯 개 혼합값을
            새로 정하는 대신 기존 토큰을 그대로 쓴다(차이는 미세하다). */
@@ -238,7 +230,6 @@
            와야 한다 — QSS는 특이도가 같으면 나중 선언이 이기므로, 순서가
            바뀌면 무신호인데도 이전 심각도 색이 살아남는다. */
         #statValue[vital="stale"] { color: %(sub); }
-        #vitalDot[vital="stale"] { background: %(sub); border-radius: 5px; }
         #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
 
         /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
