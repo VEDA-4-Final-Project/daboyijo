@@ -28,6 +28,8 @@ qt_add_executable(daboyijo
     sparkline.h
     vitaltile.cpp
     vitaltile.h
+    alertbanner.cpp
+    alertbanner.h
     activitychart.cpp
     activitychart.h
     clickslider.cpp
