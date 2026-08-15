@@ -12,20 +12,40 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
 {
     setObjectName("vitalCard");
 
-    auto* lay = new QVBoxLayout(this);
+    // v2 VMS 계기판 톤. v1에서 걷어낸 것과 이유:
+    //  · 이모지 아이콘(🫁 ❤) — 관제 소프트웨어에 이모지가 들어가면 즉시 아마추어로
+    //    읽힌다. 텍스트 캡션(SpO₂ / HR)으로 교체.
+    //  · statBox 중첩 — vitalCard(라운드14) 안에 statBox(라운드12)를 넣은 카드-속-카드
+    //    구조였다. ROADMAP이 명시적으로 금지한 패턴이고, 밀도를 갉아먹는다.
+    //  · 24px 상태 점 — 타일 헤더에 24px 원은 과하다. 타일 왼쪽 끝 세로 레일로
+    //    바꿔 등급을 표시한다(면적은 줄고 시선 유도는 오히려 강해진다).
+    //
+    // 최종 형태 — 좌측 3px 등급 레일 + 3행(이름/판독값/추세):
+    //   │ 김영희      채널 1        ✓ 정상
+    //   │ SpO₂ 98 %   HR 72 bpm
+    //   │ ▁▂▃▅▃▂▁▂▃▅▇▅▃▂
+    auto* shell = new QHBoxLayout(this);
+    shell->setContentsMargins(0, 0, 0, 0);
+    shell->setSpacing(0);
+
+    // 등급 레일 — 기존 dot_ 멤버를 그대로 재사용한다(세터 4곳의 배선 불변).
+    // objectName만 #severityDot에서 #vitalRail로 바꾼다: 24px 원거리 계약은
+    // 경보 계열 전용이고, 이 레일은 데스크 스케일 요소다(IA-03 펜스 유지).
+    dot_ = new QLabel();
+    dot_->setObjectName("vitalRail");
+    shell->addWidget(dot_);
+
+    auto* lay = new QVBoxLayout();
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
+    shell->addLayout(lay, 1);
 
-    // ── 헤더 바: 상태등 + 이름 + 병상 + 상태 배지 ──
+    // ── 1행: 이름 + 병상 + 상태 배지 ──
     auto* head = new QFrame();
     head->setObjectName("vitalHead");
     auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(14, 7, 12, 7);
-    hl->setSpacing(8);
-    dot_ = new QLabel();
-    // #vitalDot이 아니라 공용 #severityDot — base.qss의 24px 원거리 계약을
-    // 처음으로 실제 소비하는 위젯이 된다(9px 고정 크기는 승계하지 않는다).
-    dot_->setObjectName("severityDot");
+    hl->setContentsMargins(11, 6, 9, 5);
+    hl->setSpacing(7);
     nameLbl_ = new QLabel();
     nameLbl_->setObjectName("vitalName");
     bedLbl_ = new QLabel();
@@ -33,51 +53,42 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     badgeLbl_ = new QLabel(QStringLiteral("대기"));
     badgeLbl_->setObjectName("vitalBadge");
     badgeLbl_->setAlignment(Qt::AlignCenter);
-    hl->addWidget(dot_);
     hl->addWidget(nameLbl_);
     hl->addWidget(bedLbl_);
     hl->addStretch();
     hl->addWidget(badgeLbl_);
     lay->addWidget(head);
 
-    // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──
+    // ── 2행: 판독값 2개를 한 줄에. 상자 없이 캡션+수치+단위만 놓는다 ──
     auto* body = new QHBoxLayout();
-    body->setContentsMargins(14, 9, 14, 6);
-    body->setSpacing(10);
+    body->setContentsMargins(11, 7, 11, 4);
+    body->setSpacing(18);
 
-    auto makeStat = [&](const QString& icon, const QString& caption,
-                         const QString& unit, QLabel*& valueRef) {
-        auto* box = new QFrame();
-        box->setObjectName("statBox");
-        auto* bl = new QVBoxLayout(box);
-        bl->setContentsMargins(12, 7, 12, 7);
-        bl->setSpacing(2);
-        auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
+    auto makeStat = [&](const QString& caption, const QString& unit,
+                         QLabel*& valueRef) {
+        auto* row = new QHBoxLayout();
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(5);
+        auto* cap = new QLabel(caption);
         cap->setObjectName("statCaption");
         valueRef = new QLabel(QStringLiteral("--"));
         valueRef->setObjectName("statValue");
         auto* unitLbl = new QLabel(unit);
         unitLbl->setObjectName("statUnit");
-        auto* valRow = new QHBoxLayout();
-        valRow->setContentsMargins(0, 0, 0, 0);
-        valRow->setSpacing(4);
-        valRow->addWidget(valueRef);
-        valRow->addWidget(unitLbl, 0, Qt::AlignBottom);
-        valRow->addStretch();
-        bl->addWidget(cap);
-        bl->addLayout(valRow);
-        return box;
+        row->addWidget(cap, 0, Qt::AlignBottom);
+        row->addWidget(valueRef);
+        row->addWidget(unitLbl, 0, Qt::AlignBottom);
+        return row;
     };
 
-    body->addWidget(makeStat(QStringLiteral("🫁"), QStringLiteral("산소포화도"),
-                              QStringLiteral("%"), spo2Value_));
-    body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
-                              QStringLiteral("bpm"), hrValue_));
+    body->addLayout(makeStat(QStringLiteral("SpO₂"), QStringLiteral("%"), spo2Value_));
+    body->addLayout(makeStat(QStringLiteral("HR"), QStringLiteral("bpm"), hrValue_));
+    body->addStretch();
     lay->addLayout(body);
 
-    // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
+    // ── 3행: 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
     auto* sparkRow = new QHBoxLayout();
-    sparkRow->setContentsMargins(14, 0, 14, 10);
+    sparkRow->setContentsMargins(11, 0, 11, 8);
     spark_ = new Sparkline();
     spark_->setRange(40, 140);
     spark_->setGuides({

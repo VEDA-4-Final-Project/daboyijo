@@ -167,8 +167,11 @@
         /* 바이탈 상태 배지 — 배경은 기존 blendHex() 18% 혼합 대신 평평한
            %(card)로 단순화한다. QSS는 색을 계산하지 못하므로 다섯 개 혼합값을
            새로 정하는 대신 기존 토큰을 그대로 쓴다(차이는 미세하다). */
-        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 9px;
-                      padding: 1px 10px; font-size: 11px; font-weight: 800; color: %(sub); }
+        /* v2: 알약(라운드9)에서 각진 태그(라운드2)로. 관제 UI는 둥근 pill보다
+           각진 라벨을 쓴다 — 도형(✖▲◆●✓)이 이미 앞에 붙으므로 배지 자체는
+           담백해야 도형이 읽힌다. */
+        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 2px;
+                      padding: 1px 7px; font-size: 11px; font-weight: 800; color: %(sub); }
         #vitalBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
         #vitalBadge[severity="high"] { color: %(high); border-color: %(high); }
         #vitalBadge[severity="medium"] { color: %(warn); border-color: %(warn); }
@@ -329,16 +332,33 @@
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
-        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+        /* v2 VMS 계기판 톤: 라운드 14→2px, 카드-속-카드(statBox) 제거,
+           좌측 3px 등급 레일이 상태를 표시한다. */
+        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 2px; }
+        #vitalRail { min-width: 3px; max-width: 3px; background: %(sub); border: none; }
+        #vitalRail[severity="critical"] { background: %(critical); }
+        #vitalRail[severity="high"]     { background: %(high); }
+        #vitalRail[severity="medium"]   { background: %(warn); }
+        #vitalRail[severity="info"]     { background: %(info); }
+        #vitalRail[severity="normal"]   { background: %(normal); }
+        #vitalRail[vital="stale"]       { background: %(border); }
         #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
                      border-top-left-radius: 14px; border-top-right-radius: 14px; }
-        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
-        #vitalBed { color: %(sub); font-size: 12px; }
-        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        /* v2: 사이드 레일 섹션 머리글 — 17px/800 헤딩이 아니라 작고 자간 넓은
+           캡션. 상용 VMS 사이드 패널의 관용구다. */
+        #railTitle { color: %(sub); font-size: 10px; font-weight: 800;
+                     letter-spacing: 1.4px; padding: 1px 2px 3px 2px; }
+        #vitalName { color: %(text); font-size: 13px; font-weight: 800; }
+        #vitalBed { color: %(sub); font-size: 11px; }
+        /* #statBox는 v2에서 제거됐다(카드-속-카드). 규칙만 남기면 죽은 코드라
+           함께 삭제한다 — 되살리려면 vitaltile.cpp의 makeStat을 되돌릴 것. */
+        #statCaption { color: %(sub); font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
+                       padding-bottom: 4px; }
+        /* 26px — v1의 32px은 원거리 스케일(#severityBadge)과 붙어 위계가 뭉갰다.
+           개인정보가 아닌 판독 수치라 데스크 스케일 상단이 맞는 자리다(IA-03). */
         #statValue { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
-                     font-size: 32px; font-weight: 800; }
-        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
+                     font-size: 26px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 11px; font-weight: 600; padding-bottom: 4px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */

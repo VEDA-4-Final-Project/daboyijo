@@ -1298,12 +1298,15 @@ QWidget* MainWindow::buildVitalsPanel()
     panel->setMinimumWidth(300);
     panel->setMaximumWidth(316);
 
+    // v2 VMS: 우측 레일도 조밀하게. 여백 16/14→9/8, 간격 12→8.
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(16, 14, 16, 16);
-    outer->setSpacing(12);
+    outer->setContentsMargins(9, 8, 9, 9);
+    outer->setSpacing(8);
 
+    // 제목은 17px/800 헤딩이 아니라 레일 섹션 라벨로 — 상용 VMS의 사이드
+    // 패널 머리글은 작고 자간 넓은 캡션이다(#railTitle).
     auto* title = new QLabel(QStringLiteral("웨어러블 생체신호"));
-    title->setObjectName("panelTitle");
+    title->setObjectName("railTitle");
     outer->addWidget(title);
 
     // 스크롤 가능한 바이탈 카드 목록
@@ -1314,8 +1317,8 @@ QWidget* MainWindow::buildVitalsPanel()
 
     auto* inner = new QWidget();
     vitalListLayout_ = new QVBoxLayout(inner);
-    vitalListLayout_->setContentsMargins(0, 0, 6, 0);
-    vitalListLayout_->setSpacing(10);
+    vitalListLayout_->setContentsMargins(0, 0, 5, 0);
+    vitalListLayout_->setSpacing(5);   // v2: 10→5, 타일 사이를 조밀하게
     // 카드 개수는 재원 입소자 수에 따라 달라진다(한 채널에 여러 명일 수 있음).
     // 생성자에서 loadPatientsFromDb() 를 먼저 부르므로 여기서 목록을 알 수 있다.
     rebuildVitalCards();
