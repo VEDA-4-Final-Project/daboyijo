@@ -52,20 +52,26 @@
         QWidget { color: %(text); font-family: "Segoe UI", "맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; font-size: 13px; }
         QMainWindow, #centralwidget { background: %(bgDeep); }
 
-        #header { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                     stop:0 %(panel), stop:1 %(card));
-                  border-bottom: 1px solid %(border); }
-        #brandDot { background: %(accent); border-radius: 5px; }
-        #logo { color: %(text); font-size: 23px; font-weight: 800; letter-spacing: 0.5px; }
-        #subtitle { color: %(sub); font-size: 13px; }
-        #clock { color: %(text); font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
-                 padding: 0 6px; }
+        /* v2 VMS 헤더. 고친 것:
+           · 세로 그라데이션 → 평면. 그라데이션은 SaaS 대시보드의 흔적이고
+             관제 툴 헤더는 평평하다.
+           · 시계 16px/800 흰색 → 13px 모노스페이스 sub색. 관제 화면에서 가장
+             먼저 눈에 들어와야 하는 건 시각이 아니다. 모노스페이스는 미감이
+             아니라 기능이다 — 가변폭 숫자는 초가 바뀔 때마다 옆 요소를 밀어낸다.
+           · 버튼 4종이 라운드 10/16/19/14로 제각각이었다 → 전부 3px 각진 형태로
+             통일하고 높이를 30px로 맞춘다. */
+        #header { background: %(panel); border-bottom: 1px solid %(border); }
+        #brandDot { background: %(accent); border-radius: 1px; }
+        #logo { color: %(text); font-size: 19px; font-weight: 800; letter-spacing: 0.3px; }
+        #subtitle { color: %(sub); font-size: 12px; }
+        #clock { color: %(sub); font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+                 font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
+                 padding: 0 8px; }
 
-        /* 라이트/다크 테마 토글 — 원형 아이콘 버튼 */
-        #themeToggle { background: transparent; border: 1px solid %(border); border-radius: 16px;
-                       min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
-                       font-size: 15px; }
-        #themeToggle:hover { border-color: %(accent); background: %(card); }
+        #themeToggle { background: transparent; border: 1px solid %(border); border-radius: 3px;
+                       min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
+                       font-size: 14px; color: %(sub); }
+        #themeToggle:hover { border-color: %(sub); background: %(card); color: %(text); }
 
         /* 도움말 버튼 — 원형 물음표 아이콘 + "도움말" 텍스트 (필 형태) */
         #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 15px;
@@ -250,13 +256,17 @@
         #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
 
         /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
-        #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
-        #userChip:hover { border-color: %(accent); }
-        #userAvatar { background: %(accent); color: %(onAccent); border-radius: 15px;
-                      font-size: 13px; font-weight: 800; }
-        #userName { color: %(text); font-size: 13px; font-weight: 700; }
+        /* v2: 사용자 칩에서 accent를 뺐다. accent(청록)는 화면에서 가장 튀는
+           색인데 v1은 그걸 사람 이니셜 원에 썼다 — 헤더에서 제일 먼저 눈에
+           들어오는 게 로그인한 사람 이름표가 되는 건 관제 화면에서 틀렸다.
+           accent는 경보·상태·현재선택에만 남긴다. */
+        #userChip { background: %(card); border: 1px solid %(border); border-radius: 3px; }
+        #userChip:hover { border-color: %(sub); }
+        #userAvatar { background: %(border); color: %(text); border-radius: 2px;
+                      font-size: 11px; font-weight: 800; }
+        #userName { color: %(sub); font-size: 12px; font-weight: 700; }
         #logoutButton { background: transparent; color: %(sub); border: none;
-                        border-radius: 14px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+                        border-radius: 2px; padding: 4px 10px; font-size: 11px; font-weight: 600; }
         #logoutButton:hover { background: %(critical); color: #fff; }
 
         /* ── 좌측 네비 레일 ── */
@@ -295,9 +305,11 @@
         #segBtnDanger:hover { background: %(card); color: %(critical); }
         #segBtnToggle:checked { background: %(accent); color: %(onAccent); }
 
-        #micButton { background: %(card); color: %(text); border: 1px solid %(border);
-                     border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
-        #micButton:hover { border-color: %(accent); }
+        /* v2: 헤더 버튼 공통 형태 — 라운드 3px, 패딩 6/12, 12px. mic/alarm/help가
+           같은 규격을 쓴다(v1은 10/16/19px 라운드로 제각각이었다). */
+        #micButton { background: %(card); color: %(sub); border: 1px solid %(border);
+                     border-radius: 3px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
+        #micButton:hover { border-color: %(sub); color: %(text); }
         #micButton[active="true"] { color: #fff; border-color: %(critical);
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 #ff6b62, stop:1 %(critical)); }
@@ -352,6 +364,10 @@
         #vitalBed { color: %(sub); font-size: 11px; }
         /* #statBox는 v2에서 제거됐다(카드-속-카드). 규칙만 남기면 죽은 코드라
            함께 삭제한다 — 되살리려면 vitaltile.cpp의 makeStat을 되돌릴 것. */
+        /* 판독값 캡션 아이콘 — vitaltile.cpp의 makeVitalIcon()이 QPainter로 그린
+           선 아이콘(산소 방울 / 심전도 파형). 이모지가 아니라 픽스맵이라
+           QSS로는 여백만 잡는다. */
+        #statIcon { padding-bottom: 3px; }
         #statCaption { color: %(sub); font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
                        padding-bottom: 4px; }
         /* 26px — v1의 32px은 원거리 스케일(#severityBadge)과 붙어 위계가 뭉갰다.

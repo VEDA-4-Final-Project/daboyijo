@@ -22,6 +22,7 @@
 #include <QTextBrowser>
 #include <QListWidget>
 #include <QPainter>
+#include <QPainterPath>
 #include <QIcon>
 #include <QLinearGradient>
 #include <QResizeEvent>
@@ -30,6 +31,10 @@
 #include <QList>
 #include <algorithm>
 #include <cmath>
+
+// 헤더 아이콘 생성기 — 정의는 buildHeader() 바로 위에 있다. 생성자가
+// buildHeader()보다 먼저 나오면서 테마 아이콘을 세팅하므로 전방 선언이 필요하다.
+static QPixmap makeHeaderIcon(int kind, const QColor& c);
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -382,8 +387,8 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     buildUi();
     applyTheme();
     if (themeToggleButton)
-        themeToggleButton->setText(darkMode ? QStringLiteral("☀")
-                                            : QStringLiteral("🌙"));
+        themeToggleButton->setIcon(QIcon(makeHeaderIcon(
+            darkMode ? 2 : 1, QColor(0x8B, 0x98, 0xA5))));
     enableDarkTitleBar(this);  // Windows 네이티브 타이틀바를 다크로
 
     // DB 입소자 목록(카드) 초기 로드 (main.cpp에서 연결을 이미 열어둠)
@@ -820,6 +825,54 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     }
 }
 
+// (선언은 파일 상단 — 생성자가 buildHeader()보다 먼저 나오므로 전방 선언이 필요하다)
+// 헤더 아이콘 — 이모지(🎤 🌙 ☀) 대신 직접 그리는 선 아이콘.
+// 이유는 vitaltile.cpp의 makeVitalIcon()과 같다: 컬러 이모지는 OS마다
+// 모양·톤이 달라 팔레트가 깨지고, 관제 소프트웨어에서 아마추어로 읽힌다.
+// kind: 0 = 마이크, 1 = 달(다크 전환), 2 = 해(라이트 전환)
+static QPixmap makeHeaderIcon(int kind, const QColor& c)
+{
+    const int d = 16;
+    const qreal dpr = 2.0;
+    QPixmap pm(int(d * dpr), int(d * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(c);
+    pen.setWidthF(1.35);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    if (kind == 0) {
+        // 마이크 — 캡슐 몸통 + 아래 받침 원호 + 스탠드
+        p.drawRoundedRect(QRectF(5.6, 1.6, 4.8, 7.6), 2.4, 2.4);
+        p.drawArc(QRectF(3.4, 5.2, 9.2, 7.4), 200 * 16, 140 * 16);
+        p.drawLine(QPointF(8.0, 12.0), QPointF(8.0, 14.2));
+    } else if (kind == 1) {
+        // 달 — 초승달(두 원의 차집합 대신 원호 두 개로 그린다)
+        QPainterPath path;
+        path.moveTo(11.0, 2.6);
+        path.arcTo(QRectF(1.8, 1.8, 12.4, 12.4), 60.0, 240.0);
+        path.arcTo(QRectF(5.2, 0.4, 12.0, 12.0), 190.0, -150.0);
+        p.drawPath(path);
+    } else {
+        // 해 — 중앙 원 + 8방향 광선
+        p.drawEllipse(QRectF(5.2, 5.2, 5.6, 5.6));
+        for (int i = 0; i < 8; ++i) {
+            const qreal a = i * (M_PI / 4.0);
+            const qreal cx = 8.0, cy = 8.0;
+            p.drawLine(QPointF(cx + std::cos(a) * 5.4, cy + std::sin(a) * 5.4),
+                       QPointF(cx + std::cos(a) * 7.2, cy + std::sin(a) * 7.2));
+        }
+    }
+    p.end();
+    return pm;
+}
+
 QWidget* MainWindow::buildHeader()
 {
     auto* header = new QFrame();
@@ -839,8 +892,10 @@ QWidget* MainWindow::buildHeader()
 
     // ── 실시간 관제 액션 — 방송(인터콤) ──
     // 경보 해제는 헤더가 아니라 "경보 배너"(경보 시에만 표시)로 옮겼다.
-    micButton = new QPushButton(QStringLiteral("🎤 방송"));
+    micButton = new QPushButton(QStringLiteral("방송"));
     micButton->setObjectName("micButton");
+    micButton->setIcon(QIcon(makeHeaderIcon(0, QColor(0x8B, 0x98, 0xA5))));
+    micButton->setIconSize(QSize(16, 16));
     micButton->setCursor(Qt::PointingHandCursor);
     connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
     connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
@@ -909,8 +964,9 @@ QWidget* MainWindow::buildHeader()
     lay->addWidget(helpButton);
 
     // 테마 토글
-    themeToggleButton = new QPushButton(QStringLiteral("🌙"));
+    themeToggleButton = new QPushButton();
     themeToggleButton->setObjectName("themeToggle");
+    themeToggleButton->setIconSize(QSize(16, 16));
     themeToggleButton->setCursor(Qt::PointingHandCursor);
     themeToggleButton->setToolTip(QStringLiteral("라이트/다크 테마 전환"));
     connect(themeToggleButton, &QPushButton::clicked, this, &MainWindow::toggleTheme);
@@ -2647,8 +2703,8 @@ void MainWindow::toggleTheme()
     refreshNavIcons();  // 네비 아이콘은 QPainter로 그린 픽스맵이라 따로 다시 그린다
 
     if (themeToggleButton)
-        themeToggleButton->setText(darkMode ? QStringLiteral("☀")
-                                            : QStringLiteral("🌙"));
+        themeToggleButton->setIcon(QIcon(makeHeaderIcon(
+            darkMode ? 2 : 1, QColor(0x8B, 0x98, 0xA5))));
 
     // statusDot·vitalDot 등은 severity 동적 속성으로 색을 유지하므로
     // applyTheme() 뒤에 따로 복원할 필요가 없다.
@@ -5141,7 +5197,7 @@ void MainWindow::onMicPressed()
 
 void MainWindow::onMicReleased()
 {
-    micButton->setText(QStringLiteral("🎤 방송"));
+    micButton->setText(QStringLiteral("방송"));
     micButton->setProperty("active", false);
     micButton->style()->unpolish(micButton);
     micButton->style()->polish(micButton);

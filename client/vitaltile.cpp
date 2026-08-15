@@ -5,8 +5,64 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QStyle>
 #include <QVBoxLayout>
+
+namespace {
+
+// 판독값 캡션 아이콘 — 이모지(🫁 ❤) 대신 직접 그리는 선 아이콘.
+// 이모지를 쓰면 (1) OS마다 컬러 이모지 폰트가 제각각이라 톤이 깨지고
+// (2) 관제 소프트웨어에 컬러 이모지가 있으면 즉시 아마추어로 읽힌다.
+// helpButton(mainwindow.cpp:878~)이 이미 쓰는 방식과 같다 — 2배 DPR로
+// 그려 고해상도에서도 또렷하다.
+//
+// kind: 0 = SpO2(산소 방울), 1 = HR(심전도 파형)
+QPixmap makeVitalIcon(int kind, const QColor& c)
+{
+    const int d = 14;
+    const qreal dpr = 2.0;
+    QPixmap pm(int(d * dpr), int(d * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(c);
+    pen.setWidthF(1.35);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    if (kind == 0) {
+        // 산소 방울 — 위 꼭짓점에서 좌우로 벌어져 아래에서 원호로 만나는 형태.
+        // 혈중 산소포화도의 관용 기호(맥박산소측정기 UI가 공통으로 쓴다).
+        QPainterPath path;
+        path.moveTo(7.0, 1.6);
+        path.cubicTo(7.0, 1.6, 11.6, 6.6, 11.6, 9.1);
+        path.arcTo(QRectF(2.4, 4.5, 9.2, 9.2), 0.0, -180.0);
+        path.cubicTo(2.4, 6.6, 7.0, 1.6, 7.0, 1.6);
+        p.drawPath(path);
+    } else {
+        // 심전도 파형 — 평탄선에서 QRS 스파이크 하나. 심박의 관용 기호이고
+        // 하트(♥)보다 의료 모니터 문맥에 맞는다.
+        QPainterPath path;
+        path.moveTo(0.8, 7.2);
+        path.lineTo(3.4, 7.2);
+        path.lineTo(4.6, 4.0);
+        path.lineTo(6.2, 10.6);
+        path.lineTo(7.6, 7.2);
+        path.lineTo(13.2, 7.2);
+        p.drawPath(path);
+    }
+    p.end();
+    return pm;
+}
+
+}  // namespace
 
 VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
 {
@@ -64,25 +120,32 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     body->setContentsMargins(11, 7, 11, 4);
     body->setSpacing(18);
 
-    auto makeStat = [&](const QString& caption, const QString& unit,
+    // 캡션 아이콘 색 — 두 테마 모두에서 읽히는 중간 회색(helpButton과 같은 값).
+    const QColor capIcon(0x8B, 0x98, 0xA5);
+
+    auto makeStat = [&](int iconKind, const QString& caption, const QString& unit,
                          QLabel*& valueRef) {
         auto* row = new QHBoxLayout();
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(5);
+        auto* icon = new QLabel();
+        icon->setObjectName("statIcon");
+        icon->setPixmap(makeVitalIcon(iconKind, capIcon));
         auto* cap = new QLabel(caption);
         cap->setObjectName("statCaption");
         valueRef = new QLabel(QStringLiteral("--"));
         valueRef->setObjectName("statValue");
         auto* unitLbl = new QLabel(unit);
         unitLbl->setObjectName("statUnit");
+        row->addWidget(icon, 0, Qt::AlignBottom);
         row->addWidget(cap, 0, Qt::AlignBottom);
         row->addWidget(valueRef);
         row->addWidget(unitLbl, 0, Qt::AlignBottom);
         return row;
     };
 
-    body->addLayout(makeStat(QStringLiteral("SpO₂"), QStringLiteral("%"), spo2Value_));
-    body->addLayout(makeStat(QStringLiteral("HR"), QStringLiteral("bpm"), hrValue_));
+    body->addLayout(makeStat(0, QStringLiteral("SpO₂"), QStringLiteral("%"), spo2Value_));
+    body->addLayout(makeStat(1, QStringLiteral("HR"), QStringLiteral("bpm"), hrValue_));
     body->addStretch();
     lay->addLayout(body);
 
