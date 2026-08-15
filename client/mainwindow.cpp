@@ -786,6 +786,13 @@ void MainWindow::buildUi()
     // 경보 토스트 — 상단에서 슬라이드해 내려오는 알림(오버레이, 레이아웃 밖).
     buildAlarmBanner();
 
+    // 상시 노출용 경보 배너(#alertBanner) — 이 단계는 만들고 배선까지만 한다.
+    // 어느 화면 자리에 상시 노출할지는 Phase 4 ALERT-03이 결정하므로(D-03)
+    // 지금은 레이아웃에 꽂지 않고 숨겨 둔다. Phase 4는 이 hide() 한 줄을
+    // 지우고 원하는 레이아웃에 위젯을 추가하기만 하면 된다.
+    alertBanner_ = new AlertBanner(ui->centralwidget);
+    alertBanner_->hide();
+
     resize(1600, 940);
     setMinimumSize(1340, 760);
 }
@@ -5178,6 +5185,40 @@ void MainWindow::onAlarmClearClicked()
     }
 }
 
+// 활성 경보 목록을 만든다 — 등급 판정(critical/high/medium)과 도형 선택이 전부
+// 여기서 끝나 AlertBanner로는 완성된 값만 넘어간다(D-02). 채널당 최대
+// 3건(낙상/침상이탈/생체이상)이 나올 수 있다.
+QList<AlertItem> MainWindow::collectAlertItems() const
+{
+    QList<AlertItem> items;
+    for (int ch = 0; ch < 4; ++ch) {
+        if (fallActive[ch]) {
+            const QString severity = QStringLiteral("critical");
+            items.append({ch, severityGlyph(severity), QStringLiteral("낙상"),
+                          patients[ch].bed, severity});
+        }
+        if (bedEgressActive[ch]) {
+            const QString severity = QStringLiteral("high");
+            items.append({ch, severityGlyph(severity), QStringLiteral("침상이탈"),
+                          patients[ch].bed, severity});
+        }
+        if (vitalAbnormalActive[ch]) {
+            // 그 채널에 배정된 입소자의 현재 바이탈 등급을 쓴다 — 단일 출처는
+            // vitalSeverity()(D-02). 배정된 사람을 찾지 못하면 안전하게
+            // medium으로 내린다(UI-SPEC §4.2).
+            QString severity = QStringLiteral("medium");
+            const QVector<int>& ids = residentsByChannel_[ch];
+            if (!ids.isEmpty()) {
+                const VitalSample sample = vitals_.value(ids.first());
+                severity = vitalSeverity(sample.spo2, sample.heartRate);
+            }
+            items.append({ch, severityGlyph(severity), QStringLiteral("생체신호 이상"),
+                          patients[ch].bed, severity});
+        }
+    }
+    return items;
+}
+
 // 낙상/침상이탈이 하나라도 활성이면 경보 버튼을 빨강 채움으로, 아니면 차분한 아웃라인으로.
 void MainWindow::refreshAlarmButton()
 {
@@ -5186,6 +5227,9 @@ void MainWindow::refreshAlarmButton()
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch] || vitalAbnormalActive[ch]) { anyActive = true; break; }
     updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
+    // 상시 노출용 배너(#alertBanner) 갱신 — 상태를 바꾸는 다섯 지점이 전부
+    // 이 함수를 거치므로 배선은 여기 한 곳뿐이다.
+    if (alertBanner_) alertBanner_->setActiveAlerts(collectAlertItems());
 
     // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
     if (alarmOverlay_) {
