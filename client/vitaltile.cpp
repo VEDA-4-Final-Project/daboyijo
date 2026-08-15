@@ -20,8 +20,8 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     auto* head = new QFrame();
     head->setObjectName("vitalHead");
     auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(14, 7, 12, 7);
-    hl->setSpacing(8);
+    hl->setContentsMargins(12, 4, 10, 4);   // v2: 위아래 7→4
+    hl->setSpacing(7);
     dot_ = new QLabel();
     // #severityDot(24px)이 아니라 #vitalDot(9px)로 되돌린다.
     // 24px는 "몇 미터 밖에서 보이는" 경보 스케일이고, 이 타일은 가까이서
@@ -46,15 +46,15 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
 
     // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──
     auto* body = new QHBoxLayout();
-    body->setContentsMargins(14, 9, 14, 6);
-    body->setSpacing(10);
+    body->setContentsMargins(12, 7, 12, 5);
+    body->setSpacing(8);
 
     auto makeStat = [&](const QString& icon, const QString& caption,
                          const QString& unit, QLabel*& valueRef) {
         auto* box = new QFrame();
         box->setObjectName("statBox");
         auto* bl = new QVBoxLayout(box);
-        bl->setContentsMargins(12, 7, 12, 7);
+        bl->setContentsMargins(11, 5, 11, 5);
         bl->setSpacing(2);
         auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
         cap->setObjectName("statCaption");
@@ -81,7 +81,7 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
 
     // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
     auto* sparkRow = new QHBoxLayout();
-    sparkRow->setContentsMargins(14, 0, 14, 10);
+    sparkRow->setContentsMargins(12, 0, 12, 7);
     spark_ = new Sparkline();
     spark_->setRange(40, 140);
     spark_->setGuides({
