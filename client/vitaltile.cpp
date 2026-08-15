@@ -49,16 +49,19 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
 
     // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──
     auto* body = new QHBoxLayout();
-    body->setContentsMargins(12, 7, 12, 5);
-    body->setSpacing(8);
+    body->setContentsMargins(10, 5, 10, 4);
+    body->setSpacing(7);
 
     auto makeStat = [&](const QString& icon, const QString& caption,
                          const QString& unit, QLabel*& valueRef) {
         auto* box = new QFrame();
         box->setObjectName("statBox");
+        // 높이를 못박는다. 이름 행과 같은 이유 — 안에서 가장 큰 글자(수치)의
+        // 폰트 메트릭이 높이를 정해서, 여백만 줄여서는 세로가 안 줄었다.
+        box->setFixedHeight(46);
         auto* bl = new QVBoxLayout(box);
-        bl->setContentsMargins(11, 5, 11, 5);
-        bl->setSpacing(2);
+        bl->setContentsMargins(10, 1, 10, 1);
+        bl->setSpacing(0);
         auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
         cap->setObjectName("statCaption");
         valueRef = new QLabel(QStringLiteral("--"));

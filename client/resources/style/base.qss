@@ -365,10 +365,13 @@
         #vitalName { color: %(text); font-size: 13px; font-weight: 800; }
         #vitalBed { color: %(sub); font-size: 11px; }
         #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        #statCaption { color: %(sub); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+        /* 32→26px. 박스 높이를 정하는 건 여백이 아니라 이 글자다(32px 한 줄이
+           약 43px). 26px은 타이포 규범 블록에 이미 있는 데이터 디스플레이
+           값이라 새 크기를 만들지 않는다. */
         #statValue { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
-                     font-size: 32px; font-weight: 800; }
-        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
+                     font-size: 22px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 11px; font-weight: 600; padding-bottom: 2px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */
