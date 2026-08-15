@@ -1306,27 +1306,17 @@ QWidget* MainWindow::buildVitalsPanel()
     return panel;
 }
 
-// 바이탈 카드 목록을 입소자 구성에 맞춰 다시 만든다.
-// 입소자가 늘거나 줄면 위젯 개수 자체가 달라지므로 글자만 갈아끼울 수 없다.
-// 심박 이력은 hrHistory_(위젯 밖)에 있어서 다시 만들어도 살아남는다.
+// 바이탈 카드 목록을 입소자 구성에 맞춰 다시 만든다(D-04 — diff 방식).
+// 구성이 안 바뀌면 위젯을 하나도 만들지도 지우지도 않는다. 심박 이력은
+// hrHistory_(위젯 밖)에 있어서 타일이 새로 만들어져도 살아남는다.
 void MainWindow::rebuildVitalCards()
 {
     if (!vitalListLayout_) return;   // 아직 패널을 만들기 전(생성자 초기 단계)
 
-    // 위젯을 지우면 타일 포인터가 전부 무효가 된다 — 표를 먼저 비워야
-    // updateVitals() 가 죽은 포인터를 만지지 않는다.
-    vitalTiles_.clear();
-
-    while (QLayoutItem* item = vitalListLayout_->takeAt(0)) {
-        // 레이아웃에서 빼기만 하면 위젯은 부모에 그대로 남아 화면에 계속 보인다.
-        // 부모에서 떼어내야 사라지고, 삭제 자체는 이벤트 루프에 맡긴다.
-        if (QWidget* w = item->widget()) {
-            w->setParent(nullptr);
-            w->deleteLater();
-        }
-        delete item;
-    }
-
+    // ── 목표 키 순서 목록: (키, 이름, 병상표기) 3튜플. 순서가 곧 화면 배치 순서다. ──
+    struct TargetEntry { int key; QString name; QString bedText; };
+    QVector<TargetEntry> target;
+    target.reserve(8);
     for (int ch = 0; ch < 4; ++ch) {
         const QString bedText = QStringLiteral("채널 %1").arg(ch + 1);
         const QVector<int>& ids = residentsByChannel_[ch];
@@ -1334,13 +1324,50 @@ void MainWindow::rebuildVitalCards()
         // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
         // 관제사가 그 채널을 잊는다. 음수 키라 값이 안 들어와 "대기"로 뜬다.
         if (ids.isEmpty()) {
-            vitalListLayout_->addWidget(
-                buildVitalCard(-(ch + 1), QStringLiteral("미배정"), bedText), 1);
+            target.append({-(ch + 1), QStringLiteral("미배정"), bedText});
             continue;
         }
         for (int rid : ids)
-            vitalListLayout_->addWidget(
-                buildVitalCard(rid, residentInfo_.value(rid).name, bedText), 1);
+            target.append({rid, residentInfo_.value(rid).name, bedText});
+    }
+
+    // ── 사라진 키를 제거한다. 순회 중 해시를 수정하지 않도록 대상 키를 먼저
+    //    모은 뒤 별도 루프에서 지운다. ──
+    QSet<int> targetKeys;
+    for (const auto& t : target) targetKeys.insert(t.key);
+    QVector<int> staleKeys;
+    for (auto it = vitalTiles_.constBegin(); it != vitalTiles_.constEnd(); ++it)
+        if (!targetKeys.contains(it.key())) staleKeys.append(it.key());
+    for (int key : staleKeys) {
+        if (VitalTile* tile = vitalTiles_.take(key)) {
+            vitalListLayout_->removeWidget(tile);
+            tile->setParent(nullptr);
+            tile->deleteLater();
+        }
+    }
+
+    // ── 목표 목록을 순서대로 훑으며 생성 또는 갱신한다. ──
+    for (const auto& t : target) {
+        VitalTile* tile = vitalTiles_.value(t.key);
+        if (!tile) {
+            tile = buildVitalCard(t.key, t.name, t.bedText);
+            vitalListLayout_->addWidget(tile, 1);
+        } else {
+            // 조건 없이 호출한다 — PD-01의 멱등 가드가 변화 없을 때를 흡수하고,
+            // 같은 입소자가 다른 채널로 옮겨져 병상 표기만 바뀐 경우를 놓치지 않는다.
+            tile->setIdentity(t.name, t.bedText);
+        }
+    }
+
+    // ── 배치 순서를 목표 목록과 일치시킨다. 살아남은 타일이 섞여 있으면
+    //    인덱스가 어긋날 수 있다. ──
+    for (int i = 0; i < target.size(); ++i) {
+        VitalTile* tile = vitalTiles_.value(target[i].key);
+        if (!tile) continue;
+        if (vitalListLayout_->indexOf(tile) != i) {
+            vitalListLayout_->removeWidget(tile);
+            vitalListLayout_->insertWidget(i, tile, 1);
+        }
     }
 
     updateVitals();   // 새로 만든 위젯에 현재 값·색을 즉시 반영
@@ -5348,13 +5375,6 @@ void MainWindow::loadPatientsFromDb()
 void MainWindow::refreshPatientLabels()
 {
     for (int ch = 0; ch < 4; ++ch) {
-        // 원시 채널 번호를 키로 바이탈 타일을 건드리는 경로 — 7개 병렬 해시가
-        // 단일 vitalTiles_로 수렴하며 컴파일이 깨지지 않도록 임시로 이 형태를
-        // 유지한다. 지금은 바로 아래 rebuildVitalCards()가 매번 vitalTiles_를
-        // 통째로 비우고 다시 채우므로 무해하다(RESEARCH Pitfall 1) — 그 clear가
-        // 사라지는 diff 전환(다음 태스크)과 같은 커밋에서 이 줄 자체를 지운다.
-        if (VitalTile* tile = vitalTiles_.value(ch))
-            tile->setIdentity(patients[ch].name, patients[ch].bed);
         // 침대 이름표·매핑 콤보도 새 입소자 구성으로 다시 그린다 — 이름을 고치거나
         // 퇴원시켰는데 침대 라벨만 옛 이름으로 남으면 관제사가 오판한다.
         refreshRoiZones(ch);
