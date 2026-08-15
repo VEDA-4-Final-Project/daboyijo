@@ -583,6 +583,14 @@ QTextEdit#formEdit:focus {
             border-left: 4px solid transparent; border-right: 4px solid transparent;
             border-top: 5px solid %(sub); margin-right: 8px; }
 
+        /* 케어 로그 필터바 콤보 팝업 — 닫힘 상태는 390-392행이 이미 담당한다. 콤보 팝업은
+           Qt 내부적으로 별도 top-level 위젯이라 부모 규칙이 자동 상속되지 않으므로 펼침 목록만 따로 잡는다. */
+        #filterBar QComboBox QAbstractItemView {
+            background: %(card); color: %(text);
+            border: 1px solid %(border);
+            outline: none;
+            selection-background-color: %(accent); selection-color: %(onAccent); }
+
 
         /* ── 캘린더 팝업 (QDateEdit) ── */
         QCalendarWidget QWidget { background: %(panel); color: %(text); }
