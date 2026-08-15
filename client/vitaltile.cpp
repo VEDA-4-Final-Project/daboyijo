@@ -19,8 +19,11 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     // ── 헤더 바: 상태등 + 이름 + 병상 + 상태 배지 ──
     auto* head = new QFrame();
     head->setObjectName("vitalHead");
+    // 높이를 고정한다. 여백만 줄여서는 안에서 가장 큰 자식(이름 라벨)의
+    // 폰트 메트릭이 행 높이를 다시 밀어올려 체감 변화가 없었다.
+    head->setFixedHeight(24);
     auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(10, 2, 9, 2);   // v2: 위아래 7→2
+    hl->setContentsMargins(10, 0, 9, 0);
     hl->setSpacing(6);
     dot_ = new QLabel();
     // #severityDot(24px)이 아니라 #vitalDot(9px)로 되돌린다.
