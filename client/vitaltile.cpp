@@ -80,7 +80,9 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     lay->addLayout(body);
 
     // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
-    auto* sparkRow = new QHBoxLayout();
+    // 컨테이너로 감싼다 — 무신호일 때 여백까지 함께 사라지게 하기 위해서다.
+    sparkRow_ = new QWidget();
+    auto* sparkRow = new QHBoxLayout(sparkRow_);
     sparkRow->setContentsMargins(12, 0, 12, 7);
     spark_ = new Sparkline();
     spark_->setRange(40, 140);
@@ -91,7 +93,8 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
         { 45.0, QColor(QString::fromLatin1(kCritical))},  // 저 위험
     });
     sparkRow->addWidget(spark_);
-    lay->addLayout(sparkRow);
+    lay->addWidget(sparkRow_);
+    sparkRow_->hide();   // 생성 직후는 무신호 — setLive()가 오면 보인다
 }
 
 void VitalTile::setIdentity(const QString& name, const QString& bedText)
@@ -140,6 +143,7 @@ void VitalTile::setLive(int spo2, int heartRate, const QString& severity,
     badgeLbl_->update();
 
     spark_->setLineColor(sparkColor);
+    sparkRow_->show();   // 신호가 있으면 추세 그래프를 되살린다
 }
 
 void VitalTile::setStale(const QString& badgeText, const QColor& sparkColor)
@@ -174,6 +178,9 @@ void VitalTile::setStale(const QString& badgeText, const QColor& sparkColor)
     badgeLbl_->update();
 
     spark_->setLineColor(sparkColor);
+    // 무신호면 추세 영역을 통째로 숨긴다 — 빈 띠만 남는 것보다 타일이
+    // 짧아지는 편이 낫다(사용자 결정 2026-08-15).
+    sparkRow_->hide();
 }
 
 void VitalTile::pushHeartRateSample(double bpm)
