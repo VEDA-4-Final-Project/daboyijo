@@ -9,7 +9,14 @@ class QLabel;
 class Sparkline;
 
 // 바이탈 카드 1장 — 이름·병상·SpO2·심박·상태 배지·심박 추세를 그리는 표시 전용
-// 위젯. 신호/슬롯이 없어 moc 매크로가 불필요(client/sparkline.h와 같은 관용구).
+// 위젯. 신호/슬롯이 없어 Q_OBJECT를 생략했다.
+//   ⚠ sparkline.h·clickslider.h는 Q_OBJECT를 쓴다 — 이 클래스가 예외다.
+//   Q_OBJECT 없이도 되는 이유는 (1) 시그널/슬롯이 없고 (2) qobject_cast 대상이
+//   아니며 (3) QSS가 objectName 셀렉터(#severityDot 등)로만 이 위젯을 잡기
+//   때문이다. 동적 속성 셀렉터([severity="..."])는 QObject 기능이라 moc 없이도
+//   동작한다. 셋 중 하나라도 깨지면 — 특히 base.qss에 `VitalTile { ... }` 같은
+//   타입 셀렉터를 추가하면 metaObject()->className()이 "QFrame"을 돌려줘
+//   규칙이 조용히 안 먹는다 — 그때 Q_OBJECT를 추가할 것.
 // 임계값 판정·등급 도형·등급 색 계산은 여기 없다 — MainWindow가 계산해
 // setLive()/setStale()로 완성된 표시값을 주입한다(D-02).
 class VitalTile : public QFrame {
