@@ -5,9 +5,11 @@
 #include <algorithm>
 
 Sparkline::Sparkline(QWidget* parent) : QWidget(parent) {
-    setMinimumHeight(28);
-    // 카드가 세로로 커지면 남는 공간을 그래프가 흡수(헤더·수치는 고정) → 빈틈 없이 채움.
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // v2: 세로 Expanding을 뺐다. 남는 공간을 그래프가 흡수하면 바이탈 타일이
+    // 부풀어 우측 레일이 영상 폭을 잡아먹는다 — 실제로 그렇게 됐다.
+    // 추세는 "흐름만 보이면 되는" 보조 정보라 34px 고정이면 충분하다.
+    setFixedHeight(34);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setAttribute(Qt::WA_TransparentForMouseEvents, true);  // 클릭 방해 안 하게
 }
 
@@ -63,6 +65,21 @@ void Sparkline::paintEvent(QPaintEvent*) {
         return r.bottom() - (v - lo) / span * r.height();
     };
 
+    const int n = values_.size();
+
+    // v2: 데이터가 없으면 가이드 점선도 그리지 않는다.
+    // v1은 guides_를 먼저 그리고 그 뒤에 n<2로 반환해서, 신호가 없을 때
+    // "점선 4줄만 뜬 빈 상자"가 됐다 — 화면에서 고장난 칸처럼 읽혔다.
+    // 대신 중앙에 옅은 기준선 하나만 그어 "자리는 있으나 신호가 없다"를 표현한다.
+    if (n < 2) {
+        QColor idle = color_;
+        idle.setAlpha(46);
+        p.setPen(QPen(idle, 1.0, Qt::DotLine));
+        const double my = r.center().y();
+        p.drawLine(QPointF(r.left(), my), QPointF(r.right(), my));
+        return;
+    }
+
     // 기준선(주의/위험 임계) — 점선, 값 선보다 아래에 먼저 그린다.
     for (const auto& g : guides_) {
         QColor c = g.second;
@@ -72,9 +89,6 @@ void Sparkline::paintEvent(QPaintEvent*) {
         const double gy = yAt(g.first);
         p.drawLine(QPointF(r.left(), gy), QPointF(r.right(), gy));
     }
-
-    const int n = values_.size();
-    if (n < 2) return;
 
     auto xAt = [&](int i) { return r.left() + r.width() * i / double(n - 1); };
 

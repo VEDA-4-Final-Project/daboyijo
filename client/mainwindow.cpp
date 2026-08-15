@@ -1351,8 +1351,10 @@ QWidget* MainWindow::buildVitalsPanel()
     auto* panel = new QFrame();
     panel->setObjectName("panel");
     // 바이탈 패널은 폭 고정 → 창을 키우면 남는 폭이 전부 영상 월로 간다.
-    panel->setMinimumWidth(300);
-    panel->setMaximumWidth(316);
+    // v2: 300~316 → 232~268. 좁은 창에서 우측 레일이 영상과 폭을 나눠 갖는
+    // 상황이 실제로 나왔다(스크린샷). 영상이 주역이므로 레일이 먼저 양보한다.
+    panel->setMinimumWidth(232);
+    panel->setMaximumWidth(268);
 
     // v2 VMS: 우측 레일도 조밀하게. 여백 16/14→9/8, 간격 12→8.
     auto* outer = new QVBoxLayout(panel);
@@ -1375,6 +1377,10 @@ QWidget* MainWindow::buildVitalsPanel()
     vitalListLayout_ = new QVBoxLayout(inner);
     vitalListLayout_->setContentsMargins(0, 0, 5, 0);
     vitalListLayout_->setSpacing(5);   // v2: 10→5, 타일 사이를 조밀하게
+    // 남는 세로를 흡수할 스트레치는 여기 두지 않는다 — rebuildVitalCards()가
+    // addWidget으로 뒤에 붙이므로 타일이 스트레치 아래로 밀린다.
+    // 대신 VitalTile 자체가 세로 Fixed라(vitaltile.cpp 생성자) 남는 공간이
+    // 타일로 흘러들지 않는다.
     // 카드 개수는 재원 입소자 수에 따라 달라진다(한 채널에 여러 명일 수 있음).
     // 생성자에서 loadPatientsFromDb() 를 먼저 부르므로 여기서 목록을 알 수 있다.
     rebuildVitalCards();
@@ -1430,7 +1436,10 @@ void MainWindow::rebuildVitalCards()
         VitalTile* tile = vitalTiles_.value(t.key);
         if (!tile) {
             tile = buildVitalCard(t.key, t.name, t.bedText);
-            vitalListLayout_->addWidget(tile, 1);
+            // v2: stretch 1 → 0. 타일이 남는 세로를 나눠 먹으면 입소자가
+            // 적을수록 타일이 거대해진다(스크린샷에서 확인된 증상).
+            // 자연 높이로 위에서부터 쌓이고, 남는 공간은 아래 스트레치가 먹는다.
+            vitalListLayout_->addWidget(tile, 0);
         } else {
             // 조건 없이 호출한다 — PD-01의 멱등 가드가 변화 없을 때를 흡수하고,
             // 같은 입소자가 다른 채널로 옮겨져 병상 표기만 바뀐 경우를 놓치지 않는다.
@@ -1445,7 +1454,7 @@ void MainWindow::rebuildVitalCards()
         if (!tile) continue;
         if (vitalListLayout_->indexOf(tile) != i) {
             vitalListLayout_->removeWidget(tile);
-            vitalListLayout_->insertWidget(i, tile, 1);
+            vitalListLayout_->insertWidget(i, tile, 0);
         }
     }
 

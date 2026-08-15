@@ -67,6 +67,10 @@ QPixmap makeVitalIcon(int kind, const QColor& c)
 VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
 {
     setObjectName("vitalCard");
+    // 세로 Fixed — 남는 공간이 타일로 흘러들면 입소자가 적을수록 타일이
+    // 거대해진다(v1의 실제 증상). 타일은 내용만큼만 높고, 남는 세로는
+    // 목록 아래에 그대로 비워 둔다.
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     // v2 VMS 계기판 톤. v1에서 걷어낸 것과 이유:
     //  · 이모지 아이콘(🫁 ❤) — 관제 소프트웨어에 이모지가 들어가면 즉시 아마추어로
