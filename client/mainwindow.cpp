@@ -757,17 +757,22 @@ void MainWindow::buildUi()
     contentStack->setObjectName("contentStack");
 
     // ── 1: 실시간 관제 및 제어 (경보 배너 + 영상월 + 바이탈 패널) ──
+    // v2 VMS 밀도: 여백 18px→6px. 관제 화면에서 여백은 영상을 깎아먹는 비용이다.
+    // 상용 VMS가 화면 끝까지 영상을 붙이는 이유 — 24시간 보는 화면에서
+    // 크롬 1px은 영상 1px이다.
     auto* body = new QHBoxLayout();
-    body->setContentsMargins(18, 18, 18, 18);
-    body->setSpacing(18);
+    body->setContentsMargins(6, 6, 6, 6);
+    body->setSpacing(6);
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
     // 상시 노출용 경보 배너(#alertBanner) — dashboardTab 최상단, body 위.
     // 좌우는 body와 같은 세로선에 맞추고(18px) 상하는 최소로 둔다 — QSS가
     // 이미 padding 24px 32px를 준다(ALERT-03 / D-01).
+    // v2: 배너를 화면 폭 끝까지 붙인 스트립으로 만든다. 여백을 두면 "카드"로
+    // 보이고, 카드는 관제 화면에서 경보가 아니라 위젯처럼 읽힌다.
     alertBanner_ = new AlertBanner();
-    alertBanner_->setContentsMargins(18, 12, 18, 0);
+    alertBanner_->setContentsMargins(0, 0, 0, 0);
 
     auto* dashboardOuter = new QVBoxLayout();
     dashboardOuter->setContentsMargins(0, 0, 0, 0);
@@ -1192,16 +1197,19 @@ void MainWindow::onLogoutClicked()
 
 QWidget* MainWindow::buildVideoWall()
 {
+    // v2: 영상월은 더 이상 "패널 위에 얹힌 카드 묶음"이 아니다. 카드 테두리와
+    // 라운드를 걷어내고 영상이 곧 표면이 되게 한다 — 상용 VMS의 기본형이다.
+    // objectName을 #panel에서 #videoWall로 바꿔 배경·테두리·라운드를 전부 뺀다.
     auto* panel = new QFrame();
-    panel->setObjectName("panel");
+    panel->setObjectName("videoWall");
 
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(12, 12, 12, 12);
+    outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
 
     // 방송·경보해제 버튼은 상단 헤더로 올렸다 → 여기선 영상 4개가 패널을 꽉 채운다.
     videoGrid = new QGridLayout();
-    videoGrid->setSpacing(12);   // 라운드 카드가 숨 쉴 만큼의 간격(모던 대시보드 톤)
+    videoGrid->setSpacing(3);   // v2: 12px→3px. 채널 사이를 가르는 최소한의 선만 남긴다
     for (int ch = 0; ch < 4; ++ch)
         videoCards[ch] = buildVideoCard(ch);
     outer->addLayout(videoGrid, 1);
@@ -1225,7 +1233,7 @@ QWidget* MainWindow::buildVideoCard(int channel)
     // 오버레이는 "CH1"만 — 병상·이름은 표시하지 않는다(overlayInfo 비움).
     auto* video = new VideoView(channel);
     video->setObjectName("video");
-    video->setCornerRadius(11);   // 카드(#videoCard 12px) 안쪽에 딱 맞게
+    video->setCornerRadius(0);   // v2: 라운드 제거 — 영상은 각지게, 화면 끝까지
     channelViews[channel] = video;
     connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
     connect(video, &VideoView::drawModeChanged, this,

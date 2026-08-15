@@ -107,16 +107,30 @@
            않도록 이 문단을 남긴다. severity 속성값 어휘는 #statusDot과 동일한
            "critical"|"high"|"medium"|"info"|"normal"이며, C++ 필드명 warn↔QSS
            값 medium 불일치도 동일하게 승계한다. */
-        #alertBanner { font-size: 48px; font-weight: 800; color: %(text);
-                        padding: 24px 32px; border-radius: 16px;
-                        border-left: 8px solid %(sub); background: %(card); }
-        #alertBanner[severity="critical"] { border-left-color: %(critical);
-            background: %(critical); color: white; }
-        #alertBanner[severity="high"] { border-left-color: %(high);
-            background: %(high); color: white; }
-        #alertBanner[severity="medium"] { border-left-color: %(warn); background: %(card); }
-        #alertBanner[severity="info"] { border-left-color: %(info); background: %(card); }
-        #alertBanner[severity="normal"] { border-left-color: %(normal); background: %(card); }
+        /* v2 VMS: 평시엔 얇은 스트립, 경보 시엔 크게 — 크기 변화 자체가
+           0.5초 판별의 신호다. v1은 평시에도 48px/24px패딩이라 경보가 없을 때도
+           화면 상단을 통째로 먹었고, 그래서 "경보 영역"이 아니라 "제목 줄"처럼
+           읽혔다. 라운드는 제거 — 화면 폭 끝까지 붙는 스트립이라야 크롬이 아니라
+           상태 표시로 읽힌다. */
+        #alertBanner { font-size: 15px; font-weight: 700; color: %(sub);
+                        padding: 7px 14px; border-radius: 0;
+                        border-left: 4px solid %(normal);
+                        border-bottom: 1px solid %(border);
+                        background: %(panel); }
+        /* 경보가 실제로 있을 때만 원거리 스케일로 커진다(VERIFY-04의 2~3m 요구). */
+        #alertBanner[severity="critical"] { font-size: 40px; font-weight: 800;
+            padding: 14px 20px; border-left: 10px solid #FFFFFF;
+            background: %(critical); color: #FFFFFF; }
+        #alertBanner[severity="high"] { font-size: 40px; font-weight: 800;
+            padding: 14px 20px; border-left: 10px solid #FFFFFF;
+            background: %(high); color: #FFFFFF; }
+        #alertBanner[severity="medium"] { font-size: 28px; font-weight: 800;
+            padding: 11px 18px; border-left: 8px solid %(warn);
+            background: %(card); color: %(text); }
+        #alertBanner[severity="info"] { font-size: 20px; font-weight: 700;
+            padding: 9px 16px; border-left: 6px solid %(info);
+            background: %(card); color: %(text); }
+        #alertBanner[severity="normal"] { border-left-color: %(normal); }
 
         #severityBadge { font-size: 32px; font-weight: 800; color: white;
                           padding: 8px 16px; border-radius: 8px; background: %(sub); }
@@ -255,7 +269,9 @@
                      border-radius: 8px; font-size: 15px; }
         #navToggle:hover { background: %(card); color: %(text); }
 
-        #panel { background: %(panel); border: 1px solid %(border); border-radius: 16px; }
+        /* v2 VMS: 라운드 16px→3px. 큰 라운드는 SaaS 대시보드 관용구고,
+           관제 툴은 각진 패널로 정보 밀도를 우선한다. */
+        #panel { background: %(panel); border: 1px solid %(border); border-radius: 3px; }
         /* 섹션 제목: 좌측 굵은 청록 악센트 바 + 큼직한 타이틀 */
         #panelTitle { color: %(text); font-size: 17px; font-weight: 800; letter-spacing: 0.3px;
                       border-left: 4px solid %(accent); padding: 1px 0 1px 12px; }
@@ -305,8 +321,11 @@
            배경은 팔레트가 아니라 영상 캔버스 전용 단일 출처 토큰을 참조한다(D-07/IA-02) —
            videoview.cpp의 paintEvent()가 같은 상수(kVideoSurface)로 칠하는 영역과
            반드시 같은 검정이어야 카드 테두리 안쪽과 실제 영상 영역의 색이 갈리지 않는다. */
-        #videoCard { background: %(videoSurface); border: 1px solid %(border); border-radius: 12px; }
-        #video { color: #9AA7B2; font-size: 13px; background: %(videoSurface); border-radius: 12px; }
+        /* v2 VMS: 영상월은 표면이지 카드가 아니다. #videoWall은 배경·테두리를
+           갖지 않고, 채널 사이 3px 간격이 곧 구분선 역할을 한다. */
+        #videoWall { background: transparent; border: none; }
+        #videoCard { background: %(videoSurface); border: none; border-radius: 0; }
+        #video { color: #9AA7B2; font-size: 13px; background: %(videoSurface); border-radius: 0; }
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
