@@ -20,8 +20,8 @@ VitalTile::VitalTile(QWidget* parent) : QFrame(parent)
     auto* head = new QFrame();
     head->setObjectName("vitalHead");
     auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(12, 4, 10, 4);   // v2: 위아래 7→4
-    hl->setSpacing(7);
+    hl->setContentsMargins(10, 2, 9, 2);   // v2: 위아래 7→2
+    hl->setSpacing(6);
     dot_ = new QLabel();
     // #severityDot(24px)이 아니라 #vitalDot(9px)로 되돌린다.
     // 24px는 "몇 미터 밖에서 보이는" 경보 스케일이고, 이 타일은 가까이서

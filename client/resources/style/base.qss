@@ -178,8 +178,8 @@
         /* 바이탈 상태 배지 — 배경은 기존 blendHex() 18% 혼합 대신 평평한
            %(card)로 단순화한다. QSS는 색을 계산하지 못하므로 다섯 개 혼합값을
            새로 정하는 대신 기존 토큰을 그대로 쓴다(차이는 미세하다). */
-        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 9px;
-                      padding: 1px 10px; font-size: 11px; font-weight: 800; color: %(sub); }
+        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 8px;
+                      padding: 0 9px; font-size: 10px; font-weight: 800; color: %(sub); }
         #vitalBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
         #vitalBadge[severity="high"] { color: %(high); border-color: %(high); }
         #vitalBadge[severity="medium"] { color: %(warn); border-color: %(warn); }
@@ -362,8 +362,8 @@
         #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
                      border-top-left-radius: 14px; border-top-right-radius: 14px; }
         /* 사용자 판단으로 v1 형태 복원(2026-08-15) — 이모지 캡션 + statBox 카드형. */
-        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
-        #vitalBed { color: %(sub); font-size: 12px; }
+        #vitalName { color: %(text); font-size: 13px; font-weight: 800; }
+        #vitalBed { color: %(sub); font-size: 11px; }
         #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
         #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
         #statValue { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
