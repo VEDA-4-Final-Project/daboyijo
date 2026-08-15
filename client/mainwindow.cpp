@@ -756,15 +756,27 @@ void MainWindow::buildUi()
     contentStack = new QStackedWidget();
     contentStack->setObjectName("contentStack");
 
-    // ── 1: 실시간 관제 및 제어 (영상월 + 바이탈 패널) ──
+    // ── 1: 실시간 관제 및 제어 (경보 배너 + 영상월 + 바이탈 패널) ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(18, 18, 18, 18);
     body->setSpacing(18);
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
+    // 상시 노출용 경보 배너(#alertBanner) — dashboardTab 최상단, body 위.
+    // 좌우는 body와 같은 세로선에 맞추고(18px) 상하는 최소로 둔다 — QSS가
+    // 이미 padding 24px 32px를 준다(ALERT-03 / D-01).
+    alertBanner_ = new AlertBanner();
+    alertBanner_->setContentsMargins(18, 12, 18, 0);
+
+    auto* dashboardOuter = new QVBoxLayout();
+    dashboardOuter->setContentsMargins(0, 0, 0, 0);
+    dashboardOuter->setSpacing(0);
+    dashboardOuter->addWidget(alertBanner_);
+    dashboardOuter->addLayout(body, 1);
+
     auto* dashboardTab = new QWidget();
-    dashboardTab->setLayout(body);
+    dashboardTab->setLayout(dashboardOuter);
     contentStack->addWidget(dashboardTab);
 
     contentStack->addWidget(buildEventLogTab());        // 2: 이벤트 기록
@@ -785,13 +797,6 @@ void MainWindow::buildUi()
 
     // 경보 토스트 — 상단에서 슬라이드해 내려오는 알림(오버레이, 레이아웃 밖).
     buildAlarmBanner();
-
-    // 상시 노출용 경보 배너(#alertBanner) — 이 단계는 만들고 배선까지만 한다.
-    // 어느 화면 자리에 상시 노출할지는 Phase 4 ALERT-03이 결정하므로(D-03)
-    // 지금은 레이아웃에 꽂지 않고 숨겨 둔다. Phase 4는 이 hide() 한 줄을
-    // 지우고 원하는 레이아웃에 위젯을 추가하기만 하면 된다.
-    alertBanner_ = new AlertBanner(ui->centralwidget);
-    alertBanner_->hide();
 
     resize(1600, 940);
     setMinimumSize(1340, 760);

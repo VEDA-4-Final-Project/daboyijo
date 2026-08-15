@@ -1,5 +1,7 @@
 #include "alertbanner.h"
 
+#include <algorithm>
+
 #include <QLabel>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -17,6 +19,11 @@ int severityRank(const QString& severity)
     if (severity == QStringLiteral("info"))     return 1;
     return 0;  // normal 및 알 수 없는 값
 }
+
+// 배너가 동시에 그릴 수 있는 최대 줄 수(04-UI-SPEC §3.4). 4건 이상이면
+// 상위 2건 + 요약 줄(+N건 더)로 이 값에 맞춘다. 5줄 상한값이 아니라 이
+// 상수 하나만 낮추면 §5.2의 1차 완화책(3→2)이 그대로 적용된다.
+constexpr int kMaxVisibleLines = 3;
 
 }  // namespace
 
@@ -47,15 +54,41 @@ void AlertBanner::setActiveAlerts(const QList<AlertItem>& items)
         lineTexts << QStringLiteral("✓ 활성 경보 없음 · 모든 침대 정상 범위");
         overallSeverity = QStringLiteral("normal");
     } else {
+        // ① 배경색을 정하는 overallSeverity는 상한 적용 전 전체 items에서
+        // 고른다 — 접힌 항목의 등급이 배경색에 반영되지 않는 실패를 막는다.
         int bestRank = -1;
         for (const AlertItem& item : items) {
-            lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
-                              QStringLiteral(" · ") + item.location;
             const int rank = severityRank(item.severity);
             if (rank > bestRank) {
                 bestRank = rank;
                 overallSeverity = item.severity;
             }
+        }
+
+        // ② 등급 내림차순 안정 정렬 — 동순위 항목은 collectAlertItems()가
+        // 넣은 채널 오름차순·이벤트 순서를 그대로 유지한다. 순서를 보장하지
+        // 않는 정렬 함수는 쓰지 않는다 — 반드시 stable 계열이어야 한다.
+        QList<AlertItem> sorted = items;
+        std::stable_sort(sorted.begin(), sorted.end(),
+                          [](const AlertItem& a, const AlertItem& b) {
+                              return severityRank(a.severity) > severityRank(b.severity);
+                          });
+
+        // ③④ kMaxVisibleLines 이하면 전부 줄로, 넘으면 상위 2건 + 요약 줄.
+        // 상한은 항목 개수 정수 비교로만 건다 — 문자열을 자르거나
+        // 말줄임하지 않는다(한글 음절이 중간에서 깨지는 실패 모드 차단).
+        if (sorted.size() <= kMaxVisibleLines) {
+            for (const AlertItem& item : sorted) {
+                lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
+                                  QStringLiteral(" · ") + item.location;
+            }
+        } else {
+            for (int i = 0; i < 2; ++i) {
+                const AlertItem& item = sorted[i];
+                lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
+                                  QStringLiteral(" · ") + item.location;
+            }
+            lineTexts << QStringLiteral("+%1건 더").arg(sorted.size() - 2);
         }
     }
 
