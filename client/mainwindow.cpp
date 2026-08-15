@@ -1361,10 +1361,8 @@ QWidget* MainWindow::buildVitalsPanel()
     outer->setContentsMargins(9, 8, 9, 9);
     outer->setSpacing(8);
 
-    // 제목은 17px/800 헤딩이 아니라 레일 섹션 라벨로 — 상용 VMS의 사이드
-    // 패널 머리글은 작고 자간 넓은 캡션이다(#railTitle).
     auto* title = new QLabel(QStringLiteral("웨어러블 생체신호"));
-    title->setObjectName("railTitle");
+    title->setObjectName("panelTitle");
     outer->addWidget(title);
 
     // 스크롤 가능한 바이탈 카드 목록

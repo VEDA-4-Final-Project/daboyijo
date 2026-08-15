@@ -68,13 +68,18 @@
                  font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                  padding: 0 8px; }
 
-        #themeToggle { background: transparent; border: 1px solid %(border); border-radius: 3px;
+        /* 헤더 컨트롤 공통 규칙(v2-2).
+           v2-1은 "전부 테두리 3px로 통일"이었는데, 다크에서 card(#131920)가
+           panel(#0D1116)보다 밝아 버튼·칩이 헤더 위에 뜬 회색 블록이 됐다.
+           그래서 반대로 간다 — 평상시엔 배경·테두리 없이 글자만, hover에서만
+           살짝 밝아진다. 헤더는 조작 영역이 아니라 상태 표시줄에 가깝다. */
+        #themeToggle { background: transparent; border: none; border-radius: 3px;
                        min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
-                       font-size: 14px; color: %(sub); }
-        #themeToggle:hover { border-color: %(sub); background: %(card); color: %(text); }
+                       color: %(sub); }
+        #themeToggle:hover { background: %(card); }
 
         /* 도움말 버튼 — 원형 물음표 아이콘 + "도움말" 텍스트 (필 형태) */
-        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 15px;
+        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 3px;
                    padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
         #helpBtn:hover { background: %(card); color: %(text); }
 
@@ -173,11 +178,8 @@
         /* 바이탈 상태 배지 — 배경은 기존 blendHex() 18% 혼합 대신 평평한
            %(card)로 단순화한다. QSS는 색을 계산하지 못하므로 다섯 개 혼합값을
            새로 정하는 대신 기존 토큰을 그대로 쓴다(차이는 미세하다). */
-        /* v2: 알약(라운드9)에서 각진 태그(라운드2)로. 관제 UI는 둥근 pill보다
-           각진 라벨을 쓴다 — 도형(✖▲◆●✓)이 이미 앞에 붙으므로 배지 자체는
-           담백해야 도형이 읽힌다. */
-        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 2px;
-                      padding: 1px 7px; font-size: 11px; font-weight: 800; color: %(sub); }
+        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 9px;
+                      padding: 1px 10px; font-size: 11px; font-weight: 800; color: %(sub); }
         #vitalBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
         #vitalBadge[severity="high"] { color: %(high); border-color: %(high); }
         #vitalBadge[severity="medium"] { color: %(warn); border-color: %(warn); }
@@ -260,10 +262,10 @@
            색인데 v1은 그걸 사람 이니셜 원에 썼다 — 헤더에서 제일 먼저 눈에
            들어오는 게 로그인한 사람 이름표가 되는 건 관제 화면에서 틀렸다.
            accent는 경보·상태·현재선택에만 남긴다. */
-        #userChip { background: %(card); border: 1px solid %(border); border-radius: 3px; }
-        #userChip:hover { border-color: %(sub); }
-        #userAvatar { background: %(border); color: %(text); border-radius: 2px;
-                      font-size: 11px; font-weight: 800; }
+        /* 칩 컨테이너를 지웠다 — 헤더보다 밝은 회색 블록이 우측 끝에 떠 있었다. */
+        #userChip { background: transparent; border: none; }
+        #userAvatar { background: transparent; color: %(sub); border: 1px solid %(border);
+                      border-radius: 3px; font-size: 11px; font-weight: 800; }
         #userName { color: %(sub); font-size: 12px; font-weight: 700; }
         #logoutButton { background: transparent; color: %(sub); border: none;
                         border-radius: 2px; padding: 4px 10px; font-size: 11px; font-weight: 600; }
@@ -307,9 +309,9 @@
 
         /* v2: 헤더 버튼 공통 형태 — 라운드 3px, 패딩 6/12, 12px. mic/alarm/help가
            같은 규격을 쓴다(v1은 10/16/19px 라운드로 제각각이었다). */
-        #micButton { background: %(card); color: %(sub); border: 1px solid %(border);
-                     border-radius: 3px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
-        #micButton:hover { border-color: %(sub); color: %(text); }
+        #micButton { background: transparent; color: %(sub); border: none;
+                     border-radius: 3px; padding: 6px 11px; font-size: 12px; font-weight: 600; }
+        #micButton:hover { background: %(card); color: %(text); }
         #micButton[active="true"] { color: #fff; border-color: %(critical);
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 #ff6b62, stop:1 %(critical)); }
@@ -344,37 +346,19 @@
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
-        /* v2 VMS 계기판 톤: 라운드 14→2px, 카드-속-카드(statBox) 제거,
-           좌측 3px 등급 레일이 상태를 표시한다. */
-        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 2px; }
-        #vitalRail { min-width: 3px; max-width: 3px; background: %(sub); border: none; }
-        #vitalRail[severity="critical"] { background: %(critical); }
-        #vitalRail[severity="high"]     { background: %(high); }
-        #vitalRail[severity="medium"]   { background: %(warn); }
-        #vitalRail[severity="info"]     { background: %(info); }
-        #vitalRail[severity="normal"]   { background: %(normal); }
-        #vitalRail[vital="stale"]       { background: %(border); }
+        /* 사용자 판단으로 v1 형태 복원(2026-08-15): 계기판 톤 재설계보다
+           기존 카드형이 낫다는 결정. #vitalRail은 함께 제거했다. */
+        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 14px; }
         #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
                      border-top-left-radius: 14px; border-top-right-radius: 14px; }
-        /* v2: 사이드 레일 섹션 머리글 — 17px/800 헤딩이 아니라 작고 자간 넓은
-           캡션. 상용 VMS 사이드 패널의 관용구다. */
-        #railTitle { color: %(sub); font-size: 10px; font-weight: 800;
-                     letter-spacing: 1.4px; padding: 1px 2px 3px 2px; }
-        #vitalName { color: %(text); font-size: 13px; font-weight: 800; }
-        #vitalBed { color: %(sub); font-size: 11px; }
-        /* #statBox는 v2에서 제거됐다(카드-속-카드). 규칙만 남기면 죽은 코드라
-           함께 삭제한다 — 되살리려면 vitaltile.cpp의 makeStat을 되돌릴 것. */
-        /* 판독값 캡션 아이콘 — vitaltile.cpp의 makeVitalIcon()이 QPainter로 그린
-           선 아이콘(산소 방울 / 심전도 파형). 이모지가 아니라 픽스맵이라
-           QSS로는 여백만 잡는다. */
-        #statIcon { padding-bottom: 3px; }
-        #statCaption { color: %(sub); font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
-                       padding-bottom: 4px; }
-        /* 26px — v1의 32px은 원거리 스케일(#severityBadge)과 붙어 위계가 뭉갰다.
-           개인정보가 아닌 판독 수치라 데스크 스케일 상단이 맞는 자리다(IA-03). */
+        /* 사용자 판단으로 v1 형태 복원(2026-08-15) — 이모지 캡션 + statBox 카드형. */
+        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
+        #vitalBed { color: %(sub); font-size: 12px; }
+        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
         #statValue { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
-                     font-size: 26px; font-weight: 800; }
-        #statUnit { color: %(sub); font-size: 11px; font-weight: 600; padding-bottom: 4px; }
+                     font-size: 32px; font-weight: 800; }
+        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */
