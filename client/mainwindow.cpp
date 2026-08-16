@@ -294,6 +294,9 @@ constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 // 블랙박스 클립 HTTP 서버 포트 (server/src/main.cpp의 kClipHttpPort와 동일하게 유지)
 constexpr quint16 kClipHttpPort = 5501;
 
+// NVR(연속녹화) 클립 HTTP 서버 포트 (server/src/config.hpp의 nvr_http_port 기본값과 동일하게 유지)
+constexpr quint16 kNvrHttpPort = 5502;
+
 // 블랙박스 재생 실패(=서버가 아직 파일 저장 중) 시 재시도 간격·횟수.
 // 서버는 낙상 후 post초(현재 5초)를 더 녹화한 뒤에야 파일을 완성하므로,
 // 낙상 직후 로그를 누르면 아직 파일이 없다 — 잠깐 기다렸다 다시 시도한다.
@@ -763,9 +766,10 @@ void MainWindow::buildUi()
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
-    // 상시 노출용 경보 배너(#alertBanner) — dashboardTab 최상단, body 위.
-    // 좌우는 body와 같은 세로선에 맞추고(18px) 상하는 최소로 둔다 — QSS가
-    // 이미 padding 24px 32px를 준다(ALERT-03 / D-01).
+    // 경보 배너(#alertBanner) — dashboardTab 최상단, body 위. 활성 경보가
+    // 있을 때만 보이고 0건이면 숨는다. 좌우는 body와 같은 세로선에 맞추고
+    // (18px) 상하는 최소로 둔다 — QSS가 이미 padding 24px 32px를 준다
+    // (ALERT-03 / D-01).
     alertBanner_ = new AlertBanner();
     alertBanner_->setContentsMargins(18, 12, 18, 0);
 
@@ -1432,6 +1436,7 @@ QWidget* MainWindow::buildEventLogTab()
     bbHint->setWordWrap(true);
     right->addWidget(bbHint);
     right->addWidget(buildBlackboxPlayer(), 1);
+    right->addWidget(buildNvrBrowser());
     body->addLayout(right, 4);
 
     outer->addLayout(body, 1);
@@ -1885,6 +1890,120 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlayer->setSource(QUrl());
     blackboxPlayer->setSource(QUrl(url));
     blackboxPlayer->play();
+}
+
+// NVR(연속녹화) 탐색 — 채널 콤보 + 세그먼트 목록. 재생기는 새로 안 만들고
+// 위의 블랙박스 재생기(blackboxPlayer 등)를 그대로 재사용한다.
+QWidget* MainWindow::buildNvrBrowser()
+{
+    auto* card = new QFrame();
+    card->setObjectName("videoCard");
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setSpacing(6);
+
+    auto* cap = new QLabel(QStringLiteral("NVR 연속녹화"));
+    cap->setObjectName("panelTitle");
+    lay->addWidget(cap);
+
+    auto* topRow = new QHBoxLayout();
+    nvrChannelCombo = new QComboBox();
+    nvrChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
+    for (int ch = 0; ch < 4; ++ch)
+        nvrChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
+    topRow->addWidget(nvrChannelCombo, 1);
+
+    auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
+    refreshBtn->setCursor(Qt::PointingHandCursor);
+    topRow->addWidget(refreshBtn);
+    lay->addLayout(topRow);
+
+    nvrSegmentList = new QListWidget();
+    nvrSegmentList->setMaximumHeight(140);
+    lay->addWidget(nvrSegmentList);
+
+    connect(nvrChannelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::repopulateNvrList);
+    connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshNvrSegments);
+    connect(nvrSegmentList, &QListWidget::itemDoubleClicked, this,
+            [this](QListWidgetItem* item) {
+        if (!item) return;
+        playBlackboxClip(item->data(Qt::UserRole).toString());
+    });
+
+    refreshNvrSegments();
+    return card;
+}
+
+// 각 Pi의 NVR HTTP 서버(/list)에서 세그먼트 파일 목록을 받아 nvrSegments_에 누적하고
+// 목록 UI를 다시 채운다. 파일명 규칙: ch{채널}_{세그먼트시작 unixMs}.mp4
+void MainWindow::refreshNvrSegments()
+{
+    nvrSegments_.clear();
+    for (int si = 0; si < kNumServers; ++si) {
+        auto* manager = new QNetworkAccessManager(this);
+        const QString host = serverHost(si);
+        QUrl url(QStringLiteral("http://%1:%2/list").arg(host).arg(kNvrHttpPort));
+        QNetworkReply* reply = manager->get(QNetworkRequest(url));
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply, host]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                qDebug() << "⚠️ NVR 세그먼트 목록 수집 실패(" << host << "):" << reply->errorString();
+                return;
+            }
+
+            const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            if (!doc.isArray()) return;
+
+            for (const QJsonValue& value : doc.array()) {
+                const QString fileName = value.toString();
+                const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                const QStringList parts = cleanName.split(QLatin1Char('_'));
+                if (parts.size() != 2) continue;   // ch{N}_{startMs} 형식만 (이벤트 클립과 구분)
+
+                const int channel = parts[0].mid(2).toInt();  // "ch1" -> 1
+                const qint64 startMs = parts[1].toLongLong();
+                if (channel < 0 || channel >= 4) continue;
+
+                NvrSegmentInfo entry;
+                entry.channel = channel;
+                entry.startMs = startMs;
+                entry.url = QStringLiteral("http://%1:%2/%3")
+                                .arg(host).arg(kNvrHttpPort).arg(fileName);
+                nvrSegments_.push_back(entry);
+            }
+            repopulateNvrList();
+        });
+    }
+}
+
+// nvrChannelCombo 선택값 기준으로 nvrSegments_에서 골라 nvrSegmentList를 최신순으로 채움
+void MainWindow::repopulateNvrList()
+{
+    if (!nvrSegmentList || !nvrChannelCombo) return;
+    const int filterCh = nvrChannelCombo->currentData().toInt();
+
+    QVector<NvrSegmentInfo> shown;
+    for (const auto& seg : nvrSegments_) {
+        if (filterCh >= 0 && seg.channel != filterCh) continue;
+        shown.push_back(seg);
+    }
+    std::sort(shown.begin(), shown.end(),
+              [](const NvrSegmentInfo& a, const NvrSegmentInfo& b) {
+        return a.startMs > b.startMs;   // 최신순
+    });
+
+    nvrSegmentList->clear();
+    for (const auto& seg : shown) {
+        const QString when = QDateTime::fromMSecsSinceEpoch(seg.startMs)
+                                  .toString("yyyy-MM-dd HH:mm:ss");
+        auto* item = new QListWidgetItem(
+            QStringLiteral("채널 %1 · %2").arg(seg.channel + 1).arg(when));
+        item->setData(Qt::UserRole, seg.url);
+        nvrSegmentList->addItem(item);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════

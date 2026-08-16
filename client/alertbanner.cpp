@@ -39,57 +39,58 @@ AlertBanner::AlertBanner(QWidget* parent) : QFrame(parent)
     lineLayout_->setContentsMargins(0, 0, 0, 0);
     lineLayout_->setSpacing(8);   // Phase 2 간격 스케일 sm
 
-    setActiveAlerts({});   // 생성 직후 0건 상태를 렌더해 둔다
+    setActiveAlerts({});   // 생성 직후 0건 상태이므로 숨겨 둔다
 }
 
 void AlertBanner::setActiveAlerts(const QList<AlertItem>& items)
 {
+    if (items.isEmpty()) {
+        // 0건이면 자리 자체를 접는다 — "활성 경보 없음" 고정 카피 대신
+        // 위젯을 숨겨 dashboardOuter 레이아웃에서 공간을 비운다.
+        setVisible(false);
+        return;
+    }
+    setVisible(true);
+
     // 1. 표시할 줄 텍스트 목록과 배너 전체 등급을 만든다.
     QStringList lineTexts;
     QString overallSeverity;
 
-    if (items.isEmpty()) {
-        // 0건 고정 카피(PD-07) — 도형까지 포함한 리터럴 문자열이며 계산 결과가
-        // 아니다.
-        lineTexts << QStringLiteral("✓ 활성 경보 없음 · 모든 침대 정상 범위");
-        overallSeverity = QStringLiteral("normal");
+    // ① 배경색을 정하는 overallSeverity는 상한 적용 전 전체 items에서
+    // 고른다 — 접힌 항목의 등급이 배경색에 반영되지 않는 실패를 막는다.
+    int bestRank = -1;
+    for (const AlertItem& item : items) {
+        const int rank = severityRank(item.severity);
+        if (rank > bestRank) {
+            bestRank = rank;
+            overallSeverity = item.severity;
+        }
+    }
+
+    // ② 등급 내림차순 안정 정렬 — 동순위 항목은 collectAlertItems()가
+    // 넣은 채널 오름차순·이벤트 순서를 그대로 유지한다. 순서를 보장하지
+    // 않는 정렬 함수는 쓰지 않는다 — 반드시 stable 계열이어야 한다.
+    QList<AlertItem> sorted = items;
+    std::stable_sort(sorted.begin(), sorted.end(),
+                      [](const AlertItem& a, const AlertItem& b) {
+                          return severityRank(a.severity) > severityRank(b.severity);
+                      });
+
+    // ③④ kMaxVisibleLines 이하면 전부 줄로, 넘으면 상위 2건 + 요약 줄.
+    // 상한은 항목 개수 정수 비교로만 건다 — 문자열을 자르거나
+    // 말줄임하지 않는다(한글 음절이 중간에서 깨지는 실패 모드 차단).
+    if (sorted.size() <= kMaxVisibleLines) {
+        for (const AlertItem& item : sorted) {
+            lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
+                              QStringLiteral(" · ") + item.location;
+        }
     } else {
-        // ① 배경색을 정하는 overallSeverity는 상한 적용 전 전체 items에서
-        // 고른다 — 접힌 항목의 등급이 배경색에 반영되지 않는 실패를 막는다.
-        int bestRank = -1;
-        for (const AlertItem& item : items) {
-            const int rank = severityRank(item.severity);
-            if (rank > bestRank) {
-                bestRank = rank;
-                overallSeverity = item.severity;
-            }
+        for (int i = 0; i < 2; ++i) {
+            const AlertItem& item = sorted[i];
+            lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
+                              QStringLiteral(" · ") + item.location;
         }
-
-        // ② 등급 내림차순 안정 정렬 — 동순위 항목은 collectAlertItems()가
-        // 넣은 채널 오름차순·이벤트 순서를 그대로 유지한다. 순서를 보장하지
-        // 않는 정렬 함수는 쓰지 않는다 — 반드시 stable 계열이어야 한다.
-        QList<AlertItem> sorted = items;
-        std::stable_sort(sorted.begin(), sorted.end(),
-                          [](const AlertItem& a, const AlertItem& b) {
-                              return severityRank(a.severity) > severityRank(b.severity);
-                          });
-
-        // ③④ kMaxVisibleLines 이하면 전부 줄로, 넘으면 상위 2건 + 요약 줄.
-        // 상한은 항목 개수 정수 비교로만 건다 — 문자열을 자르거나
-        // 말줄임하지 않는다(한글 음절이 중간에서 깨지는 실패 모드 차단).
-        if (sorted.size() <= kMaxVisibleLines) {
-            for (const AlertItem& item : sorted) {
-                lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
-                                  QStringLiteral(" · ") + item.location;
-            }
-        } else {
-            for (int i = 0; i < 2; ++i) {
-                const AlertItem& item = sorted[i];
-                lineTexts << item.glyph + QStringLiteral(" ") + item.eventLabel +
-                                  QStringLiteral(" · ") + item.location;
-            }
-            lineTexts << QStringLiteral("+%1건 더").arg(sorted.size() - 2);
-        }
+        lineTexts << QStringLiteral("+%1건 더").arg(sorted.size() - 2);
     }
 
     // 2. 줄 라벨 개수를 맞춘다 — 부족하면 만들고, 남으면 숨긴다(삭제하지 않는다).

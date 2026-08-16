@@ -29,6 +29,7 @@
 #include "ai_worker.hpp"
 #include "bed_zones.hpp"
 #include "blackbox_module.hpp"
+#include "nvr_module.hpp"
 #include "caregiver_module.hpp"
 #include "config.hpp"
 #include "database.hpp"
@@ -115,6 +116,8 @@ int main(int argc, char* argv[]) {
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
+    NvrModule nvr(config.nvr_storage_path, config.nvr_retention_hours,
+                  config.nvr_segment_minutes, config.nvr_http_port);  // [NVR 연속녹화]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
@@ -379,6 +382,7 @@ int main(int argc, char* argv[]) {
     // ── 서버 기동 ────────────────────────────────────────────────
     if (!stream_server.start()) return 1;
     blackbox.startHttp();
+    nvr.startHttp();
     telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
     db.connect(config.db_host, "daboijo", "1234", "daboijo");
 
@@ -414,6 +418,7 @@ int main(int argc, char* argv[]) {
             detections.push(ch, std::move(dets), cap);  // 공용: 시간 매칭용 이력 저장
         });
         blackbox.attachChannel(*client);    // 블랙박스: 압축 패킷 버퍼링 배선
+        nvr.attachChannel(*client);         // NVR: 연속 녹화 배선
         caregiver.addChannel(cam.channel);  // 요양사: 케어 타이머 준비
         fall.addChannel(cam.channel);       // 낙상: 채널 전용 MoveNet 로드
         ai_worker.addChannel(cam.channel);  // AI: 채널 전담 워커 스레드 예약
@@ -463,11 +468,13 @@ int main(int argc, char* argv[]) {
     caregiver.flush();    // 열린 케어 세션 마감 → DB 기록
     activity.flushAll();  // 아직 안 쓴 마지막 1분치 활동량 저장
     blackbox.flushAll();  // 저장 중이던 클립 마무리 (유실 방지)
+    nvr.flushAll();       // 진행 중이던 NVR 세그먼트 마무리 (유실 방지)
     for (auto& client : clients) {
         client->stop();
     }
     stream_server.stop();
     blackbox.stopHttp();
+    nvr.stopHttp();
     curl_global_cleanup();
     return 0;
 }

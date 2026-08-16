@@ -66,6 +66,22 @@ ServerConfig loadServerConfig(const std::string& path) {
             config.care_contact_manager = value;
             continue;
         }
+        if (key == "nvr_storage_path") {
+            config.nvr_storage_path = value;
+            continue;
+        }
+        if (key == "nvr_retention_hours") {
+            if (!value.empty()) config.nvr_retention_hours = std::stoi(value);
+            continue;
+        }
+        if (key == "nvr_segment_minutes") {
+            if (!value.empty()) config.nvr_segment_minutes = std::stoi(value);
+            continue;
+        }
+        if (key == "nvr_http_port") {
+            if (!value.empty()) config.nvr_http_port = std::stoi(value);
+            continue;
+        }
         static const std::string kChatIdPrefix = "telegram_chat_id_";
         if (key.size() > kChatIdPrefix.size() &&
             key.compare(0, kChatIdPrefix.size(), kChatIdPrefix) == 0) {

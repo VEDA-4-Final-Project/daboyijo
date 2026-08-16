@@ -188,9 +188,9 @@ bool RtspAvClient::openAndStream(const std::string& url) {
 
     // 영상 디코더 준비
     AVCodecParameters* vpar = fmt->streams[video_idx]->codecpar;
-    if (on_stream_ready_) {
+    {
         AVRational tb = fmt->streams[video_idx]->time_base;
-        on_stream_ready_(vpar, tb.num, tb.den);
+        for (auto& cb : on_stream_readys_) cb(vpar, tb.num, tb.den);
     }
     const AVCodec* dec = avcodec_find_decoder(vpar->codec_id);
     AVCodecContext* dctx = avcodec_alloc_context3(dec);
@@ -253,8 +253,8 @@ bool RtspAvClient::openAndStream(const std::string& url) {
         }
 
         if (pkt->stream_index == video_idx) {
-            // 압축 상태 그대로 블랙박스 소비자에게 전달 (디코딩 스로틀과 무관하게 전 패킷)
-            if (on_packet_) on_packet_(pkt);
+            // 압축 상태 그대로 블랙박스/NVR 등 소비자에게 전달 (디코딩 스로틀과 무관하게 전 패킷)
+            for (auto& cb : on_packets_) cb(pkt);
 
             // ── 영상 패킷: 디코딩 → cv::Mat → 큐 ──
             if (avcodec_send_packet(dctx, pkt) == 0) {

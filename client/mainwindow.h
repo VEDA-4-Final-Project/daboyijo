@@ -152,6 +152,14 @@ struct PatientInfo {
     QString room;   // 호실 — MQTT 알림 명령에 실어 보낸다(알림 노드가 LED에 띄운다)
 };
 
+// NVR(연속녹화) 세그먼트 1개 — /list 응답 파일명(ch{N}_{startMs}.mp4)을 파싱한 결과.
+// 콤보박스로 채널 필터링할 때 재요청 없이 이 목록에서 다시 골라 쓴다.
+struct NvrSegmentInfo {
+    int channel = -1;
+    qint64 startMs = 0;
+    QString url;
+};
+
 // 입소자 한 명의 표시 정보. 한 채널에 여러 명이 있을 수 있어 채널 단위인
 // PatientInfo(대표 1명)와 따로 둔다 — 바이탈은 사람마다 따로 와야 한다.
 struct ResidentInfo {
@@ -336,6 +344,11 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
+
+    // NVR(연속녹화) 탐색 — 같은 재생기(blackboxPlayer 등)를 그대로 재사용한다
+    QComboBox* nvrChannelCombo = nullptr;
+    QListWidget* nvrSegmentList = nullptr;
+    QVector<NvrSegmentInfo> nvrSegments_;   // /list로 받은 전체 목록(채널 필터링용 원본)
     // ── 일일 리포트: 날짜 선택 ──────────────────────────────
     // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
     // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다
@@ -465,6 +478,9 @@ private:
     QWidget* buildLogTable();
     QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
+    QWidget* buildNvrBrowser();        // NVR(연속녹화) 채널+세그먼트 탐색 목록
+    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신
+    void repopulateNvrList();          // nvrChannelCombo 선택값 기준으로 nvrSegmentList 다시 채움
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
     void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
     // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.

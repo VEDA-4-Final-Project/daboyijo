@@ -33,6 +33,13 @@ struct ServerConfig {
     // [DB] MariaDB 호스트. 2-Pi 분할 시 DB를 호스팅하지 않는 Pi는 cameras.conf에
     // db_host=<DB Pi IP> 로 지정한다. 기본은 자기 자신(단일 Pi 또는 DB 호스팅 Pi).
     std::string db_host = "127.0.0.1";
+
+    // [NVR] 연속 녹화 저장 경로(USB 마운트 지점 등). 빈 값이면 NVR 비활성 —
+    // 서버 나머지 기능(라이브 스트리밍·블랙박스 등)은 그대로 동작한다.
+    std::string nvr_storage_path;
+    int nvr_retention_hours = 12;   // 이보다 오래된 세그먼트는 자동 삭제
+    int nvr_segment_minutes = 10;   // 세그먼트 파일 하나의 길이
+    int nvr_http_port = 5502;       // Qt가 NVR 세그먼트 목록/재생을 받아가는 포트
 };
 
 // 형식: "채널번호=RTSP URL" 또는 "stream_port=포트", '#' 주석
