@@ -17,8 +17,10 @@
 //    core/clip_http_server.* ══
 //
 // 블랙박스(이벤트 트리거 전/후 클립)와 달리 항상 기록한다. USB 등 외장
-// 저장장치 경로(storagePath)가 없거나 쓰기 불가하면 조용히 비활성화되고
-// 서버의 나머지 기능은 그대로 동작한다(startHttp/attachChannel이 no-op).
+// 저장장치 경로(storagePath)가 없거나, 실제로 마운트된 장치가 아니거나(USB
+// 미장착 — SD카드에 계속 쓰는 걸 막기 위해 마운트포인트 여부를 확인함),
+// 쓰기 불가하면 조용히 비활성화되고 서버의 나머지 기능은 그대로 동작한다
+// (startHttp/attachChannel이 no-op).
 class NvrModule {
 public:
     // storagePath 가 비어 있거나 mkdir/쓰기 확인에 실패하면 비활성 상태로 생성됨

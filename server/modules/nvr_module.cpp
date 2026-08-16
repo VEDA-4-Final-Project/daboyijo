@@ -1,5 +1,7 @@
 #include "nvr_module.hpp"
 
+#include <sys/stat.h>
+
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -7,6 +9,22 @@
 
 namespace {
 constexpr auto kRetentionPeriod = std::chrono::seconds(60);
+
+// path가 그 부모 디렉터리와 다른 장치(st_dev)에 있는지로 "실제로 뭔가 마운트돼
+// 있는지"를 판단한다(POSIX `mountpoint` 명령과 같은 원리). USB를 안 꽂았는데
+// 마운트 지점 디렉터리(예: /mnt/nvr)만 미리 만들어져 있으면 그냥 SD카드 위의
+// 빈 폴더라 쓰기 자체는 되므로, 쓰기 가능 여부만으로는 USB 미장착을 못 잡는다.
+bool isMountPoint(const std::string& path) {
+    struct stat pathStat{};
+    if (stat(path.c_str(), &pathStat) != 0) return false;
+
+    const auto parent = std::filesystem::path(path).parent_path();
+    const std::string parentStr = parent.empty() ? "/" : parent.string();
+    struct stat parentStat{};
+    if (stat(parentStr.c_str(), &parentStat) != 0) return false;
+
+    return pathStat.st_dev != parentStat.st_dev;
+}
 }  // namespace
 
 NvrModule::NvrModule(std::string storagePath, int retentionHours,
@@ -28,7 +46,18 @@ NvrModule::NvrModule(std::string storagePath, int retentionHours,
         return;
     }
 
-    // 쓰기 가능 확인 — USB 미장착/읽기전용 마운트 등을 기동 시점에 걸러낸다
+    // 마운트포인트 확인 — 디렉터리는 있는데 USB가 안 꽂혀 있으면 SD카드(루트
+    // 파일시스템) 위의 평범한 폴더일 뿐이라 쓰기는 되지만 여기 계속 쓰면 SD카드가
+    // 찬다. 부모와 다른 장치여야("뭔가 마운트됨") 진짜 외장 저장장치로 간주한다.
+    if (!isMountPoint(storagePath_)) {
+        std::fprintf(stderr,
+                     "[NVR] 저장 경로(%s)가 별도 마운트 장치가 아님(USB 미장착으로 "
+                     "보임) — SD카드에 계속 쓰지 않도록 연속 녹화 비활성화\n",
+                     storagePath_.c_str());
+        return;
+    }
+
+    // 쓰기 가능 확인 — 읽기전용 마운트 등을 기동 시점에 걸러낸다
     const std::string probePath = storagePath_ + "/.nvr_write_probe";
     FILE* f = std::fopen(probePath.c_str(), "wb");
     if (!f) {

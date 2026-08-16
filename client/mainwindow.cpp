@@ -33,6 +33,7 @@
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include <QTableWidget>
 #include <QHeaderView>
@@ -514,6 +515,8 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
                 const QString clipUrl = QStringLiteral("http://%1:%2/%3")
                                              .arg(host).arg(kClipHttpPort).arg(fileName);
                 dtItem->setData(Qt::UserRole, clipUrl);
+                dtItem->setData(Qt::UserRole + 1, channel);
+                dtItem->setData(Qt::UserRole + 2, timestampMs);
 
                 logTable->setItem(row, 0, dtItem);
                 logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
@@ -1436,6 +1439,23 @@ QWidget* MainWindow::buildEventLogTab()
     bbHint->setWordWrap(true);
     right->addWidget(bbHint);
     right->addWidget(buildBlackboxPlayer(), 1);
+
+    auto* actionRow = new QHBoxLayout();
+    nvrJumpButton = new QPushButton(QStringLiteral("이 시점 NVR에서 이어보기"));
+    nvrJumpButton->setObjectName("nvrJumpButton");
+    nvrJumpButton->setCursor(Qt::PointingHandCursor);
+    nvrJumpButton->setEnabled(false);   // 로그에서 이벤트를 열기 전까진 대상이 없음
+    connect(nvrJumpButton, &QPushButton::clicked, this, &MainWindow::jumpToNvrContext);
+    actionRow->addWidget(nvrJumpButton, 1);
+
+    clipDownloadButton = new QPushButton(QStringLiteral("다운로드"));
+    clipDownloadButton->setObjectName("clipDownloadButton");
+    clipDownloadButton->setCursor(Qt::PointingHandCursor);
+    clipDownloadButton->setEnabled(false);   // 재생된 클립이 있어야 저장할 게 있음
+    connect(clipDownloadButton, &QPushButton::clicked, this, &MainWindow::downloadCurrentClip);
+    actionRow->addWidget(clipDownloadButton);
+    right->addLayout(actionRow);
+
     right->addWidget(buildNvrBrowser());
     body->addLayout(right, 4);
 
@@ -1822,6 +1842,12 @@ QWidget* MainWindow::buildBlackboxPlayer()
         blackboxSeek->setRange(0, static_cast<int>(dur));
         blackboxTimeLabel->setText(formatMs(blackboxPlayer->position()) +
                                    QStringLiteral(" / ") + formatMs(dur));
+        // playBlackboxClipAt()이 예약해둔 탐색 위치 — 길이가 확정된 지금이
+        // setPosition을 걸 수 있는 시점(그 전엔 무시되거나 씹힐 수 있음).
+        if (blackboxPendingSeekMs_ >= 0) {
+            blackboxPlayer->setPosition(qBound<qint64>(0, blackboxPendingSeekMs_, dur));
+            blackboxPendingSeekMs_ = -1;
+        }
     });
     // 재생 위치 변화 → 슬라이더/시간 갱신. 단, 사용자가 슬라이더를 잡고
     // 있는 동안은 덮어쓰지 않는다(안 그러면 드래그가 튕긴다).
@@ -1890,6 +1916,80 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlayer->setSource(QUrl());
     blackboxPlayer->setSource(QUrl(url));
     blackboxPlayer->play();
+
+    if (clipDownloadButton) clipDownloadButton->setEnabled(true);
+}
+
+// blackboxUrl로 재생을 시작하되, 길이가 확정되면(durationChanged) 한 번 지정
+// 위치로 탐색한다 — 이벤트↔NVR 연결에서 "그 시점 근처로 이동"할 때 사용.
+void MainWindow::playBlackboxClipAt(const QString& url, qint64 seekMs)
+{
+    blackboxPendingSeekMs_ = qMax<qint64>(0, seekMs);
+    playBlackboxClip(url);
+}
+
+// 로그에서 선택된 이벤트(selectedEventChannel_/selectedEventTimestampMs_)를
+// 담고 있는 NVR 세그먼트를 nvrSegments_에서 찾아 그 시점으로 재생한다.
+// 매칭 규칙: 같은 채널에서 시작시각이 이벤트 시각보다 앞선 것 중 가장 늦게
+// 시작한 세그먼트(=그 시각을 담고 있을 세그먼트) — 세그먼트 길이는 클라가
+// 몰라 정확한 종료시각 검증은 못 하지만, 서버 로테이션이 순차적이라 이걸로
+// 충분하다.
+void MainWindow::jumpToNvrContext()
+{
+    if (selectedEventChannel_ < 0 || selectedEventTimestampMs_ < 0) return;
+
+    bool found = false;
+    NvrSegmentInfo best;
+    for (const auto& seg : nvrSegments_) {
+        if (seg.channel != selectedEventChannel_) continue;
+        if (seg.startMs > selectedEventTimestampMs_) continue;
+        if (!found || seg.startMs > best.startMs) {
+            best = seg;
+            found = true;
+        }
+    }
+    if (!found) {
+        QMessageBox::information(this, QStringLiteral("NVR 없음"),
+            QStringLiteral("이 시점에 해당하는 NVR 녹화를 찾을 수 없습니다.\n"
+                           "(보존기간 경과, 미녹화 구간, 또는 아직 목록을 못 받아왔을 수 있습니다 — "
+                           "새로고침 후 다시 시도해보세요.)"));
+        return;
+    }
+    playBlackboxClipAt(best.url, selectedEventTimestampMs_ - best.startMs);
+}
+
+// 현재 재생기에 로드된 클립(블랙박스든 NVR이든 — blackboxUrl 하나로 공용)을
+// 사용자가 고른 위치에 로컬 파일로 저장한다.
+void MainWindow::downloadCurrentClip()
+{
+    if (blackboxUrl.isEmpty()) return;
+
+    const QUrl srcUrl(blackboxUrl);
+    const QString suggestedName = srcUrl.fileName();
+    const QString savePath = QFileDialog::getSaveFileName(
+        this, QStringLiteral("클립 저장"), suggestedName,
+        QStringLiteral("영상 파일 (*.mp4)"));
+    if (savePath.isEmpty()) return;   // 사용자가 취소
+
+    auto* manager = new QNetworkAccessManager(this);
+    QNetworkReply* reply = manager->get(QNetworkRequest(srcUrl));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, savePath]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            QMessageBox::warning(this, QStringLiteral("다운로드 실패"), reply->errorString());
+            return;
+        }
+        QFile file(savePath);
+        if (!file.open(QIODevice::WriteOnly)) {
+            QMessageBox::warning(this, QStringLiteral("다운로드 실패"),
+                QStringLiteral("파일을 저장할 수 없습니다: %1").arg(savePath));
+            return;
+        }
+        file.write(reply->readAll());
+        file.close();
+        QMessageBox::information(this, QStringLiteral("다운로드 완료"),
+            QStringLiteral("저장됨: %1").arg(savePath));
+    });
 }
 
 // NVR(연속녹화) 탐색 — 채널 콤보 + 세그먼트 목록. 재생기는 새로 안 만들고
@@ -1909,17 +2009,20 @@ QWidget* MainWindow::buildNvrBrowser()
 
     auto* topRow = new QHBoxLayout();
     nvrChannelCombo = new QComboBox();
+    nvrChannelCombo->setObjectName("nvrChannelCombo");
     nvrChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
     for (int ch = 0; ch < 4; ++ch)
         nvrChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
     topRow->addWidget(nvrChannelCombo, 1);
 
     auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
+    refreshBtn->setObjectName("nvrRefreshBtn");
     refreshBtn->setCursor(Qt::PointingHandCursor);
     topRow->addWidget(refreshBtn);
     lay->addLayout(topRow);
 
     nvrSegmentList = new QListWidget();
+    nvrSegmentList->setObjectName("nvrSegmentList");
     nvrSegmentList->setMaximumHeight(140);
     lay->addWidget(nvrSegmentList);
 
@@ -3386,6 +3489,8 @@ void MainWindow::handleFallEvent(int channel, int roiId, quint64 timestampMs,
                                      .arg(channel)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
+        dtItem->setData(Qt::UserRole + 1, channel);
+        dtItem->setData(Qt::UserRole + 2, static_cast<qint64>(timestampMs));
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(eventPlaceLabel(channel, roiId)));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
@@ -3437,6 +3542,8 @@ void MainWindow::handleBedEgressEvent(int channel, int roiId, quint64 timestampM
                                      .arg(channel)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
+        dtItem->setData(Qt::UserRole + 1, channel);
+        dtItem->setData(Qt::UserRole + 2, static_cast<qint64>(timestampMs));
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(eventPlaceLabel(channel, roiId)));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상 이탈"))); // 💡 이탈 분류로 등록
@@ -3484,6 +3591,8 @@ void MainWindow::handleVitalAbnormalEvent(int channel, quint64 timestampMs)
                                      .arg(channel)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
+        dtItem->setData(Qt::UserRole + 1, channel);
+        dtItem->setData(Qt::UserRole + 2, static_cast<qint64>(timestampMs));
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("생체신호 이상")));
@@ -5376,6 +5485,14 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
 
     // 영상을 열었으므로 이 이벤트는 '확인' 처리
     markLogConfirmed(row);
+
+    // 이벤트↔NVR 연결용 — 이 행의 채널/시각을 기억해뒀다가 "NVR에서 이어보기"에서 쓴다.
+    const QVariant chVar = item->data(Qt::UserRole + 1);
+    const QVariant tsVar = item->data(Qt::UserRole + 2);
+    selectedEventChannel_ = chVar.isValid() ? chVar.toInt() : -1;
+    selectedEventTimestampMs_ = tsVar.isValid() ? tsVar.toLongLong() : -1;
+    if (nvrJumpButton)
+        nvrJumpButton->setEnabled(selectedEventChannel_ >= 0 && selectedEventTimestampMs_ >= 0);
 
     qDebug() << "블랙박스 재생 요청 —" << url;
     // 인라인 플레이어(페이지 우측)에서 바로 재생 — 팝업 없음.

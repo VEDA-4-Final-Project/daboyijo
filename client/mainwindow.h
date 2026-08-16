@@ -344,11 +344,18 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
+    qint64 blackboxPendingSeekMs_ = -1;   // durationChanged 이후 한 번 적용할 탐색 위치(-1=없음)
 
     // NVR(연속녹화) 탐색 — 같은 재생기(blackboxPlayer 등)를 그대로 재사용한다
     QComboBox* nvrChannelCombo = nullptr;
     QListWidget* nvrSegmentList = nullptr;
     QVector<NvrSegmentInfo> nvrSegments_;   // /list로 받은 전체 목록(채널 필터링용 원본)
+
+    // 이벤트↔NVR 연결: 로그에서 마지막으로 연 이벤트의 채널/시각(NVR 시점 점프용)
+    int selectedEventChannel_ = -1;
+    qint64 selectedEventTimestampMs_ = -1;
+    QPushButton* nvrJumpButton = nullptr;
+    QPushButton* clipDownloadButton = nullptr;
     // ── 일일 리포트: 날짜 선택 ──────────────────────────────
     // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
     // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다
@@ -478,9 +485,12 @@ private:
     QWidget* buildLogTable();
     QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
+    void playBlackboxClipAt(const QString& url, qint64 seekMs);  // 재생 후 지정 위치로 탐색
     QWidget* buildNvrBrowser();        // NVR(연속녹화) 채널+세그먼트 탐색 목록
     void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신
     void repopulateNvrList();          // nvrChannelCombo 선택값 기준으로 nvrSegmentList 다시 채움
+    void jumpToNvrContext();           // 선택된 로그 이벤트 시점의 NVR 세그먼트를 찾아 그 위치로 재생
+    void downloadCurrentClip();        // 현재 재생 중인 클립을 로컬에 저장
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
     void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
     // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.
