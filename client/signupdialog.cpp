@@ -11,7 +11,7 @@
 #include <QVBoxLayout>
 
 #include "auth.h"
-#include "theme.h"
+#include "thememanager.h"
 #include "wintheme.h"
 
 namespace {
@@ -27,7 +27,7 @@ SignupDialog::SignupDialog(QWidget* parent)
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 
     buildUi();
-    setStyleSheet(authDialogStyleSheet());   // 로그인 창과 같은 스타일
+    setStyleSheet(ThemeManager::dialogStyleSheet());   // 로그인 창과 같은 스타일
     enableDarkTitleBar(this);                // 네이티브 타이틀바도 다크로
 
     idEdit_->setFocus();

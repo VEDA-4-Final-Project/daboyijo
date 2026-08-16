@@ -20,10 +20,16 @@ qt_add_executable(daboyijo
     videoview.cpp
     videoview.h
     theme.h
+    thememanager.cpp
+    thememanager.h
     wintheme.cpp
     wintheme.h
     sparkline.cpp
     sparkline.h
+    vitaltile.cpp
+    vitaltile.h
+    alertbanner.cpp
+    alertbanner.h
     activitychart.cpp
     activitychart.h
     clickslider.cpp
@@ -39,6 +45,16 @@ qt_add_executable(daboyijo
     alertmatrixpreview.cpp
     alertmatrixpreview.h
     hub75-font16.h
+)
+
+# 앱 전역 스타일시트 리소스.
+# qt_add_executable 의 소스 목록에 .qrc 를 넣는 것만으로는 컴파일되지 않는다
+# (이 프로젝트는 qt_standard_project_setup() 방식이라 rcc 가 자동으로 걸리지 않는다).
+# Qt 6 권장대로 qt_add_resources 로 명시해야 :/style/base.qss 가 실제로 exe 에 들어간다.
+qt_add_resources(daboyijo "appstyle"
+    PREFIX "/style"
+    BASE "resources/style"
+    FILES resources/style/base.qss resources/style/dialogs.qss
 )
 
 # veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치

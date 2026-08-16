@@ -15,6 +15,10 @@ ClickSlider::ClickSlider(QWidget* parent) : QSlider(Qt::Horizontal, parent) {
 
     // 우측 kValueMargin은 값 숫자용으로 비워 두고(padding-right), groove는 테마색.
     //  · groove(전체 트랙): border 색 / sub-page(채워진 부분): accent / handle: 본문색
+    // Phase 1(SCREEN-04) QSS 수렴에서 이 시트는 의도적으로 제외했다 —
+    // kValueMargin이 mousePressEvent()/paintEvent()의 클릭 좌표·텍스트 위치 계산에도
+    // 쓰이는 C++ 레이아웃 상수라, QSS 파일로 분리하면 두 곳에서 값이 따로 관리되어
+    // 어긋나는 순간 슬라이더 클릭 위치가 조용히 틀어진다.
     setStyleSheet(QString(R"(
         QSlider { padding-right: %1px; }
         QSlider::groove:horizontal {

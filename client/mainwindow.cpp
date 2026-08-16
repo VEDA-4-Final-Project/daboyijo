@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
 #include "theme.h"
+#include "thememanager.h"
 #include "videoview.h"
 #include "wintheme.h"
 #include "sparkline.h"
@@ -178,6 +179,52 @@ QString vitalStatusLabel(int spo2, int hr) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════
+//  심각도(severity) 어휘 헬퍼 3종 — ISA-18.2 5단계(02-03-PLAN.md <severity_contract>).
+//
+//  등급 판정은 여기 한 곳에서만 한다. 색이 필요하면 severityColor(), 도형이
+//  필요하면 severityGlyph()를 쓴다. 임계값을 다른 곳에서 다시 판정하지 말 것 —
+//  판정 기준이 두 곳에서 갈라지면 같은 화면 안에서 등급이 어긋난다.
+// ═══════════════════════════════════════════════════════════
+
+// 바이탈 등급 판정 → QSS severity 속성값 문자열. 기존 vitalLevel()의 임계값을
+// 그대로 재사용한다 — 새 기준을 만들지 않는다. 바이탈은 3단계(정상/주의/위험)만
+// 판정하므로 "critical"/"medium"/"normal" 중 하나만 돌려준다.
+QString vitalSeverity(int spo2, int hr) {
+    switch (vitalLevel(spo2, hr)) {
+        case VitalLevel::Critical: return QStringLiteral("critical");
+        case VitalLevel::Warn:     return QStringLiteral("medium");
+        default:                   return QStringLiteral("normal");
+    }
+}
+
+// 등급 문자열 → theme.h 색 상수. QSS를 받지 않는 커스텀 페인트 위젯(Sparkline 등)
+// 전용 통로다 — 이 함수를 거치면 QSS 쪽 severityBadge/severityDot과 같은 등급
+// 판정에서 갈라지지 않는다. 알 수 없는 값(무신호 포함)은 중립색을 돌려준다.
+QColor severityColor(const QString& severity) {
+    if (severity == QStringLiteral("critical")) return QColor(QString::fromLatin1(kCritical));
+    if (severity == QStringLiteral("high"))     return QColor(QString::fromLatin1(kHigh));
+    if (severity == QStringLiteral("medium"))   return QColor(QString::fromLatin1(kWarn));
+    if (severity == QStringLiteral("info"))     return QColor(QString::fromLatin1(kInfo));
+    if (severity == QStringLiteral("normal"))   return QColor(QString::fromLatin1(kNormal));
+    return QColor(QString::fromLatin1(kTextSub));
+}
+
+// 등급 문자열 → 유니코드 도형(<severity_contract> 표). 색만으로는 다섯 등급의
+// 그레이스케일 명도가 0.035 폭으로 수렴해(theme_audit.py (c)) 구분이 안 되므로
+// 이 도형이 두 번째 채널이다(D-09). stale=true면 severity 값과 무관하게
+// 무신호 상태용 빈 원(○)을 돌려준다 — 대기·신호 끊김·미착용 세 상태가
+// 공유하는 "심각도가 아니다"라는 표시.
+QString severityGlyph(const QString& severity, bool stale = false) {
+    if (stale) return QStringLiteral("○");                                // ○ 무신호
+    if (severity == QStringLiteral("critical")) return QStringLiteral("✖"); // ✖ 위험
+    if (severity == QStringLiteral("high"))     return QStringLiteral("▲"); // ▲ 높음
+    if (severity == QStringLiteral("medium"))   return QStringLiteral("◆"); // ◆ 주의
+    if (severity == QStringLiteral("info"))     return QStringLiteral("●"); // ● 정보
+    if (severity == QStringLiteral("normal"))   return QStringLiteral("✓"); // ✓ 정상
+    return QStringLiteral("○");  // 알 수 없는 값 → 무신호와 같은 안전값
+}
+
 // 두 색을 f:(1-f) 비율로 섞는다. 배지 배경 tint 계산용.
 // (fg를 현재 카드색 bg와 섞으면 라이트/다크 어느 테마에서도 자연스러운 옅은 배경이 된다)
 QString blendHex(const QString& fg, const QString& bg, double f) {
@@ -196,8 +243,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.50";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -328,8 +375,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     // (main.cpp에서 DB 연결을 이미 열어둬 buildUi 전에 조회 가능)
     loadPatientsFromDb();
 
-    buildUi();
+    // ClickSlider 등 생성 시점에 theme.h 전역 색 상수를 인라인 QSS로 굽는
+    // 위젯이 있으므로, buildUi()보다 먼저 팔레트를 확정해야 한다. 순서가
+    // 뒤바뀌면 다크로 시작해도 그런 위젯만 라이트 색으로 남는다.
     applyPalette(darkMode ? kDark : kLight);  // 기본 다크 팔레트로 시작
+    buildUi();
     applyTheme();
     if (themeToggleButton)
         themeToggleButton->setText(darkMode ? QStringLiteral("☀")
@@ -706,15 +756,27 @@ void MainWindow::buildUi()
     contentStack = new QStackedWidget();
     contentStack->setObjectName("contentStack");
 
-    // ── 1: 실시간 관제 및 제어 (영상월 + 바이탈 패널) ──
+    // ── 1: 실시간 관제 및 제어 (경보 배너 + 영상월 + 바이탈 패널) ──
     auto* body = new QHBoxLayout();
     body->setContentsMargins(18, 18, 18, 18);
     body->setSpacing(18);
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
+    // 상시 노출용 경보 배너(#alertBanner) — dashboardTab 최상단, body 위.
+    // 좌우는 body와 같은 세로선에 맞추고(18px) 상하는 최소로 둔다 — QSS가
+    // 이미 padding 24px 32px를 준다(ALERT-03 / D-01).
+    alertBanner_ = new AlertBanner();
+    alertBanner_->setContentsMargins(18, 12, 18, 0);
+
+    auto* dashboardOuter = new QVBoxLayout();
+    dashboardOuter->setContentsMargins(0, 0, 0, 0);
+    dashboardOuter->setSpacing(0);
+    dashboardOuter->addWidget(alertBanner_);
+    dashboardOuter->addLayout(body, 1);
+
     auto* dashboardTab = new QWidget();
-    dashboardTab->setLayout(body);
+    dashboardTab->setLayout(dashboardOuter);
     contentStack->addWidget(dashboardTab);
 
     contentStack->addWidget(buildEventLogTab());        // 2: 이벤트 기록
@@ -1034,7 +1096,6 @@ void MainWindow::renderHelpTopic(int idx)
     const QString A  = QString::fromLatin1(kAccent);
     const QString T  = QString::fromLatin1(kTextMain);
     const QString S  = QString::fromLatin1(kTextSub);
-    const QString BG = QString::fromLatin1(kPanel);
     const QString BD = QString::fromLatin1(kBorder);
 
     auto li = [](const QString& k, const QString& d) {
@@ -1103,14 +1164,13 @@ void MainWindow::renderHelpTopic(int idx)
     }
 
     const QString html = QStringLiteral(
-        "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",sans-serif; font-size:14px; color:%1;'>"
+        "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",\"Malgun Gothic\",\"Apple SD Gothic Neo\",\"Noto Sans CJK KR\",\"Noto Sans KR\",sans-serif; font-size:14px; color:%1;'>"
         "<h1 style='color:%2; margin:0 0 10px;'>%3</h1>"
         "<hr style='border:none; border-top:1px solid %4;'>"
         "<div style='line-height:155%;'>%5</div></div>")
         .arg(T, A, title, BD, body);
     helpBrowser->setHtml(html);
-    helpBrowser->setStyleSheet(
-        QString("QTextBrowser#helpBrowser{background:%1; border:none; padding:20px 22px;}").arg(BG));
+    // 배경/여백은 base.qss의 QTextBrowser#helpBrowser 규칙이 담당한다(테마 토글 시 자동 갱신).
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1228,7 +1288,7 @@ QWidget* MainWindow::buildVitalsPanel()
     panel->setObjectName("panel");
     // 바이탈 패널은 폭 고정 → 창을 키우면 남는 폭이 전부 영상 월로 간다.
     panel->setMinimumWidth(300);
-    panel->setMaximumWidth(340);
+    panel->setMaximumWidth(316);
 
     auto* outer = new QVBoxLayout(panel);
     outer->setContentsMargins(16, 14, 16, 16);
@@ -1258,33 +1318,17 @@ QWidget* MainWindow::buildVitalsPanel()
     return panel;
 }
 
-// 바이탈 카드 목록을 입소자 구성에 맞춰 다시 만든다.
-// 입소자가 늘거나 줄면 위젯 개수 자체가 달라지므로 글자만 갈아끼울 수 없다.
-// 심박 이력은 hrHistory_(위젯 밖)에 있어서 다시 만들어도 살아남는다.
+// 바이탈 카드 목록을 입소자 구성에 맞춰 다시 만든다(D-04 — diff 방식).
+// 구성이 안 바뀌면 위젯을 하나도 만들지도 지우지도 않는다. 심박 이력은
+// hrHistory_(위젯 밖)에 있어서 타일이 새로 만들어져도 살아남는다.
 void MainWindow::rebuildVitalCards()
 {
     if (!vitalListLayout_) return;   // 아직 패널을 만들기 전(생성자 초기 단계)
 
-    // 위젯을 지우면 라벨 포인터가 전부 무효가 된다 — 표를 먼저 비워야
-    // updateVitals() 가 죽은 포인터를 만지지 않는다.
-    spo2Values.clear();
-    hrValues.clear();
-    vitalStatusDots.clear();
-    vitalStatusBadges.clear();
-    vitalNameLabels.clear();
-    vitalBedLabels.clear();
-    hrSpark.clear();
-
-    while (QLayoutItem* item = vitalListLayout_->takeAt(0)) {
-        // 레이아웃에서 빼기만 하면 위젯은 부모에 그대로 남아 화면에 계속 보인다.
-        // 부모에서 떼어내야 사라지고, 삭제 자체는 이벤트 루프에 맡긴다.
-        if (QWidget* w = item->widget()) {
-            w->setParent(nullptr);
-            w->deleteLater();
-        }
-        delete item;
-    }
-
+    // ── 목표 키 순서 목록: (키, 이름, 병상표기) 3튜플. 순서가 곧 화면 배치 순서다. ──
+    struct TargetEntry { int key; QString name; QString bedText; };
+    QVector<TargetEntry> target;
+    target.reserve(8);
     for (int ch = 0; ch < 4; ++ch) {
         const QString bedText = QStringLiteral("채널 %1").arg(ch + 1);
         const QVector<int>& ids = residentsByChannel_[ch];
@@ -1292,109 +1336,65 @@ void MainWindow::rebuildVitalCards()
         // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
         // 관제사가 그 채널을 잊는다. 음수 키라 값이 안 들어와 "대기"로 뜬다.
         if (ids.isEmpty()) {
-            vitalListLayout_->addWidget(
-                buildVitalCard(-(ch + 1), QStringLiteral("미배정"), bedText), 1);
+            target.append({-(ch + 1), QStringLiteral("미배정"), bedText});
             continue;
         }
         for (int rid : ids)
-            vitalListLayout_->addWidget(
-                buildVitalCard(rid, residentInfo_.value(rid).name, bedText), 1);
+            target.append({rid, residentInfo_.value(rid).name, bedText});
+    }
+
+    // ── 사라진 키를 제거한다. 순회 중 해시를 수정하지 않도록 대상 키를 먼저
+    //    모은 뒤 별도 루프에서 지운다. ──
+    QSet<int> targetKeys;
+    for (const auto& t : target) targetKeys.insert(t.key);
+    QVector<int> staleKeys;
+    for (auto it = vitalTiles_.constBegin(); it != vitalTiles_.constEnd(); ++it)
+        if (!targetKeys.contains(it.key())) staleKeys.append(it.key());
+    for (int key : staleKeys) {
+        if (VitalTile* tile = vitalTiles_.take(key)) {
+            vitalListLayout_->removeWidget(tile);
+            tile->setParent(nullptr);
+            tile->deleteLater();
+        }
+    }
+
+    // ── 목표 목록을 순서대로 훑으며 생성 또는 갱신한다. ──
+    for (const auto& t : target) {
+        VitalTile* tile = vitalTiles_.value(t.key);
+        if (!tile) {
+            tile = buildVitalCard(t.key, t.name, t.bedText);
+            vitalListLayout_->addWidget(tile, 1);
+        } else {
+            // 조건 없이 호출한다 — PD-01의 멱등 가드가 변화 없을 때를 흡수하고,
+            // 같은 입소자가 다른 채널로 옮겨져 병상 표기만 바뀐 경우를 놓치지 않는다.
+            tile->setIdentity(t.name, t.bedText);
+        }
+    }
+
+    // ── 배치 순서를 목표 목록과 일치시킨다. 살아남은 타일이 섞여 있으면
+    //    인덱스가 어긋날 수 있다. ──
+    for (int i = 0; i < target.size(); ++i) {
+        VitalTile* tile = vitalTiles_.value(target[i].key);
+        if (!tile) continue;
+        if (vitalListLayout_->indexOf(tile) != i) {
+            vitalListLayout_->removeWidget(tile);
+            vitalListLayout_->insertWidget(i, tile, 1);
+        }
     }
 
     updateVitals();   // 새로 만든 위젯에 현재 값·색을 즉시 반영
 }
 
-QWidget* MainWindow::buildVitalCard(int key, const QString& name, const QString& bedText)
+VitalTile* MainWindow::buildVitalCard(int key, const QString& name, const QString& bedText)
 {
-    auto* card = new QFrame();
-    card->setObjectName("vitalCard");
-    applyCardShadow(card, 20, 5, 60);   // 바이탈 카드에 은은한 입체감
-
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(0);
-
-    // ── 헤더 바: 상태등 + 이름 + 병상 + 상태 배지 ──
-    auto* head = new QFrame();
-    head->setObjectName("vitalHead");
-    auto* hl = new QHBoxLayout(head);
-    hl->setContentsMargins(14, 7, 12, 7);
-    hl->setSpacing(8);
-    auto* dot = new QLabel();
-    dot->setObjectName("vitalDot");
-    dot->setFixedSize(9, 9);
-    vitalStatusDots[key] = dot;
-    auto* nameLbl = new QLabel(name);
-    nameLbl->setObjectName("vitalName");
-    vitalNameLabels[key] = nameLbl;
-    auto* bed = new QLabel(bedText);
-    bed->setObjectName("vitalBed");
-    vitalBedLabels[key] = bed;
-    auto* badge = new QLabel(QStringLiteral("대기"));
-    badge->setObjectName("vitalBadge");
-    badge->setAlignment(Qt::AlignCenter);
-    vitalStatusBadges[key] = badge;
-    hl->addWidget(dot);
-    hl->addWidget(nameLbl);
-    hl->addWidget(bed);
-    hl->addStretch();
-    hl->addWidget(badge);
-    lay->addWidget(head);
-
-    // ── 본문: 큰 판독값 2개 (산소포화도 / 심박) — 환자 모니터 느낌 ──
-    auto* body = new QHBoxLayout();
-    body->setContentsMargins(14, 9, 14, 6);
-    body->setSpacing(10);
-
-    auto makeStat = [&](const QString& icon, const QString& caption,
-                        const QString& unit, QLabel*& valueRef) {
-        auto* box = new QFrame();
-        box->setObjectName("statBox");
-        auto* bl = new QVBoxLayout(box);
-        bl->setContentsMargins(12, 7, 12, 7);
-        bl->setSpacing(2);
-        auto* cap = new QLabel(icon + QStringLiteral("  ") + caption);
-        cap->setObjectName("statCaption");
-        valueRef = new QLabel(QStringLiteral("--"));
-        valueRef->setObjectName("statValue");
-        auto* unitLbl = new QLabel(unit);
-        unitLbl->setObjectName("statUnit");
-        auto* valRow = new QHBoxLayout();
-        valRow->setContentsMargins(0, 0, 0, 0);
-        valRow->setSpacing(4);
-        valRow->addWidget(valueRef);
-        valRow->addWidget(unitLbl, 0, Qt::AlignBottom);
-        valRow->addStretch();
-        bl->addWidget(cap);
-        bl->addLayout(valRow);
-        return box;
-    };
-
-    body->addWidget(makeStat(QStringLiteral("🫁"), QStringLiteral("산소포화도"),
-                             QStringLiteral("%"), spo2Values[key]));
-    body->addWidget(makeStat(QStringLiteral("❤"), QStringLiteral("심박"),
-                             QStringLiteral("bpm"), hrValues[key]));
-    lay->addLayout(body);
-
-    // ── 심박 미니 추세 그래프 (고정 스케일 40~140 + 주의/위험 점선) ──
-    auto* sparkRow = new QHBoxLayout();
-    sparkRow->setContentsMargins(14, 0, 14, 10);
-    auto* spark = new Sparkline();
-    spark->setRange(40, 140);
-    spark->setGuides({
-        {110.0, QColor(QString::fromLatin1(kCritical))},  // 고 위험
-        {100.0, QColor(QString::fromLatin1(kWarn))},      // 고 주의
-        { 55.0, QColor(QString::fromLatin1(kWarn))},      // 저 주의
-        { 45.0, QColor(QString::fromLatin1(kCritical))},  // 저 위험
-    });
+    auto* tile = new VitalTile();
+    applyCardShadow(tile, 20, 5, 60);   // 바이탈 카드에 은은한 입체감(static이라 타일 밖에서 건다 — PD-02)
+    tile->setIdentity(name, bedText);
     // 카드를 다시 만들어도 그래프가 리셋되지 않도록 보관해둔 이력을 다시 부어넣는다.
     // (다른 입소자가 추가·퇴원했다고 이 사람 추세가 사라지면 안 된다)
-    for (double v : hrHistory_.value(key)) spark->addValue(v);
-    hrSpark[key] = spark;
-    sparkRow->addWidget(spark);
-    lay->addLayout(sparkRow);
-
-    return card;
+    for (double v : hrHistory_.value(key)) tile->pushHeartRateSample(v);
+    vitalTiles_[key] = tile;
+    return tile;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1906,9 +1906,18 @@ QWidget* MainWindow::buildDbTab()
     titleRow->addWidget(title);
     titleRow->addStretch();
     dbStatusDot = new QLabel();
-    dbStatusDot->setObjectName("statusDot");
+    // 헤더 연결 상태등(7×7, #statusDot)과 objectName을 공유하면 그쪽의
+    // border-radius:3px 규칙이 이 9×9 위젯에도 번진다 — 02-03 정정 B로 분리.
+    dbStatusDot->setObjectName("dbStatusDot");
     dbStatusDot->setFixedSize(9, 9);
-    dbStatusDot->setStyleSheet(QString("background:%1; border-radius:4px;").arg(kNormal));
+    // 사전 존재 결함(DYNAMIC-STYLE-INVENTORY.md #1, A-9): 이 점은 생성 시
+    // 한 번 "정상" 색으로 칠해질 뿐, 실제 DB 연결 상태를 반영해 갱신하는
+    // 호출부가 코드에 없다. 이 계획은 표시 메커니즘만 속성 기반으로 옮긴다
+    // — 실제 DB 이벤트 배선은 새 기능이라 이 단계 요구사항 범위 밖이다.
+    dbStatusDot->setProperty("severity", "normal");
+    dbStatusDot->style()->unpolish(dbStatusDot);
+    dbStatusDot->style()->polish(dbStatusDot);
+    dbStatusDot->update();
     dbStatusText = new QLabel(QStringLiteral("DB 연결됨 · daboijo"));
     dbStatusText->setObjectName("statusText");
     titleRow->addWidget(dbStatusDot);
@@ -1936,7 +1945,11 @@ QWidget* MainWindow::buildResidentSummary()
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(12);
 
-    auto makeStat = [&](const QString& caption, const char* color, QLabel*& ref) {
+    // category는 심각도가 아니라 통계 카테고리다 — resStatVal[category=...]
+    // 규칙(base.qss)이 색을 결정한다. "재원" 카드는 이 전환으로 accent 텍스트
+    // 색(FOUND-06 위반, 3:1 큰 글씨 기준조차 미달)에서 %(text)로 바뀐다 —
+    // 의도된 시각 변화다.
+    auto makeStat = [&](const QString& caption, const QString& category, QLabel*& ref) {
         auto* card = new QFrame();
         card->setObjectName("resStat");
         auto* v = new QVBoxLayout(card);
@@ -1944,8 +1957,7 @@ QWidget* MainWindow::buildResidentSummary()
         v->setSpacing(3);
         ref = new QLabel(QStringLiteral("0"));
         ref->setObjectName("resStatVal");
-        // 색만 인라인으로 — 폰트/여백은 QSS(#resStatVal)가 담당.
-        ref->setStyleSheet(QString("color:%1;").arg(color));
+        ref->setProperty("category", category);
         auto* c = new QLabel(caption);
         c->setObjectName("resStatCap");
         v->addWidget(ref);
@@ -1953,11 +1965,11 @@ QWidget* MainWindow::buildResidentSummary()
         row->addWidget(card, 1);
     };
 
-    makeStat(QStringLiteral("재원"),     kAccent,   resSumActive);
-    makeStat(QStringLiteral("위험 상"),  kCritical, resSumHigh);
-    makeStat(QStringLiteral("위험 중"),  kWarn,     resSumMid);
-    makeStat(QStringLiteral("위험 하"),  kNormal,   resSumLow);
-    makeStat(QStringLiteral("채널 배정"), kTextMain, resSumCam);
+    makeStat(QStringLiteral("재원"),     QStringLiteral("active"),      resSumActive);
+    makeStat(QStringLiteral("위험 상"),  QStringLiteral("danger-high"), resSumHigh);
+    makeStat(QStringLiteral("위험 중"),  QStringLiteral("danger-mid"),  resSumMid);
+    makeStat(QStringLiteral("위험 하"),  QStringLiteral("danger-low"),  resSumLow);
+    makeStat(QStringLiteral("채널 배정"), QStringLiteral("channel"),    resSumCam);
     return host;
 }
 
@@ -2071,6 +2083,7 @@ QWidget* MainWindow::buildResidentDetail()
     hl->setContentsMargins(16, 12, 16, 12);
     hl->setSpacing(14);
     dlgAvatar = new QLabel();
+    dlgAvatar->setObjectName("dlgAvatar");
     dlgAvatar->setFixedSize(52, 52);
     dlgAvatar->setAlignment(Qt::AlignCenter);
     auto* nameCol = new QVBoxLayout();
@@ -2082,7 +2095,9 @@ QWidget* MainWindow::buildResidentDetail()
     nameCol->addWidget(dlgNameBig);
     nameCol->addWidget(dlgSubMeta);
     dlgRiskBadge = new QLabel();
+    dlgRiskBadge->setObjectName("dlgRiskBadge");
     dlgStatusBadge = new QLabel();
+    dlgStatusBadge->setObjectName("dlgStatusBadge");
     hl->addWidget(dlgAvatar);
     hl->addLayout(nameCol);
     hl->addStretch();
@@ -2128,14 +2143,20 @@ QWidget* MainWindow::buildResidentDetail()
 }
 
 // 위험도/상태 텍스트를 색상 칩으로 만드는 헬퍼(파일 로컬).
+// severity가 비어 있으면(예: "퇴원") 등급이 아니므로 도형을 붙이지 않고
+// #riskChip 기본 규칙(중립색)에 맡긴다 — 상태 칩은 심각도가 아니다.
+// 위젯이 아직 화면에 붙기 전에 만들어지므로(목록 재렌더마다 새로 생성) repolish
+// 없이 속성만 설정해도 첫 표시 시 QSS가 적용된다 — #resRow의 inactive/selected
+// 선례와 같다.
 namespace {
-QLabel* makeChip(const QString& text, const char* color) {
-    auto* chip = new QLabel(text);
+QLabel* makeChip(const QString& text, const QString& severity) {
+    const QString label = severity.isEmpty()
+        ? text
+        : severityGlyph(severity) + QStringLiteral(" ") + text;
+    auto* chip = new QLabel(label);
+    chip->setObjectName("riskChip");
     chip->setAttribute(Qt::WA_TransparentForMouseEvents);
-    chip->setStyleSheet(QString(
-        "color:%1; border:1px solid %1; border-radius:9px;"
-        " padding:1px 9px; font-size:11px; font-weight:800; background:transparent;")
-        .arg(color));
+    chip->setProperty("severity", severity);
     return chip;
 }
 }  // namespace
@@ -2182,10 +2203,11 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         const QString risk    = q.value(6).toString();
         const QString status  = q.value(7).toString();
         const bool    active  = (status == QStringLiteral("재원"));
-        const char* riskColor = risk == QStringLiteral("상") ? kCritical
-                              : risk == QStringLiteral("중") ? kWarn : kNormal;
+        const QString riskSeverity = risk == QStringLiteral("상") ? QStringLiteral("critical")
+                                   : risk == QStringLiteral("중") ? QStringLiteral("medium")
+                                                                  : QStringLiteral("normal");
 
-        // 행 = 클릭 가능한 버튼. 좌측에 위험도 색 띠(riskColor)로 위험도를 시각화.
+        // 행 = 클릭 가능한 버튼. 좌측에 위험도 색 띠(riskSeverity)로 위험도를 시각화.
         auto* rowBtn = new QPushButton();
         rowBtn->setObjectName("resRow");
         rowBtn->setProperty("inactive", !active);
@@ -2198,21 +2220,24 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         rl->setContentsMargins(8, 8, 12, 8);
         rl->setSpacing(10);
 
-        // 위험도 색 띠
+        // 위험도 색 띠 — 글자가 없어 도형을 못 붙인다. 이 띠의 색 외 채널은
+        // 같은 행의 위험도 칩(아래) 도형이다 — 이 짝짓기를 깨지 말 것(D-09).
         auto* riskBar = new QLabel();
+        riskBar->setObjectName("riskBar");
         riskBar->setAttribute(Qt::WA_TransparentForMouseEvents);
         riskBar->setFixedWidth(4);
-        riskBar->setStyleSheet(QString("background:%1; border-radius:2px;").arg(riskColor));
+        riskBar->setProperty("severity", riskSeverity);
         rl->addWidget(riskBar);
 
-        // 아바타
+        // 아바타 — active 속성으로 색을 받는다(재원 여부, 심각도 아님).
+        // 이 위젯은 목록 재렌더마다 새로 만들어지고 아직 화면에 붙기 전이므로
+        // 같은 행의 resRow와 동일하게 생성 직후 속성 설정만으로 충분하다.
         auto* avatar = new QLabel(name.left(1));
+        avatar->setObjectName("resAvatar");
         avatar->setAttribute(Qt::WA_TransparentForMouseEvents);
         avatar->setAlignment(Qt::AlignCenter);
         avatar->setFixedSize(38, 38);
-        avatar->setStyleSheet(QString(
-            "background:%1; color:#fff; border-radius:19px;"
-            " font-size:16px; font-weight:800;").arg(active ? kAccent : kTextSub));
+        avatar->setProperty("active", active);
         rl->addWidget(avatar);
 
         // 이름 + 채널
@@ -2231,13 +2256,13 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         nameCol->addWidget(metaLbl);
         rl->addLayout(nameCol, 1);
 
-        // 우측: 위험도 칩(퇴원 행은 상태 칩)
+        // 우측: 위험도 칩(퇴원 행은 상태 칩 — 심각도가 아니므로 severity를 비운다)
         if (active)
             rl->addWidget(makeChip(QStringLiteral("위험 %1")
                                        .arg(risk.isEmpty() ? QStringLiteral("-") : risk),
-                                   riskColor));
+                                   riskSeverity));
         else
-            rl->addWidget(makeChip(QStringLiteral("퇴원"), kTextSub));
+            rl->addWidget(makeChip(QStringLiteral("퇴원"), QString()));
 
         box->addWidget(rowBtn);
         ++n;
@@ -2378,9 +2403,11 @@ void MainWindow::refreshResidentDialogHeader()
     const bool active  = (editStatus->currentText() == QStringLiteral("재원"));
 
     dlgAvatar->setText(name.isEmpty() ? QStringLiteral("＋") : name.left(1));
-    dlgAvatar->setStyleSheet(QString(
-        "background:%1; color:#fff; border-radius:26px;"
-        " font-size:22px; font-weight:800;").arg(active && !isNew ? kAccent : kTextSub));
+    // 목록 행 아바타와 달리 이 위젯은 편집 중 반복 갱신되므로 repolish가 필요하다.
+    dlgAvatar->setProperty("active", active && !isNew);
+    dlgAvatar->style()->unpolish(dlgAvatar);
+    dlgAvatar->style()->polish(dlgAvatar);
+    dlgAvatar->update();
 
     dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
                               : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));
@@ -2389,19 +2416,28 @@ void MainWindow::refreshResidentDialogHeader()
     dlgSubMeta->setText(cam.isEmpty() ? QStringLiteral("채널 미지정")
                                       : QStringLiteral("채널 %1").arg(cam));
 
-    auto styleBadge = [](QLabel* b, const QString& text, const char* color) {
-        b->setText(text);
-        b->setStyleSheet(QString(
-            "color:%1; border:1px solid %1; border-radius:11px;"
-            " padding:3px 12px; font-size:12px; font-weight:800; background:transparent;")
-            .arg(color));
-    };
+    // 이 함수는 콤보박스 값이 바뀔 때마다 다시 불리므로(생성 시 1회가 아니다)
+    // 매번 repolish가 필요하다.
     const QString risk = editRiskLevel->currentText();
-    const char* riskColor = risk == QStringLiteral("상") ? kCritical
-                          : risk == QStringLiteral("중") ? kWarn : kNormal;
-    styleBadge(dlgRiskBadge, QStringLiteral("위험 %1").arg(risk), riskColor);
-    styleBadge(dlgStatusBadge, active ? QStringLiteral("재원") : QStringLiteral("퇴원"),
-               active ? kNormal : kTextSub);
+    const QString riskSeverity = risk == QStringLiteral("상") ? QStringLiteral("critical")
+                                : risk == QStringLiteral("중") ? QStringLiteral("medium")
+                                                                : QStringLiteral("normal");
+    dlgRiskBadge->setText(severityGlyph(riskSeverity) + QStringLiteral(" ")
+                           + QStringLiteral("위험 %1").arg(risk));
+    dlgRiskBadge->setProperty("severity", riskSeverity);
+    dlgRiskBadge->style()->unpolish(dlgRiskBadge);
+    dlgRiskBadge->style()->polish(dlgRiskBadge);
+    dlgRiskBadge->update();
+
+    // 상태 배지(재원/퇴원)는 심각도가 아니다 — 재원 여부는 등급이 아니라
+    // 분류다. severity를 쓰지 않고 별도 속성 residency로만 다루며 도형도
+    // 붙이지 않는다.
+    dlgStatusBadge->setText(active ? QStringLiteral("재원") : QStringLiteral("퇴원"));
+    dlgStatusBadge->setProperty("residency", active ? "active" : "discharged");
+    dlgStatusBadge->style()->unpolish(dlgStatusBadge);
+    dlgStatusBadge->style()->polish(dlgStatusBadge);
+    dlgStatusBadge->update();
+
     dlgRiskBadge->setVisible(!isNew);
     dlgStatusBadge->setVisible(!isNew);
 
@@ -2581,414 +2617,15 @@ void MainWindow::showChangeLogDialog(int admissionId)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::applyTheme()
 {
-    const QString qss = QString(R"(
-        QWidget { color: %(text); font-family: "Segoe UI", "맑은 고딕", sans-serif; font-size: 13px; }
-        QMainWindow, #centralwidget { background: %(bgDeep); }
+    // 적용 주체는 이 위젯이 아니라 qApp이다 — 이 창 하나가 아니라 앱 전체가
+    // 같은 시트를 받아야 로그인 창까지 한 경로로 스타일이 흐른다.
+    ThemeManager::applyStylesheet(darkMode ? kDark : kLight, darkMode);
 
-        #header { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                     stop:0 %(panel), stop:1 %(card));
-                  border-bottom: 1px solid %(border); }
-        #brandDot { background: %(accent); border-radius: 5px; }
-        #logo { color: %(text); font-size: 23px; font-weight: 800; letter-spacing: 0.5px; }
-        #subtitle { color: %(sub); font-size: 13px; }
-        #clock { color: %(text); font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
-                 padding: 0 6px; }
-
-        /* 라이트/다크 테마 토글 — 원형 아이콘 버튼 */
-        #themeToggle { background: transparent; border: 1px solid %(border); border-radius: 16px;
-                       min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
-                       font-size: 15px; }
-        #themeToggle:hover { border-color: %(accent); background: %(card); }
-
-        /* 도움말 버튼 — 원형 물음표 아이콘 + "도움말" 텍스트 (필 형태) */
-        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 15px;
-                   padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
-        #helpBtn:hover { background: %(card); color: %(text); }
-
-        /* 도움말 창 — 좌측 주제 목록 */
-        #helpList { background: %(card); color: %(sub); border: none; outline: none;
-                    border-right: 1px solid %(border); font-size: 13px; }
-        #helpList::item { padding: 11px 16px; border: none; }
-        #helpList::item:selected { background: %(panel); color: %(accent); font-weight: 700; }
-        #helpList::item:hover:!selected { color: %(text); }
-
-        /* 연결 상태 pill 배지 */
-        #statusPill { background: %(card); border: 1px solid %(border); border-radius: 13px; }
-        #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
-
-        /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
-        #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
-        #userChip:hover { border-color: %(accent); }
-        #userAvatar { background: %(accent); color: #fff; border-radius: 15px;
-                      font-size: 13px; font-weight: 800; }
-        #userName { color: %(text); font-size: 13px; font-weight: 700; }
-        #logoutButton { background: transparent; color: %(sub); border: none;
-                        border-radius: 14px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
-        #logoutButton:hover { background: %(critical); color: #fff; }
-
-        /* ── 좌측 네비 레일 ── */
-        #navRail { background: %(panel); border-right: 1px solid %(border); }
-        #navBtn { background: transparent; color: %(sub); border: none; border-radius: 10px;
-                  padding: 0 12px; text-align: left;
-                  font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
-        #navBtn:hover { background: %(card); color: %(text); }
-        #navBtn:checked { background: %(accent); color: #ffffff; font-weight: 800; }
-        /* 접힘 상태 — 라벨이 없으니 아이콘을 가운데로 */
-        #navBtn[collapsed="true"] { padding: 0; text-align: center; }
-        #navToggle { background: transparent; color: %(sub); border: none;
-                     border-radius: 8px; font-size: 15px; }
-        #navToggle:hover { background: %(card); color: %(text); }
-
-        #panel { background: %(panel); border: 1px solid %(border); border-radius: 16px; }
-        /* 섹션 제목: 좌측 굵은 청록 악센트 바 + 큼직한 타이틀 */
-        #panelTitle { color: %(text); font-size: 17px; font-weight: 800; letter-spacing: 0.3px;
-                      border-left: 4px solid %(accent); padding: 1px 0 1px 12px; }
-
-        #roiButton, #roiToggle, #roiClear { background: %(card); color: %(text); border: 1px solid %(border);
-                                 border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
-        #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
-        #roiToggle:checked { background: %(accent); color: #fff; border-color: %(accent); }
-        #roiClear:hover { border-color: %(critical); color: %(critical); }
-
-        /* ── 관제화면 ROI 세그먼트 그룹 ── */
-        #segGroup { background: %(bgDeep); border: 1px solid %(border); border-radius: 9px; }
-        #segCaption { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
-        #segBtn, #segBtnDanger, #segBtnToggle {
-            background: transparent; color: %(text); border: none;
-            border-radius: 6px; padding: 5px 13px; font-size: 12px; font-weight: 600; }
-        #segBtn:hover, #segBtnToggle:hover { background: %(card); }
-        #segBtnDanger:hover { background: %(card); color: %(critical); }
-        #segBtnToggle:checked { background: %(accent); color: #fff; }
-
-        #micButton { background: %(card); color: %(text); border: 1px solid %(border);
-                     border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
-        #micButton:hover { border-color: %(accent); }
-        #micButton[active="true"] { color: #fff; border-color: %(critical);
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #ff6b62, stop:1 %(critical)); }
-
-        /* 경보 해제 — 평상시엔 차분한 아웃라인, 경보 활성 시(active=true)에만 빨강 그라데이션 */
-        #alarmButton { background: %(card); color: %(sub); border: 1px solid %(border);
-                       border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 700; }
-        #alarmButton:hover { border-color: %(critical); color: %(critical); }
-        #alarmButton[active="true"] { color: #fff; border-color: %(critical); font-weight: 800;
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #ff6b62, stop:1 %(critical)); }
-        #alarmButton[active="true"]:hover { background: #ff6b62; }
-
-        /* 경보 토스트 — 상단에서 내려오는 떠 있는 알림 카드 */
-        #alarmToast { background: %(card); border: 1px solid %(border);
-                      border-left: 4px solid %(critical); border-radius: 12px; }
-        #alarmDot { background: %(critical); border-radius: 4px; }
-        #alarmToastText { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.2px; }
-        #alarmToastBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
-                         padding: 7px 16px; font-size: 13px; font-weight: 800; }
-        #alarmToastBtn:hover { background: #ff6b62; }
-
-        /* NVR 매트릭스: 순수 검정 셀 + 얇은 구분선. 정보는 VideoView가 영상 위에 오버레이 */
-        #videoCard { background: #000000; border: 1px solid %(border); border-radius: 12px; }
-        #video { color: #9AA7B2; font-size: 13px; background: #000000; border-radius: 12px; }
-
-        #vitalScroll { background: transparent; }
-        #vitalScroll > QWidget > QWidget { background: transparent; }
-        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 14px; }
-        #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
-                     border-top-left-radius: 14px; border-top-right-radius: 14px; }
-        #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
-        #vitalBed { color: %(sub); font-size: 12px; }
-        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-        #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
-        #statValue { font-family: "Consolas", "D2Coding", monospace;
-                     font-size: 32px; font-weight: 800; }
-        #statUnit { color: %(sub); font-size: 12px; font-weight: 600; padding-bottom: 5px; }
-        #vitalUpdated { color: %(sub); font-size: 11px; }
-
-        /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */
-        #careCard { background: %(card); border: 1px solid %(border); border-radius: 16px; }
-        #careMeta { color: %(sub); font-size: 12px; }
-        #careBigCap { color: %(sub); font-size: 12px; font-weight: 600; }
-        #careMiniCap { color: %(sub); font-size: 11px; font-weight: 600; }
-
-        /* ── 일일 리포트 ──
-           QCalendarWidget은 내부가 네비게이션바 + QTableView로 되어 있어서
-           위젯 하나에 색을 줘도 안쪽이 기본 흰색으로 남는다. 다크에서 이 부분만
-           하얗게 튀므로 내부 위젯을 이름으로 하나씩 눌러준다. */
-        #reportDate { color: %(text); font-size: 16px; font-weight: 800; }
-        #reportCalendar { background: %(card); border: none; }
-        #reportCalendar QWidget#qt_calendar_navigationbar {
-            background: %(card); border-bottom: 1px solid %(border); }
-        /* ★ 달력 안쪽 글자 크기는 px 가 아니라 pt 로 준다.
-           QFont 은 크기를 pt 나 px 중 하나로만 갖는데, px 로 정하면 pointSize()
-           가 -1("pt 로 정해지지 않음")을 돌려준다. QCalendarWidget 은 날짜 칸을
-           그릴 때 본문 폰트에서 pointSize 를 꺼내 계산하므로, 앱 전역의
-           QWidget{font-size:13px} 를 그대로 물려받으면 그 -1 을 다시
-           setPointSize 에 넣어 'Point size <= 0' 경고가 뜬다.
-           동작에는 지장이 없지만 날짜를 누를 때마다 콘솔이 더러워진다.
-           ※ 이 스타일시트 전체가 raw 문자열이라, 주석 안에서도 닫는 괄호
-             바로 뒤에 큰따옴표가 오면 문자열이 그 자리에서 끊긴다. 금지. */
-        #reportCalendar, #reportCalendar QAbstractItemView { font-size: 10pt; }
-        #reportCalendar QToolButton {
-            background: transparent; color: %(text); border: none;
-            font-size: 10pt; font-weight: 700; padding: 4px 8px; }
-        #reportCalendar QToolButton:hover { background: %(panel); border-radius: 6px; }
-        #reportCalendar QToolButton::menu-indicator { image: none; }
-        #reportCalendar QAbstractItemView:enabled {
-            background: %(card); color: %(text); outline: none;
-            selection-background-color: %(accent); selection-color: #ffffff; }
-        /* 이번 달 밖의 날짜 + 미래 날짜(선택 불가) */
-        #reportCalendar QAbstractItemView:disabled { color: %(border); }
-        #reportCalendar QTableView QHeaderView::section {
-            background: %(card); color: %(sub); border: none;
-            font-size: 8pt; font-weight: 700; padding: 4px 0; }
-        #reportTodayBtn { background: transparent; color: %(accent);
-                          border: 1px solid %(border); border-radius: 8px;
-                          padding: 6px 0; font-size: 12px; font-weight: 700; }
-        #reportTodayBtn:hover { border-color: %(accent); background: %(panel); }
-        /* 입소자 이름 탭 — 선택된 하나만 강조색으로 채운다 */
-        #residentTab { background: transparent; color: %(sub);
-                       border: 1px solid %(border); border-radius: 14px;
-                       padding: 5px 14px; font-size: 13px; font-weight: 700; }
-        #residentTab:hover { color: %(text); border-color: %(sub); }
-        #residentTab:checked { background: %(accent); color: #ffffff; border-color: %(accent); }
-        /* 지표 타일 */
-        #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
-        #reportTileVal { color: %(accent); font-family: "Consolas", "D2Coding", monospace;
-                         font-size: 26px; font-weight: 800; }
-
-        /* 스크롤바 — 세로/가로 모두 다크. 트랙(page)·코너의 기본 흰색을 없앤다 */
-        QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
-        QScrollBar::handle:vertical { background: %(border); border-radius: 5px; min-height: 30px; }
-        QScrollBar::handle:vertical:hover { background: %(sub); }
-        QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
-        QScrollBar::handle:horizontal { background: %(border); border-radius: 5px; min-width: 30px; }
-        QScrollBar::handle:horizontal:hover { background: %(sub); }
-        QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; background: transparent; }
-        QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
-        QAbstractScrollArea::corner { background: transparent; }
-
-        /* ── 이벤트 기록 ── */
-        #filterBar QLabel { color: %(sub); font-size: 12px; }
-        #filterBar QComboBox, #filterBar QDateEdit {
-            background: %(card); color: %(text); border: 1px solid %(border);
-            border-radius: 8px; padding: 5px 10px; }
-        #logTable { background: %(panel); color: %(text); gridline-color: transparent;
-                    border: 1px solid %(border); border-radius: 12px;
-                    alternate-background-color: %(card); }
-        #logTable::item { padding: 4px 8px; border: none; }
-        #logTable QHeaderView::section { background: %(bgDeep); color: %(sub);
-                                         border: none; border-bottom: 1px solid %(border);
-                                         padding: 9px 8px; font-weight: 700; }
-        #logTable::item:selected { background: %(accent); color: #fff; }
-
-/* ── TAB3: DB 관리 ── */
-
-QLabel {
-    color: %(text);
-}
-
-/* 검색창 */
-#searchEdit { background: %(card); color: %(text); border: 1px solid %(border);
-              border-radius: 17px; padding: 4px 14px; font-size: 13px; }
-#searchEdit:focus { border-color: %(accent); }
-
-/* 주요 액션 버튼(신규 등록·저장) */
-#primaryButton { background: %(accent); color: #fff; border: none;
-                 border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
-#primaryButton:hover { background: %(accent); opacity: 0.9; }
-#dangerButton { background: transparent; color: %(critical); border: 1px solid %(critical);
-                border-radius: 8px; padding: 6px 16px; font-size: 13px; font-weight: 700; }
-#dangerButton:hover { background: %(critical); color: #fff; }
-#iconButton { background: %(card); color: %(text); border: 1px solid %(border);
-              border-radius: 8px; font-size: 16px; font-weight: 700; }
-#iconButton:hover { border-color: %(accent); color: %(accent); }
-
-/* ── 입소자 관리: 상단 요약 통계 ── */
-#resStat { background: %(card); border: 1px solid %(border); border-radius: 14px; }
-/* 큰 숫자가 세로로 잘리지 않도록 라벨에 충분한 높이를 준다 */
-#resStatVal { font-family: "Consolas", "D2Coding", monospace;
-              font-size: 26px; font-weight: 800; min-height: 34px; padding: 0; }
-#resStatCap { color: %(sub); font-size: 12px; font-weight: 700; }
-
-/* ── 입소자 관리: 좌측 목록(마스터) ── */
-#listPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
-#cardHost { background: transparent; }
-
-/* 재원/전체/퇴원 세그먼트 탭 */
-#segTab { background: %(bgDeep); color: %(sub); border: 1px solid %(border);
-          padding: 6px 0; font-size: 12px; font-weight: 700; }
-#segTab:hover { color: %(text); }
-#segTab:checked { background: %(accent); color: #fff; border-color: %(accent); }
-
-/* 목록 행 카드 */
-#resRow { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px;
-          text-align: left; }
-#resRow:hover { border-color: %(accent); }
-#resRow[selected="true"] { border: 2px solid %(accent); background: %(panel); }
-#resRow[inactive="true"] { background: transparent; }
-#resName { color: %(text); font-size: 15px; font-weight: 800; }
-#resMeta { color: %(sub); font-size: 12px; }
-
-/* ── 입소자 관리: 우측 디테일(인라인 편집) ── */
-#detailPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
-#detailPlaceholder { color: %(sub); font-size: 14px; }
-
-/* ── 카메라 설정: [채널 스트립] │ [스테이지] │ [인스펙터] 3단 워크스페이스 ── */
-#camStrip { background: %(card); border: 1px solid %(border); border-radius: 16px; }
-#camRailCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 2px;
-              padding-left: 2px; }
-/* 채널 타일 — 썸네일을 품은 체크 버튼. 선택은 '테두리 + 바탕'으로만 표시해서
-   썸네일(진짜 정보)이 색에 묻히지 않게 한다. */
-#camTile { background: transparent; border: 2px solid transparent;
-           border-radius: 12px; padding: 0; text-align: left; }
-#camTile:hover { background: %(bgDeep); border-color: %(border); }
-#camTile:checked { background: %(bgDeep); border-color: %(accent); }
-#camTileCh { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px; }
-#camChStatus { font-size: 11px; font-weight: 700; }
-
-#camControlPanel { background: %(card); border: 1px solid %(border); border-radius: 16px; }
-#camInspCh { color: %(text); font-size: 19px; font-weight: 800; letter-spacing: 0.5px; }
-#camPill { color: %(sub); border: 1px solid %(border); border-radius: 9px;
-           padding: 1px 9px; font-size: 11px; font-weight: 800; }
-#camInspIp { color: %(sub); font-size: 11px; font-family: "Consolas", "D2Coding", monospace; }
-#camRule { background: %(border); }
-
-/* 연결·ROI·이미지 세그먼트 — 트랙(#camSeg) 안에 얹힌 알약 버튼 */
-#camSeg { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-#camSegBtn { background: transparent; color: %(sub); border: none; border-radius: 9px;
-             padding: 9px 0; font-size: 13px; font-weight: 700; }
-#camSegBtn:hover { color: %(text); }
-#camSegBtn:checked { background: %(accent); color: #fff; font-weight: 800; }
-
-#camSectionCap { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
-                 border-left: 3px solid %(accent); padding-left: 8px; }
-#camHint { color: %(sub); font-size: 12px; }
-/* 그 페이지의 주 액션(연결/적용) — 채워진 악센트 */
-#camPrimary { background: %(accent); color: #fff; border: 1px solid %(accent);
-              border-radius: 10px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
-#camPrimary:hover { background: %(accentHover); border-color: %(accentHover); }
-/* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다 */
-#camStage { background: #000000; border: 1px solid %(border); border-radius: 14px; }
-#camStageCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
-
-/* ROI 페이지 — 단계 카드 + 주 액션 */
-#roiSteps { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-#roiStepNum { background: %(accent); color: #fff; border-radius: 11px;
-              font-size: 12px; font-weight: 800; }
-#roiStepText { color: %(text); font-size: 13px; }
-#roiPrimary { background: %(accent); color: #fff; border: none; border-radius: 10px;
-              font-size: 14px; font-weight: 800; }
-#roiPrimary:hover { background: %(accentHover); }
-#roiPrimary[drawing="true"] { background: %(critical); }
-#roiPrimary[drawing="true"]:hover { background: #ff6b62; }
-
-/* 편집기 프로필 헤더 */
-#dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
-#dlgName { color: %(text); font-size: 19px; font-weight: 800; }
-#dlgSub  { color: %(sub); font-size: 13px; }
-
-QGroupBox#formGroup {
-    color: %(text);
-    border: 1px solid %(border);
-    border-radius: 8px;
-    margin-top: 10px;
-    padding: 14px 10px 10px 10px;
-    font-weight: 700;
-}
-
-QGroupBox#formGroup::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    left: 10px;
-    padding: 0 6px;
-    color: %(text);
-    background: %(card);
-}
-
-QGroupBox#formGroup QLabel {
-    color: %(text);
-    font-weight: 600;
-    font-size: 13px;
-    min-width: 90px;
-}
-
-QLineEdit#formEdit,
-QTextEdit#formEdit,
-QComboBox#formEdit,
-QDateEdit#formEdit {
-    background: %(panel);
-    color: %(text);
-    border: 1px solid %(border);
-    border-radius: 6px;
-    padding: 4px 8px;
-}
-
-QLineEdit#formEdit:focus,
-QTextEdit#formEdit:focus {
-    border-color: %(accent);
-}
-
-        QComboBox#formEdit QAbstractItemView {
-            background: %(bgDeep); color: %(text);
-            border: 1px solid %(border);
-            selection-background-color: %(accent); selection-color: #fff; }
-        QComboBox#formEdit::drop-down { border: none; width: 20px; }
-        QComboBox#formEdit::down-arrow { image: none; width: 0; height: 0;
-            border-left: 4px solid transparent; border-right: 4px solid transparent;
-            border-top: 5px solid %(sub); margin-right: 8px; }
-
-
-        /* ── 캘린더 팝업 (QDateEdit) ── */
-        QCalendarWidget QWidget { background: %(panel); color: %(text); }
-        QCalendarWidget QAbstractItemView {
-            background: %(bgDeep); color: %(text);
-            selection-background-color: %(accent); selection-color: #fff;
-            outline: none; }
-        QCalendarWidget QWidget#qt_calendar_navigationbar {
-            background: %(card); border-bottom: 1px solid %(border); }
-        QCalendarWidget QToolButton {
-            background: transparent; color: %(text); border: none; padding: 4px 8px; }
-        QCalendarWidget QToolButton:hover { background: %(border); border-radius: 4px; }
-        QCalendarWidget QSpinBox {
-            background: %(bgDeep); color: %(text); border: 1px solid %(border); }
-        QCalendarWidget QAbstractItemView:disabled { color: %(sub); }
-
-        /* ── 공용 다이얼로그·메시지박스·메뉴 ──
-           기본 스타일이 흰 배경으로 떠서 밝은 글씨가 안 보이는 것 방지 */
-        QMessageBox, QInputDialog, QDialog { background: %(panel); }
-        QMessageBox QLabel, QInputDialog QLabel { color: %(text); }
-        QMessageBox QPushButton, QInputDialog QPushButton {
-            background: %(card); color: %(text); border: 1px solid %(border);
-            border-radius: 6px; padding: 5px 16px; font-size: 12px; font-weight: 600;
-            min-width: 60px; }
-        QMessageBox QPushButton:hover, QInputDialog QPushButton:hover { border-color: %(accent); }
-        QMessageBox QPushButton:default, QInputDialog QPushButton:default {
-            background: %(accent); color: #fff; border-color: %(accent); }
-        QMenu { background: %(panel); color: %(text); border: 1px solid %(border); }
-        QMenu::item:selected { background: %(accent); color: #fff; }
-        QToolTip { background: %(card); color: %(text); border: 1px solid %(border); }
-    )")
-                            .replace("%(bgDeep)", kBgDeep)
-                            .replace("%(panel)", kPanel)
-                            .replace("%(card)", kCard)
-                            .replace("%(border)", kBorder)
-                            .replace("%(text)", kTextMain)
-                            .replace("%(sub)", kTextSub)
-                            .replace("%(normal)", kNormal)
-                            .replace("%(warn)", kWarn)
-                            // accentHover는 accent의 부분문자열이라 반드시 accent보다 먼저 치환.
-                            .replace("%(accentHover)", darkMode ? "#3AD4C4" : "#3AD1C3")
-                            .replace("%(accent)", kAccent)
-                            .replace("%(critical)", kCritical);
-
-    this->setStyleSheet(qss);
-
-    // 상태등은 코드에서 배경색을 직접 지정 (동적 변경)
-    statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(kCritical));
-    // 카드는 입소자 수만큼 있으므로 채널 인덱스로 돌면 안 된다(해시에 0~3 키가 없다).
-    // 여기서 일단 흐리게 깔고, 아래 updateVitals()가 값 있는 카드만 상태색을 다시 입힌다.
-    for (QLabel* dot : vitalStatusDots)
-        if (dot) dot->setStyleSheet(
-            QString("background:%1; border-radius:5px;").arg(kTextSub));
+    // statusDot·vitalDot·vitalBadge·statValue 등은 전부 severity/vital 동적
+    // 속성 + QSS[severity=...]/[vital=...] 규칙이 색을 결정한다. 예전엔
+    // 여기서 vitalStatusDots를 매번 흐리게 인라인으로 리셋했는데, 그 인라인
+    // 값이 앱 전역 QSS 재적용에 지워지기 때문에 있던 보상 코드였다 — 이제
+    // QSS가 속성 값을 스스로 기억하므로 리셋할 필요가 없다(02-03 Task2).
 }
 
 void MainWindow::toggleTheme()
@@ -3002,12 +2639,13 @@ void MainWindow::toggleTheme()
         themeToggleButton->setText(darkMode ? QStringLiteral("☀")
                                             : QStringLiteral("🌙"));
 
-    // applyTheme가 상태등을 기본값(빨강/회색)으로 리셋하므로 현재 상태를 즉시 복원한다.
-    bool connected = true;
-    for (int i = 0; i < kNumServers; ++i)
-        if (sockets[i]->state() != QAbstractSocket::ConnectedState) connected = false;
-    setConnectionState(connected, statusText->text());
-    updateVitals();  // 바이탈 색/배지를 새 팔레트 기준으로 즉시 갱신
+    // statusDot·vitalDot 등은 severity 동적 속성으로 색을 유지하므로
+    // applyTheme() 뒤에 따로 복원할 필요가 없다.
+    // 그래도 updateVitals()는 지우면 안 된다 — Sparkline은 QSS를 받지 않는
+    // 커스텀 페인트 위젯이라 setLineColor()로 주입한 QColor를 그대로 들고
+    // 있다. 여기서 다시 부르지 않으면 테마를 토글해도 스파크라인 선 색만
+    // 이전 팔레트로 남는다.
+    updateVitals();
     // 카드의 아바타/칩은 인라인 색이라 QSS 재적용만으론 안 바뀐다 → 다시 그린다.
     refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
 }
@@ -3015,8 +2653,12 @@ void MainWindow::toggleTheme()
 void MainWindow::setConnectionState(bool connected, const QString& text)
 {
     if (!statusDot) return;
-    const char* color = connected ? kNormal : kCritical;
-    statusDot->setStyleSheet(QString("background:%1; border-radius:3px;").arg(color));
+    // collapsed/active 선례와 같은 4단계: 속성 설정 → unpolish → polish → update.
+    // QSS 선택자가 문자열로 비교하는 값이므로 severity는 정확한 리터럴이어야 한다.
+    statusDot->setProperty("severity", connected ? "normal" : "critical");
+    statusDot->style()->unpolish(statusDot);
+    statusDot->style()->polish(statusDot);
+    statusDot->update();
     statusText->setText(text);
 }
 
@@ -3094,16 +2736,16 @@ void MainWindow::updateVitals()
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
+    // 판정(무신호 3종 구분·등급·라벨·도형 접두)은 전부 여기서 한다 — VitalTile은
+    // 완성된 표시값만 setLive()/setStale()로 받는다(D-02). 위젯 갱신의 4단계
+    // repolish 관용구도 VitalTile 내부로 옮겨갔다(client/vitaltile.cpp).
+
     // 카드 단위로 돈다. 키는 입소자면 resident_id, 미배정 채널이면 음수 —
     // 음수 키는 vitals_ 에 값이 없어 기본값(received=false)이 잡히고 "대기"로 뜬다.
-    for (auto it = vitalNameLabels.constBegin(); it != vitalNameLabels.constEnd(); ++it) {
+    for (auto it = vitalTiles_.constBegin(); it != vitalTiles_.constEnd(); ++it) {
         const int key = it.key();
-        QLabel* spo2Lbl  = spo2Values.value(key);
-        QLabel* hrLbl    = hrValues.value(key);
-        QLabel* dotLbl   = vitalStatusDots.value(key);
-        QLabel* badgeLbl = vitalStatusBadges.value(key);
-        if (!spo2Lbl || !hrLbl || !dotLbl || !badgeLbl) continue;
-        Sparkline* spark = hrSpark.value(key);
+        VitalTile* tile = it.value();
+        if (!tile) continue;
 
         const VitalSample v = vitals_.value(key);
         const bool fresh = v.received && (now - v.arrivedAtMs) <= kVitalStaleMs;
@@ -3112,55 +2754,32 @@ void MainWindow::updateVitals()
         const bool worn = vitalWorn(v.spo2, v.heartRate);
 
         if (!fresh || !worn) {
-            const QString dim = kTextSub;
-            spo2Lbl->setText(QStringLiteral("--"));
-            spo2Lbl->setStyleSheet(QString("color:%1;").arg(dim));
-            hrLbl->setText(QStringLiteral("--"));
-            hrLbl->setStyleSheet(QString("color:%1;").arg(dim));
-
-            dotLbl->setStyleSheet(
-                QString("background:%1; border-radius:4px;").arg(dim));
-
             // 세 가지를 구분한다 — 대응이 각각 다르다.
             //   대기      : 한 번도 안 옴 (등록/배선 문제)
             //   신호 끊김 : 오다가 멈춤 (기기 방전·중계 노드 다운)
             //   미착용    : 값은 오는데 전부 0 (기기를 안 차고 있음)
-            badgeLbl->setText(!fresh ? (v.received ? QStringLiteral("신호 끊김")
-                                                   : QStringLiteral("대기"))
-                                     : QStringLiteral("미착용"));
-            badgeLbl->setStyleSheet(QString(
-                "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
-                " padding:1px 10px; font-size:11px; font-weight:800;")
-                .arg(dim, blendHex(dim, kCard, 0.18)));
-
-            if (spark) spark->setLineColor(QColor(dim));
+            // 도형(○)은 색 없이도 "이 카드는 심각도 등급이 아니라 신호가
+            // 없는 상태"임을 알리는 채널 — 세 상태를 구분하는 건 텍스트다.
+            const QString label = !fresh ? (v.received ? QStringLiteral("신호 끊김")
+                                                        : QStringLiteral("대기"))
+                                          : QStringLiteral("미착용");
+            const QString badgeText = severityGlyph(QString(), /*stale=*/true)
+                                       + QStringLiteral(" ") + label;
+            // 커스텀 페인트 위젯(Sparkline)은 QSS를 못 받으므로 색 헬퍼를 거쳐
+            // 중립색을 직접 받는다 — 전역 상수를 여기서 다시 읽지 않는다.
+            tile->setStale(badgeText, severityColor(QString()));
             continue;
         }
 
         const int spo2 = v.spo2;
         const int hr   = v.heartRate;
-        const QString color = vitalColor(spo2, hr);
-
-        // 센서가 못 읽어 0이 오면 숫자 대신 "--" — 0%를 그대로 띄우면 오독한다.
-        spo2Lbl->setText(spo2 > 0 ? QString::number(spo2)   // 단위(%)는 별도 라벨
-                                  : QStringLiteral("--"));
-        spo2Lbl->setStyleSheet(QString("color:%1;").arg(color));
-        hrLbl->setText(QString::number(hr));               // 단위(bpm)는 별도 라벨
-        hrLbl->setStyleSheet(QString("color:%1;").arg(color));
-
-        dotLbl->setStyleSheet(QString("background:%1; border-radius:4px;").arg(color));
-
+        const QString severity = vitalSeverity(spo2, hr);
+        // 상태 배지에만 등급 도형을 접두한다 — SpO2/심박 값 라벨엔 붙이지
+        // 않는다(숫자 판독 방해 + 배지가 이미 도형을 들고 있어 중복 부호화는
+        // 이미 충족된다).
         const QString status = vitalStatusLabel(spo2, hr);
-        badgeLbl->setText(status);
-        badgeLbl->setStyleSheet(QString(
-            "color:%1; background:%2; border:1px solid %1; border-radius:9px;"
-            " padding:1px 10px; font-size:11px; font-weight:800;")
-            .arg(color, blendHex(color, kCard, 0.18)));
-
-        // 그래프에 점을 찍는 건 여기가 아니라 onWearableData 다. 이 함수는 2초마다
-        // 불리는데 여기서 addValue 를 하면 새 값이 없어도 같은 값이 계속 쌓여
-        // 실제 측정 간격이 그래프에서 사라진다.
-        if (spark) spark->setLineColor(QColor(color));
+        const QString badgeText = severityGlyph(severity) + QStringLiteral(" ") + status;
+        tile->setLive(spo2, hr, severity, badgeText, severityColor(severity));
     }
 }
 
@@ -3195,7 +2814,7 @@ void MainWindow::onWearableData(const WearableData& data)
     QVector<double>& hist = hrHistory_[rid];
     hist.append(data.heart_rate);
     while (hist.size() > kHrHistoryMax) hist.removeFirst();
-    if (Sparkline* spark = hrSpark.value(rid)) spark->addValue(data.heart_rate);
+    if (VitalTile* tile = vitalTiles_.value(rid)) tile->pushHeartRateSample(data.heart_rate);
 
     // 웨어러블이 낙상을 감지한 경우. 카메라 낙상(TCP 0xDB4D)과는 별개 경로라
     // 같은 사건이 두 번 들어올 수 있다 — 이미 경보 중인 채널은 다시 울리지 않는다.
@@ -3258,27 +2877,29 @@ void MainWindow::onAlarmNodeStatus(const QString& node, bool online)
         refreshAlertStatusBadge();
 }
 
-// 배지 3상태 — 카메라 인스펙터의 연결 배지(camInspPill)와 같은 스타일 규칙.
-//   미확인(회색, 아직 상태 토픽 못 받음) / 온라인(정상색) / 오프라인(위험색)
+// 배지 3상태 — severity 속성 + #alertNodeBadge QSS 규칙.
+//   미확인(도형 ○, severity 없음) / 온라인(✓, normal) / 오프라인(✖, critical)
 void MainWindow::refreshAlertStatusBadge()
 {
     if (!alertStatusBadge_ || !alertNode_) return;
     const QString node = alertNode_->currentText();
-    QString text, color;
+    QString text, severity;
     if (!alertNodeOnline_.contains(node)) {
         text = QStringLiteral("상태 미확인");
-        color = QString::fromLatin1(kTextSub);
+        severity = QString();  // 심각도 어느 값에도 걸리지 않는 중립 상태
     } else if (alertNodeOnline_.value(node)) {
         text = QStringLiteral("온라인");
-        color = QString::fromLatin1(kNormal);
+        severity = QStringLiteral("normal");
     } else {
         text = QStringLiteral("오프라인");
-        color = QString::fromLatin1(kCritical);
+        severity = QStringLiteral("critical");
     }
-    alertStatusBadge_->setText(text);
-    alertStatusBadge_->setStyleSheet(
-        QString("color:%1; border:1px solid %1; border-radius:9px;"
-                " padding:1px 9px; font-size:11px; font-weight:800;").arg(color));
+    alertStatusBadge_->setText(severityGlyph(severity, severity.isEmpty())
+                                + QStringLiteral(" ") + text);
+    alertStatusBadge_->setProperty("severity", severity);
+    alertStatusBadge_->style()->unpolish(alertStatusBadge_);
+    alertStatusBadge_->style()->polish(alertStatusBadge_);
+    alertStatusBadge_->update();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4517,7 +4138,10 @@ QWidget* MainWindow::buildAlertSettingsTab()
     auto* headTitle = new QLabel(QStringLiteral("대상 노드"));
     headTitle->setObjectName("camInspCh");
     alertStatusBadge_ = new QLabel(QStringLiteral("상태 미확인"));
-    alertStatusBadge_->setObjectName("camPill");
+    // 카메라 인스펙터 연결 배지(camInspPill, #camPill)와 objectName을 공유하면
+    // 서로 다른 속성 어휘(이쪽은 severity, 저쪽은 02-04의 연결 상태)가 섞인다
+    // — 02-03 정정 C로 분리.
+    alertStatusBadge_->setObjectName("alertNodeBadge");
     head->addWidget(headTitle);
     head->addWidget(alertStatusBadge_);
     head->addStretch();
@@ -5055,6 +4679,7 @@ void MainWindow::rebuildBedList()
 
     for (const RoiZone& z : zones) {
         auto* row = new QWidget();
+        row->setObjectName("roiBedRow");
         auto* h = new QHBoxLayout(row);
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(8);
@@ -5064,9 +4689,12 @@ void MainWindow::rebuildBedList()
         dot->setAlignment(Qt::AlignCenter);
         dot->setFixedSize(22, 22);
         const QColor c = VideoView::zoneColor(z.id);
-        dot->setStyleSheet(QStringLiteral("background:%1; color:#fff; border-radius:11px;"
+        // 의도적 잔류(clickslider.cpp와 같은 이유): 배경이 VideoView::zoneColor()의
+        // 8색 배열이라 영상 오버레이와 출처를 공유해야 하므로 QSS로 옮기지 않는다.
+        // 전경색만 흰색→본문색 토큰(대비 개선)으로 바꿨다.
+        dot->setStyleSheet(QStringLiteral("background:%1; color:%2; border-radius:11px;"
                                           "font-weight:700; font-size:11px;")
-                               .arg(c.name()));
+                               .arg(c.name(), QString::fromLatin1(kTextMain)));
         h->addWidget(dot);
 
         // 입소자 선택 — 이 채널에 배정된 재원 입소자만 후보로 올린다.
@@ -5108,10 +4736,10 @@ void MainWindow::rebuildBedList()
         });
         h->addWidget(del);
 
-        // 영상에서 고른 침대를 목록에서도 알아볼 수 있게 강조
-        if (z.id == selected)
-            row->setStyleSheet(QStringLiteral("background: rgba(255,255,255,0.06);"
-                                              "border-radius: 6px;"));
+        // 영상에서 고른 침대를 목록에서도 알아볼 수 있게 강조 — 팔레트 토큰(selected
+        // 속성)을 써서 라이트 테마에서도 보인다. 목록 재빌드마다 새로 만들어지므로
+        // 목록 행 아바타와 같은 이유로 repolish 없이 생성 직후 속성 설정만으로 충분하다.
+        row->setProperty("selected", z.id == selected);
         bedListLayout_->addWidget(row);
     }
 }
@@ -5235,9 +4863,12 @@ void MainWindow::refreshCamChannelStatus()
         // 침대가 여러 개일 수 있으니 "ROI 있음"이 아니라 몇 개인지를 보여준다
         if (beds > 0) txt += QStringLiteral(" · 침대 %1").arg(beds);
         camChannelStatus[ch]->setText(txt);
-        camChannelStatus[ch]->setStyleSheet(
-            QString("color:%1; font-size:11px; font-weight:700;")
-                .arg(connected ? kNormal : kTextSub));
+        // ●/○ 접두는 ALERT-02의 색 외 채널이라 지우지 않는다 — connected 속성과
+        // 같은 갱신 경로에서 함께 설정해 색과 모양이 어긋나지 않게 한다.
+        camChannelStatus[ch]->setProperty("connected", connected);
+        camChannelStatus[ch]->style()->unpolish(camChannelStatus[ch]);
+        camChannelStatus[ch]->style()->polish(camChannelStatus[ch]);
+        camChannelStatus[ch]->update();
     }
 
     // 인스펙터 헤더 — 지금 만지는 채널의 번호·연결 상태·주소.
@@ -5245,11 +4876,12 @@ void MainWindow::refreshCamChannelStatus()
     if (camInspCh) camInspCh->setText(QStringLiteral("CH %1").arg(cur + 1));
     if (camInspPill) {
         const bool on = cameraActive_[cur];
-        camInspPill->setText(on ? QStringLiteral("연결됨") : QStringLiteral("미연결"));
-        camInspPill->setStyleSheet(
-            QString("color:%1; border:1px solid %1; border-radius:9px;"
-                    " padding:1px 9px; font-size:11px; font-weight:800;")
-                .arg(on ? kNormal : kTextSub));
+        // 채널 상태 텍스트와 같은 어휘(●/○)를 붙여 두 배지의 표기를 통일한다.
+        camInspPill->setText(on ? QStringLiteral("● 연결됨") : QStringLiteral("○ 미연결"));
+        camInspPill->setProperty("connected", on);
+        camInspPill->style()->unpolish(camInspPill);
+        camInspPill->style()->polish(camInspPill);
+        camInspPill->update();
     }
     if (camInspIp) {
         // URL에는 계정·비밀번호가 들어 있으므로 호스트만 보여준다.
@@ -5558,6 +5190,40 @@ void MainWindow::onAlarmClearClicked()
     }
 }
 
+// 활성 경보 목록을 만든다 — 등급 판정(critical/high/medium)과 도형 선택이 전부
+// 여기서 끝나 AlertBanner로는 완성된 값만 넘어간다(D-02). 채널당 최대
+// 3건(낙상/침상이탈/생체이상)이 나올 수 있다.
+QList<AlertItem> MainWindow::collectAlertItems() const
+{
+    QList<AlertItem> items;
+    for (int ch = 0; ch < 4; ++ch) {
+        if (fallActive[ch]) {
+            const QString severity = QStringLiteral("critical");
+            items.append({ch, severityGlyph(severity), QStringLiteral("낙상"),
+                          patients[ch].bed, severity});
+        }
+        if (bedEgressActive[ch]) {
+            const QString severity = QStringLiteral("high");
+            items.append({ch, severityGlyph(severity), QStringLiteral("침상이탈"),
+                          patients[ch].bed, severity});
+        }
+        if (vitalAbnormalActive[ch]) {
+            // 그 채널에 배정된 입소자의 현재 바이탈 등급을 쓴다 — 단일 출처는
+            // vitalSeverity()(D-02). 배정된 사람을 찾지 못하면 안전하게
+            // medium으로 내린다(UI-SPEC §4.2).
+            QString severity = QStringLiteral("medium");
+            const QVector<int>& ids = residentsByChannel_[ch];
+            if (!ids.isEmpty()) {
+                const VitalSample sample = vitals_.value(ids.first());
+                severity = vitalSeverity(sample.spo2, sample.heartRate);
+            }
+            items.append({ch, severityGlyph(severity), QStringLiteral("생체신호 이상"),
+                          patients[ch].bed, severity});
+        }
+    }
+    return items;
+}
+
 // 낙상/침상이탈이 하나라도 활성이면 경보 버튼을 빨강 채움으로, 아니면 차분한 아웃라인으로.
 void MainWindow::refreshAlarmButton()
 {
@@ -5566,6 +5232,9 @@ void MainWindow::refreshAlarmButton()
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch] || vitalAbnormalActive[ch]) { anyActive = true; break; }
     updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
+    // 상시 노출용 배너(#alertBanner) 갱신 — 상태를 바꾸는 다섯 지점이 전부
+    // 이 함수를 거치므로 배선은 여기 한 곳뿐이다.
+    if (alertBanner_) alertBanner_->setActiveAlerts(collectAlertItems());
 
     // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
     if (alarmOverlay_) {
@@ -5755,9 +5424,6 @@ void MainWindow::loadPatientsFromDb()
 void MainWindow::refreshPatientLabels()
 {
     for (int ch = 0; ch < 4; ++ch) {
-        // 영상 오버레이는 "CH1"만 유지 — 병상·이름은 얹지 않는다.
-        if (vitalNameLabels[ch]) vitalNameLabels[ch]->setText(patients[ch].name);
-        if (vitalBedLabels[ch])  vitalBedLabels[ch]->setText(patients[ch].bed);
         // 침대 이름표·매핑 콤보도 새 입소자 구성으로 다시 그린다 — 이름을 고치거나
         // 퇴원시켰는데 침대 라벨만 옛 이름으로 남으면 관제사가 오판한다.
         refreshRoiZones(ch);

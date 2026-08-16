@@ -221,15 +221,20 @@ QPointF VideoView::toWidget(const QPointF& n) const {
 // ── 그리기 ───────────────────────────────────────────────────
 void VideoView::paintEvent(QPaintEvent*) {
     QPainter p(this);
+    // kVideoSurface는 Palette 구조체 밖 독립 상수라 팔레트 전환 함수(applyPalette)가
+    // 닿을 통로 자체가 없다(D-07/IA-02). 이 색이 밝아지면 아래에서 그리는 반투명
+    // 오버레이(이름표 캡슐·CH태그·LIVE 배지)들의 가독성이 전부 깨지므로, 둥근 모서리
+    // 분기와 사각형 분기가 반드시 같은 QColor 인스턴스를 공유해야 한다.
+    const QColor videoSurface(QString::fromLatin1(kVideoSurface));
     if (cornerRadius_ > 0) {
         // 카드 radius에 맞춰 영상·오버레이 전부를 둥글게 잘라낸다.
         QPainterPath clip;
         clip.addRoundedRect(QRectF(rect()), cornerRadius_, cornerRadius_);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillPath(clip, Qt::black);
+        p.fillPath(clip, videoSurface);
         p.setClipPath(clip);
     } else {
-        p.fillRect(rect(), Qt::black);
+        p.fillRect(rect(), videoSurface);
     }
 
     if (!cameraConnected_) {
@@ -491,7 +496,8 @@ void FramePreview::paintEvent(QPaintEvent*) {
     const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     QPainterPath frameShape;
     frameShape.addRoundedRect(box, 8, 8);
-    p.fillPath(frameShape, Qt::black);
+    // kVideoSurface — VideoView::paintEvent()와 같은 단일 출처(D-07/IA-02).
+    p.fillPath(frameShape, QColor(QString::fromLatin1(kVideoSurface)));
 
     if (frame_.isNull()) {
         p.setPen(QColor(QString::fromLatin1(kTextSub)));

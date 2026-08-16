@@ -6,6 +6,7 @@ CLAUDE.local.md
 .cursor/
 .aider*
 .planning/
+.gsd/
 skills-lock.json
 
 # ===== 빌드 산출물 =====

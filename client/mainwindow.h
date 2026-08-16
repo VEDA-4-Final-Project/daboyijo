@@ -28,6 +28,8 @@
 // 으로 컴파일이 깨진다. 선언이 먼저 오도록 통째로 include 한다.
 #include "mqttqtmanager.h"
 #include "clickslider.h"
+#include "vitaltile.h"
+#include "alertbanner.h"
 
 
 
@@ -283,12 +285,8 @@ private:
     // 아무도 배정되지 않은 채널이면 -(채널+1). 음수 키는 vitals_ 에 값이 없어
     // 자연히 "대기" 상태로 표시된다.
     // ★ 카드 개수가 입소자 수에 따라 변하므로 고정 배열이 아니라 해시다.
-    //   rebuildVitalCards() 가 통째로 비우고 다시 채운다.
-    QHash<int, QLabel*> spo2Values;         // 산소포화도 값
-    QHash<int, QLabel*> hrValues;           // 심박수 값
-    QHash<int, QLabel*> vitalStatusDots;    // 바이탈 상태등
-    QHash<int, QLabel*> vitalStatusBadges;  // 상태 배지(정상/주의/위험)
-    QHash<int, QLabel*> vitalNameLabels;    // 입소자 이름
+    //   rebuildVitalCards() 가 구성 변경 시에만 diff로 생성·삭제한다(D-04).
+    QHash<int, VitalTile*> vitalTiles_;     // 키 → 타일 인스턴스(단일 출처)
 
     // ── MQTT ─────────────────────────────────────────────
     MqttQtManager* mqtt = nullptr;     // 브로커 연결(웨어러블 수신 + 알림 노드 제어)
@@ -303,8 +301,6 @@ private:
     //   위젯과 함께 사라진다. 입소자가 추가·퇴원할 때마다 남의 그래프까지 초기화되지
     //   않도록 이력은 위젯 밖인 여기에 두고, 카드를 만들 때 다시 부어넣는다.
     QHash<int, QVector<double>> hrHistory_;
-    QHash<int, QLabel*> vitalBedLabels;       // 위치 표기("채널 N")
-    QHash<int, Sparkline*> hrSpark;           // 심박 미니 추세 그래프
     QVBoxLayout* vitalListLayout_ = nullptr;  // 바이탈 카드 목록(재생성 대상)
 
     QTimer clockTimer;
@@ -435,9 +431,9 @@ private:
     QWidget* buildVitalsPanel();
     QWidget* buildVideoCard(int channel);
     // 바이탈 카드 1장. key 는 입소자면 resident_id(양수), 미배정 채널이면 -(채널+1).
-    QWidget* buildVitalCard(int key, const QString& name, const QString& bedText);
-    // 바이탈 카드 목록을 입소자 구성에 맞춰 통째로 다시 만든다.
-    // 입소자가 늘거나 줄면 카드 개수 자체가 달라져서 글자만 갈아끼울 수 없다.
+    VitalTile* buildVitalCard(int key, const QString& name, const QString& bedText);
+    // 바이탈 카드 목록을 입소자 구성에 맞춰 다시 만든다. 구성이 바뀔 때만
+    // 생성·삭제하고, 살아남은 타일은 setIdentity()로만 갱신한다(D-04).
     void rebuildVitalCards();
     void applyTheme();
     void setConnectionState(bool connected, const QString& text);
@@ -455,6 +451,13 @@ private:
     QWidget* buildAlarmBanner();            // 토스트 카드 생성(오버레이)
     void updateAlarmBanner();               // 활성 경보에 따라 문구·표시 갱신
     void animateAlarmToast(bool show);      // 위→아래 슬라이드 인/아웃
+
+    // 상시 노출용 경보 배너(Phase 3/02 신설) — #alarmToast와 별개 위젯.
+    // buildUi()에서 생성돼 hide() 상태로 Phase 4(ALERT-03)에 인계된다(D-03/PD-08).
+    AlertBanner* alertBanner_ = nullptr;
+    // 활성 경보 목록을 만드는 헬퍼 — 등급 판정(vitalSeverity)과 도형 선택
+    // (severityGlyph)이 전부 이 함수 안에서 끝나 배너로는 완성값만 넘어간다.
+    QList<AlertItem> collectAlertItems() const;
 
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스
