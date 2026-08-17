@@ -324,6 +324,14 @@ int main(int argc, char* argv[]) {
         int room = e.resident_id > 0 ? db.getRoomByResident(e.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(e.channel);
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
+        // [일일 리포트] 이벤트 원장에 기록 — 낙상 콜백과 동일 패턴.
+        // e.resident_id 는 침대 매핑으로 이미 확정된 값이라(추정 아님) 그대로
+        // 넘긴다: 0 이면 insertEvent 가 미지정(NULL)으로 남긴다.
+        char clip[64];
+        std::snprintf(clip, sizeof(clip), "ch%d_%lld_EGRESS.mp4", e.channel,
+                      (long long)evt_ms);
+        db.insertEvent(EventType::BedEgress, EventSource::Camera, e.channel, evt_ms,
+                       clip, e.resident_id);
     });
     // 이 서버가 담당하는 채널인가 — cameras.conf 에 적힌 채널만 처리한다.
     //
