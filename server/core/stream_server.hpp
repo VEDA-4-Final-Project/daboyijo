@@ -1,5 +1,7 @@
 #pragma once
 
+#include <openssl/ssl.h>
+
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -13,7 +15,9 @@
 #include <vector>
 
 // 처리된 JPEG 프레임을 관제 클라이언트(Qt)로 송출하는 TCP 서버
-// 패킷 형식은 protocol/video_stream.h 참조, v1 은 평문 (추후 TLS)
+// 패킷 형식은 protocol/video_stream.h 참조.
+// TLS: cert_path/key_path를 둘 다 주면 접속마다 OpenSSL로 핸드셰이크(TLS 서버,
+// 클라 인증서는 요구 안 함 — Qt가 서버만 검증). 비우면 평문(기존 동작).
 //
 // 클라이언트마다 전송 스레드와 대기열(outbox)을 따로 둬서 느린 클라이언트가
 // 파이프라인·다른 클라이언트에 영향을 안 줌 (차면 오래된 프레임부터 버림)
@@ -51,7 +55,11 @@ public:
     using FocusCallback =
         std::function<void(int channel, bool area, float nx, float ny)>;
 
-    explicit StreamServer(int port);
+    // cert_path/key_path를 둘 다 넘기면 TLS로 뜬다. 파일을 못 읽거나 키가 인증서와
+    // 안 맞으면 start()가 false를 반환한다(잘못된 설정으로 조용히 평문으로 내려가는
+    // 것을 막기 위해 — 절반만 넘기면(한쪽만 빈 값) 즉시 구성 오류로 취급한다).
+    explicit StreamServer(int port, std::string cert_path = "",
+                          std::string key_path = "");
     ~StreamServer();
 
     StreamServer(const StreamServer&) = delete;
@@ -89,6 +97,7 @@ private:
 
     struct Client {
         int fd = -1;
+        SSL* ssl = nullptr;    // tls_enabled_ 일 때만 사용, 아니면 nullptr
         std::deque<Packet> outbox;
         std::mutex mutex;
         std::condition_variable cv;
@@ -97,6 +106,11 @@ private:
         std::atomic<bool> alive{true};
     };
 
+    bool initTls();  // ssl_ctx_ 구성 — start()에서 cert/key가 있을 때만 호출
+    // 두 함수는 tls_enabled_ 여부에 따라 SSL_read/write 또는 recv/send로 갈라짐 —
+    // 이 두 곳 말고는 accept 루프의 SSL_accept 핸드셰이크가 유일한 TLS 분기점.
+    ssize_t clientRecv(Client& client, void* buf, size_t len);
+    ssize_t clientSend(Client& client, const void* buf, size_t len);
     void acceptLoop();
     void enqueueAll(Packet packet);     // 모든 outbox 에 적재 + 죽은 클라 정리
     void senderLoop(Client& client);
@@ -104,6 +118,10 @@ private:
     void closeClient(Client& client);   // alive=false → 셧다운 → join → close
 
     const int port_;
+    const std::string cert_path_;
+    const std::string key_path_;
+    bool tls_enabled_ = false;
+    SSL_CTX* ssl_ctx_ = nullptr;
     int listen_fd_ = -1;
     std::thread accept_thread_;
     std::atomic<bool> running_{false};

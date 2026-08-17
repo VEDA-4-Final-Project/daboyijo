@@ -3,7 +3,10 @@
  * @brief   중앙 서버 → Qt 관제 클라이언트 영상 스트림 패킷 정의
  *
  * 사용 구간:
- *  - 중앙 서버(RPi 4) → Qt 관제 클라이언트 : TCP (v1 평문, 추후 OpenSSL TLS 적용)
+ *  - 중앙 서버(RPi 4) → Qt 관제 클라이언트 : TCP, OpenSSL TLS(선택)
+ *    서버(server/src/config.hpp의 stream_cert_path/stream_key_path)에 인증서를
+ *    설정하면 TLS, 비우면 평문 — 프레임 포맷 자체는 TLS 유무와 무관(전송계층만
+ *    다르다). 인증서 발급은 MQTT/scripts/generate_stream_certs.sh 참고.
  *
  * 스트림 구조: [dbj_vs_header_t][JPEG payload_len 바이트] 의 반복
  *  - 모든 다바이트 필드는 리틀엔디언

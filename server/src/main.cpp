@@ -83,7 +83,11 @@ int main(int argc, char* argv[]) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // ── 공용 인프라 ──────────────────────────────────────────────
-    StreamServer stream_server(config.stream_port);
+    // stream_cert_path/stream_key_path가 비어 있으면 평문(기존 동작) — 개발 환경
+    // 등 인증서를 안 놓은 곳에서도 그대로 뜬다. 값이 있는데 로드 실패하면 start()가
+    // false를 반환해 아래에서 바로 종료한다.
+    StreamServer stream_server(config.stream_port, config.stream_cert_path,
+                                config.stream_key_path);
     // 채널별 전용 프레임 큐 — 한 채널이 몰아쳐도 다른 채널을 굶기지 않도록 격리.
     // 채널당 처리 스레드 1개가 자기 큐만 소비한다(VideoPipeline).
     std::map<int, std::unique_ptr<FrameQueue>> queues;

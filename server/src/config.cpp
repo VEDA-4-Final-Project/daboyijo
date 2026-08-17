@@ -38,6 +38,14 @@ ServerConfig loadServerConfig(const std::string& path) {
             config.stream_port = std::stoi(value);
             continue;
         }
+        if (key == "stream_cert_path") {
+            config.stream_cert_path = value;
+            continue;
+        }
+        if (key == "stream_key_path") {
+            config.stream_key_path = value;
+            continue;
+        }
         if (key == "telegram_bot_token") {
             config.telegram_bot_token = value;
             continue;

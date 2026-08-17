@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QTcpSocket>
+#include <QSslSocket>
 #include <QByteArray>
 #include <QLabel>
 #include <QPolygonF>
@@ -218,6 +219,10 @@ private slots:
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
+    // 소켓은 붙어있는데 카메라 쪽 스트림만 멈추는 경우(setLive(true)는 프레임
+    // 도착 때만 불려서 이런 정지를 아무도 알려주지 않는다) — 주기적으로 마지막
+    // 프레임 시각을 점검해 LIVE 배지를 "미연결"로 되돌린다.
+    void checkChannelHealth();
 
     // ── MQTT (웨어러블·알림 노드) ─────────────────────────
     // 영상 경로(TCP)와 별개로, 브로커를 통해 들어오는 것들을 받는 슬롯.
@@ -245,9 +250,21 @@ private:
     //   ch0·ch1 → Pi A(sockets[0]) / ch2·ch3 → Pi B(sockets[1]).
     static constexpr int kNumServers = 2;
     static int serverForChannel(int ch) { return ch < 2 ? 0 : 1; }
-    QTcpSocket *sockets[kNumServers] = {};
+    // QSslSocket은 QTcpSocket 파생이라 나머지 코드(sock->state()/write() 등)는
+    // QTcpSocket*로 받아써도 그대로 동작 — TLS 전용 API(connectToHostEncrypted 등)를
+    // 쓰는 지점(connectToServer)만 QSslSocket*가 필요하다.
+    QSslSocket *sockets[kNumServers] = {};
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
+    // ── 확장 지점 메모(room 개념 도입, 2026-08) ──────────────────────
+    // 이 파일의 고정크기-4 배열들(channelViews/videoCards/patients/
+    // residentsByChannel_ 등 총 19곳)과 setVideoFocus()의 2×2 그리드 배치는
+    // 전부 "카메라 1대(4채널) = 방 1개"를 전제한다. 카메라를 더 붙여 방이
+    // 여러 개가 되는 걸 실제로 지원하려면 이 배열들을 채널 인덱스가 아니라
+    // (room, 채널) 쌍 기반의 동적 컨테이너로, setVideoFocus()도 데이터 기반
+    // 레이아웃으로 재작성해야 한다 — 지금은 리스크 대비 이득이 낮아 보류.
+    // room "이름" 자체는 이미 표시 레이어(currentRoomName(), mainwindow.cpp)에
+    // 도입돼 있어 방을 늘릴 때 그 값부터 목록으로 확장하면 된다.
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     QWidget* videoCards[4] = {};      // 영상 카드(스포트라이트 재배치용)
     QGridLayout* videoGrid = nullptr; // 영상 월 그리드(재배치 대상)
@@ -260,6 +277,9 @@ private:
     // 채널별 카메라 연결 여부(QSettings 지속) — 서버는 Qt를 껐다 켜도 스트리밍을
     // 유지하므로, 재시작 후 URL이 없어도 이 플래그로 "해제" 대상을 안다. 비어 있으면 미연결.
     bool cameraActive_[4] = {};
+    // 채널별 마지막 영상 프레임 수신 시각(에폭 ms). 0이면 이번 세션에서 아직
+    // 한 장도 못 받음. checkChannelHealth()가 이 값으로 "신호 끊김"을 판정한다.
+    qint64 lastFrameMs_[4] = {};
     bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
     bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
@@ -315,6 +335,7 @@ private:
     QTimer vitalsTimer;
     QTimer careTimeTimer;        // 케어 타임 대시보드 주기 갱신(care_logs 재조회)
     QTimer reconnectTimer;       // 영상 서버 자동 재접속
+    QTimer channelHealthTimer;   // 채널별 프레임 정지(신호 끊김) 감시
 
     // ── TAB 구조 ──────────────────────────────────────────
     // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──

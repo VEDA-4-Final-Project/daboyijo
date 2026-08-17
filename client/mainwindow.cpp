@@ -8,7 +8,10 @@
 #include "mqttqtmanager.h"
 #include "alertmatrixpreview.h"
 #include <QHostAddress>
-#include <QCoreApplication>   // MQTT CA 인증서를 실행 파일 기준 경로에서 찾는다
+#include <QSslConfiguration>
+#include <QSslCertificate>
+#include <QSslError>
+#include <QCoreApplication>   // MQTT/영상 스트림 CA 인증서를 실행 파일 기준 경로에서 찾는다
 #include <QFile>
 #include <QPixmap>
 #include <QDateTime>
@@ -257,6 +260,16 @@ QString serverHost(int idx) {
 // 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2172.20.32.39,3→1).
 QString hostForChannel(int ch) { return serverHost(ch < 2 ? 0 : 1); }
 
+// 이 카메라(4채널) 한 대가 담당하는 방 이름. 지금은 room이 항상 하나뿐이라
+// 값 하나로 충분하지만, 카메라를 더 붙여 room이 늘어나면 이 자리가 목록(예:
+// QStringList)으로 바뀌는 지점이다 — serverHost()/hostForChannel()과 같은
+// 패턴으로 QSettings에서 읽어와 하드코딩을 피한다.
+const char* kSettingsRoomName = "room/name";
+QString currentRoomName() {
+    QSettings s;
+    return s.value(kSettingsRoomName, QStringLiteral("101호")).toString();
+}
+
 // MQTT 브로커 주소. 영상 서버와 같은 라즈베리에 띄우는 경우가 많아 기본값을
 // Pi A 와 같게 뒀지만, 브로커만 따로 두는 구성도 있어 설정으로 분리했다.
 const char* kSettingsBrokerHost = "mqtt/brokerHost";
@@ -280,6 +293,22 @@ QString brokerCaPath() {
                        + QStringLiteral("/certs/ca.crt")).toString();
 }
 
+// 영상 스트림 서버(Pi) 검증용 CA. MQTT 브로커와 같은 CA(DavoCA)로 서명하므로
+// 기본값은 brokerCaPath()와 같은 파일 — 새 인증서를 발급해도 이 파일 하나만
+// certs/에 있으면 되고, 배포된 클라이언트를 다시 건드릴 일이 없다.
+QString streamCaPath() {
+    QSettings s;
+    return s.value(QStringLiteral("stream/caCert"),
+                   QCoreApplication::applicationDirPath()
+                       + QStringLiteral("/certs/ca.crt")).toString();
+}
+
+// 영상 서버(Pi) 인증서에 적힌 이름(CN). MQTT/scripts/generate_stream_certs.sh 의
+//   openssl req -new -key streamA.key ... -subj "/CN=DaboStreamA"
+// 와 반드시 같아야 한다(인덱스: 0=Pi A, 1=Pi B, MainWindow::kNumServers와 같은 크기
+// 여야 하나 private static이라 여기서 직접 참조는 못 해 리터럴 2로 둔다).
+const char* kStreamCommonName[2] = {"DaboStreamA", "DaboStreamB"};
+
 // 이 시간이 지나도록 새 값이 안 오면 화면의 생체값을 "--" 로 되돌린다.
 // 웨어러블이 빠졌거나 중계 노드가 죽은 걸 관제사가 알아야 하는데, 마지막 값이
 // 계속 떠 있으면 멀쩡한 줄 안다.
@@ -291,6 +320,11 @@ constexpr int kHrHistoryMax = 40;
 }  // namespace
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
+
+// 이 시간 동안 새 프레임이 안 오면 소켓은 붙어있어도 "신호 끊김"으로 본다.
+// 정상 송출은 목표 15fps(≈67ms 간격)라 5초면 순간 지터가 아니라 진짜 정지다.
+constexpr int kChannelStaleTimeoutMs = 5000;
+constexpr int kChannelHealthCheckMs  = 2000;   // 정지 판정 점검 주기
 
 // 블랙박스 클립 HTTP 서버 포트 (server/src/main.cpp의 kClipHttpPort와 동일하게 유지)
 constexpr quint16 kClipHttpPort = 5501;
@@ -404,9 +438,31 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     // 2. 서버별 소켓 생성 및 시그널 연결 (2-Pi: 소켓 kNumServers개)
     //    수신 슬롯 onReadyRead는 sender()로 어느 소켓이 신호를 냈는지 구분한다.
     for (int i = 0; i < kNumServers; ++i) {
-        sockets[i] = new QTcpSocket(this);
+        sockets[i] = new QSslSocket(this);
         connect(sockets[i], &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
         connect(sockets[i], &QTcpSocket::stateChanged, this, &MainWindow::onSocketStateChanged);
+        // MQTT(mqttqtmanager.cpp)와 같은 이유의 같은 예외 처리 — 우리 서버 인증서는
+        // 공인 CA가 아니라 자체 CA(DavoCA)가 서명했고, IP로 접속하는데 인증서 SAN이
+        // 그 IP와 완전히 일치하지 않을 수 있어 이름불일치(HostNameMismatch)만 딱
+        // 짚어 CN이 기대값(DaboStreamA/B)일 때만 눈감아준다. 그 외 에러(서명 위조,
+        // 만료 등)는 그대로 연결 실패로 남는다.
+        QSslSocket* sock = sockets[i];
+        connect(sock, &QSslSocket::sslErrors, this,
+                [sock, i](const QList<QSslError>& errors) {
+                    QList<QSslError> ignorable;
+                    for (const QSslError& e : errors) {
+                        if (e.error() != QSslError::HostNameMismatch) continue;
+                        const QStringList cn =
+                            e.certificate().subjectInfo(QSslCertificate::CommonName);
+                        if (cn.contains(QLatin1String(kStreamCommonName[i]))) {
+                            ignorable.append(e);
+                        } else {
+                            qWarning() << "[영상서버] 인증서 이름이 다릅니다. 기대:"
+                                       << kStreamCommonName[i] << "실제:" << cn;
+                        }
+                    }
+                    if (!ignorable.isEmpty()) sock->ignoreSslErrors(ignorable);
+                });
     }
 
     // 3. 명세서 스펙: 5500번 포트로 즉시 접속 (IP 주소는 RPi 주소 입력)
@@ -424,6 +480,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // 메인 화면 채널 상태 배지(LIVE/미연결)가 소켓 상태만으로는 못 잡는 "카메라
+    // 쪽만 멎은" 경우까지 반영하도록 주기 점검한다.
+    connect(&channelHealthTimer, &QTimer::timeout, this, &MainWindow::checkChannelHealth);
+    channelHealthTimer.start(kChannelHealthCheckMs);
 
     // MQTT 브로커 접속 — 웨어러블 생체·낙상을 받고, 알림 노드에 제어 명령을 보낸다.
     // 영상 경로(TCP 5500)와는 완전히 별개의 연결이다.
@@ -1336,8 +1397,9 @@ void MainWindow::rebuildVitalCards()
     struct TargetEntry { int key; QString name; QString bedText; };
     QVector<TargetEntry> target;
     target.reserve(8);
+    const QString room = currentRoomName();
     for (int ch = 0; ch < 4; ++ch) {
-        const QString bedText = QStringLiteral("채널 %1").arg(ch + 1);
+        const QString bedText = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
         const QVector<int>& ids = residentsByChannel_[ch];
 
         // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
@@ -1718,9 +1780,14 @@ QWidget* MainWindow::buildSearchFilters()
             [this](const QDate&) { applyLogFilters(true); });
 
     filterRoom = new QComboBox();
-    filterRoom->addItems({QStringLiteral("전체 병실"), QStringLiteral("201호-1"),
-                          QStringLiteral("201호-2"), QStringLiteral("201호-3"),
-                          QStringLiteral("201호-4")});
+    // 카메라(4채널) 한 대 = 방 하나. 지금은 room이 하나뿐이라 목록도 하나지만,
+    // 카메라가 늘어나면 currentRoomName() 자리가 room 목록으로 바뀌면서 여기도
+    // 자연히 늘어나는 구조 — 로그 위치 문구("{room} · 채널 N")와 접두어를 맞춰야
+    // applyLogFilters()의 startsWith 매칭이 먹는다.
+    filterRoom->addItem(QStringLiteral("전체 병실"));
+    filterRoom->addItem(currentRoomName());
+    connect(filterRoom, &QComboBox::currentTextChanged,
+            this, [this](const QString&) { applyLogFilters(true); });
 
     filterEventType = new QComboBox();
     filterEventType->addItems({QStringLiteral("전체 이벤트"), QStringLiteral("낙상"),
@@ -2900,8 +2967,28 @@ void MainWindow::connectToServer()
         if (sockets[i]->state() != QAbstractSocket::UnconnectedState) continue;
         buffers[i].clear();  // 이전 연결의 파싱 잔여물 폐기
         const QString host = serverHost(i);
-        sockets[i]->connectToHost(QHostAddress(host), kServerPort);
-        qDebug() << "영상 서버 접속 시도:" << host << ":" << kServerPort;
+
+        // TLS/평문은 CA 파일 유무로 가른다 — MqttQtManager::startConnection()의
+        // m_caPath.isEmpty() 판단과 같은 패턴. certs/ca.crt를 배포했다는 것 자체가
+        // "이 Pi들은 stream_cert_path를 켜서 TLS로 띄웠다"는 선언으로 본다. 아직
+        // 인증서를 안 놓은 개발 환경/미전환 Pi에서는 파일이 없어 기존처럼 평문 접속.
+        const QString caPath = streamCaPath();
+        if (QFile::exists(caPath)) {
+            QSslConfiguration conf = QSslConfiguration::defaultConfiguration();
+            const QList<QSslCertificate> ca = QSslCertificate::fromPath(caPath);
+            if (ca.isEmpty()) {
+                qWarning() << "[영상서버] CA 인증서를 읽지 못했습니다:" << caPath;
+            } else {
+                conf.setCaCertificates(ca);
+            }
+            conf.setPeerVerifyMode(QSslSocket::VerifyPeer);
+            sockets[i]->setSslConfiguration(conf);
+            sockets[i]->connectToHostEncrypted(host, kServerPort);
+            qDebug() << "영상 서버 접속 시도(TLS):" << host << ":" << kServerPort;
+        } else {
+            sockets[i]->connectToHost(QHostAddress(host), kServerPort);
+            qDebug() << "영상 서버 접속 시도(평문):" << host << ":" << kServerPort;
+        }
     }
 }
 
@@ -2942,6 +3029,24 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
     // 끊긴 소켓이 하나라도 있으면 재접속 예약
     if (unconnected > 0 && !reconnectTimer.isActive())
         reconnectTimer.start();
+}
+
+// 메인 화면 채널 배지(LIVE/미연결)를 소켓 상태만으로 못 잡는 경우까지 정확하게
+// 만든다: Pi와의 TCP는 멀쩡한데 카메라 쪽 RTSP만 죽으면(케이블 빠짐 등) 새
+// dbj_vs_header_t가 안 와서 setLive(true)가 다시 불릴 일이 없다 — 배지는 마지막
+// 프레임 그대로 LIVE에 멈춰 있고, 관제사는 채널이 죽은 걸 설정 탭을 열어보기
+// 전엔 알 방법이 없었다. 여기서 kChannelStaleTimeoutMs 동안 프레임이 없으면
+// 배지를 직접 내린다.
+void MainWindow::checkChannelHealth()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (int ch = 0; ch < 4; ++ch) {
+        if (!channelViews[ch] || !cameraActive_[ch]) continue;
+        if (!channelViews[ch]->live()) continue;          // 이미 미연결 표시 중
+        if (lastFrameMs_[ch] == 0) continue;               // 이번 세션 첫 프레임 전
+        if (now - lastFrameMs_[ch] > kChannelStaleTimeoutMs)
+            channelViews[ch]->setLive(false);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3433,6 +3538,7 @@ void MainWindow::onReadyRead()
         lastFramePix_[ch] = pix;           // 이미지 탭 Before/After 프리뷰용 최신본 보관
         channelViews[ch]->setFrame(pix);
         channelViews[ch]->setLive(true);   // 프레임 도착 → LIVE 표시등 점등
+        lastFrameMs_[ch] = QDateTime::currentMSecsSinceEpoch();  // checkChannelHealth() 판정용
         // ROI 편집기가 이 채널을 보고 있고 설정 탭이 열려 있으면 편집 영상도 실시간 갱신.
         if (roiEditorView && roiEditChannel == ch && cameraSettingsVisible()) {
             roiEditorView->setFrame(pix);
@@ -3738,7 +3844,7 @@ void MainWindow::loadRoiZonesFromDb()
 //   (엉뚱한 보호자에게 연락이 간다).
 QString MainWindow::eventWhoLabel(int channel, int roiId) const
 {
-    if (roiId < 0) return QStringLiteral("채널 %1").arg(channel + 1);
+    if (roiId < 0) return QStringLiteral("%1 · 채널 %2").arg(currentRoomName()).arg(channel + 1);
     const QString name = zoneResidentName(channel, roiId);
     return name == QStringLiteral("미지정")
                ? QStringLiteral("침대 %1").arg(roiId + 1)
@@ -5561,6 +5667,9 @@ void MainWindow::applyLogFilters(bool withDates)
     // 콤보는 "침상이탈", 로그 행은 "침상 이탈" — 띄어쓰기 차이를 흡수해 비교
     const QString evtKey = QString(evtSel).remove(QLatin1Char(' '));
 
+    const QString roomSel = filterRoom ? filterRoom->currentText() : QString();
+    const bool roomAll = roomSel.isEmpty() || roomSel == QStringLiteral("전체 병실");
+
     for (int row = 0; row < logTable->rowCount(); ++row) {
         bool show = true;
 
@@ -5570,6 +5679,14 @@ void MainWindow::applyLogFilters(bool withDates)
             const QString evt =
                 evtItem ? QString(evtItem->text()).remove(QLatin1Char(' ')) : QString();
             show = (evt == evtKey);
+        }
+
+        // 병실 — 위치 문구("{room} · 채널 N[ · 침대 M]")가 선택된 room으로 시작하는지.
+        // room이 하나뿐인 지금은 늘 참이지만, 카메라가 늘어 room이 여럿이 되면
+        // 이 매칭이 바로 실제 필터로 동작한다(로직 변경 불필요).
+        if (show && !roomAll) {
+            auto* placeItem = logTable->item(row, 1);
+            show = placeItem && placeItem->text().startsWith(roomSel);
         }
 
         // 날짜 범위 — 0열 "yyyy-MM-dd HH:mm:ss"의 앞 10글자만 파싱
@@ -5596,9 +5713,10 @@ void MainWindow::applyLogFilters(bool withDates)
 // 채널에 등록된 입소자가 없으면 "미배정"으로 둔다(하드코딩 이름 없음).
 void MainWindow::loadPatientsFromDb()
 {
+    const QString room = currentRoomName();
     for (int ch = 0; ch < 4; ++ch) {
         patients[ch] = { QStringLiteral("미배정"),
-                         QStringLiteral("채널 %1").arg(ch + 1),
+                         QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1),
                          QString() };
         residentsByChannel_[ch].clear();
     }
@@ -5623,8 +5741,8 @@ void MainWindow::loadPatientsFromDb()
         ResidentInfo info;
         info.name    = q.value(2).toString();
         info.room    = q.value(3).toString();
-        // 위치는 채널로만 표기. 침상 구분이 생기기 전까지는 같은 채널이면 같은 값.
-        info.bed     = QStringLiteral("채널 %1").arg(ch + 1);
+        // 위치는 room+채널로 표기. 침상 구분이 생기기 전까지는 같은 채널이면 같은 값.
+        info.bed     = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
         info.channel = ch;
         residentInfo_.insert(rid, info);
         residentsByChannel_[ch].append(rid);

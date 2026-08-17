@@ -240,7 +240,7 @@ void VideoView::paintEvent(QPaintEvent*) {
     if (!cameraConnected_) {
         p.setPen(QColor(139, 148, 158));
         p.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap,
-                   QStringLiteral("📷 카메라 미연결\n상단 '카메라 연결'을 눌러 CCTV를 연결하세요"));
+                   QStringLiteral("📷 카메라 미연결\nCCTV를 연결하세요"));
     } else if (frame_.isNull()) {
         p.setPen(QColor(139, 148, 158));
         p.drawText(rect(), Qt::AlignCenter, QStringLiteral("신호 대기 중…"));
