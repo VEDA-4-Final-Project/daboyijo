@@ -54,6 +54,11 @@ public:
     // SUNAPI HTTP 도 별도 스레드로
     using FocusCallback =
         std::function<void(int channel, bool area, float nx, float ny)>;
+    // [영상검색] Qt 관제 화면의 자연어 질의. clientId는 sendSearchResult로 그
+    // 클라이언트에게만 회신할 때 쓴다(다른 관제 PC로 새지 않게). Gemini+DB 왕복이
+    // 있으니 호출부는 반드시 detached 스레드에서 처리할 것(다른 콜백과 동일 원칙).
+    using SearchQueryCallback =
+        std::function<void(int channel, uint64_t clientId, const std::string& query)>;
 
     // cert_path/key_path를 둘 다 넘기면 TLS로 뜬다. 파일을 못 읽거나 키가 인증서와
     // 안 맞으면 start()가 false를 반환한다(잘못된 설정으로 조용히 평문으로 내려가는
@@ -74,6 +79,7 @@ public:
     void setCameraClearCallback(CameraClearCallback cb) { on_camera_clear_ = std::move(cb); }
     void setImageSetCallback(ImageSetCallback cb) { on_image_set_ = std::move(cb); }
     void setFocusCallback(FocusCallback cb) { on_focus_ = std::move(cb); }
+    void setSearchQueryCallback(SearchQueryCallback cb) { on_search_query_ = std::move(cb); }
 
     bool start();
     void stop();
@@ -90,6 +96,11 @@ public:
     void broadcastEvent(int channel, uint8_t type, float x, float y,
                         int roi_id, int64_t timestampMsOverride = 0);
 
+    // [영상검색] 특정 클라이언트에게만 검색 결과 회신 (SearchQueryCallback이 받은
+    // clientId 그대로). 그 사이 클라이언트가 끊겼으면 조용히 버림 — 재연결한
+    // 클라를 잘못 짚느니 응답을 잃는 편이 안전하다(clientId는 접속마다 새로 발급).
+    void sendSearchResult(uint64_t clientId, int channel, const std::string& text);
+
     size_t clientCount();
 
 private:
@@ -98,6 +109,7 @@ private:
     struct Client {
         int fd = -1;
         SSL* ssl = nullptr;    // tls_enabled_ 일 때만 사용, 아니면 nullptr
+        uint64_t id = 0;       // 접속마다 고유(fd는 재사용될 수 있어 못 씀) — sendSearchResult 대상 식별
         std::deque<Packet> outbox;
         std::mutex mutex;
         std::condition_variable cv;
@@ -125,10 +137,11 @@ private:
     int listen_fd_ = -1;
     std::thread accept_thread_;
     std::atomic<bool> running_{false};
+    std::atomic<uint64_t> next_client_id_{1};  // 0은 "대상 없음"으로 남겨둠
 
     std::mutex clients_mutex_;
     std::vector<std::shared_ptr<Client>> clients_;
-    
+
     RoiCallback on_roi_;
     RoiBindCallback on_roi_bind_;
     ConfirmCallback on_confirm_;
@@ -137,4 +150,5 @@ private:
     CameraClearCallback on_camera_clear_;
     ImageSetCallback on_image_set_;
     FocusCallback on_focus_;
+    SearchQueryCallback on_search_query_;
 };

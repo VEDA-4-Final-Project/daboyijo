@@ -418,6 +418,25 @@
         #nvrSegmentList::item { padding: 6px 10px; border: none; }
         #nvrSegmentList::item:selected { background: %(accent); color: %(onAccent); }
 
+        /* 영상검색(🔍) — NVR 탐색과 같은 이유로 objectName마다 명시적으로 칠한다. */
+        #searchChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
+                              border-radius: 8px; padding: 5px 10px; }
+        #searchChannelCombo QAbstractItemView { background: %(card); color: %(text);
+                                                outline: none;
+                                                selection-background-color: %(accent);
+                                                selection-color: %(onAccent); }
+        #searchQueryEdit { background: %(card); color: %(text); border: 1px solid %(border);
+                           border-radius: 8px; padding: 5px 10px; }
+        #searchQueryEdit:focus { border-color: %(accent); }
+        #searchButton {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 8px; padding: 5px 14px; font-weight: 700; }
+        #searchButton:hover { border-color: %(accent); }
+        #searchButton:disabled { color: %(sub); border-color: %(border); }
+        #searchResultBrowser { background: %(panel); color: %(text); border: 1px solid %(border);
+                               border-radius: 12px; padding: 6px 10px; }
+        #searchResultBrowser a { color: %(accent); }
+
 /* ── TAB3: DB 관리 ── */
 
 QLabel {

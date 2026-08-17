@@ -90,6 +90,14 @@ struct dbj_evt_header_t {
     uint16_t y;             // 2B (발생 위치 정규화 y ×10000)
     uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
 };                          // 18B
+
+// 역방향(서버→클라) 영상검색 결과 — magic=0xDB4E. 헤더 뒤 UTF-8 텍스트(text_len 바이트).
+struct dbj_search_result_header_t {
+    uint16_t magic;         // 2B (0xDB4E)
+    uint8_t  version;       // 1B (0x01)
+    uint8_t  channel;       // 1B (0~3, 요청한 채널)
+    uint32_t text_len;      // 4B (이어지는 UTF-8 답변 텍스트 바이트 수)
+};                          // 8B
 #pragma pack(pop)
 
 // 제어 메시지 상수 (서버와 합의된 값 — protocol/video_stream.h와 동일하게 유지)
@@ -101,6 +109,8 @@ static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr uint8_t kCtrlImageSet = 0x07;     // 카메라 이미지 파라미터 (헤더 뒤 dbj_image_params_t)
 static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤더 뒤 dbj_focus_t)
 static constexpr uint8_t kCtrlRoiBind = 0x09;      // 침대 ↔ 입소자 매핑 (헤더 뒤 dbj_roi_bind_t)
+static constexpr uint8_t kCtrlSearchQuery = 0x0A;  // 영상검색 질의 (헤더 뒤 UTF-8 질의 문자열)
+static constexpr int kSearchQueryMax = 300;        // DBJ_SEARCH_QUERY_MAX
 static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
 static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;
@@ -115,6 +125,9 @@ static constexpr uint16_t kEvtMagic = 0xDB4D;
 static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 static constexpr uint8_t kEvtVitalAbnormal = 0x03;  // 웨어러블 생체데이터 이상 (x,y 미사용)
+
+// 영상검색 결과 메시지 상수 (서버 스펙)
+static constexpr uint16_t kSearchMagic = 0xDB4E;
 
 #include "videoview.h"   // RoiZone / kMaxRoiZones — 침대 목록을 값으로 들고 있어 필요
 
@@ -377,6 +390,17 @@ private:
     qint64 selectedEventTimestampMs_ = -1;
     QPushButton* nvrJumpButton = nullptr;
     QPushButton* clipDownloadButton = nullptr;
+
+    // ── 영상검색(🔍) — 케어봇(video_search_module)과 같은 서버 로직을 관제
+    //    화면에서도 쓴다. 질의는 DBJ_CTRL_SEARCH_QUERY, 응답은 DBJ_SEARCH_MAGIC.
+    QComboBox* searchChannelCombo = nullptr;
+    QLineEdit* searchQueryEdit = nullptr;
+    QPushButton* searchButton = nullptr;
+    QTextBrowser* searchResultBrowser = nullptr;
+    QWidget* buildVideoSearchPanel();
+    void sendSearchQuery();
+    // onReadyRead가 DBJ_SEARCH_MAGIC 패킷을 다 모으면 호출 — 답변 표시 + 버튼 복구
+    void onSearchResultReceived(int channel, const QString& text);
     // ── 일일 리포트: 날짜 선택 ──────────────────────────────
     // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
     // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다

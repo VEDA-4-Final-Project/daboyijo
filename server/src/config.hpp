@@ -41,6 +41,11 @@ struct ServerConfig {
     // db_host=<DB Pi IP> 로 지정한다. 기본은 자기 자신(단일 Pi 또는 DB 호스팅 Pi).
     std::string db_host = "127.0.0.1";
 
+    // [영상검색] 케어봇 검색 결과에 넣을 클립 링크용, 이 Pi 자신의 접속 주소.
+    // 서버는 자기 외부/LAN IP를 스스로 모른다(db_host와 같은 이유). 미설정 시
+    // 링크 대신 "관제 화면에서 확인" 안내 문구로 대체 — 기능 자체는 죽지 않는다.
+    std::string public_host;
+
     // [NVR] 연속 녹화 저장 경로(USB 마운트 지점 등). 빈 값이면 NVR 비활성 —
     // 서버 나머지 기능(라이브 스트리밍·블랙박스 등)은 그대로 동작한다.
     std::string nvr_storage_path;

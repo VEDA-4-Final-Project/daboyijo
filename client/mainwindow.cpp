@@ -1519,6 +1519,7 @@ QWidget* MainWindow::buildEventLogTab()
     right->addLayout(actionRow);
 
     right->addWidget(buildNvrBrowser());
+    right->addWidget(buildVideoSearchPanel());
     body->addLayout(right, 4);
 
     outer->addLayout(body, 1);
@@ -2174,6 +2175,121 @@ void MainWindow::repopulateNvrList()
         item->setData(Qt::UserRole, seg.url);
         nvrSegmentList->addItem(item);
     }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  영상검색(🔍) — 케어봇과 같은 서버 로직(video_search_module)을 관제 화면에서도.
+//  질의는 DBJ_CTRL_SEARCH_QUERY로 그 채널 담당 Pi에 보내고, 응답(DBJ_SEARCH_MAGIC)은
+//  onReadyRead가 받아 onSearchResultReceived로 넘긴다.
+// ═══════════════════════════════════════════════════════════
+QWidget* MainWindow::buildVideoSearchPanel()
+{
+    auto* card = new QFrame();
+    card->setObjectName("videoCard");
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setSpacing(6);
+
+    auto* cap = new QLabel(QStringLiteral("🔍 영상 검색"));
+    cap->setObjectName("panelTitle");
+    lay->addWidget(cap);
+
+    auto* topRow = new QHBoxLayout();
+    searchChannelCombo = new QComboBox();
+    searchChannelCombo->setObjectName("searchChannelCombo");
+    for (int ch = 0; ch < 4; ++ch)
+        searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
+    topRow->addWidget(searchChannelCombo);
+
+    searchQueryEdit = new QLineEdit();
+    searchQueryEdit->setObjectName("searchQueryEdit");
+    searchQueryEdit->setPlaceholderText(
+        QStringLiteral("예: 어제 저녁에 낙상 있었어?"));
+    topRow->addWidget(searchQueryEdit, 1);
+
+    searchButton = new QPushButton(QStringLiteral("검색"));
+    searchButton->setObjectName("searchButton");
+    searchButton->setCursor(Qt::PointingHandCursor);
+    topRow->addWidget(searchButton);
+    lay->addLayout(topRow);
+
+    searchResultBrowser = new QTextBrowser();
+    searchResultBrowser->setObjectName("searchResultBrowser");
+    searchResultBrowser->setMaximumHeight(140);
+    searchResultBrowser->setOpenLinks(false);  // 클립 링크는 인앱 재생기로 가로챈다
+    lay->addWidget(searchResultBrowser);
+
+    connect(searchButton, &QPushButton::clicked, this, &MainWindow::sendSearchQuery);
+    connect(searchQueryEdit, &QLineEdit::returnPressed, this, &MainWindow::sendSearchQuery);
+    connect(searchResultBrowser, &QTextBrowser::anchorClicked, this,
+            [this](const QUrl& url) { playBlackboxClip(url.toString()); });
+
+    return card;
+}
+
+void MainWindow::sendSearchQuery()
+{
+    if (!searchChannelCombo || !searchQueryEdit || !searchButton || !searchResultBrowser)
+        return;
+
+    const QString query = searchQueryEdit->text().trimmed();
+    if (query.isEmpty()) return;
+
+    const int channel = searchChannelCombo->currentData().toInt();
+    QTcpSocket* sock = socketForChannel(channel);
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        searchResultBrowser->setPlainText(
+            QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    const QByteArray q = query.toUtf8();
+    const int len = qMin(q.size(), kSearchQueryMax);
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlSearchQuery;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = static_cast<uint16_t>(len);
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    pkt.append(q.constData(), len);
+    sock->write(pkt);
+    sock->flush();
+
+    searchButton->setEnabled(false);
+    searchResultBrowser->setPlainText(QStringLiteral("검색 중…"));
+
+    // Gemini+DB 왕복이 수 초 걸릴 수 있어, 응답이 안 오면 버튼이 영원히 잠기지
+    // 않도록 넉넉한 시간 후 자동 복구(서버 curl 타임아웃 20초보다 여유 있게).
+    QTimer::singleShot(25000, this, [this]() {
+        if (searchButton && !searchButton->isEnabled()) {
+            searchButton->setEnabled(true);
+            if (searchResultBrowser)
+                searchResultBrowser->setPlainText(
+                    QStringLiteral("응답이 없어요. 다시 시도해 주세요."));
+        }
+    });
+}
+
+void MainWindow::onSearchResultReceived(int /*channel*/, const QString& text)
+{
+    if (searchButton) searchButton->setEnabled(true);
+    if (!searchResultBrowser) return;
+
+    // 답변에 섞인 클립 URL(http://…mp4)만 클릭 가능한 링크로 바꾼다. 나머지는
+    // HTML 특수문자를 이스케이프해 그대로 보여주고, 줄바꿈은 <br>로 치환.
+    QString html = text.toHtmlEscaped();
+    static const QRegularExpression kUrlRe(
+        QStringLiteral("(https?://\\S+\\.mp4)"));
+    html.replace(kUrlRe, QStringLiteral("<a href=\"\\1\">📹 클립 보기</a>"));
+    html.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+
+    searchResultBrowser->setHtml(html);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3465,6 +3581,25 @@ void MainWindow::onReadyRead()
                     handleVitalAbnormalEvent(evt.channel, evt.timestamp_ms);
                 }
             }
+            continue;
+        }
+
+        // ── 영상검색 결과 패킷 (🔍, 페이로드 있음) — 스킵 금지 ──
+        if (magic == kSearchMagic) {
+            if (buffer.size() < (int)sizeof(dbj_search_result_header_t))
+                break;  // 헤더가 덜 옴 — 다음 readyRead 대기
+            dbj_search_result_header_t sh;
+            memcpy(&sh, buffer.constData(), sizeof(sh));
+
+            const qint64 total = static_cast<qint64>(sizeof(sh)) + sh.text_len;
+            if (buffer.size() < total)
+                break;  // 텍스트가 아직 덜 옴 — 다음 readyRead 대기
+
+            const QByteArray textBytes(buffer.constData() + sizeof(sh),
+                                       static_cast<int>(sh.text_len));
+            buffer.remove(0, static_cast<int>(total));
+
+            onSearchResultReceived(sh.channel, QString::fromUtf8(textBytes));
             continue;
         }
 

@@ -223,6 +223,7 @@ void StreamServer::acceptLoop() {
         auto client = std::make_shared<Client>();
         client->fd = fd;
         client->ssl = ssl;
+        client->id = next_client_id_.fetch_add(1);  // 검색 결과 회신 대상 식별용
         client->sender =
             std::thread(&StreamServer::senderLoop, this, std::ref(*client));
         client->receiver =
@@ -294,6 +295,8 @@ void StreamServer::receiverLoop(Client& client) {
                 need += sizeof(dbj_focus_t);         // 헤더 뒤에 포커스 파라미터
             } else if (h.type == DBJ_CTRL_ROI_BIND) {
                 need += sizeof(dbj_roi_bind_t);      // 헤더 뒤에 침대↔입소자 매핑
+            } else if (h.type == DBJ_CTRL_SEARCH_QUERY) {
+                need += h.reserved;  // 헤더 뒤에 질의 문자열(reserved 바이트, CAMERA_SET과 동일 패턴)
             }
             if (buf.size() - off < need) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
@@ -387,6 +390,16 @@ void StreamServer::receiverLoop(Client& client) {
                         break;
                     }
 
+                    case DBJ_CTRL_SEARCH_QUERY: {
+                        if (on_search_query_) {
+                            const char* p = reinterpret_cast<const char*>(
+                                buf.data() + off + sizeof(dbj_ctrl_header_t));
+                            std::string query(p, h.reserved);
+                            on_search_query_(h.channel, client.id, query);
+                        }
+                        break;
+                    }
+
                     case DBJ_CTRL_IMAGE_SET: {
                         if (on_image_set_) {
                             dbj_image_params_t ip;
@@ -469,6 +482,32 @@ void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y,
     auto packet = std::make_shared<std::vector<unsigned char>>(sizeof(evt));
     std::memcpy(packet->data(), &evt, sizeof(evt));
     enqueueAll(std::move(packet));
+}
+
+// [영상검색] enqueueAll(전체 방송)이 아니라 clientId 하나만 찾아 그 outbox에만
+// 적재한다 — 다른 관제 PC가 남의 검색 결과를 받는 일이 없어야 한다.
+void StreamServer::sendSearchResult(uint64_t clientId, int channel,
+                                    const std::string& text) {
+    dbj_search_result_header_t header{};
+    header.magic = DBJ_SEARCH_MAGIC;
+    header.version = DBJ_VS_VERSION;
+    header.channel = static_cast<uint8_t>(channel);
+    header.text_len = static_cast<uint32_t>(text.size());
+
+    auto packet = std::make_shared<std::vector<unsigned char>>(
+        sizeof(header) + text.size());
+    std::memcpy(packet->data(), &header, sizeof(header));
+    std::memcpy(packet->data() + sizeof(header), text.data(), text.size());
+
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    for (auto& c : clients_) {
+        if (c->id != clientId || !c->alive.load()) continue;
+        std::lock_guard<std::mutex> client_lock(c->mutex);
+        c->outbox.push_back(packet);  // 이벤트와 같은 급 — 드롭 대상 아님
+        c->cv.notify_one();
+        return;
+    }
+    // 그 사이 클라이언트가 끊겼다 — 회신 대상이 없으니 조용히 버림.
 }
 
 void StreamServer::enqueueAll(Packet packet) {

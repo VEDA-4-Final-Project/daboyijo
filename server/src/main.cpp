@@ -49,6 +49,7 @@
 #include "telegram_module.hpp"
 #include "snapshot_buffer.hpp"
 #include "gemini_client.hpp"
+#include "video_search_module.hpp"
 #include "care_qa.hpp"
 #include "MqttMasterManager.hpp"
 #include "activity_module.hpp"
@@ -141,7 +142,10 @@ int main(int argc, char* argv[]) {
     // ※ 낙상 확인(블러 원복)은 텔레그램에서 빼고 Qt 관제 화면(setConfirmCallback)만 담당.
 
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
-    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram);
+    // [영상검색] 🔍 버튼이 위임하는 자연어 질의 처리기. vlm(GeminiClient)을 그대로
+    // 재사용 — 질의 파싱은 이미지가 필요 없는 텍스트 전용 VlmClient::ask() 사용.
+    VideoSearchModule video_search(vlm, db, config.public_host);
+    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, video_search);
     care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
                                    const std::string& text) {
@@ -259,6 +263,16 @@ int main(int argc, char* argv[]) {
                 else
                     std::fprintf(stderr, "[focus] ch%d 초점 적용 실패: %s\n",
                                  ch + 1, err.c_str());
+            }).detach();
+        });
+    // [영상검색] Qt 관제 화면 "🔍 영상 검색"에서 온 자연어 질의 → video_search로
+    // 처리(Gemini+DB 왕복, 수 초) → 그 클라이언트에게만 회신. 케어봇(텔레그램)과
+    // 같은 video_search 인스턴스를 재사용 — 로직은 한 곳(video_search_module)뿐.
+    stream_server.setSearchQueryCallback(
+        [&](int ch, uint64_t clientId, const std::string& query) {
+            std::thread([&stream_server, &video_search, ch, clientId, query]() {
+                const std::string answer = video_search.search(ch, query);
+                stream_server.sendSearchResult(clientId, ch, answer);
             }).detach();
         });
     // CCTV 기반 낙상 판정  → 블러 부분 해제 + 블랙박스 클립 저장 + Qt 경보

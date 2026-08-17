@@ -591,6 +591,62 @@ long long Database::insertEvent(EventType type, EventSource source, int cameraId
     return eventId;
 }
 
+std::vector<EventRow> Database::findEvents(bool anyType, EventType type, int channel,
+                                           long long startMs, long long endMs,
+                                           int limit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<EventRow> rows;
+    if (!conn_) return rows;
+    if (limit <= 0) limit = 5;
+    if (limit > 50) limit = 50;  // 방어적 상한 — 호출부 실수로도 폭주 안 하게
+
+    // type/channel 은 전부 우리 코드가 만든 enum·int라 이스케이프가 필요한
+    // 사용자 원문 문자열이 섞이지 않는다(insertEvent 와 같은 전제).
+    char typeClause[48] = "";
+    if (!anyType) {
+        std::snprintf(typeClause, sizeof(typeClause), "AND event_type = '%s' ", toSql(type));
+    }
+    char channelClause[32] = "";
+    if (channel >= 0) {
+        std::snprintf(channelClause, sizeof(channelClause), "AND camera_id = %d ", channel);
+    }
+
+    char sql[768];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT event_id, UNIX_TIMESTAMP(occurred_at)*1000, camera_id, resident_id, "
+        "event_type, source, clip_url FROM events "
+        "WHERE occurred_at BETWEEN FROM_UNIXTIME(%lld/1000.0) AND FROM_UNIXTIME(%lld/1000.0) "
+        "%s%sORDER BY occurred_at DESC LIMIT %d",
+        startMs, endMs, typeClause, channelClause, limit);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 이벤트 검색 실패: " << mysql_error(conn_) << "\n";
+        return rows;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) {
+        std::cerr << "[DB] 이벤트 검색 결과셋 반환 실패: " << mysql_error(conn_) << "\n";
+        return rows;
+    }
+    while (MYSQL_ROW row = mysql_fetch_row(res)) {
+        EventRow r;
+        r.event_id = row[0] ? std::atoll(row[0]) : 0;
+        r.occurred_ms = row[1] ? std::atoll(row[1]) : 0;
+        r.camera_id = row[2] ? std::atoi(row[2]) : -1;
+        r.resident_id = row[3] ? std::atoi(row[3]) : -1;
+        const std::string typeStr = row[4] ? row[4] : "";
+        r.type = typeStr == "EGRESS"         ? EventType::BedEgress
+                 : typeStr == "VITAL_ABNORMAL" ? EventType::VitalAbnormal
+                                                : EventType::Fall;
+        r.source = (row[5] && std::string(row[5]) == "WEARABLE") ? EventSource::Wearable
+                                                                  : EventSource::Camera;
+        r.clip_url = row[6] ? row[6] : "";
+        rows.push_back(std::move(r));
+    }
+    mysql_free_result(res);
+    return rows;
+}
+
 long long Database::openBedSession(int cameraId, int residentId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_) return 0;

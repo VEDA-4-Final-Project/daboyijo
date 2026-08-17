@@ -66,6 +66,10 @@ ServerConfig loadServerConfig(const std::string& path) {
             if (!value.empty()) config.db_host = value;
             continue;
         }
+        if (key == "public_host") {
+            config.public_host = value;
+            continue;
+        }
         if (key == "care_contact_caregiver") {
             config.care_contact_caregiver = value;
             continue;
