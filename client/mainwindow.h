@@ -111,6 +111,7 @@ static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤�
 static constexpr uint8_t kCtrlRoiBind = 0x09;      // 침대 ↔ 입소자 매핑 (헤더 뒤 dbj_roi_bind_t)
 static constexpr uint8_t kCtrlSearchQuery = 0x0A;  // 영상검색 질의 (헤더 뒤 UTF-8 질의 문자열)
 static constexpr int kSearchQueryMax = 300;        // DBJ_SEARCH_QUERY_MAX
+static constexpr uint8_t kChannelAll = 0xFF;       // SEARCH_QUERY channel 자리의 "전체 채널" (DBJ_CHANNEL_ALL)
 static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
 static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;

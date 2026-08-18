@@ -2198,6 +2198,9 @@ QWidget* MainWindow::buildVideoSearchPanel()
     auto* topRow = new QHBoxLayout();
     searchChannelCombo = new QComboBox();
     searchChannelCombo->setObjectName("searchChannelCombo");
+    // 기본값 = 전체 채널(NVR 브라우저와 같은 패턴) — 질문할 때 채널을 매번
+    // 고르지 않아도 전체에서 찾아준다. 좁히고 싶을 때만 특정 채널로 바꾸면 됨.
+    searchChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
     for (int ch = 0; ch < 4; ++ch)
         searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
     topRow->addWidget(searchChannelCombo);
@@ -2236,11 +2239,24 @@ void MainWindow::sendSearchQuery()
     const QString query = searchQueryEdit->text().trimmed();
     if (query.isEmpty()) return;
 
-    const int channel = searchChannelCombo->currentData().toInt();
-    QTcpSocket* sock = socketForChannel(channel);
+    const int channel = searchChannelCombo->currentData().toInt();  // -1 = 전체 채널
+
+    QTcpSocket* sock = nullptr;
+    if (channel >= 0) {
+        sock = socketForChannel(channel);
+    } else {
+        // 전체 채널 검색 — DB를 두 Pi가 공유하므로(2-Pi 분할) 아무 Pi에나 물어봐도
+        // 전체 결과가 나온다. 연결된 소켓 중 먼저 찾은 것(Pi A 우선)으로 보낸다.
+        for (int i = 0; i < kNumServers; ++i) {
+            if (sockets[i]->state() == QAbstractSocket::ConnectedState) {
+                sock = sockets[i];
+                break;
+            }
+        }
+    }
     if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
         searchResultBrowser->setPlainText(
-            QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+            QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
         return;
     }
 
@@ -2251,7 +2267,7 @@ void MainWindow::sendSearchQuery()
     h.magic = kCtrlMagic;
     h.version = 0x01;
     h.type = kCtrlSearchQuery;
-    h.channel = static_cast<uint8_t>(channel);
+    h.channel = (channel < 0) ? kChannelAll : static_cast<uint8_t>(channel);
     h.point_count = 0;
     h.reserved = static_cast<uint16_t>(len);
 

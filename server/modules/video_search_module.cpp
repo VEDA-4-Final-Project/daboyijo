@@ -49,11 +49,8 @@ int64_t parseLocal(const std::string& s) {
 }  // namespace
 
 std::string VideoSearchModule::search(int channel, const std::string& query) {
-    if (channel < 0) {
-        // 호출부(care_qa)가 이미 막아야 하는 경우지만, 실수로 -1이 들어오면
-        // "전 채널 검색"으로 새는 것보다 여기서 한 번 더 막는 편이 안전하다.
-        return "방(채널)이 확인되지 않아 검색할 수 없어요.";
-    }
+    // channel<0 = 전체 채널(관제 전용, 헤더 주석 참고). care_qa(보호자용)는
+    // 이 함수를 부르기 전에 이미 자기 채널로 고정해 넘기므로 여기선 그대로 믿는다.
     if (!vlm_.available()) {
         return "지금은 영상 검색 기능이 설정돼 있지 않아요. (관리자 설정 필요)";
     }
@@ -142,7 +139,13 @@ std::string VideoSearchModule::search(int channel, const std::string& query) {
 
     std::string reply = "🔎 검색 결과 " + std::to_string(rows.size()) + "건\n";
     for (const auto& r : rows) {
-        reply += "\n· " + formatLocal(r.occurred_ms) + " · " + typeLabel(r.type);
+        reply += "\n· " + formatLocal(r.occurred_ms);
+        // 전체 채널 검색일 땐 어느 방인지 몰라 결과가 뒤섞이므로 채널을 밝힌다.
+        // 단일 채널 검색(channel>=0)일 땐 이미 아는 정보라 생략해 문장을 짧게 둔다.
+        if (channel < 0 && r.camera_id >= 0) {
+            reply += " · 채널 " + std::to_string(r.camera_id + 1);
+        }
+        reply += " · " + typeLabel(r.type);
         if (r.resident_id > 0) {
             const std::string name = db_.getResidentName(r.resident_id);
             if (!name.empty()) reply += " · " + name + "님";

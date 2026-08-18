@@ -98,9 +98,14 @@ extern "C" {
  * (core/identity_tracker.hpp). resident_id=0 이면 매핑 해제. */
 #define DBJ_CTRL_ROI_BIND     0x09  /* 침대 ↔ 입소자 매핑 — 헤더 뒤 dbj_roi_bind_t */
 /* 영상검색 자연어 질의 — 헤더 뒤에 reserved 바이트 길이의 UTF-8 질의 문자열이
- * 온다(CAMERA_SET과 같은 재활용 패턴). channel은 검색 범위(그 방만) — 서버는
- * video_search_module로 처리한 뒤 DBJ_SEARCH_MAGIC 메시지로 이 클라이언트에만 회신한다. */
+ * 온다(CAMERA_SET과 같은 재활용 패턴). channel은 검색 범위 — 특정 채널(0~3) 또는
+ * DBJ_CHANNEL_ALL(전체 채널, 2-Pi 분할이어도 DB가 공유돼 어느 Pi가 받아도 전체
+ * 조회가 된다). 서버는 video_search_module로 처리한 뒤 DBJ_SEARCH_MAGIC 메시지로
+ * 이 클라이언트에만 회신한다.
+ * ⚠️ 보호자용(텔레그램 케어봇) 경로는 다른 방 사생활 보호를 위해 항상 자기
+ * 채널로만 검색하며 DBJ_CHANNEL_ALL을 쓰지 않는다 — 이 값은 관제(Qt) 전용 개념. */
 #define DBJ_CTRL_SEARCH_QUERY 0x0A  /* 영상검색 질의 — 헤더 뒤 UTF-8 질의 문자열 */
+#define DBJ_CHANNEL_ALL       0xFF  /* SEARCH_QUERY channel 자리의 "전체 채널" 특수값 */
 
 #define DBJ_CAMERA_URL_MAX  512     /* CAMERA_SET URL 문자열 길이 상한 */
 #define DBJ_SEARCH_QUERY_MAX 300    /* SEARCH_QUERY 질의 문자열 길이 상한(UTF-8 바이트) */
