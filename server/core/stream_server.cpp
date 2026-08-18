@@ -302,7 +302,19 @@ void StreamServer::receiverLoop(Client& client) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
             }
 
-            if (h.channel < 4) { // 채널 유효성 공통 체크
+            // [영상검색] SEARCH_QUERY는 "전체 채널"(DBJ_CHANNEL_ALL=0xFF)도 유효한
+            // 값이라 아래 공통 채널 유효성 체크(<4)를 그대로 못 쓴다 — 따로 뺀다.
+            if (h.type == DBJ_CTRL_SEARCH_QUERY) {
+                if (on_search_query_ && (h.channel < 4 || h.channel == DBJ_CHANNEL_ALL)) {
+                    const char* p = reinterpret_cast<const char*>(
+                        buf.data() + off + sizeof(dbj_ctrl_header_t));
+                    std::string query(p, h.reserved);
+                    const int channel = (h.channel == DBJ_CHANNEL_ALL)
+                                             ? -1
+                                             : static_cast<int>(h.channel);
+                    on_search_query_(channel, client.id, query);
+                }
+            } else if (h.channel < 4) { // 채널 유효성 공통 체크
                 switch (h.type) {
                     case DBJ_CTRL_ROI_SET:
                     case DBJ_CTRL_ROI_CLEAR: {
@@ -386,16 +398,6 @@ void StreamServer::receiverLoop(Client& client) {
                     case DBJ_CTRL_CAMERA_CLEAR: {
                         if (on_camera_clear_) {
                             on_camera_clear_(h.channel);
-                        }
-                        break;
-                    }
-
-                    case DBJ_CTRL_SEARCH_QUERY: {
-                        if (on_search_query_) {
-                            const char* p = reinterpret_cast<const char*>(
-                                buf.data() + off + sizeof(dbj_ctrl_header_t));
-                            std::string query(p, h.reserved);
-                            on_search_query_(h.channel, client.id, query);
                         }
                         break;
                     }
@@ -491,7 +493,7 @@ void StreamServer::sendSearchResult(uint64_t clientId, int channel,
     dbj_search_result_header_t header{};
     header.magic = DBJ_SEARCH_MAGIC;
     header.version = DBJ_VS_VERSION;
-    header.channel = static_cast<uint8_t>(channel);
+    header.channel = (channel < 0) ? DBJ_CHANNEL_ALL : static_cast<uint8_t>(channel);
     header.text_len = static_cast<uint32_t>(text.size());
 
     auto packet = std::make_shared<std::vector<unsigned char>>(

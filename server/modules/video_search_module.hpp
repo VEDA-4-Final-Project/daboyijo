@@ -21,8 +21,10 @@ public:
     VideoSearchModule(VlmClient& vlm, Database& db, std::string public_host)
         : vlm_(vlm), db_(db), public_host_(std::move(public_host)) {}
 
-    // channel: 요청자(보호자)의 방 — 결과는 이 채널로만 제한한다(다른 방
-    // 사생활을 보여주지 않기 위해, channel<0으로 호출하지 말 것).
+    // channel: 검색 범위. 0~3이면 그 채널로만 제한, -1이면 전체 채널.
+    // ⚠️ -1(전체)은 관제(Qt) 전용 개념이다 — 보호자용(텔레그램 케어봇) 호출부는
+    // 다른 방 사생활을 보여주면 안 되므로 반드시 자기 채널(0~3)만 넘길 것, 절대
+    // -1을 전달하지 말 것(그 채널 판단 자체는 호출부 책임 — 여기서는 안 막는다).
     // 반환은 항상 사람이 읽을 완성된 한국어 문장(질의 이해 실패·결과 없음도
     // 문장으로) — 호출부는 그대로 전송하면 된다.
     std::string search(int channel, const std::string& query);
