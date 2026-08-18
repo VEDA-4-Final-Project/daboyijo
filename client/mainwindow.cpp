@@ -3714,6 +3714,33 @@ void MainWindow::exportReportPdf()
     if (eventRows.isEmpty())
         eventRows = QStringLiteral("<tr><td colspan='4'>이벤트 없음</td></tr>");
 
+    // ── AI 요약 (있을 때만) ──
+    // PDF 는 AI 요약에 의존하지 않는다. 생성해 둔 적이 있으면 넣고, 없으면 그 칸 없이
+    // 나온다 — 요약이 없다고 리포트를 못 뽑으면 안 되기 때문이다.
+    // ★ 회색 상자로 감싸 위쪽 수치와 시각적으로 떼어 놓는다. 위 숫자는 기계가 센
+    //   값이고 이 문단은 생성된 글이라, 감사(監査) 상황에서 그 구분이 중요하다.
+    QString summaryHtml;
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT summary_text, model, generated_at FROM daily_reports "
+            "WHERE report_date=? AND resident_id=?"));
+        q.addBindValue(reportDate_);
+        q.addBindValue(reportResidentId_);
+        if (q.exec() && q.next() && !q.value(0).toString().trimmed().isEmpty()) {
+            summaryHtml = QStringLiteral(
+                "<p style='margin-top:18px'><b>AI 요약</b></p>"
+                "<table width='100%' cellspacing='0' cellpadding='10' border='1'"
+                "       bordercolor='#DCE4EC'><tr bgcolor='#F0F4F8'><td>%1"
+                "<br><span style='color:#8B98A5; font-size:8pt'>"
+                "%2 생성 · 이 문단은 위 수치를 근거로 자동 작성된 것입니다</span>"
+                "</td></tr></table>")
+                .arg(q.value(0).toString().toHtmlEscaped().replace(QLatin1Char('\n'),
+                                                                   QStringLiteral("<br>")),
+                     q.value(2).toDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+        }
+    }
+
     const QString html = QStringLiteral(R"HTML(
 <html><body style="font-family:'맑은 고딕',sans-serif; font-size:10pt; color:#1E2A32">
 <h1 style="font-size:19pt; margin-bottom:2px">일일 리포트</h1>
@@ -3738,6 +3765,7 @@ void MainWindow::exportReportPdf()
       <th align="left">감지</th><th align="left">확인</th></tr>
   %14
 </table>
+%16
 <p style="margin-top:22px; color:#8B98A5; font-size:8pt">
   다보이조 요양원 통합 모니터링 &middot; 생성 %15
 </p>
@@ -3756,7 +3784,8 @@ void MainWindow::exportReportPdf()
              metrics_.eventDetail.isEmpty() ? QStringLiteral("이벤트 없음")
                                             : metrics_.eventDetail,
              chartHtml, eventRows,
-             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+             summaryHtml);
 
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
