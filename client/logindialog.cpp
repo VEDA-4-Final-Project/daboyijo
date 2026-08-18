@@ -13,7 +13,7 @@
 #include <QVBoxLayout>
 
 #include "signupdialog.h"
-#include "theme.h"
+#include "thememanager.h"
 #include "wintheme.h"
 
 namespace {
@@ -32,7 +32,7 @@ LoginDialog::LoginDialog(QWidget* parent)
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 
     buildUi();
-    setStyleSheet(authDialogStyleSheet());   // 회원가입 창과 같은 스타일
+    setStyleSheet(ThemeManager::dialogStyleSheet());   // 회원가입 창과 같은 스타일
     enableDarkTitleBar(this);                // 네이티브 타이틀바도 다크로
 
     // 중괄호 초기화 — 괄호로 쓰면 컴파일러가 함수 선언으로 읽는다(most vexing parse)

@@ -1,7 +1,7 @@
 #include "caregiver_detector.hpp"
 #include <algorithm>   // std::max, std::min
-#include <cstdio>
-#include <vector>
+#include <cstdio>      // std::fprintf
+#include <vector>      // std::vector
 
 CaregiverDetector::CaregiverDetector(cv::Scalar lower, cv::Scalar upper, double threshold)
     : lower_(lower), upper_(upper), threshold_(threshold) {}
@@ -15,73 +15,87 @@ void CaregiverDetector::setThreshold(double threshold) {
     threshold_ = threshold;
 }
 
+//한 사람 ROI 분석
 bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     if (personROI.empty()) return false;
 
-    // 상반신(위쪽 절반)만 사용 — 상의 색에 집중
-    cv::Rect torsoRect(0, 0, personROI.cols, personROI.rows / 2);
-    cv::Mat torso = personROI(torsoRect);
-    if (torso.empty()) return false;
-
-    // BGR -> HSV 변환 (조명 변화에 강함)
+    
+    //색을 BGR -> HSV
     cv::Mat hsv;
-    cv::cvtColor(torso, hsv, cv::COLOR_BGR2HSV);
+    cv::cvtColor(personROI, hsv, cv::COLOR_BGR2HSV);
 
-    // 유니폼 색 범위 마스킹
+    //주황 범위에 드는 픽셀만 흰색, 나머지는 검정인 mask 생성
     cv::Mat mask;
     cv::inRange(hsv, lower_, upper_, mask);
 
-    // 노이즈 제거 (작은 점 제거)
-    cv::morphologyEx(mask, mask, cv::MORPH_OPEN,
-                     cv::getStructuringElement(cv::MORPH_RECT, {3, 3}));
+    // 끊긴 조각 이어붙이기 — 주름·그림자로 갈라진 조끼를 한 덩어리로 복원
+    cv::morphologyEx(mask, mask, cv::MORPH_CLOSE,
+                     cv::getStructuringElement(cv::MORPH_RECT, {5, 5}));
 
-    // 유니폼 색 픽셀 비율
-    double ratio = static_cast<double>(cv::countNonZero(mask))
-                 / (mask.rows * mask.cols);
+    // mask에서 흰 덩어리들의 바깥 외곽선을 찾아 contours에 담음 (점은 압축 저장)
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    // [디버그] 상반신 영역의 실제 HSV 통계 — 색 범위 튜닝용.
-    // 출력뿐 아니라 통계 계산 자체가 사람당 매번 돌던 낭비라 통째로 비활성화.
-    // 색 범위 다시 튜닝할 때 #if 1로 켜서 쓸 것.
-#if 0
-    {
-        cv::Scalar meanHsv, stdHsv;
-        cv::meanStdDev(hsv, meanHsv, stdHsv);   // 채널별 평균/표준편차
-
-        // 채널 분리해서 최소/최대도 확인
-        std::vector<cv::Mat> ch;
-        cv::split(hsv, ch);
-        double hMin, hMax, sMin, sMax, vMin, vMax;
-        cv::minMaxLoc(ch[0], &hMin, &hMax);
-        cv::minMaxLoc(ch[1], &sMin, &sMax);
-        cv::minMaxLoc(ch[2], &vMin, &vMax);
-
-        // std::fprintf(stderr,
-        //     "[caregiver] HSV 평균 H=%.1f S=%.1f V=%.1f | 편차 H=%.1f S=%.1f V=%.1f\n",
-        //     meanHsv[0], meanHsv[1], meanHsv[2],
-        //     stdHsv[0], stdHsv[1], stdHsv[2]);
-        // std::fprintf(stderr,
-        //     "[caregiver] HSV 범위  H=%.0f~%.0f S=%.0f~%.0f V=%.0f~%.0f\n",
-        //     hMin, hMax, sMin, sMax, vMin, vMax);
-        // std::fprintf(stderr,
-        //     "[caregiver] 현재 설정 lower=(%.0f,%.0f,%.0f) upper=(%.0f,%.0f,%.0f)\n",
-        //     lower_[0], lower_[1], lower_[2], upper_[0], upper_[1], upper_[2]);
+    // 전체 픽셀 수가 아니라 "가장 큰 덩어리" 하나만 — 흩어진 얼굴·손은 탈락
+    // 평균 채도를 재려면 그 덩어리가 몇 번째인지 알아야 해서 인덱스도 기억
+    double maxArea = 0;
+    int maxIdx = -1;
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double a = cv::contourArea(contours[i]);
+        if (a > maxArea) {
+            maxArea = a;
+            maxIdx = static_cast<int>(i);
+        }
     }
-#endif
 
-    //std::fprintf(stderr, "[caregiver] ratio=%.3f threshold=%.2f\n", ratio, threshold_);
+    // ratio (화면에서 주황색이 차지하는 비율)이 threshold_ 이상인지 판단
+    double ratio = maxArea / (mask.rows * mask.cols);
 
-    return ratio >= threshold_;
+    
+    //   최대 덩어리 내부의 평균 채도(S) 측정
+    //   blob = 그 덩어리만 흰색인 마스크. cv::mean에 마스크로 넘기면
+    //   덩어리 안쪽 픽셀만 평균 내므로, 배경이 섞이지 않은 순수 옷 색이 나온다.
+    double mean_sat = 0;
+    if (maxIdx >= 0) {
+        cv::Mat blob = cv::Mat::zeros(mask.size(), CV_8U);
+        cv::drawContours(blob, contours, maxIdx, cv::Scalar(255), cv::FILLED);
+        mean_sat = cv::mean(hsv, blob)[1];   // [0]=H [1]=S [2]=V
+    }
+
+    // ★ 최종 판정 = 면적 조건 AND 채도 조건
+    //   ratio는 자세(서 있음/앉음)에 따라 3~5배씩 변해서 단독 판정이 불가능하다.
+    //   실측에서 조끼가 ratio 0.028로 탈락하고, 사복 입은 사람이 0.18로 통과하는
+    //   역전이 확인됨. 그래서 재질 고유값이라 자세와 무관한 채도를 주 판정으로 쓰고,
+    //   ratio는 "잡힌 덩어리가 노이즈 수준은 아님"을 보증하는 하한 역할만 맡긴다.
+    bool result = (ratio >= threshold_) && (mean_sat >= min_sat_);
+
+    // if(ratio>=0.03){
+    // std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
+    //              ratio, mean_sat, result ? "O" : "X");
+    // }
+
+    return result;
 }
 
+// 프레임 전체 순회
 bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
-                                       const DetectionFrame& df) const {
+                                       const DetectionFrame& df,
+                                       std::vector<int>* caregiver_ids) const {
     if (frame.empty()) return false;
+    bool found = false;
     const int W = frame.cols;
     const int H = frame.rows;
 
+   // [디버그] 이 프레임에 객체가 몇 개 들어왔는지
+    // std::fprintf(stderr, "[detectInFrame] ch%d 객체 수=%zu\n",
+    //              df.channel + 1, df.objects.size());
+
     for (const auto& obj : df.objects) {
-        if (!obj.isHuman()) continue;         // Human 타입만
-        if (obj.likelihood < 0.5f) continue;  // 신뢰도 낮으면 스킵
+        if (!obj.isHuman()) continue;         // df 중 Human 타입만 처리
+
+        // [디버그] 사람 후보의 신뢰도
+        // std::fprintf(stderr, "[detectInFrame] human likelihood=%.2f\n", obj.likelihood);
+        //if (obj.likelihood < 0.5f) continue;  // 신뢰도 낮으면 스킵 -> wiseAi로 이미 걸러서 중복이라 비활성
 
         // 정규화 좌표(0~1) → 픽셀 Rect 변환
         int x = static_cast<int>(obj.left   * W);
@@ -89,7 +103,7 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
         int w = static_cast<int>(obj.width()  * W);
         int h = static_cast<int>(obj.height() * H);
 
-        // 프레임 경계 클램핑 (좌표가 살짝 벗어나면 크래시 방지)
+        // 프레임 경계 클램핑 (좌표가 살짝 벗어나면 크래시 방지) -> ROi 박스 좌표
         x = std::max(0, x);
         y = std::max(0, y);
         w = std::min(w, W - x);
@@ -97,7 +111,13 @@ bool CaregiverDetector::detectInFrame(const cv::Mat& frame,
         if (w <= 0 || h <= 0) continue;
 
         cv::Rect box(x, y, w, h);
-        if (isCaregiver(frame(box))) return true;   // 보호사 하나라도 있으면 true
+
+        if (!isCaregiver(frame(box))) continue;
+
+        found = true;
+        // 존재 여부만 물어본 호출이면 여기서 끝 — 나머지 사람은 볼 필요가 없다
+        if (!caregiver_ids) return true;
+        caregiver_ids->push_back(obj.object_id);
     }
-    return false;
+    return found;
 }

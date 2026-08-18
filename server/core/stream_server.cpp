@@ -16,10 +16,10 @@
 #include "protocol/video_stream.h"
 
 namespace {
-constexpr size_t kMaxOutbox = 8;  // 클라이언트당 대기 프레임 상한
-constexpr size_t kRecvBufCap = 64 * 1024;  // 제어 수신 버퍼 상한(동기 깨지면 리셋)
+constexpr size_t kMaxOutbox = 8;           // 클라이언트당 대기 프레임 상한
+constexpr size_t kRecvBufCap = 64 * 1024;  // 제어 수신 버퍼 상한 — 동기 깨지면 리셋
 
-// 이벤트(낙상 통보 등) 패킷인지 — outbox가 가득 차도 드롭하면 안 되는 패킷
+// 이벤트 패킷인지 — outbox 가 차도 드롭하면 안 되는 패킷
 bool isEventPacket(const std::vector<unsigned char>& buf) {
     if (buf.size() < sizeof(uint16_t)) return false;
     uint16_t magic;
@@ -87,13 +87,13 @@ void StreamServer::stop() {
     clients_.clear();
 }
 
-// 송신·수신 스레드를 안전하게 내리고 소켓을 닫는다.
-// 순서 중요: alive=false → shutdown(recv/send 블로킹 해제) → join → close.
-// (join 전에 close하면 안 됨 — receiver가 recv()에서 못 깨어나 데드락)
+// 송신·수신 스레드를 내리고 소켓 닫기
+// 순서 중요 — alive=false → shutdown(블로킹 해제) → join → close
+// join 전에 close 하면 receiver 가 recv() 에서 못 깨어나 데드락
 void StreamServer::closeClient(Client& client) {
     client.alive.store(false);
     if (client.fd >= 0) {
-        ::shutdown(client.fd, SHUT_RDWR);  // recv()/send() 즉시 반환시킴
+        ::shutdown(client.fd, SHUT_RDWR);  // recv()/send() 즉시 반환
     }
     client.cv.notify_all();
     if (client.sender.joinable()) {
@@ -118,7 +118,7 @@ void StreamServer::acceptLoop() {
             if (running_.load()) {
                 continue;  // 일시적 오류
             }
-            break;  // stop()에 의한 종료
+            break;  // stop() 에 의한 종료
         }
 
         int on = 1;
@@ -161,7 +161,7 @@ void StreamServer::senderLoop(Client& client) {
             ssize_t n = ::send(client.fd, buf.data() + sent, buf.size() - sent,
                                MSG_NOSIGNAL);
             if (n <= 0) {
-                client.alive.store(false);  // 연결 끊김 — broadcast()가 정리
+                client.alive.store(false);  // 연결 끊김 — broadcast() 가 정리
                 break;
             }
             sent += static_cast<size_t>(n);
@@ -169,15 +169,15 @@ void StreamServer::senderLoop(Client& client) {
     }
 }
 
-// 클라이언트(Qt)가 보내는 제어 메시지를 파싱한다.
-// TCP는 경계 없이 도착하므로 버퍼에 쌓아가며 완성된 메시지만 뽑아낸다.
+// Qt 가 보내는 제어 메시지 파싱
+// TCP 는 경계가 없어 버퍼에 쌓아가며 완성된 메시지만 뽑아냄
 void StreamServer::receiverLoop(Client& client) {
     std::vector<uint8_t> buf;
     uint8_t chunk[1024];
     while (running_.load() && client.alive.load()) {
         ssize_t n = ::recv(client.fd, chunk, sizeof(chunk), 0);
         if (n <= 0) {
-            client.alive.store(false);  // 끊김/오류 — broadcast()가 정리
+            client.alive.store(false);  // 끊김/오류 — broadcast() 가 정리
             break;
         }
         buf.insert(buf.end(), chunk, chunk + static_cast<size_t>(n));
@@ -196,6 +196,12 @@ void StreamServer::receiverLoop(Client& client) {
                 need += static_cast<size_t>(h.point_count) * sizeof(dbj_roi_point_t);
             } else if (h.type == DBJ_CTRL_CAMERA_SET) {
                 need += h.reserved;  // 헤더 뒤에 URL 문자열(reserved 바이트)이 옴
+            } else if (h.type == DBJ_CTRL_IMAGE_SET) {
+                need += sizeof(dbj_image_params_t);  // 헤더 뒤에 이미지 파라미터
+            } else if (h.type == DBJ_CTRL_FOCUS_SET) {
+                need += sizeof(dbj_focus_t);         // 헤더 뒤에 포커스 파라미터
+            } else if (h.type == DBJ_CTRL_ROI_BIND) {
+                need += sizeof(dbj_roi_bind_t);      // 헤더 뒤에 침대↔입소자 매핑
             }
             if (buf.size() - off < need) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
@@ -208,8 +214,18 @@ void StreamServer::receiverLoop(Client& client) {
                         if (on_roi_) {
                             RoiUpdate up;
                             up.channel = h.channel;
+                            // reserved 하위 8비트 = 침대 번호 (예전 클라의 0 은 0번 침대)
+                            up.roi_id = DBJ_CTRL_ROI_ID(h.reserved);
                             up.clear = (h.type == DBJ_CTRL_ROI_CLEAR);
-                            
+
+                            // 삭제가 아닌데 침대 번호가 범위를 벗어나면 버린다 —
+                            // 잘못된 번호로 만든 침대는 Qt 화면에 안 보여서 지울 수도 없다.
+                            if (!up.clear && up.roi_id >= DBJ_ROI_MAX_ZONES) {
+                                std::cerr << "[stream] ROI 침대 번호 범위 초과: "
+                                          << up.roi_id << std::endl;
+                                break;
+                            }
+
                             // ROI 지정일 때만 뒤따라오는 꼭짓점 점 데이터 파싱
                             if (h.type == DBJ_CTRL_ROI_SET) {
                                 const uint8_t* pts =
@@ -238,7 +254,26 @@ void StreamServer::receiverLoop(Client& client) {
                     case DBJ_CTRL_RISK_UPDATE: {
                         if (on_risk_level_) {
                             int risk_level = h.point_count;
-                            on_risk_level_(h.channel, risk_level);
+                            // 위험도는 사람에게 붙는 값 → 침대 단위.
+                            // reserved 하위 8비트가 침대 번호(0xFF = 채널 일괄).
+                            on_risk_level_(h.channel, DBJ_CTRL_ROI_ID(h.reserved),
+                                           risk_level);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_ROI_BIND: {
+                        if (on_roi_bind_) {
+                            dbj_roi_bind_t b;
+                            std::memcpy(&b, buf.data() + off + sizeof(dbj_ctrl_header_t),
+                                        sizeof(b));
+                            if (b.roi_id >= DBJ_ROI_MAX_ZONES) {
+                                std::cerr << "[stream] 매핑 침대 번호 범위 초과: "
+                                          << (int)b.roi_id << std::endl;
+                                break;
+                            }
+                            on_roi_bind_(h.channel, b.roi_id,
+                                         static_cast<int>(b.resident_id));
                         }
                         break;
                     }
@@ -256,6 +291,29 @@ void StreamServer::receiverLoop(Client& client) {
                     case DBJ_CTRL_CAMERA_CLEAR: {
                         if (on_camera_clear_) {
                             on_camera_clear_(h.channel);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_IMAGE_SET: {
+                        if (on_image_set_) {
+                            dbj_image_params_t ip;
+                            std::memcpy(&ip, buf.data() + off + sizeof(dbj_ctrl_header_t),
+                                        sizeof(ip));
+                            on_image_set_(h.channel, ip.brightness, ip.contrast,
+                                          ip.saturation);
+                        }
+                        break;
+                    }
+
+                    case DBJ_CTRL_FOCUS_SET: {
+                        if (on_focus_) {
+                            dbj_focus_t f;
+                            std::memcpy(&f, buf.data() + off + sizeof(dbj_ctrl_header_t),
+                                        sizeof(f));
+                            on_focus_(h.channel, f.mode == DBJ_FOCUS_AREA,
+                                      static_cast<float>(f.x) / DBJ_ROI_COORD_SCALE,
+                                      static_cast<float>(f.y) / DBJ_ROI_COORD_SCALE);
                         }
                         break;
                     }
@@ -297,12 +355,16 @@ void StreamServer::broadcast(int channel, std::vector<unsigned char> jpeg) {
 }
 
 void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y,
-                                  int64_t timestampMsOverride) {
+                                  int roi_id, int64_t timestampMsOverride) {
     dbj_evt_header_t evt{};
     evt.magic = DBJ_EVT_MAGIC;
     evt.version = DBJ_VS_VERSION;
     evt.type = type;
     evt.channel = static_cast<uint8_t>(channel);
+    // 침대를 특정 못 한 이벤트(웨어러블 발 알람 등)는 미상으로 내려보낸다
+    evt.roi_id = (roi_id >= 0 && roi_id < DBJ_ROI_MAX_ZONES)
+                     ? static_cast<uint8_t>(roi_id)
+                     : DBJ_ROI_ID_NONE;
     evt.x = static_cast<uint16_t>(x * DBJ_ROI_COORD_SCALE);
     evt.y = static_cast<uint16_t>(y * DBJ_ROI_COORD_SCALE);
     evt.timestamp_ms = timestampMsOverride != 0
@@ -330,9 +392,8 @@ void StreamServer::enqueueAll(Packet packet) {
         {
             std::lock_guard<std::mutex> client_lock(client.mutex);
             if (client.outbox.size() >= kMaxOutbox) {
-                // 느린 클라이언트: 오래된 "영상 프레임"부터 드롭.
-                // 이벤트(낙상 통보)는 절대 버리지 않는다 — 전부 이벤트면 상한 초과 허용
-                // (이벤트는 18바이트라 메모리 부담 없음).
+                // 느린 클라이언트 — 오래된 영상 프레임부터 드롭
+                // 이벤트는 안 버림, 전부 이벤트면 상한 초과 허용 (18바이트라 부담 없음)
                 auto victim = std::find_if(
                     client.outbox.begin(), client.outbox.end(),
                     [](const Packet& p) { return !isEventPacket(*p); });

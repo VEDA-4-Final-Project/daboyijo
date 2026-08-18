@@ -5,6 +5,9 @@ CLAUDE.md
 CLAUDE.local.md
 .cursor/
 .aider*
+.planning/
+.gsd/
+skills-lock.json
 
 # ===== 빌드 산출물 =====
 build/
@@ -12,6 +15,8 @@ Debug/
 Release/
 bin/
 obj/
+# 실행 파일은 확장자가 없어 패턴으로 안 잡히니 이름으로 적는다
+relay-node/relay_node
 *.o
 *.obj
 *.so
@@ -33,12 +38,18 @@ ui_*.h
 Makefile*
 !protocol/Makefile
 !server/Makefile
+!alert-node/Makefile
+!alert-node/drivers/wm8960/Makefile
+!alert-node/drivers/hub75/Makefile
+!alert-node/app/Makefile
+!alert-node/app/matrix/Makefile
+!alert-node/app/AudioPlayer/Makefile
 
 # ===== STM32CubeIDE / Eclipse =====
 .metadata/
 .settings/
-.cproject
-.mxproject
+#.cproject
+#.mxproject
 *.launch
 
 # ===== IDE / 에디터 =====
@@ -63,3 +74,21 @@ server/blackbox_clips/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+server/daboijo_dump.sql
+server/daboijo_dump_fixed.sql
+*.user
+*.user
+*.tmp
+*.TMP
+
+
+#===== SSL/TLS 인증서 및 보안 키 파일 전체 제외 ======
+*.key
+*.crt
+*.pem
+*.csr
+*.srl
+
+#===== MQTT certs 내 실체 파일 제외 (README.md 만 남기기)
+MQTT/certs/*
+!MQTT/certs/README.md

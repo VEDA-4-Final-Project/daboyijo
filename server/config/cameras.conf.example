@@ -41,6 +41,10 @@ telegram_chat_id_1=
 gemini_api_key=
 gemini_model=
 
+# 케어봇 📞 연락처 버튼이 회신할 연락처 (미설정 시 "미등록"으로 표시)
+care_contact_caregiver=담당 요양사 홍길동 010-0000-0000
+care_contact_manager=관리자 김철수 010-1111-1111
+
 # (A) 부팅 즉시 연결 — URL을 직접 지정
 0=rtsp://admin:비밀번호@172.20.35.140:554/0/profile2/media.smp
 1=rtsp://admin:비밀번호@172.20.35.140:554/1/profile2/media.smp

@@ -1,16 +1,16 @@
 TARGET   := daboyijo-server
 BUILDDIR := build
 
-SRCS := $(wildcard src/*.cpp) $(wildcard video/*.cpp) $(wildcard core/*.cpp) $(wildcard modules/*.cpp)
+SRCS := $(wildcard src/*.cpp) $(wildcard video/*.cpp) $(wildcard core/*.cpp) $(wildcard modules/*.cpp) ../MQTT/MQTT_prod/MqttClient_veda.cpp
 OBJS := $(SRCS:%.cpp=$(BUILDDIR)/%.o)
 DEPS := $(OBJS:.o=.d)
 
-PKGS     := opencv4 libavformat libavcodec libavutil libswscale libcurl
+PKGS     := opencv4 libavformat libavcodec libavutil libswscale libcurl libcrypto
 
 CXX      ?= g++
 # -MMD -MP: 헤더 의존성(.d) 자동 생성 — .hpp 수정 시 그걸 쓰는 .o 전부 재빌드
 # (없으면 구조체 레이아웃이 바뀌어도 일부 .o만 재컴파일돼 링크 후 segfault)
-CXXFLAGS += -std=c++17 -Wall -Wextra -O2 -MMD -MP -Isrc -Ivideo -Icore -Imodules -I..
+CXXFLAGS += -std=c++17 -Wall -Wextra -O2 -MMD -MP -Isrc -Ivideo -Icore -Imodules -I.. -I../MQTT/MQTT_prod
 # third_party: nlohmann/json 단일 헤더 (텔레그램 getUpdates·Gemini 응답 JSON 파싱)
 CXXFLAGS += -Ithird_party
 CXXFLAGS += $(shell pkg-config --cflags $(PKGS))
@@ -18,6 +18,9 @@ LDLIBS   := $(shell pkg-config --libs $(PKGS)) -lpthread
 
 CXXFLAGS += $(shell mariadb_config --cflags)
 LDLIBS   += $(shell mariadb_config --libs)
+LDLIBS += -Wl,--allow-multiple-definition
+LDLIBS += -lmosquitto
+
 
 # ── MoveNet(TFLite C++) 연동 ──────────────────────────────────
 # 사전 준비 (라즈베리에서 1회, server/tools/movenet_bench.py로 속도 확인 후):
