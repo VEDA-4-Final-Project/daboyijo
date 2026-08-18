@@ -492,6 +492,17 @@ void FramePreview::clearFrame() {
 }
 
 // 비율 유지(KeepAspectRatio) 레터박스 배치. 클릭 지점 초점 좌표 계산도 이 값을 쓴다.
+void FramePreview::setCaption(const QString& text, bool live) {
+    caption_ = text;
+    captionLive_ = live;
+    update();
+}
+
+qreal FramePreview::frameAspect() const {
+    if (frame_.isNull() || frame_.height() <= 0) return 16.0 / 9.0;
+    return qreal(frame_.width()) / qreal(frame_.height());
+}
+
 QRectF FramePreview::imageRect() const {
     if (frame_.isNull()) return QRectF(rect());
     QSizeF fs = frame_.size();
@@ -520,6 +531,35 @@ void FramePreview::paintEvent(QPaintEvent*) {
         p.setRenderHint(QPainter::SmoothPixmapTransform, true);
         p.drawPixmap(imageRect(), frame_, QRectF(frame_.rect()));
         p.restore();
+    }
+
+    // 좌상단 이름표 — 영상 위에 얹는다(관제 타일의 LIVE 배지와 같은 방식).
+    if (!caption_.isEmpty()) {
+        QFont cf = font();
+        cf.setBold(true);
+        cf.setPixelSize(13);
+        p.setFont(cf);
+        const QFontMetrics fm(cf);
+
+        const qreal m = 8, dr = 7;
+        const int tw = fm.horizontalAdvance(caption_);
+        const int h = fm.height() + 8;
+        const int dotW = captionLive_ ? int(dr) + 7 : 0;
+        const int w = 10 + dotW + tw + 11;
+        QRectF chip(m, m, w, h);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 165));
+        p.drawRoundedRect(chip, 4, 4);
+
+        qreal tx = chip.left() + 10;
+        if (captionLive_) {
+            p.setBrush(QColor(0xFF, 0x5A, 0x5F));
+            p.drawEllipse(QPointF(tx + dr / 2, chip.center().y()), dr / 2, dr / 2);
+            tx += dr + 7;
+        }
+        p.setPen(QColor(0xF2, 0xF6, 0xFA));
+        p.drawText(QRectF(tx, chip.top(), tw + 2, chip.height()),
+                   Qt::AlignVCenter | Qt::AlignLeft, caption_);
     }
 
     p.setBrush(Qt::NoBrush);

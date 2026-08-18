@@ -490,25 +490,25 @@
                                          border: none; border-bottom: 1px solid %(border);
                                          padding: 9px 8px; font-weight: 700; }
         #logTable::item:selected { background: %(select); color: %(onSelect); }
+        #logTable::item:hover { background: %(card); }
+        /* 결과 건수 — 미확인이 남아 있으면(alert) 눈에 걸리게 색을 올린다.
+           처리해야 할 일이 남았다는 신호라 회색으로 묻히면 안 된다. */
+        #logCount { color: %(sub); font-size: 12px; font-weight: 700; }
+        #logCount[alert="true"] { color: %(critical); }
+        #logEmptyHint { color: %(sub); font-size: 13px; background: transparent; }
+        /* 지금 재생 중인 이벤트가 무엇인지 — 재생기 바로 위 한 줄 */
+        #eventContext { color: %(text); font-size: 12px; font-weight: 700;
+                        background: %(card); border: 1px solid %(border);
+                        border-left: 3px solid %(select); border-radius: 3px;
+                        padding: 6px 10px; }
 
-        /* NVR(연속녹화) 탐색 — QComboBox/QListWidget은 objectName 없이 두면
-           플랫폼 기본 팔레트(대개 흰 배경)로 그려져 다크 테마에서 튄다.
-           #logTable/#filterBar QComboBox와 같은 원리로 이름 붙여 명시적으로 칠한다. */
-        #nvrChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
-                           border-radius: 3px; padding: 5px 10px; }
-        #nvrChannelCombo QAbstractItemView { background: %(card); color: %(text);
-                                             outline: none;
-                                             selection-background-color: %(select);
-                                             selection-color: %(onSelect); }
-        #nvrRefreshBtn, #nvrJumpButton, #clipDownloadButton {
+        /* 이벤트 기록 우측 액션 — [이 시점 NVR에서 이어보기] / [다운로드].
+           objectName 없이 두면 플랫폼 기본 팔레트(대개 흰 배경)로 그려져 다크에서 튄다. */
+        #nvrJumpButton, #clipDownloadButton {
             background: %(card); color: %(text); border: 1px solid %(border);
             border-radius: 3px; padding: 5px 12px; font-weight: 700; }
-        #nvrRefreshBtn:hover, #nvrJumpButton:hover, #clipDownloadButton:hover { border-color: %(accent); }
+        #nvrJumpButton:hover, #clipDownloadButton:hover { border-color: %(select); }
         #nvrJumpButton:disabled, #clipDownloadButton:disabled { color: %(sub); border-color: %(border); }
-        #nvrSegmentList { background: %(panel); color: %(text); border: 1px solid %(border);
-                          border-radius: 4px; outline: none; }
-        #nvrSegmentList::item { padding: 6px 10px; border: none; }
-        #nvrSegmentList::item:selected { background: %(select); color: %(onSelect); }
 
         /* 영상검색(🔍) — NVR 탐색과 같은 이유로 objectName마다 명시적으로 칠한다. */
         #searchChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
@@ -632,10 +632,27 @@ QLabel {
                  border: 1px solid transparent; border-left: 3px solid %(accent);
                  padding-left: 8px; }
 #camHint { color: %(sub); font-size: 12px; }
+/* 연결 탭 4채널 요약 배지 — 미연결/신호대기/수신중 세 상태.
+   "연결 요청을 보냈다"와 "실제로 영상이 온다"는 다르므로 색을 나눈다. */
+#camConnBadge { border: 1px solid %(border); border-radius: 3px;
+                padding: 4px 2px; font-size: 11px; font-weight: 700; color: %(sub); }
+#camConnBadge[state="live"] { color: %(normal); border-color: %(normal); }
+#camConnBadge[state="wait"] { color: %(warn); border-color: %(warn); }
+#camConnBadge[state="off"]  { color: %(sub); border-color: %(border); }
+/* 미연결이라 컨트롤이 꺼져 있을 때의 이유 문구 */
+#camDisabledHint { color: %(warn); font-size: 12px;
+                   border: 1px solid %(border); border-left: 3px solid %(warn);
+                   border-radius: 3px; padding: 8px 10px; }
 /* 그 페이지의 주 액션(연결/적용) — 채워진 악센트 */
 #camPrimary { background: %(accent); color: %(onAccent); border: 1px solid %(accent);
               border-radius: 3px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
 #camPrimary:hover { background: %(accentHover); border-color: %(accentHover); }
+/* 비활성 — 카메라가 안 붙은 채널에서는 눌러도 아무 일이 없다.
+   눌릴 것처럼 보이면 "적용했는데 안 바뀐다"는 오해를 만든다. */
+#camPrimary:disabled { background: %(border); color: %(sub); border-color: %(border); }
+#roiButton:disabled, #roiClear:disabled, #roiToggle:disabled {
+    color: %(sub); border-color: %(border); background: transparent; }
+#roiPrimary:disabled { background: %(border); color: %(sub); }
 /* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다.
    배경은 영상 캔버스 전용 단일 출처 토큰을 참조한다(D-07/IA-02) —
    FramePreview::paintEvent()의 kVideoSurface와 같은 검정이어야 한다. */

@@ -152,6 +152,14 @@ public:
     void clearFrame();                     // 비우고 안내 문구로 되돌림
     bool hasFrame() const { return !frame_.isNull(); }
     QRectF imageRect() const;              // 레터박스 여백 뺀 실제 영상 사각형
+    // 원본 프레임의 가로/세로 비. 프레임이 없으면 16:9로 가정한다 — 부모가
+    // 이 값으로 상자 크기를 잡으면 레터박스(검은 여백) 자체가 생기지 않는다.
+    qreal frameAspect() const;
+    // 영상 좌상단에 얹는 이름표("적용 전" / "적용 후 · 실시간").
+    // 영상 밖 라벨로 두면 검은 배경 위 작은 회색 글씨가 되어 잘 안 읽히고,
+    // 캡션 줄만큼 영상이 작아진다. 반투명 캡슐 위에 얹으면 둘 다 해결된다.
+    // live=true면 앞에 빨간 점을 찍어 "지금 들어오는 화면"임을 구분한다.
+    void setCaption(const QString& text, bool live = false);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -159,6 +167,8 @@ protected:
 private:
     QPixmap frame_;
     QString placeholder_;
+    QString caption_;
+    bool captionLive_ = false;
 };
 
 #endif  // VIDEOVIEW_H

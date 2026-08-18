@@ -179,6 +179,22 @@ struct NvrSegmentInfo {
     QString url;
 };
 
+// 이벤트 기록 표의 한 줄. DB 원장(events)에서 읽어온 것과 실시간으로 도착한 것이
+// 같은 모양을 갖도록 한 곳에 정의한다 — 두 경로가 따로 표를 채우면 열 순서·색·
+// 클립 URL 규칙이 조용히 갈라진다.
+struct EventLogRow {
+    qint64  eventId = -1;      // events.event_id (-1 = 방금 소켓으로 온 것, 아직 조회 전)
+    qint64  occurredMs = 0;
+    int     channel = -1;
+    QString typeCode;          // FALL / EGRESS / VITAL_ABNORMAL (DB ENUM과 같은 값)
+    QString source;            // CAMERA / WEARABLE
+    QString residentName;      // 비어 있으면 "미상"으로 표시
+    QString place;             // "101호 · 채널 2 · 침대 1"
+    QString clipUrl;           // 호스트까지 붙인 완성 URL (비어 있으면 재생 불가)
+    bool    confirmed = false;
+    QString confirmedBy;
+};
+
 // 입소자 한 명의 표시 정보. 한 채널에 여러 명이 있을 수 있어 채널 단위인
 // PatientInfo(대표 1명)와 따로 둔다 — 바이탈은 사람마다 따로 와야 한다.
 struct ResidentInfo {
@@ -442,6 +458,32 @@ private:
     QComboBox* filterRoom = nullptr;
     QComboBox* filterEventType = nullptr;
     QTableWidget* logTable = nullptr;
+    // 이벤트 기록 표의 열 순서. 인덱스를 코드 곳곳에 숫자로 흩뿌리면 열을 하나
+    // 끼워 넣을 때마다 조용히 어긋나므로 이름으로 고정한다.
+    enum LogCol { LogWhen = 0, LogType, LogPlace, LogResident, LogSource, LogStatus,
+                  LogColCount };
+    // 0열 아이템에 실어 두는 부가 데이터. Qt::UserRole+N 을 직접 쓰지 않는다.
+    enum LogRole { LogClipUrl = Qt::UserRole, LogChannel, LogTimestamp, LogEventId };
+
+    QComboBox* filterChannel = nullptr;     // 전체 채널 / CH1~4
+    QComboBox* filterConfirmed = nullptr;   // 전체 / 미확인만 / 확인만
+    QLabel*    logCountLabel = nullptr;     // "N건 · 미확인 M건"
+    QLabel*    logEmptyHint = nullptr;      // 조회 결과 0건일 때 표 위에 띄우는 안내
+    QLabel*    eventContextLabel = nullptr; // 우측 재생기 위 "누가 · 언제 · 어디서"
+
+    // events 원장을 현재 필터 조건으로 조회해 표를 통째로 다시 채운다.
+    // 이 함수가 표의 유일한 채움 경로다(실시간 도착분만 insertEventRow로 덧붙는다).
+    void reloadEventLog();
+    // 표에 한 줄 넣기 — DB 조회분/실시간 도착분 공용.
+    void insertEventRow(const EventLogRow& e);
+    // 실시간 이벤트를 표에 얹는다(서버는 같은 이벤트를 DB에도 쓴다 — 다음 조회 때 합쳐진다).
+    void appendLiveEvent(int channel, int roiId, qint64 occurredMs,
+                         const QString& typeCode, const QString& source);
+    // 종류 코드 → 화면 문구/색. 표·필터·요약이 같은 사전을 본다.
+    static QString eventTypeLabel(const QString& code);
+    static QString eventSourceLabel(const QString& code);
+    // 결과 건수·미확인 수 갱신 + 빈 상태 안내 표시
+    void refreshLogSummary();
     QLabel* blackboxPlaceholder = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
     QStackedWidget* blackboxStack = nullptr;
@@ -454,10 +496,10 @@ private:
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
     qint64 blackboxPendingSeekMs_ = -1;   // durationChanged 이후 한 번 적용할 탐색 위치(-1=없음)
 
-    // NVR(연속녹화) 탐색 — 같은 재생기(blackboxPlayer 등)를 그대로 재사용한다
-    QComboBox* nvrChannelCombo = nullptr;
-    QListWidget* nvrSegmentList = nullptr;
-    QVector<NvrSegmentInfo> nvrSegments_;   // /list로 받은 전체 목록(채널 필터링용 원본)
+    // NVR(연속녹화) 세그먼트 목록. 화면에 목록으로 띄우지는 않는다 — 관제화면
+    // 하단 타임라인이 이 데이터를 시간축 위에 그리고, 이벤트 기록의
+    // [이 시점 NVR에서 이어보기]가 여기서 해당 세그먼트를 찾아 쓴다.
+    QVector<NvrSegmentInfo> nvrSegments_;
 
     // 이벤트↔NVR 연결: 로그에서 마지막으로 연 이벤트의 채널/시각(NVR 시점 점프용)
     int selectedEventChannel_ = -1;
@@ -608,9 +650,7 @@ private:
     QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
     void playBlackboxClipAt(const QString& url, qint64 seekMs);  // 재생 후 지정 위치로 탐색
-    QWidget* buildNvrBrowser();        // NVR(연속녹화) 채널+세그먼트 탐색 목록
-    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신
-    void repopulateNvrList();          // nvrChannelCombo 선택값 기준으로 nvrSegmentList 다시 채움
+    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신(→ refreshTimeline)
     void jumpToNvrContext();           // 선택된 로그 이벤트 시점의 NVR 세그먼트를 찾아 그 위치로 재생
     void downloadCurrentClip();        // 현재 재생 중인 클립을 로컬에 저장
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
@@ -784,8 +824,34 @@ private:
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
     ClickSlider* imgSaturation = nullptr;
+    // 이미지/초점 조작은 카메라가 붙어 있을 때만 의미가 있다. 미연결 채널에서
+    // 눌러도 아무 일도 일어나지 않으므로, 눌리는 것처럼 보이게 두지 않는다.
+    QPushButton* imgApplyBtn = nullptr;
+    QPushButton* imgResetBtn = nullptr;
+    QPushButton* imgFocusBtn = nullptr;
+    QLabel*      imgDisabledHint = nullptr;   // 왜 못 만지는지 알려주는 한 줄
+    // 채널별 마지막 적용값(밝기/대비/채도). 카메라의 실제 현재값을 읽어오는 게
+    // 아니라 "이 PC에서 마지막으로 보낸 값"이다 — 프로토콜에 조회가 없다.
+    // 채널을 오갈 때 값이 따라오게 하고, 앱을 껐다 켜도 남는다.
+    void loadImageParams(int channel);        // QSettings → 슬라이더
+    void saveImageParams(int channel);        // 슬라이더 → QSettings
+    // 현재 선택 채널의 연결 여부에 맞춰 ROI/이미지 컨트롤을 켜고 끈다.
+    void refreshCamControlsEnabled();
+    // 연결 탭의 4채널 상태 요약 배지(CH1~4)
+    QLabel* camConnBadges[4] = {};
     FramePreview* imgBefore = nullptr;                 // 적용 전 스냅샷
     FramePreview* imgAfter = nullptr;                   // 실시간(적용 후)
+    // 위 두 프리뷰를 영상 비율대로 잡아 주는 상자(실체는 mainwindow.cpp의 AspectBox).
+    // 상자가 영상보다 크면 그 차이가 검은 여백으로 남기 때문에 비율을 맞춰 준다.
+    QWidget* imgBeforeBox = nullptr;
+    QWidget* imgAfterBox = nullptr;
+    // 이미지 모드에서 스테이지 카드를 영상 폭에 딱 맞춰 줄이기 위해 들고 있는다.
+    // 16:9 두 장을 세로로 쌓으면 세로가 먼저 차서 폭이 남는데, 그 남는 폭이
+    // 카드 안에 있으면 "영상 옆 검은 여백"으로 보인다. 카드를 줄여 밖으로 뺀다.
+    QFrame*      camStageCard_ = nullptr;
+    QHBoxLayout* camBodyRow_ = nullptr;   // [채널스트립 | 스테이지 | 인스펙터]
+    void updateImageStageWidth();
+    void setImagePreviewFrame(const QPixmap& pm);      // 프레임 + 상자 비율 동시 갱신
     QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──
