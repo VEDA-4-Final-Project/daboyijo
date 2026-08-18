@@ -12,6 +12,17 @@
 enum class EventType   { Fall, BedEgress, VitalAbnormal };
 enum class EventSource { Camera, Wearable };   // 같은 낙상이라도 근거가 다르다
 
+// events 조회 결과 1건 (영상검색 등 조회 전용 — insertEvent의 반대 방향).
+struct EventRow {
+    long long event_id = 0;
+    long long occurred_ms = 0;  // epoch 밀리초
+    int camera_id = -1;         // NULL이면 -1
+    int resident_id = -1;       // NULL이면 -1
+    EventType type = EventType::Fall;
+    EventSource source = EventSource::Camera;
+    std::string clip_url;       // 없으면 빈 문자열 (호스트 없는 파일명만)
+};
+
 // roi_zones 한 줄 — 침대 ROI 1개. 서버 부팅 시 복원용.
 struct RoiZoneRow {
     int camera_id = 0;
@@ -119,6 +130,15 @@ public:
                           long long occurredMs = 0,
                           const std::string& clipUrl = std::string(),
                           int residentId = -1);
+
+    // [영상검색] occurred_at이 [startMs,endMs] 안인 이벤트를 최신순으로 조회.
+    //  anyType   : true면 type 무시(전체 유형).
+    //  channel   : -1이면 전 채널, 아니면 그 카메라만(보호자 검색은 항상 자기
+    //              방으로 제한해야 하므로 호출부가 -1을 넘기지 않을 것).
+    //  limit     : 최대 반환 개수(1~50로 클램프).
+    // 실패 시 빈 벡터.
+    std::vector<EventRow> findEvents(bool anyType, EventType type, int channel,
+                                     long long startMs, long long endMs, int limit);
 
     // 침대 재실 세션 열기(입소자가 침대 ROI 안으로 들어온 순간).
     // 반환: session_id, 실패 시 0. 이 id 를 들고 있다가 나갈 때 닫는다.

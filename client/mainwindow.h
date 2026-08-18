@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QTcpSocket>
+#include <QSslSocket>
 #include <QByteArray>
 #include <QLabel>
 #include <QPolygonF>
@@ -89,6 +90,14 @@ struct dbj_evt_header_t {
     uint16_t y;             // 2B (발생 위치 정규화 y ×10000)
     uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
 };                          // 18B
+
+// 역방향(서버→클라) 영상검색 결과 — magic=0xDB4E. 헤더 뒤 UTF-8 텍스트(text_len 바이트).
+struct dbj_search_result_header_t {
+    uint16_t magic;         // 2B (0xDB4E)
+    uint8_t  version;       // 1B (0x01)
+    uint8_t  channel;       // 1B (0~3, 요청한 채널)
+    uint32_t text_len;      // 4B (이어지는 UTF-8 답변 텍스트 바이트 수)
+};                          // 8B
 #pragma pack(pop)
 
 // 제어 메시지 상수 (서버와 합의된 값 — protocol/video_stream.h와 동일하게 유지)
@@ -100,6 +109,8 @@ static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr uint8_t kCtrlImageSet = 0x07;     // 카메라 이미지 파라미터 (헤더 뒤 dbj_image_params_t)
 static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤더 뒤 dbj_focus_t)
 static constexpr uint8_t kCtrlRoiBind = 0x09;      // 침대 ↔ 입소자 매핑 (헤더 뒤 dbj_roi_bind_t)
+static constexpr uint8_t kCtrlSearchQuery = 0x0A;  // 영상검색 질의 (헤더 뒤 UTF-8 질의 문자열)
+static constexpr int kSearchQueryMax = 300;        // DBJ_SEARCH_QUERY_MAX
 static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
 static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;
@@ -114,6 +125,9 @@ static constexpr uint16_t kEvtMagic = 0xDB4D;
 static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 static constexpr uint8_t kEvtVitalAbnormal = 0x03;  // 웨어러블 생체데이터 이상 (x,y 미사용)
+
+// 영상검색 결과 메시지 상수 (서버 스펙)
+static constexpr uint16_t kSearchMagic = 0xDB4E;
 
 #include "videoview.h"   // RoiZone / kMaxRoiZones — 침대 목록을 값으로 들고 있어 필요
 
@@ -150,6 +164,14 @@ struct PatientInfo {
     QString name;   // 환자 이름
     QString bed;    // 위치 표기 — 병실/침대 제거 후 "채널 N"을 담는다(오버레이/바이탈 공용)
     QString room;   // 호실 — MQTT 알림 명령에 실어 보낸다(알림 노드가 LED에 띄운다)
+};
+
+// NVR(연속녹화) 세그먼트 1개 — /list 응답 파일명(ch{N}_{startMs}.mp4)을 파싱한 결과.
+// 콤보박스로 채널 필터링할 때 재요청 없이 이 목록에서 다시 골라 쓴다.
+struct NvrSegmentInfo {
+    int channel = -1;
+    qint64 startMs = 0;
+    QString url;
 };
 
 // 입소자 한 명의 표시 정보. 한 채널에 여러 명이 있을 수 있어 채널 단위인
@@ -210,6 +232,10 @@ private slots:
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
+    // 소켓은 붙어있는데 카메라 쪽 스트림만 멈추는 경우(setLive(true)는 프레임
+    // 도착 때만 불려서 이런 정지를 아무도 알려주지 않는다) — 주기적으로 마지막
+    // 프레임 시각을 점검해 LIVE 배지를 "미연결"로 되돌린다.
+    void checkChannelHealth();
 
     // ── MQTT (웨어러블·알림 노드) ─────────────────────────
     // 영상 경로(TCP)와 별개로, 브로커를 통해 들어오는 것들을 받는 슬롯.
@@ -237,9 +263,21 @@ private:
     //   ch0·ch1 → Pi A(sockets[0]) / ch2·ch3 → Pi B(sockets[1]).
     static constexpr int kNumServers = 2;
     static int serverForChannel(int ch) { return ch < 2 ? 0 : 1; }
-    QTcpSocket *sockets[kNumServers] = {};
+    // QSslSocket은 QTcpSocket 파생이라 나머지 코드(sock->state()/write() 등)는
+    // QTcpSocket*로 받아써도 그대로 동작 — TLS 전용 API(connectToHostEncrypted 등)를
+    // 쓰는 지점(connectToServer)만 QSslSocket*가 필요하다.
+    QSslSocket *sockets[kNumServers] = {};
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
+    // ── 확장 지점 메모(room 개념 도입, 2026-08) ──────────────────────
+    // 이 파일의 고정크기-4 배열들(channelViews/videoCards/patients/
+    // residentsByChannel_ 등 총 19곳)과 setVideoFocus()의 2×2 그리드 배치는
+    // 전부 "카메라 1대(4채널) = 방 1개"를 전제한다. 카메라를 더 붙여 방이
+    // 여러 개가 되는 걸 실제로 지원하려면 이 배열들을 채널 인덱스가 아니라
+    // (room, 채널) 쌍 기반의 동적 컨테이너로, setVideoFocus()도 데이터 기반
+    // 레이아웃으로 재작성해야 한다 — 지금은 리스크 대비 이득이 낮아 보류.
+    // room "이름" 자체는 이미 표시 레이어(currentRoomName(), mainwindow.cpp)에
+    // 도입돼 있어 방을 늘릴 때 그 값부터 목록으로 확장하면 된다.
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     QWidget* videoCards[4] = {};      // 영상 카드(스포트라이트 재배치용)
     QGridLayout* videoGrid = nullptr; // 영상 월 그리드(재배치 대상)
@@ -252,6 +290,9 @@ private:
     // 채널별 카메라 연결 여부(QSettings 지속) — 서버는 Qt를 껐다 켜도 스트리밍을
     // 유지하므로, 재시작 후 URL이 없어도 이 플래그로 "해제" 대상을 안다. 비어 있으면 미연결.
     bool cameraActive_[4] = {};
+    // 채널별 마지막 영상 프레임 수신 시각(에폭 ms). 0이면 이번 세션에서 아직
+    // 한 장도 못 받음. checkChannelHealth()가 이 값으로 "신호 끊김"을 판정한다.
+    qint64 lastFrameMs_[4] = {};
     bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
     bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
@@ -307,6 +348,7 @@ private:
     QTimer vitalsTimer;
     QTimer careTimeTimer;        // 케어 타임 대시보드 주기 갱신(care_logs 재조회)
     QTimer reconnectTimer;       // 영상 서버 자동 재접속
+    QTimer channelHealthTimer;   // 채널별 프레임 정지(신호 끊김) 감시
 
     // ── TAB 구조 ──────────────────────────────────────────
     // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
@@ -336,6 +378,29 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
+    qint64 blackboxPendingSeekMs_ = -1;   // durationChanged 이후 한 번 적용할 탐색 위치(-1=없음)
+
+    // NVR(연속녹화) 탐색 — 같은 재생기(blackboxPlayer 등)를 그대로 재사용한다
+    QComboBox* nvrChannelCombo = nullptr;
+    QListWidget* nvrSegmentList = nullptr;
+    QVector<NvrSegmentInfo> nvrSegments_;   // /list로 받은 전체 목록(채널 필터링용 원본)
+
+    // 이벤트↔NVR 연결: 로그에서 마지막으로 연 이벤트의 채널/시각(NVR 시점 점프용)
+    int selectedEventChannel_ = -1;
+    qint64 selectedEventTimestampMs_ = -1;
+    QPushButton* nvrJumpButton = nullptr;
+    QPushButton* clipDownloadButton = nullptr;
+
+    // ── 영상검색(🔍) — 케어봇(video_search_module)과 같은 서버 로직을 관제
+    //    화면에서도 쓴다. 질의는 DBJ_CTRL_SEARCH_QUERY, 응답은 DBJ_SEARCH_MAGIC.
+    QComboBox* searchChannelCombo = nullptr;
+    QLineEdit* searchQueryEdit = nullptr;
+    QPushButton* searchButton = nullptr;
+    QTextBrowser* searchResultBrowser = nullptr;
+    QWidget* buildVideoSearchPanel();
+    void sendSearchQuery();
+    // onReadyRead가 DBJ_SEARCH_MAGIC 패킷을 다 모으면 호출 — 답변 표시 + 버튼 복구
+    void onSearchResultReceived(int channel, const QString& text);
     // ── 일일 리포트: 날짜 선택 ──────────────────────────────
     // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
     // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다
@@ -465,6 +530,12 @@ private:
     QWidget* buildLogTable();
     QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
+    void playBlackboxClipAt(const QString& url, qint64 seekMs);  // 재생 후 지정 위치로 탐색
+    QWidget* buildNvrBrowser();        // NVR(연속녹화) 채널+세그먼트 탐색 목록
+    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신
+    void repopulateNvrList();          // nvrChannelCombo 선택값 기준으로 nvrSegmentList 다시 채움
+    void jumpToNvrContext();           // 선택된 로그 이벤트 시점의 NVR 세그먼트를 찾아 그 위치로 재생
+    void downloadCurrentClip();        // 현재 재생 중인 클립을 로컬에 저장
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
     void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
     // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.

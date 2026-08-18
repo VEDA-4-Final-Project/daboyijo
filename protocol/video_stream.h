@@ -3,7 +3,10 @@
  * @brief   중앙 서버 → Qt 관제 클라이언트 영상 스트림 패킷 정의
  *
  * 사용 구간:
- *  - 중앙 서버(RPi 4) → Qt 관제 클라이언트 : TCP (v1 평문, 추후 OpenSSL TLS 적용)
+ *  - 중앙 서버(RPi 4) → Qt 관제 클라이언트 : TCP, OpenSSL TLS(선택)
+ *    서버(server/src/config.hpp의 stream_cert_path/stream_key_path)에 인증서를
+ *    설정하면 TLS, 비우면 평문 — 프레임 포맷 자체는 TLS 유무와 무관(전송계층만
+ *    다르다). 인증서 발급은 MQTT/scripts/generate_stream_certs.sh 참고.
  *
  * 스트림 구조: [dbj_vs_header_t][JPEG payload_len 바이트] 의 반복
  *  - 모든 다바이트 필드는 리틀엔디언
@@ -56,6 +59,14 @@ extern "C" {
 #define DBJ_EVT_EGRESS      0x02    /* 침상 이탈 확정 (x,y = 발생 위치) */
 #define DBJ_EVT_VITAL_ABNORMAL 0x03 /* 웨어러블 생체데이터 이상 (x,y 미사용, 0) */
 
+/* ── 서버 → 클라이언트 영상검색 결과 ──────────────────────────
+ * 영상 프레임·이벤트와 같은 TCP 스트림에 섞여 내려온다. Qt는 magic으로 구분한다.
+ * 케어봇(텔레그램)의 "🔍 영상 검색"과 같은 서버 로직(video_search_module)을
+ * Qt 관제 화면에서도 쓸 수 있게 하는 통로 — 질의는 DBJ_CTRL_SEARCH_QUERY(클라→서버,
+ * 아래 제어 메시지 절 참고)로 보내고, 응답은 이 메시지로 돌아온다.
+ * 응답은 요청을 보낸 그 클라이언트에게만 간다(다른 관제 PC로 새지 않음). */
+#define DBJ_SEARCH_MAGIC    0xDB4E  /* 영상검색 결과 시작 식별자 */
+
 /* 제어 메시지 타입 (dbj_ctrl_header_t.type) */
 #define DBJ_CTRL_ROI_SET    0x01    /* 침대 ROI 설정 — 헤더 뒤에 점 배열이 옴 */
 #define DBJ_CTRL_ROI_CLEAR  0x02    /* 침대 ROI 삭제 — 점 배열 없음 */
@@ -86,8 +97,13 @@ extern "C" {
  * roi_zones 테이블에 남기고, 그 침대에서 태어난 추적 객체에 입소자를 귀속시킨다
  * (core/identity_tracker.hpp). resident_id=0 이면 매핑 해제. */
 #define DBJ_CTRL_ROI_BIND     0x09  /* 침대 ↔ 입소자 매핑 — 헤더 뒤 dbj_roi_bind_t */
+/* 영상검색 자연어 질의 — 헤더 뒤에 reserved 바이트 길이의 UTF-8 질의 문자열이
+ * 온다(CAMERA_SET과 같은 재활용 패턴). channel은 검색 범위(그 방만) — 서버는
+ * video_search_module로 처리한 뒤 DBJ_SEARCH_MAGIC 메시지로 이 클라이언트에만 회신한다. */
+#define DBJ_CTRL_SEARCH_QUERY 0x0A  /* 영상검색 질의 — 헤더 뒤 UTF-8 질의 문자열 */
 
 #define DBJ_CAMERA_URL_MAX  512     /* CAMERA_SET URL 문자열 길이 상한 */
+#define DBJ_SEARCH_QUERY_MAX 300    /* SEARCH_QUERY 질의 문자열 길이 상한(UTF-8 바이트) */
 
 /* 위험도 값 정의 (3단계 분기) */
 #define DBJ_RISK_LOW          1       /* 위험도 '하' -> 이탈해도 상관없음 (패스) */
@@ -171,6 +187,13 @@ typedef struct {
     uint16_t y;            /* 발생 위치 정규화 y × DBJ_ROI_COORD_SCALE (없으면 0) */
     uint64_t timestamp_ms; /* 서버 Unix time (밀리초) */
 } dbj_evt_header_t;        /* 18바이트, 페이로드 없음 */
+
+typedef struct {
+    uint16_t magic;        /* DBJ_SEARCH_MAGIC */
+    uint8_t  version;      /* DBJ_VS_VERSION */
+    uint8_t  channel;      /* 요청한 검색 대상 채널 0~3 */
+    uint32_t text_len;     /* 이어지는 UTF-8 답변 텍스트 바이트 수 */
+} dbj_search_result_header_t;  /* 8바이트, 이어서 text_len 바이트 UTF-8 텍스트 */
 
 #pragma pack(pop)
 
