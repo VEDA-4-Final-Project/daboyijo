@@ -44,6 +44,8 @@ qt_add_executable(daboyijo
     mqttqtmanager.h
     alertmatrixpreview.cpp
     alertmatrixpreview.h
+    timelinebar.cpp
+    timelinebar.h
     hub75-font16.h
 )
 
