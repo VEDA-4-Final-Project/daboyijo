@@ -49,8 +49,11 @@ public:
     bool cameraConnected() const { return cameraConnected_; }
 
     // NVR 스타일 오버레이 — 영상 위에 직접 그리는 정보.
+    // 배치는 Wisenet Viewer를 따른다: 좌상단에 [LIVE] + 카메라 이름 한 줄.
     void setOverlayInfo(const QString& info);  // 좌하단 라벨(예: "201호-1 · 전승현")
-    void setLive(bool on);                      // 우상단 LIVE/미연결 표시등
+    // 좌상단 LIVE 배지 옆에 붙는 카메라 이름("CH1 · 김복순"). 비우면 채널 태그만.
+    void setDisplayName(const QString& name);
+    void setLive(bool on);                      // 좌상단 LIVE/미연결 표시등
     bool live() const { return live_; }
     // 영상 모서리를 둥글게(0=직각). 카드(#videoCard/#camStage)의 radius와 맞춰
     // 모서리에 검은 각이 삐져나오지 않게 한다.
@@ -88,6 +91,9 @@ signals:
     void drawModeChanged(int channel, bool on);
     // 그리기 모드가 아닐 때 침대를 클릭 — roiId=-1이면 빈 곳을 눌러 선택 해제
     void zoneSelected(int channel, int roiId);
+    // 타일 아무 곳이나 눌렀다 — 관제 그리드에서 "지금 다루는 채널"을 바꾸는 신호.
+    // zoneSelected와 별개다: 침대를 안 눌러도(빈 영상 위여도) 타일 선택은 일어난다.
+    void tileClicked(int channel);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -116,6 +122,7 @@ private:
     bool cameraConnected_ = false;  // 카메라 연결 상태 (시작 시 미연결)
     int cornerRadius_ = 0;          // 영상 모서리 반경(0=직각)
     QString overlayInfo_;           // 좌하단 오버레이 라벨(병상·이름)
+    QString displayName_;           // 좌상단 LIVE 옆 카메라 이름
     bool live_ = false;             // 우상단 LIVE 표시등 상태
     QString vitalTemp_, vitalHr_;   // 우상단 바이탈(체온·심박) 텍스트
     QColor vitalColor_{0x8B, 0x98, 0xA5};  // 바이탈 상태색(기본 회색)

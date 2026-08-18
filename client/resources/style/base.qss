@@ -306,6 +306,77 @@
            videoview.cpp의 paintEvent()가 같은 상수(kVideoSurface)로 칠하는 영역과
            반드시 같은 검정이어야 카드 테두리 안쪽과 실제 영상 영역의 색이 갈리지 않는다. */
         #videoCard { background: %(videoSurface); border: 1px solid %(border); border-radius: 12px; }
+
+        /* ═══ Wisenet Viewer 스타일 관제 화면 ═══
+           select 토큰은 "여러 개 중 지금 고른 하나"에만 쓴다(선택 타일 테두리,
+           활성 레이아웃 탭, 트리 선택 행). accent(청록)는 그대로 "주요 동작"
+           전용 — 둘을 섞으면 누를 것과 고른 것이 구분되지 않는다. */
+
+        /* 좌측 리소스 패널 */
+        #resourcePanel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+        #resourceHead { color: %(sub); font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
+        #resourceToggle { background: transparent; color: %(sub); border: 1px solid %(border);
+                          border-radius: 4px; font-size: 12px; font-weight: 700; }
+        #resourceToggle:hover { border-color: %(select); color: %(text); }
+        #resourceSearch { background: %(card); color: %(text); border: 1px solid %(border);
+                          border-radius: 4px; padding: 5px 8px; font-size: 12px; }
+        #resourceSearch:focus { border-color: %(select); }
+        #resourceTree { background: transparent; border: none; outline: none; font-size: 12px; }
+        #resourceTree::item { padding: 4px 2px; border: none; border-radius: 3px; }
+        #resourceTree::item:hover { background: %(card); }
+        #resourceTree::item:selected { background: %(select); color: %(onSelect); }
+
+        /* 레이아웃 프리셋 탭 (그리드 위) */
+        #layoutTabBar { background: transparent; border: none; }
+        #layoutTab { background: transparent; color: %(sub); border: 1px solid %(border);
+                     border-radius: 3px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+        #layoutTab:hover { color: %(text); border-color: %(select); }
+        #layoutTab:checked { background: %(select); color: %(onSelect); border-color: %(select); }
+        #layoutRestoreBtn { background: transparent; color: %(sub); border: 1px solid %(border);
+                            border-radius: 3px; padding: 4px 10px; font-size: 12px; }
+        #layoutRestoreBtn:hover { color: %(text); border-color: %(select); }
+
+        /* 관제 그리드 타일 — 각진 모서리 + 선택 시 select 테두리.
+           #videoCard(NVR 탐색·블랙박스 카드)와 일부러 이름을 분리했다. */
+        #gridHost { background: transparent; }
+        /* 비선택 타일도 테두리를 2px로 잡되 투명하게 둔다 — 선택 시 두께가 바뀌면
+           영상 영역이 1px 흔들린다. 화면에는 검은 타일만 보인다(Wisenet과 동일). */
+        #videoTile { background: %(videoSurface); border: 2px solid transparent;
+                     border-radius: 0; }
+        #videoTile[selected="true"] { border: 2px solid %(select); }
+
+        /* 타일 크롬 — 닫기 버튼 / 호버 툴바 */
+        #tileClose { background: rgba(0, 0, 0, 150); color: #E6EDF3; border: none;
+                     border-radius: 3px; font-size: 11px; font-weight: 700; }
+        #tileClose:hover { background: %(critical); color: #FFFFFF; }
+        #tileToolbar { background: rgba(0, 0, 0, 170); border: 1px solid rgba(255, 255, 255, 40);
+                       border-radius: 4px; }
+        #tileToolBtn { background: transparent; color: #E6EDF3; border: none;
+                       border-radius: 3px; font-size: 13px; }
+        #tileToolBtn:hover { background: %(select); color: %(onSelect); }
+
+        /* 하단 트랜스포트 바 */
+        #transportBar { background: %(card); border: 1px solid %(border);
+                        border-bottom: none; border-top-left-radius: 4px;
+                        border-top-right-radius: 4px; }
+        #transportBtn { background: transparent; color: %(text); border: none;
+                        border-radius: 3px; font-size: 13px; }
+        #transportBtn:hover { background: %(panel); color: %(select); }
+        #transportTime { color: %(sub); font-size: 12px; font-weight: 600;
+                         padding-left: 8px; }
+        #transportSpeed { background: %(panel); color: %(text); border: 1px solid %(border);
+                          border-radius: 3px; padding: 3px 8px; font-size: 12px; min-width: 52px; }
+        #transportSpeed::drop-down { border: none; width: 16px; }
+        #modeBtn { background: transparent; color: %(sub); border: 1px solid %(border);
+                   border-radius: 3px; padding: 4px 12px; font-size: 12px; font-weight: 600; }
+        #modeBtn:hover { color: %(text); border-color: %(select); }
+        #modeBtn:checked { background: %(select); color: %(onSelect); border-color: %(select); }
+
+        /* 재생 화면 — 라이브 그리드와 같은 검은 바탕을 쓴다 */
+        #playbackVideo { background: %(videoSurface); }
+        #playbackHint { background: %(videoSurface); color: %(sub); font-size: 13px;
+                        line-height: 20px; }
+
         #video { color: #9AA7B2; font-size: 13px; background: %(videoSurface); border-radius: 12px; }
 
         #vitalScroll { background: transparent; }

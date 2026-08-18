@@ -15,6 +15,7 @@
 #include <QSet>
 #include <QMap>
 #include <QPixmap>
+#include <QColor>
 
 #include <QHash>
 #include <QVector>
@@ -155,6 +156,9 @@ class QPropertyAnimation;
 class QCalendarWidget;
 class QHBoxLayout;
 class ActivityChart;
+class QTreeWidget;
+class QTreeWidgetItem;
+class TimelineBar;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -282,9 +286,77 @@ private:
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     QWidget* videoCards[4] = {};      // 영상 카드(스포트라이트 재배치용)
     QGridLayout* videoGrid = nullptr; // 영상 월 그리드(재배치 대상)
-    int focusedChannel_ = -2;         // 스포트라이트 채널(-1=균등 2×2, -2=아직 미배치)
+    // 마지막으로 실제 적용한 배치의 서명. relayoutGrid()가 이 값과 비교해
+    // 달라졌을 때만 위젯을 옮긴다 — 채널을 고를 때마다 4장을 떼었다 붙이면
+    // 영상이 깜빡인다. -1은 "아직 한 번도 배치 안 함".
+    int gridKey_ = -1;
     // 낙상·침상이탈 감지 시 그 채널을 크게, 나머지는 작게. -1이면 균등 2×2로 복귀.
     void setVideoFocus(int channel);
+    // ── Wisenet Viewer 스타일 관제 화면 구성 (2026-08) ─────────────
+    // 화면을 세 덩어리로 나눈다: [리소스 트리] [레이아웃 탭 + 영상 그리드 +
+    // 타임라인] [바이탈 패널]. 그리드 배치는 "프리셋(gridLayout_) × 선택 채널
+    // (selectedChannel_) × 숨긴 타일(tileHidden_)" 세 상태의 함수이며,
+    // 그 셋 중 무엇이 바뀌든 relayoutGrid() 한 곳에서만 배치가 결정된다 —
+    // 배치 코드가 여러 갈래로 흩어지면 경보 스포트라이트와 사용자가 고른
+    // 레이아웃이 서로를 덮어써 어긋난다.
+    enum class GridLayout { Quad, Spotlight, Single };
+    GridLayout gridLayout_ = GridLayout::Quad;
+    int  selectedChannel_ = 0;      // 지금 조작 대상 채널(선택 강조색 테두리)
+    bool tileHidden_[4] = {};       // 타일 ×로 레이아웃에서 뺀 채널(카메라 해제 아님)
+    void relayoutGrid();            // 위 세 상태 → videoGrid 실제 배치
+    void setGridLayout(GridLayout mode);
+    void selectChannel(int ch);     // 타일 선택 + 리소스 트리 강조 동기화
+    void setTileHidden(int ch, bool hidden);
+    QString channelDisplayName(int ch) const;   // "CH1 · 김복순" (타일/트리 공용)
+
+    // 좌측 리소스 패널 — Root > 그룹 > CH01~04 + 레이아웃 프리셋.
+    QWidget* buildResourcePanel();
+    void     refreshResourceTree();          // 카메라 연결/입소자 변경 시 라벨·색 갱신
+    void     setResourceCollapsed(bool on);
+    QFrame*          resourcePanel_ = nullptr;
+    QTreeWidget*     resourceTree_ = nullptr;
+    QLineEdit*       resourceSearch_ = nullptr;
+    QPushButton*     resourceToggle_ = nullptr;
+    QWidget*         resourceBody_ = nullptr;   // 접을 때 숨기는 부분(검색+트리)
+    bool             resourceCollapsed_ = false;
+    QTreeWidgetItem* camItems_[4] = {};
+
+    // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
+    QWidget*     buildLayoutTabs();
+    QWidget*     buildTileChrome(int channel, QWidget* card);
+    void         saveChannelSnapshot(int channel);   // 타일 툴바 스냅샷 저장
+    QPushButton* layoutTabBtns_[3] = {};
+    QPushButton* tileCloseBtns_[4] = {};
+    QWidget*     tileToolbars_[4] = {};
+
+    // ── 하단 타임라인 + 재생바 ──────────────────────────────────
+    // 라이브/재생 전환은 영상 영역을 통째로 갈아끼운다(liveOrPlaybackStack_):
+    // 0 = 실시간 그리드, 1 = NVR 재생 화면. 소켓 프레임은 라이브에서만 보이고
+    // 재생 중에도 계속 수신은 된다 — 되돌아오면 곧바로 최신 화면이 뜬다.
+    QWidget* buildTransportBar();
+    void     refreshTimeline();              // NVR 세그먼트·이벤트 → 타임라인 반영
+    void     setPlaybackMode(bool on);
+    void     seekPlaybackTo(qint64 ms);      // 그 시각을 담은 세그먼트를 찾아 재생
+    TimelineBar*    timeline_ = nullptr;
+    QStackedWidget* liveOrPlaybackStack_ = nullptr;
+    QVideoWidget*   playbackVideo_ = nullptr;
+    // 재생 모드로 막 넘어왔을 때(아직 시각을 안 고른 상태)와 그 시각에 녹화가
+    // 없을 때 보여주는 안내. 검은 화면만 띄우면 "고장인가"로 읽힌다.
+    QLabel*         playbackPlaceholder_ = nullptr;
+    QMediaPlayer*   playbackPlayer_ = nullptr;
+    QPushButton*    liveModeBtn_ = nullptr;
+    QPushButton*    playbackModeBtn_ = nullptr;
+    QPushButton*    transportPlayBtn_ = nullptr;
+    QLabel*         transportTimeLabel_ = nullptr;
+    QComboBox*      transportSpeedCombo_ = nullptr;
+    QTimer          timelineTimer_;          // 라이브일 때 창을 "지금"에 맞춰 미는 타이머
+    bool            playbackMode_ = false;
+    qint64          playbackSegStartMs_ = 0; // 지금 재생 중인 세그먼트의 시작 시각
+    // 낙상·침상이탈이 난 시각 — 타임라인 마커. 이벤트 로그와 별개로 가볍게 들고 있는다.
+    struct TimelineEvent { qint64 atMs; int channel; QColor color; };
+    QVector<TimelineEvent> timelineEvents_;
+    void pushTimelineEvent(int channel, qint64 atMs, const QColor& color);
+
     // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
     // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
     QString lastCameraUrl_[4];

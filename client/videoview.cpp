@@ -69,6 +69,12 @@ void VideoView::setOverlayInfo(const QString& info) {
     update();
 }
 
+void VideoView::setDisplayName(const QString& name) {
+    if (displayName_ == name) return;
+    displayName_ = name;
+    update();
+}
+
 void VideoView::setLive(bool on) {
     if (live_ == on) return;
     live_ = on;
@@ -309,57 +315,58 @@ void VideoView::paintEvent(QPaintEvent*) {
         for (const auto& pt : poly) p.drawEllipse(pt, 4, 4);
     }
 
-    // ── NVR 스타일 오버레이 (영상 위 정보: 채널·이름 / LIVE) ──
+    // ── 타일 오버레이 (Wisenet Viewer 배치: 좌상단 [LIVE] 카메라 이름) ──
+    // 예전엔 CH태그가 좌하단, LIVE가 우상단으로 흩어져 있었다. 4분할에서 눈이
+    // 두 모서리를 오가야 해서 "몇 번 채널이 살아있나"를 한 번에 못 읽는다.
+    // 한 줄로 붙이면 왼쪽 위만 훑어도 채널·상태·사람이 동시에 들어온다.
+    // (우상단은 타일 닫기 버튼 자리라 비워 둔다 — mainwindow가 그 위에 얹는다.)
     {
         const int m = 8;
-
-        // 좌하단: CH 태그(청록) + 병상·이름(회백), 반투명 검정 캡슐 위에.
         QFont lf = font();
         lf.setBold(true);
         p.setFont(lf);
         const QFontMetrics fm(lf);
-        const QString chTag = QStringLiteral("CH%1").arg(channel_ + 1);
-        const QString info = overlayInfo_;
-        const int gap = info.isEmpty() ? 0 : 8;
-        const int chW = fm.horizontalAdvance(chTag);
-        const int infoW = fm.horizontalAdvance(info);
-        const int boxH = fm.height() + 8;
-        const int boxW = 10 + chW + gap + infoW + 10;
-        QRectF box(m, height() - m - boxH, boxW, boxH);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, 145));
-        p.drawRoundedRect(box, 5, 5);
-        qreal tx = box.left() + 10;
-        p.setPen(QColor(0x17, 0xC7, 0xB6));
-        p.drawText(QRectF(tx, box.top(), chW + 2, box.height()),
-                   Qt::AlignVCenter | Qt::AlignLeft, chTag);
-        if (!info.isEmpty()) {
-            tx += chW + gap;
-            p.setPen(QColor(0xE6, 0xED, 0xF3));
-            p.drawText(QRectF(tx, box.top(), infoW + 2, box.height()),
-                       Qt::AlignVCenter | Qt::AlignLeft, info);
-        }
 
-        // 우상단: LIVE(빨강 점) / 미연결(회색 점) 표시등.
-        QFont sf = font();
-        sf.setBold(true);
-        p.setFont(sf);
-        const QFontMetrics sfm(sf);
         const QString st = live_ ? QStringLiteral("LIVE") : QStringLiteral("미연결");
         const QColor dotc = live_ ? QColor(0xFF, 0x5A, 0x5F) : QColor(0x8B, 0x98, 0xA5);
+        const QString name = displayName_.isEmpty()
+                                 ? QStringLiteral("CH%1").arg(channel_ + 1)
+                                 : displayName_;
+
         const qreal dr = 6;
-        const int stW = sfm.horizontalAdvance(st);
-        const int pillH = sfm.height() + 6;
-        const int pillW = 8 + int(dr) + 6 + stW + 8;
-        QRectF pill(width() - m - pillW, m, pillW, pillH);
+        const int stW = fm.horizontalAdvance(st);
+        const int nameW = fm.horizontalAdvance(name);
+        const int boxH = fm.height() + 6;
+        const int boxW = 8 + int(dr) + 6 + stW + 10 + nameW + 9;
+        QRectF box(m, m, boxW, boxH);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0, 0, 0, 145));
-        p.drawRoundedRect(pill, pillH / 2.0, pillH / 2.0);
+        p.setBrush(QColor(0, 0, 0, 155));
+        p.drawRoundedRect(box, 4, 4);
+
+        // 상태 점 + LIVE
         p.setBrush(dotc);
-        p.drawEllipse(QPointF(pill.left() + 8 + dr / 2, pill.center().y()), dr / 2, dr / 2);
-        p.setPen(QColor(0xE6, 0xED, 0xF3));
-        p.drawText(QRectF(pill.left() + 8 + dr + 6, pill.top(), stW + 4, pill.height()),
+        p.drawEllipse(QPointF(box.left() + 8 + dr / 2, box.center().y()), dr / 2, dr / 2);
+        qreal tx = box.left() + 8 + dr + 6;
+        p.setPen(live_ ? QColor(0xFF, 0xFF, 0xFF) : QColor(0x8B, 0x98, 0xA5));
+        p.drawText(QRectF(tx, box.top(), stW + 2, box.height()),
                    Qt::AlignVCenter | Qt::AlignLeft, st);
+        // 카메라 이름 — 항상 밝은 회백으로, LIVE보다 한 톤 낮게.
+        tx += stW + 10;
+        p.setPen(QColor(0xE6, 0xED, 0xF3));
+        p.drawText(QRectF(tx, box.top(), nameW + 2, box.height()),
+                   Qt::AlignVCenter | Qt::AlignLeft, name);
+
+        // 좌하단 보조 라벨(병상·이름 등) — 지정됐을 때만.
+        if (!overlayInfo_.isEmpty()) {
+            const int iw = fm.horizontalAdvance(overlayInfo_);
+            QRectF ib(m, height() - m - boxH, iw + 20, boxH);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 145));
+            p.drawRoundedRect(ib, 4, 4);
+            p.setPen(QColor(0xE6, 0xED, 0xF3));
+            p.drawText(ib.adjusted(10, 0, -10, 0),
+                       Qt::AlignVCenter | Qt::AlignLeft, overlayInfo_);
+        }
     }
 
     // 그리기 모드 안내 배너 — 지금 몇 번 침대를 그리는 중인지 같이 보여준다
@@ -405,6 +412,10 @@ void VideoView::paintEvent(QPaintEvent*) {
 }
 
 void VideoView::mousePressEvent(QMouseEvent* e) {
+    // 그리기 중이든 아니든, 왼쪽 클릭은 언제나 "이 타일을 고른다"를 겸한다.
+    // 침대를 안 눌러도 타일 선택은 일어나야 관제 그리드에서 대상 채널이 바뀐다.
+    if (e->button() == Qt::LeftButton) emit tileClicked(channel_);
+
     if (!drawMode_) {
         // 그리기 중이 아니면 클릭은 "이 침대를 편집 대상으로 고른다"는 뜻.
         // 빈 곳을 누르면 선택 해제(-1).
