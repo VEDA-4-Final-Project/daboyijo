@@ -15,6 +15,7 @@ const char* kHelp =
     "🤖 케어봇 사용법\n"
     "· 아무 메시지나 보내면 버튼 메뉴가 나와요.\n"
     "· 📷 지금 상황 보기 : 방 상황을 사진과 함께 알려드려요\n"
+    "· 🔍 영상 검색 : \"어제 저녁에 낙상 있었어?\"처럼 물어보면 지난 기록을 찾아드려요\n"
     "· 📞 연락처 : 요양사·관리자 연락처\n"
     "· 🔕/🔔 알림 : 오늘 이 방 침상 이탈 알림을 껐다 켰다 (자정 자동 해제)\n"
     "  ※ 낙상 알림은 안전상 무음과 무관하게 항상 전송돼요.";
@@ -30,10 +31,37 @@ const char* kNowQuestion =
 
 }  // namespace
 
-// 내용과 무관하게 버튼 메뉴를 띄운다.
+// 기본은 내용과 무관하게 버튼 메뉴를 띄운다 — 단, 🔍 영상 검색 버튼을 누른
+// 직후의 chat_id는 예외로, 이번 메시지를 검색 질의로 소비한다(1회성).
 void CareQaModule::handleMessage(int channel, const std::string& chat_id,
                                  const std::string& text) {
-    (void)text;  // 메시지 내용은 쓰지 않는다 — 뭘 쓰든 메뉴로 안내
+    bool awaitingSearch = false;
+    {
+        std::lock_guard<std::mutex> lock(search_mutex_);
+        auto it = awaiting_search_.find(chat_id);
+        if (it != awaiting_search_.end()) {
+            awaiting_search_.erase(it);
+            awaitingSearch = true;
+        }
+    }
+    if (awaitingSearch) {
+        if (channel < 0) {
+            telegram_.sendMessage(chat_id,
+                "보호자 계정에 방(채널)이 연결돼 있지 않아 검색할 수 없어요. "
+                "관리자에게 telegram_chat_id_<채널번호> 설정을 요청해 주세요.");
+            sendMenu(channel, chat_id);
+            return;
+        }
+        // Gemini+DB 왕복은 폴링 루프를 막지 않도록 detached 스레드에서(now와 동일 패턴).
+        std::thread([this, channel, chat_id, text]() {
+            const std::string answer = video_search_.search(channel, text);
+            telegram_.sendMessage(chat_id, answer);
+            sendMenu(channel, chat_id);
+        }).detach();
+        return;
+    }
+
+    (void)text;  // 검색 대기 중이 아니면 내용은 쓰지 않는다 — 뭘 쓰든 메뉴로 안내
     sendMenu(channel, chat_id);
 }
 
@@ -52,6 +80,7 @@ void CareQaModule::sendMenu(int channel, const std::string& chat_id) {
     };
     nlohmann::json row_now = nlohmann::json::array();
     row_now.push_back(button("📷 지금 상황 보기", "now"));
+    row_now.push_back(button("🔍 영상 검색", "search"));
     nlohmann::json row_info = nlohmann::json::array();
     row_info.push_back(button("📞 연락처", "contact"));
     row_info.push_back(button("ℹ️ 도움말", "help"));
@@ -144,6 +173,26 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             telegram_.sendPhoto(chat_id, frames.back(), "지금 상황 📷");
             sendMenu(channel, chat_id);  // 상황 설명·사진 전송 후 메뉴 다시 표시
         }).detach();
+        return;
+    }
+
+    // ── 🔍 영상 검색 ──
+    if (data == "search") {
+        if (channel < 0) {
+            telegram_.sendMessage(chat_id,
+                "보호자 계정에 방(채널)이 연결돼 있지 않아요. 관리자에게 "
+                "telegram_chat_id_<채널번호> 설정을 요청해 주세요.");
+            sendMenu(channel, chat_id);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(search_mutex_);
+            awaiting_search_.insert(chat_id);
+        }
+        telegram_.sendMessage(chat_id,
+            "🔎 찾으시는 상황을 말씀해 주세요.\n"
+            "예: \"어제 저녁에 낙상 있었어?\", \"오늘 오전에 침대에서 나간 적 있어?\"");
+        // 메뉴는 다시 안 띄운다 — 지금은 다음 메시지를 검색어로 기다리는 중.
         return;
     }
 

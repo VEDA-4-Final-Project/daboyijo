@@ -20,6 +20,19 @@
 # Qt 클라이언트 영상 송출 포트 (생략 시 5500)
 stream_port=5500
 
+# 영상 스트림 TLS. 둘 다 비우면 평문(기존 동작). 인증서는
+# MQTT/scripts/generate_stream_certs.sh 로 발급(기존 DavoCA 재사용) — Pi A는
+# streamA.crt/key, Pi B는 streamB.crt/key. Qt 쪽은 certs/ca.crt(MQTT용과 동일
+# 파일) 유무로 TLS 여부를 스스로 판단하므로 클라이언트 설정은 따로 안 건드려도 됨.
+# 경로 하나만 있고 나머지가 비어 있으면(설정 실수) 서버가 시작하지 않는다.
+#stream_cert_path=config/streamA.crt
+#stream_key_path=config/streamA.key
+
+# [영상검색] 케어봇 "🔍 영상 검색" 결과에 넣을 클립 링크용, 이 Pi 자신의 IP.
+# 서버는 자기 IP를 스스로 모른다 — Qt가 붙는 주소(kDefaultHostA/B)와 같은 값.
+# 미설정 시 링크 대신 "관제 화면에서 확인" 문구로 대체(기능은 그대로 동작).
+#public_host=172.20.32.51
+
 # 보호자 알림 (텔레그램) — 봇 토큰이 없거나 채널에 쓸 chat_id가 없으면 그 채널 알림은 비활성
 # 1. @BotFather에게 /newbot → 발급받은 토큰을 telegram_bot_token에 (봇은 서버 전체에 하나)
 # 2. 알림 받을 사람이 그 봇과 대화 시작(/start) → 아래로 chat_id 확인

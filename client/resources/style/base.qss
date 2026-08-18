@@ -399,6 +399,44 @@
                                          padding: 9px 8px; font-weight: 700; }
         #logTable::item:selected { background: %(accent); color: %(onAccent); }
 
+        /* NVR(연속녹화) 탐색 — QComboBox/QListWidget은 objectName 없이 두면
+           플랫폼 기본 팔레트(대개 흰 배경)로 그려져 다크 테마에서 튄다.
+           #logTable/#filterBar QComboBox와 같은 원리로 이름 붙여 명시적으로 칠한다. */
+        #nvrChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
+                           border-radius: 8px; padding: 5px 10px; }
+        #nvrChannelCombo QAbstractItemView { background: %(card); color: %(text);
+                                             outline: none;
+                                             selection-background-color: %(accent);
+                                             selection-color: %(onAccent); }
+        #nvrRefreshBtn, #nvrJumpButton, #clipDownloadButton {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 8px; padding: 5px 12px; font-weight: 700; }
+        #nvrRefreshBtn:hover, #nvrJumpButton:hover, #clipDownloadButton:hover { border-color: %(accent); }
+        #nvrJumpButton:disabled, #clipDownloadButton:disabled { color: %(sub); border-color: %(border); }
+        #nvrSegmentList { background: %(panel); color: %(text); border: 1px solid %(border);
+                          border-radius: 12px; outline: none; }
+        #nvrSegmentList::item { padding: 6px 10px; border: none; }
+        #nvrSegmentList::item:selected { background: %(accent); color: %(onAccent); }
+
+        /* 영상검색(🔍) — NVR 탐색과 같은 이유로 objectName마다 명시적으로 칠한다. */
+        #searchChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
+                              border-radius: 8px; padding: 5px 10px; }
+        #searchChannelCombo QAbstractItemView { background: %(card); color: %(text);
+                                                outline: none;
+                                                selection-background-color: %(accent);
+                                                selection-color: %(onAccent); }
+        #searchQueryEdit { background: %(card); color: %(text); border: 1px solid %(border);
+                           border-radius: 8px; padding: 5px 10px; }
+        #searchQueryEdit:focus { border-color: %(accent); }
+        #searchButton {
+            background: %(card); color: %(text); border: 1px solid %(border);
+            border-radius: 8px; padding: 5px 14px; font-weight: 700; }
+        #searchButton:hover { border-color: %(accent); }
+        #searchButton:disabled { color: %(sub); border-color: %(border); }
+        #searchResultBrowser { background: %(panel); color: %(text); border: 1px solid %(border);
+                               border-radius: 12px; padding: 6px 10px; }
+        #searchResultBrowser a { color: %(accent); }
+
 /* ── TAB3: DB 관리 ── */
 
 QLabel {

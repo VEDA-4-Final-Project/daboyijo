@@ -8,7 +8,10 @@
 #include "mqttqtmanager.h"
 #include "alertmatrixpreview.h"
 #include <QHostAddress>
-#include <QCoreApplication>   // MQTT CA 인증서를 실행 파일 기준 경로에서 찾는다
+#include <QSslConfiguration>
+#include <QSslCertificate>
+#include <QSslError>
+#include <QCoreApplication>   // MQTT/영상 스트림 CA 인증서를 실행 파일 기준 경로에서 찾는다
 #include <QFile>
 #include <QPixmap>
 #include <QDateTime>
@@ -33,6 +36,7 @@
 #include <QPushButton>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include <QTableWidget>
 #include <QHeaderView>
@@ -256,6 +260,16 @@ QString serverHost(int idx) {
 // 매핑은 MainWindow::serverForChannel과 동일하게 유지할 것 (ch0,1→0 / ch2172.20.32.39,3→1).
 QString hostForChannel(int ch) { return serverHost(ch < 2 ? 0 : 1); }
 
+// 이 카메라(4채널) 한 대가 담당하는 방 이름. 지금은 room이 항상 하나뿐이라
+// 값 하나로 충분하지만, 카메라를 더 붙여 room이 늘어나면 이 자리가 목록(예:
+// QStringList)으로 바뀌는 지점이다 — serverHost()/hostForChannel()과 같은
+// 패턴으로 QSettings에서 읽어와 하드코딩을 피한다.
+const char* kSettingsRoomName = "room/name";
+QString currentRoomName() {
+    QSettings s;
+    return s.value(kSettingsRoomName, QStringLiteral("101호")).toString();
+}
+
 // MQTT 브로커 주소. 영상 서버와 같은 라즈베리에 띄우는 경우가 많아 기본값을
 // Pi A 와 같게 뒀지만, 브로커만 따로 두는 구성도 있어 설정으로 분리했다.
 const char* kSettingsBrokerHost = "mqtt/brokerHost";
@@ -279,6 +293,22 @@ QString brokerCaPath() {
                        + QStringLiteral("/certs/ca.crt")).toString();
 }
 
+// 영상 스트림 서버(Pi) 검증용 CA. MQTT 브로커와 같은 CA(DavoCA)로 서명하므로
+// 기본값은 brokerCaPath()와 같은 파일 — 새 인증서를 발급해도 이 파일 하나만
+// certs/에 있으면 되고, 배포된 클라이언트를 다시 건드릴 일이 없다.
+QString streamCaPath() {
+    QSettings s;
+    return s.value(QStringLiteral("stream/caCert"),
+                   QCoreApplication::applicationDirPath()
+                       + QStringLiteral("/certs/ca.crt")).toString();
+}
+
+// 영상 서버(Pi) 인증서에 적힌 이름(CN). MQTT/scripts/generate_stream_certs.sh 의
+//   openssl req -new -key streamA.key ... -subj "/CN=DaboStreamA"
+// 와 반드시 같아야 한다(인덱스: 0=Pi A, 1=Pi B, MainWindow::kNumServers와 같은 크기
+// 여야 하나 private static이라 여기서 직접 참조는 못 해 리터럴 2로 둔다).
+const char* kStreamCommonName[2] = {"DaboStreamA", "DaboStreamB"};
+
 // 이 시간이 지나도록 새 값이 안 오면 화면의 생체값을 "--" 로 되돌린다.
 // 웨어러블이 빠졌거나 중계 노드가 죽은 걸 관제사가 알아야 하는데, 마지막 값이
 // 계속 떠 있으면 멀쩡한 줄 안다.
@@ -291,8 +321,16 @@ constexpr int kHrHistoryMax = 40;
 constexpr quint16 kServerPort = 5500;
 constexpr int kReconnectDelayMs = 3000;   // 끊김 후 재접속 간격
 
+// 이 시간 동안 새 프레임이 안 오면 소켓은 붙어있어도 "신호 끊김"으로 본다.
+// 정상 송출은 목표 15fps(≈67ms 간격)라 5초면 순간 지터가 아니라 진짜 정지다.
+constexpr int kChannelStaleTimeoutMs = 5000;
+constexpr int kChannelHealthCheckMs  = 2000;   // 정지 판정 점검 주기
+
 // 블랙박스 클립 HTTP 서버 포트 (server/src/main.cpp의 kClipHttpPort와 동일하게 유지)
 constexpr quint16 kClipHttpPort = 5501;
+
+// NVR(연속녹화) 클립 HTTP 서버 포트 (server/src/config.hpp의 nvr_http_port 기본값과 동일하게 유지)
+constexpr quint16 kNvrHttpPort = 5502;
 
 // 블랙박스 재생 실패(=서버가 아직 파일 저장 중) 시 재시도 간격·횟수.
 // 서버는 낙상 후 post초(현재 5초)를 더 녹화한 뒤에야 파일을 완성하므로,
@@ -400,9 +438,31 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     // 2. 서버별 소켓 생성 및 시그널 연결 (2-Pi: 소켓 kNumServers개)
     //    수신 슬롯 onReadyRead는 sender()로 어느 소켓이 신호를 냈는지 구분한다.
     for (int i = 0; i < kNumServers; ++i) {
-        sockets[i] = new QTcpSocket(this);
+        sockets[i] = new QSslSocket(this);
         connect(sockets[i], &QTcpSocket::readyRead, this, &MainWindow::onReadyRead);
         connect(sockets[i], &QTcpSocket::stateChanged, this, &MainWindow::onSocketStateChanged);
+        // MQTT(mqttqtmanager.cpp)와 같은 이유의 같은 예외 처리 — 우리 서버 인증서는
+        // 공인 CA가 아니라 자체 CA(DavoCA)가 서명했고, IP로 접속하는데 인증서 SAN이
+        // 그 IP와 완전히 일치하지 않을 수 있어 이름불일치(HostNameMismatch)만 딱
+        // 짚어 CN이 기대값(DaboStreamA/B)일 때만 눈감아준다. 그 외 에러(서명 위조,
+        // 만료 등)는 그대로 연결 실패로 남는다.
+        QSslSocket* sock = sockets[i];
+        connect(sock, &QSslSocket::sslErrors, this,
+                [sock, i](const QList<QSslError>& errors) {
+                    QList<QSslError> ignorable;
+                    for (const QSslError& e : errors) {
+                        if (e.error() != QSslError::HostNameMismatch) continue;
+                        const QStringList cn =
+                            e.certificate().subjectInfo(QSslCertificate::CommonName);
+                        if (cn.contains(QLatin1String(kStreamCommonName[i]))) {
+                            ignorable.append(e);
+                        } else {
+                            qWarning() << "[영상서버] 인증서 이름이 다릅니다. 기대:"
+                                       << kStreamCommonName[i] << "실제:" << cn;
+                        }
+                    }
+                    if (!ignorable.isEmpty()) sock->ignoreSslErrors(ignorable);
+                });
     }
 
     // 3. 명세서 스펙: 5500번 포트로 즉시 접속 (IP 주소는 RPi 주소 입력)
@@ -420,6 +480,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     connect(&vitalsTimer, &QTimer::timeout, this, &MainWindow::updateVitals);
     vitalsTimer.start(2000);
     updateVitals();
+
+    // 메인 화면 채널 상태 배지(LIVE/미연결)가 소켓 상태만으로는 못 잡는 "카메라
+    // 쪽만 멎은" 경우까지 반영하도록 주기 점검한다.
+    connect(&channelHealthTimer, &QTimer::timeout, this, &MainWindow::checkChannelHealth);
+    channelHealthTimer.start(kChannelHealthCheckMs);
 
     // MQTT 브로커 접속 — 웨어러블 생체·낙상을 받고, 알림 노드에 제어 명령을 보낸다.
     // 영상 경로(TCP 5500)와는 완전히 별개의 연결이다.
@@ -511,6 +576,8 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
                 const QString clipUrl = QStringLiteral("http://%1:%2/%3")
                                              .arg(host).arg(kClipHttpPort).arg(fileName);
                 dtItem->setData(Qt::UserRole, clipUrl);
+                dtItem->setData(Qt::UserRole + 1, channel);
+                dtItem->setData(Qt::UserRole + 2, timestampMs);
 
                 logTable->setItem(row, 0, dtItem);
                 logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
@@ -763,9 +830,10 @@ void MainWindow::buildUi()
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
-    // 상시 노출용 경보 배너(#alertBanner) — dashboardTab 최상단, body 위.
-    // 좌우는 body와 같은 세로선에 맞추고(18px) 상하는 최소로 둔다 — QSS가
-    // 이미 padding 24px 32px를 준다(ALERT-03 / D-01).
+    // 경보 배너(#alertBanner) — dashboardTab 최상단, body 위. 활성 경보가
+    // 있을 때만 보이고 0건이면 숨는다. 좌우는 body와 같은 세로선에 맞추고
+    // (18px) 상하는 최소로 둔다 — QSS가 이미 padding 24px 32px를 준다
+    // (ALERT-03 / D-01).
     alertBanner_ = new AlertBanner();
     alertBanner_->setContentsMargins(18, 12, 18, 0);
 
@@ -1329,8 +1397,9 @@ void MainWindow::rebuildVitalCards()
     struct TargetEntry { int key; QString name; QString bedText; };
     QVector<TargetEntry> target;
     target.reserve(8);
+    const QString room = currentRoomName();
     for (int ch = 0; ch < 4; ++ch) {
-        const QString bedText = QStringLiteral("채널 %1").arg(ch + 1);
+        const QString bedText = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
         const QVector<int>& ids = residentsByChannel_[ch];
 
         // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
@@ -1432,6 +1501,25 @@ QWidget* MainWindow::buildEventLogTab()
     bbHint->setWordWrap(true);
     right->addWidget(bbHint);
     right->addWidget(buildBlackboxPlayer(), 1);
+
+    auto* actionRow = new QHBoxLayout();
+    nvrJumpButton = new QPushButton(QStringLiteral("이 시점 NVR에서 이어보기"));
+    nvrJumpButton->setObjectName("nvrJumpButton");
+    nvrJumpButton->setCursor(Qt::PointingHandCursor);
+    nvrJumpButton->setEnabled(false);   // 로그에서 이벤트를 열기 전까진 대상이 없음
+    connect(nvrJumpButton, &QPushButton::clicked, this, &MainWindow::jumpToNvrContext);
+    actionRow->addWidget(nvrJumpButton, 1);
+
+    clipDownloadButton = new QPushButton(QStringLiteral("다운로드"));
+    clipDownloadButton->setObjectName("clipDownloadButton");
+    clipDownloadButton->setCursor(Qt::PointingHandCursor);
+    clipDownloadButton->setEnabled(false);   // 재생된 클립이 있어야 저장할 게 있음
+    connect(clipDownloadButton, &QPushButton::clicked, this, &MainWindow::downloadCurrentClip);
+    actionRow->addWidget(clipDownloadButton);
+    right->addLayout(actionRow);
+
+    right->addWidget(buildNvrBrowser());
+    right->addWidget(buildVideoSearchPanel());
     body->addLayout(right, 4);
 
     outer->addLayout(body, 1);
@@ -1700,9 +1788,14 @@ QWidget* MainWindow::buildSearchFilters()
             [this](const QDate&) { applyLogFilters(true); });
 
     filterRoom = new QComboBox();
-    filterRoom->addItems({QStringLiteral("전체 병실"), QStringLiteral("201호-1"),
-                          QStringLiteral("201호-2"), QStringLiteral("201호-3"),
-                          QStringLiteral("201호-4")});
+    // 카메라(4채널) 한 대 = 방 하나. 지금은 room이 하나뿐이라 목록도 하나지만,
+    // 카메라가 늘어나면 currentRoomName() 자리가 room 목록으로 바뀌면서 여기도
+    // 자연히 늘어나는 구조 — 로그 위치 문구("{room} · 채널 N")와 접두어를 맞춰야
+    // applyLogFilters()의 startsWith 매칭이 먹는다.
+    filterRoom->addItem(QStringLiteral("전체 병실"));
+    filterRoom->addItem(currentRoomName());
+    connect(filterRoom, &QComboBox::currentTextChanged,
+            this, [this](const QString&) { applyLogFilters(true); });
 
     filterEventType = new QComboBox();
     filterEventType->addItems({QStringLiteral("전체 이벤트"), QStringLiteral("낙상"),
@@ -1824,6 +1917,12 @@ QWidget* MainWindow::buildBlackboxPlayer()
         blackboxSeek->setRange(0, static_cast<int>(dur));
         blackboxTimeLabel->setText(formatMs(blackboxPlayer->position()) +
                                    QStringLiteral(" / ") + formatMs(dur));
+        // playBlackboxClipAt()이 예약해둔 탐색 위치 — 길이가 확정된 지금이
+        // setPosition을 걸 수 있는 시점(그 전엔 무시되거나 씹힐 수 있음).
+        if (blackboxPendingSeekMs_ >= 0) {
+            blackboxPlayer->setPosition(qBound<qint64>(0, blackboxPendingSeekMs_, dur));
+            blackboxPendingSeekMs_ = -1;
+        }
     });
     // 재생 위치 변화 → 슬라이더/시간 갱신. 단, 사용자가 슬라이더를 잡고
     // 있는 동안은 덮어쓰지 않는다(안 그러면 드래그가 튕긴다).
@@ -1892,6 +1991,312 @@ void MainWindow::playBlackboxClip(const QString& url)
     blackboxPlayer->setSource(QUrl());
     blackboxPlayer->setSource(QUrl(url));
     blackboxPlayer->play();
+
+    if (clipDownloadButton) clipDownloadButton->setEnabled(true);
+}
+
+// blackboxUrl로 재생을 시작하되, 길이가 확정되면(durationChanged) 한 번 지정
+// 위치로 탐색한다 — 이벤트↔NVR 연결에서 "그 시점 근처로 이동"할 때 사용.
+void MainWindow::playBlackboxClipAt(const QString& url, qint64 seekMs)
+{
+    blackboxPendingSeekMs_ = qMax<qint64>(0, seekMs);
+    playBlackboxClip(url);
+}
+
+// 로그에서 선택된 이벤트(selectedEventChannel_/selectedEventTimestampMs_)를
+// 담고 있는 NVR 세그먼트를 nvrSegments_에서 찾아 그 시점으로 재생한다.
+// 매칭 규칙: 같은 채널에서 시작시각이 이벤트 시각보다 앞선 것 중 가장 늦게
+// 시작한 세그먼트(=그 시각을 담고 있을 세그먼트) — 세그먼트 길이는 클라가
+// 몰라 정확한 종료시각 검증은 못 하지만, 서버 로테이션이 순차적이라 이걸로
+// 충분하다.
+void MainWindow::jumpToNvrContext()
+{
+    if (selectedEventChannel_ < 0 || selectedEventTimestampMs_ < 0) return;
+
+    bool found = false;
+    NvrSegmentInfo best;
+    for (const auto& seg : nvrSegments_) {
+        if (seg.channel != selectedEventChannel_) continue;
+        if (seg.startMs > selectedEventTimestampMs_) continue;
+        if (!found || seg.startMs > best.startMs) {
+            best = seg;
+            found = true;
+        }
+    }
+    if (!found) {
+        QMessageBox::information(this, QStringLiteral("NVR 없음"),
+            QStringLiteral("이 시점에 해당하는 NVR 녹화를 찾을 수 없습니다.\n"
+                           "(보존기간 경과, 미녹화 구간, 또는 아직 목록을 못 받아왔을 수 있습니다 — "
+                           "새로고침 후 다시 시도해보세요.)"));
+        return;
+    }
+    playBlackboxClipAt(best.url, selectedEventTimestampMs_ - best.startMs);
+}
+
+// 현재 재생기에 로드된 클립(블랙박스든 NVR이든 — blackboxUrl 하나로 공용)을
+// 사용자가 고른 위치에 로컬 파일로 저장한다.
+void MainWindow::downloadCurrentClip()
+{
+    if (blackboxUrl.isEmpty()) return;
+
+    const QUrl srcUrl(blackboxUrl);
+    const QString suggestedName = srcUrl.fileName();
+    const QString savePath = QFileDialog::getSaveFileName(
+        this, QStringLiteral("클립 저장"), suggestedName,
+        QStringLiteral("영상 파일 (*.mp4)"));
+    if (savePath.isEmpty()) return;   // 사용자가 취소
+
+    auto* manager = new QNetworkAccessManager(this);
+    QNetworkReply* reply = manager->get(QNetworkRequest(srcUrl));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, savePath]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            QMessageBox::warning(this, QStringLiteral("다운로드 실패"), reply->errorString());
+            return;
+        }
+        QFile file(savePath);
+        if (!file.open(QIODevice::WriteOnly)) {
+            QMessageBox::warning(this, QStringLiteral("다운로드 실패"),
+                QStringLiteral("파일을 저장할 수 없습니다: %1").arg(savePath));
+            return;
+        }
+        file.write(reply->readAll());
+        file.close();
+        QMessageBox::information(this, QStringLiteral("다운로드 완료"),
+            QStringLiteral("저장됨: %1").arg(savePath));
+    });
+}
+
+// NVR(연속녹화) 탐색 — 채널 콤보 + 세그먼트 목록. 재생기는 새로 안 만들고
+// 위의 블랙박스 재생기(blackboxPlayer 등)를 그대로 재사용한다.
+QWidget* MainWindow::buildNvrBrowser()
+{
+    auto* card = new QFrame();
+    card->setObjectName("videoCard");
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setSpacing(6);
+
+    auto* cap = new QLabel(QStringLiteral("NVR 연속녹화"));
+    cap->setObjectName("panelTitle");
+    lay->addWidget(cap);
+
+    auto* topRow = new QHBoxLayout();
+    nvrChannelCombo = new QComboBox();
+    nvrChannelCombo->setObjectName("nvrChannelCombo");
+    nvrChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
+    for (int ch = 0; ch < 4; ++ch)
+        nvrChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
+    topRow->addWidget(nvrChannelCombo, 1);
+
+    auto* refreshBtn = new QPushButton(QStringLiteral("새로고침"));
+    refreshBtn->setObjectName("nvrRefreshBtn");
+    refreshBtn->setCursor(Qt::PointingHandCursor);
+    topRow->addWidget(refreshBtn);
+    lay->addLayout(topRow);
+
+    nvrSegmentList = new QListWidget();
+    nvrSegmentList->setObjectName("nvrSegmentList");
+    nvrSegmentList->setMaximumHeight(140);
+    lay->addWidget(nvrSegmentList);
+
+    connect(nvrChannelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::repopulateNvrList);
+    connect(refreshBtn, &QPushButton::clicked, this, &MainWindow::refreshNvrSegments);
+    connect(nvrSegmentList, &QListWidget::itemDoubleClicked, this,
+            [this](QListWidgetItem* item) {
+        if (!item) return;
+        playBlackboxClip(item->data(Qt::UserRole).toString());
+    });
+
+    refreshNvrSegments();
+    return card;
+}
+
+// 각 Pi의 NVR HTTP 서버(/list)에서 세그먼트 파일 목록을 받아 nvrSegments_에 누적하고
+// 목록 UI를 다시 채운다. 파일명 규칙: ch{채널}_{세그먼트시작 unixMs}.mp4
+void MainWindow::refreshNvrSegments()
+{
+    nvrSegments_.clear();
+    for (int si = 0; si < kNumServers; ++si) {
+        auto* manager = new QNetworkAccessManager(this);
+        const QString host = serverHost(si);
+        QUrl url(QStringLiteral("http://%1:%2/list").arg(host).arg(kNvrHttpPort));
+        QNetworkReply* reply = manager->get(QNetworkRequest(url));
+
+        connect(reply, &QNetworkReply::finished, this, [this, reply, host]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                qDebug() << "⚠️ NVR 세그먼트 목록 수집 실패(" << host << "):" << reply->errorString();
+                return;
+            }
+
+            const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            if (!doc.isArray()) return;
+
+            for (const QJsonValue& value : doc.array()) {
+                const QString fileName = value.toString();
+                const QString cleanName = fileName.left(fileName.lastIndexOf('.'));
+                const QStringList parts = cleanName.split(QLatin1Char('_'));
+                if (parts.size() != 2) continue;   // ch{N}_{startMs} 형식만 (이벤트 클립과 구분)
+
+                const int channel = parts[0].mid(2).toInt();  // "ch1" -> 1
+                const qint64 startMs = parts[1].toLongLong();
+                if (channel < 0 || channel >= 4) continue;
+
+                NvrSegmentInfo entry;
+                entry.channel = channel;
+                entry.startMs = startMs;
+                entry.url = QStringLiteral("http://%1:%2/%3")
+                                .arg(host).arg(kNvrHttpPort).arg(fileName);
+                nvrSegments_.push_back(entry);
+            }
+            repopulateNvrList();
+        });
+    }
+}
+
+// nvrChannelCombo 선택값 기준으로 nvrSegments_에서 골라 nvrSegmentList를 최신순으로 채움
+void MainWindow::repopulateNvrList()
+{
+    if (!nvrSegmentList || !nvrChannelCombo) return;
+    const int filterCh = nvrChannelCombo->currentData().toInt();
+
+    QVector<NvrSegmentInfo> shown;
+    for (const auto& seg : nvrSegments_) {
+        if (filterCh >= 0 && seg.channel != filterCh) continue;
+        shown.push_back(seg);
+    }
+    std::sort(shown.begin(), shown.end(),
+              [](const NvrSegmentInfo& a, const NvrSegmentInfo& b) {
+        return a.startMs > b.startMs;   // 최신순
+    });
+
+    nvrSegmentList->clear();
+    for (const auto& seg : shown) {
+        const QString when = QDateTime::fromMSecsSinceEpoch(seg.startMs)
+                                  .toString("yyyy-MM-dd HH:mm:ss");
+        auto* item = new QListWidgetItem(
+            QStringLiteral("채널 %1 · %2").arg(seg.channel + 1).arg(when));
+        item->setData(Qt::UserRole, seg.url);
+        nvrSegmentList->addItem(item);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  영상검색(🔍) — 케어봇과 같은 서버 로직(video_search_module)을 관제 화면에서도.
+//  질의는 DBJ_CTRL_SEARCH_QUERY로 그 채널 담당 Pi에 보내고, 응답(DBJ_SEARCH_MAGIC)은
+//  onReadyRead가 받아 onSearchResultReceived로 넘긴다.
+// ═══════════════════════════════════════════════════════════
+QWidget* MainWindow::buildVideoSearchPanel()
+{
+    auto* card = new QFrame();
+    card->setObjectName("videoCard");
+
+    auto* lay = new QVBoxLayout(card);
+    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setSpacing(6);
+
+    auto* cap = new QLabel(QStringLiteral("🔍 영상 검색"));
+    cap->setObjectName("panelTitle");
+    lay->addWidget(cap);
+
+    auto* topRow = new QHBoxLayout();
+    searchChannelCombo = new QComboBox();
+    searchChannelCombo->setObjectName("searchChannelCombo");
+    for (int ch = 0; ch < 4; ++ch)
+        searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
+    topRow->addWidget(searchChannelCombo);
+
+    searchQueryEdit = new QLineEdit();
+    searchQueryEdit->setObjectName("searchQueryEdit");
+    searchQueryEdit->setPlaceholderText(
+        QStringLiteral("예: 어제 저녁에 낙상 있었어?"));
+    topRow->addWidget(searchQueryEdit, 1);
+
+    searchButton = new QPushButton(QStringLiteral("검색"));
+    searchButton->setObjectName("searchButton");
+    searchButton->setCursor(Qt::PointingHandCursor);
+    topRow->addWidget(searchButton);
+    lay->addLayout(topRow);
+
+    searchResultBrowser = new QTextBrowser();
+    searchResultBrowser->setObjectName("searchResultBrowser");
+    searchResultBrowser->setMaximumHeight(140);
+    searchResultBrowser->setOpenLinks(false);  // 클립 링크는 인앱 재생기로 가로챈다
+    lay->addWidget(searchResultBrowser);
+
+    connect(searchButton, &QPushButton::clicked, this, &MainWindow::sendSearchQuery);
+    connect(searchQueryEdit, &QLineEdit::returnPressed, this, &MainWindow::sendSearchQuery);
+    connect(searchResultBrowser, &QTextBrowser::anchorClicked, this,
+            [this](const QUrl& url) { playBlackboxClip(url.toString()); });
+
+    return card;
+}
+
+void MainWindow::sendSearchQuery()
+{
+    if (!searchChannelCombo || !searchQueryEdit || !searchButton || !searchResultBrowser)
+        return;
+
+    const QString query = searchQueryEdit->text().trimmed();
+    if (query.isEmpty()) return;
+
+    const int channel = searchChannelCombo->currentData().toInt();
+    QTcpSocket* sock = socketForChannel(channel);
+    if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
+        searchResultBrowser->setPlainText(
+            QStringLiteral("해당 채널의 영상 서버에 연결되어 있지 않습니다."));
+        return;
+    }
+
+    const QByteArray q = query.toUtf8();
+    const int len = qMin(q.size(), kSearchQueryMax);
+
+    dbj_ctrl_header_t h;
+    h.magic = kCtrlMagic;
+    h.version = 0x01;
+    h.type = kCtrlSearchQuery;
+    h.channel = static_cast<uint8_t>(channel);
+    h.point_count = 0;
+    h.reserved = static_cast<uint16_t>(len);
+
+    QByteArray pkt;
+    pkt.append(reinterpret_cast<const char*>(&h), sizeof(h));
+    pkt.append(q.constData(), len);
+    sock->write(pkt);
+    sock->flush();
+
+    searchButton->setEnabled(false);
+    searchResultBrowser->setPlainText(QStringLiteral("검색 중…"));
+
+    // Gemini+DB 왕복이 수 초 걸릴 수 있어, 응답이 안 오면 버튼이 영원히 잠기지
+    // 않도록 넉넉한 시간 후 자동 복구(서버 curl 타임아웃 20초보다 여유 있게).
+    QTimer::singleShot(25000, this, [this]() {
+        if (searchButton && !searchButton->isEnabled()) {
+            searchButton->setEnabled(true);
+            if (searchResultBrowser)
+                searchResultBrowser->setPlainText(
+                    QStringLiteral("응답이 없어요. 다시 시도해 주세요."));
+        }
+    });
+}
+
+void MainWindow::onSearchResultReceived(int /*channel*/, const QString& text)
+{
+    if (searchButton) searchButton->setEnabled(true);
+    if (!searchResultBrowser) return;
+
+    // 답변에 섞인 클립 URL(http://…mp4)만 클릭 가능한 링크로 바꾼다. 나머지는
+    // HTML 특수문자를 이스케이프해 그대로 보여주고, 줄바꿈은 <br>로 치환.
+    QString html = text.toHtmlEscaped();
+    static const QRegularExpression kUrlRe(
+        QStringLiteral("(https?://\\S+\\.mp4)"));
+    html.replace(kUrlRe, QStringLiteral("<a href=\"\\1\">📹 클립 보기</a>"));
+    html.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+
+    searchResultBrowser->setHtml(html);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2685,8 +3090,28 @@ void MainWindow::connectToServer()
         if (sockets[i]->state() != QAbstractSocket::UnconnectedState) continue;
         buffers[i].clear();  // 이전 연결의 파싱 잔여물 폐기
         const QString host = serverHost(i);
-        sockets[i]->connectToHost(QHostAddress(host), kServerPort);
-        qDebug() << "영상 서버 접속 시도:" << host << ":" << kServerPort;
+
+        // TLS/평문은 CA 파일 유무로 가른다 — MqttQtManager::startConnection()의
+        // m_caPath.isEmpty() 판단과 같은 패턴. certs/ca.crt를 배포했다는 것 자체가
+        // "이 Pi들은 stream_cert_path를 켜서 TLS로 띄웠다"는 선언으로 본다. 아직
+        // 인증서를 안 놓은 개발 환경/미전환 Pi에서는 파일이 없어 기존처럼 평문 접속.
+        const QString caPath = streamCaPath();
+        if (QFile::exists(caPath)) {
+            QSslConfiguration conf = QSslConfiguration::defaultConfiguration();
+            const QList<QSslCertificate> ca = QSslCertificate::fromPath(caPath);
+            if (ca.isEmpty()) {
+                qWarning() << "[영상서버] CA 인증서를 읽지 못했습니다:" << caPath;
+            } else {
+                conf.setCaCertificates(ca);
+            }
+            conf.setPeerVerifyMode(QSslSocket::VerifyPeer);
+            sockets[i]->setSslConfiguration(conf);
+            sockets[i]->connectToHostEncrypted(host, kServerPort);
+            qDebug() << "영상 서버 접속 시도(TLS):" << host << ":" << kServerPort;
+        } else {
+            sockets[i]->connectToHost(QHostAddress(host), kServerPort);
+            qDebug() << "영상 서버 접속 시도(평문):" << host << ":" << kServerPort;
+        }
     }
 }
 
@@ -2727,6 +3152,24 @@ void MainWindow::onSocketStateChanged(QAbstractSocket::SocketState /*state*/)
     // 끊긴 소켓이 하나라도 있으면 재접속 예약
     if (unconnected > 0 && !reconnectTimer.isActive())
         reconnectTimer.start();
+}
+
+// 메인 화면 채널 배지(LIVE/미연결)를 소켓 상태만으로 못 잡는 경우까지 정확하게
+// 만든다: Pi와의 TCP는 멀쩡한데 카메라 쪽 RTSP만 죽으면(케이블 빠짐 등) 새
+// dbj_vs_header_t가 안 와서 setLive(true)가 다시 불릴 일이 없다 — 배지는 마지막
+// 프레임 그대로 LIVE에 멈춰 있고, 관제사는 채널이 죽은 걸 설정 탭을 열어보기
+// 전엔 알 방법이 없었다. 여기서 kChannelStaleTimeoutMs 동안 프레임이 없으면
+// 배지를 직접 내린다.
+void MainWindow::checkChannelHealth()
+{
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (int ch = 0; ch < 4; ++ch) {
+        if (!channelViews[ch] || !cameraActive_[ch]) continue;
+        if (!channelViews[ch]->live()) continue;          // 이미 미연결 표시 중
+        if (lastFrameMs_[ch] == 0) continue;               // 이번 세션 첫 프레임 전
+        if (now - lastFrameMs_[ch] > kChannelStaleTimeoutMs)
+            channelViews[ch]->setLive(false);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3148,6 +3591,25 @@ void MainWindow::onReadyRead()
             continue;
         }
 
+        // ── 영상검색 결과 패킷 (🔍, 페이로드 있음) — 스킵 금지 ──
+        if (magic == kSearchMagic) {
+            if (buffer.size() < (int)sizeof(dbj_search_result_header_t))
+                break;  // 헤더가 덜 옴 — 다음 readyRead 대기
+            dbj_search_result_header_t sh;
+            memcpy(&sh, buffer.constData(), sizeof(sh));
+
+            const qint64 total = static_cast<qint64>(sizeof(sh)) + sh.text_len;
+            if (buffer.size() < total)
+                break;  // 텍스트가 아직 덜 옴 — 다음 readyRead 대기
+
+            const QByteArray textBytes(buffer.constData() + sizeof(sh),
+                                       static_cast<int>(sh.text_len));
+            buffer.remove(0, static_cast<int>(total));
+
+            onSearchResultReceived(sh.channel, QString::fromUtf8(textBytes));
+            continue;
+        }
+
         // ── 영상 프레임 패킷 ──
         // 1) 헤더 크기(16바이트)만큼도 안 모였으면 데이터 더 올 때까지 대기
         if (buffer.size() < (int)sizeof(dbj_vs_header_t))
@@ -3218,6 +3680,7 @@ void MainWindow::onReadyRead()
         lastFramePix_[ch] = pix;           // 이미지 탭 Before/After 프리뷰용 최신본 보관
         channelViews[ch]->setFrame(pix);
         channelViews[ch]->setLive(true);   // 프레임 도착 → LIVE 표시등 점등
+        lastFrameMs_[ch] = QDateTime::currentMSecsSinceEpoch();  // checkChannelHealth() 판정용
         // ROI 편집기가 이 채널을 보고 있고 설정 탭이 열려 있으면 편집 영상도 실시간 갱신.
         if (roiEditorView && roiEditChannel == ch && cameraSettingsVisible()) {
             roiEditorView->setFrame(pix);
@@ -3274,6 +3737,8 @@ void MainWindow::handleFallEvent(int channel, int roiId, quint64 timestampMs,
                                      .arg(channel)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
+        dtItem->setData(Qt::UserRole + 1, channel);
+        dtItem->setData(Qt::UserRole + 2, static_cast<qint64>(timestampMs));
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(eventPlaceLabel(channel, roiId)));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("낙상")));
@@ -3325,6 +3790,8 @@ void MainWindow::handleBedEgressEvent(int channel, int roiId, quint64 timestampM
                                      .arg(channel)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
+        dtItem->setData(Qt::UserRole + 1, channel);
+        dtItem->setData(Qt::UserRole + 2, static_cast<qint64>(timestampMs));
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(eventPlaceLabel(channel, roiId)));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("침상 이탈"))); // 💡 이탈 분류로 등록
@@ -3372,6 +3839,8 @@ void MainWindow::handleVitalAbnormalEvent(int channel, quint64 timestampMs)
                                      .arg(channel)
                                      .arg(timestampMs);
         dtItem->setData(Qt::UserRole, clipUrl);
+        dtItem->setData(Qt::UserRole + 1, channel);
+        dtItem->setData(Qt::UserRole + 2, static_cast<qint64>(timestampMs));
         logTable->setItem(row, 0, dtItem);
         logTable->setItem(row, 1, new QTableWidgetItem(patients[channel].bed));
         logTable->setItem(row, 2, new QTableWidgetItem(QStringLiteral("생체신호 이상")));
@@ -3517,7 +3986,7 @@ void MainWindow::loadRoiZonesFromDb()
 //   (엉뚱한 보호자에게 연락이 간다).
 QString MainWindow::eventWhoLabel(int channel, int roiId) const
 {
-    if (roiId < 0) return QStringLiteral("채널 %1").arg(channel + 1);
+    if (roiId < 0) return QStringLiteral("%1 · 채널 %2").arg(currentRoomName()).arg(channel + 1);
     const QString name = zoneResidentName(channel, roiId);
     return name == QStringLiteral("미지정")
                ? QStringLiteral("침대 %1").arg(roiId + 1)
@@ -5265,6 +5734,14 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
     // 영상을 열었으므로 이 이벤트는 '확인' 처리
     markLogConfirmed(row);
 
+    // 이벤트↔NVR 연결용 — 이 행의 채널/시각을 기억해뒀다가 "NVR에서 이어보기"에서 쓴다.
+    const QVariant chVar = item->data(Qt::UserRole + 1);
+    const QVariant tsVar = item->data(Qt::UserRole + 2);
+    selectedEventChannel_ = chVar.isValid() ? chVar.toInt() : -1;
+    selectedEventTimestampMs_ = tsVar.isValid() ? tsVar.toLongLong() : -1;
+    if (nvrJumpButton)
+        nvrJumpButton->setEnabled(selectedEventChannel_ >= 0 && selectedEventTimestampMs_ >= 0);
+
     qDebug() << "블랙박스 재생 요청 —" << url;
     // 인라인 플레이어(페이지 우측)에서 바로 재생 — 팝업 없음.
     playBlackboxClip(url);
@@ -5332,6 +5809,9 @@ void MainWindow::applyLogFilters(bool withDates)
     // 콤보는 "침상이탈", 로그 행은 "침상 이탈" — 띄어쓰기 차이를 흡수해 비교
     const QString evtKey = QString(evtSel).remove(QLatin1Char(' '));
 
+    const QString roomSel = filterRoom ? filterRoom->currentText() : QString();
+    const bool roomAll = roomSel.isEmpty() || roomSel == QStringLiteral("전체 병실");
+
     for (int row = 0; row < logTable->rowCount(); ++row) {
         bool show = true;
 
@@ -5341,6 +5821,14 @@ void MainWindow::applyLogFilters(bool withDates)
             const QString evt =
                 evtItem ? QString(evtItem->text()).remove(QLatin1Char(' ')) : QString();
             show = (evt == evtKey);
+        }
+
+        // 병실 — 위치 문구("{room} · 채널 N[ · 침대 M]")가 선택된 room으로 시작하는지.
+        // room이 하나뿐인 지금은 늘 참이지만, 카메라가 늘어 room이 여럿이 되면
+        // 이 매칭이 바로 실제 필터로 동작한다(로직 변경 불필요).
+        if (show && !roomAll) {
+            auto* placeItem = logTable->item(row, 1);
+            show = placeItem && placeItem->text().startsWith(roomSel);
         }
 
         // 날짜 범위 — 0열 "yyyy-MM-dd HH:mm:ss"의 앞 10글자만 파싱
@@ -5367,9 +5855,10 @@ void MainWindow::applyLogFilters(bool withDates)
 // 채널에 등록된 입소자가 없으면 "미배정"으로 둔다(하드코딩 이름 없음).
 void MainWindow::loadPatientsFromDb()
 {
+    const QString room = currentRoomName();
     for (int ch = 0; ch < 4; ++ch) {
         patients[ch] = { QStringLiteral("미배정"),
-                         QStringLiteral("채널 %1").arg(ch + 1),
+                         QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1),
                          QString() };
         residentsByChannel_[ch].clear();
     }
@@ -5394,8 +5883,8 @@ void MainWindow::loadPatientsFromDb()
         ResidentInfo info;
         info.name    = q.value(2).toString();
         info.room    = q.value(3).toString();
-        // 위치는 채널로만 표기. 침상 구분이 생기기 전까지는 같은 채널이면 같은 값.
-        info.bed     = QStringLiteral("채널 %1").arg(ch + 1);
+        // 위치는 room+채널로 표기. 침상 구분이 생기기 전까지는 같은 채널이면 같은 값.
+        info.bed     = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
         info.channel = ch;
         residentInfo_.insert(rid, info);
         residentsByChannel_[ch].append(rid);

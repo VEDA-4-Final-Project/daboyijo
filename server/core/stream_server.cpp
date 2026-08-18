@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <openssl/err.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -28,13 +29,80 @@ bool isEventPacket(const std::vector<unsigned char>& buf) {
 }
 }
 
-StreamServer::StreamServer(int port) : port_(port) {}
+StreamServer::StreamServer(int port, std::string cert_path, std::string key_path)
+    : port_(port), cert_path_(std::move(cert_path)), key_path_(std::move(key_path)) {}
 
 StreamServer::~StreamServer() {
     stop();
+    if (ssl_ctx_) {
+        SSL_CTX_free(ssl_ctx_);
+        ssl_ctx_ = nullptr;
+    }
+}
+
+// cert/key 로드 + SSL_CTX 설정. start()에서 경로가 있을 때만 호출.
+bool StreamServer::initTls() {
+    ssl_ctx_ = SSL_CTX_new(TLS_server_method());
+    if (!ssl_ctx_) {
+        std::fprintf(stderr, "[stream] SSL_CTX_new 실패\n");
+        return false;
+    }
+    // senderLoop()는 부분 전송 시 sent만큼 전진한 포인터로 재시도한다(기존 평문
+    // 코드와 동일 패턴). OpenSSL 기본 모드는 재시도마다 "이전과 동일한 버퍼·길이"를
+    // 요구해 이 패턴과 충돌하므로, 버퍼 이동/부분전송을 허용하도록 미리 풀어준다.
+    SSL_CTX_set_mode(ssl_ctx_,
+                      SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
+    if (SSL_CTX_use_certificate_chain_file(ssl_ctx_, cert_path_.c_str()) <= 0) {
+        std::fprintf(stderr, "[stream] 인증서 로드 실패: %s\n", cert_path_.c_str());
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    if (SSL_CTX_use_PrivateKey_file(ssl_ctx_, key_path_.c_str(), SSL_FILETYPE_PEM) <= 0) {
+        std::fprintf(stderr, "[stream] 개인키 로드 실패: %s\n", key_path_.c_str());
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    if (!SSL_CTX_check_private_key(ssl_ctx_)) {
+        std::fprintf(stderr, "[stream] 인증서와 개인키가 서로 맞지 않음: %s / %s\n",
+                     cert_path_.c_str(), key_path_.c_str());
+        return false;
+    }
+    return true;
+}
+
+// TLS일 때는 SSL_read/SSL_write, 아니면 기존 recv/send — 이 두 함수와
+// acceptLoop()의 SSL_accept 핸드셰이크가 이 파일에서 유일한 TLS 분기점이다.
+ssize_t StreamServer::clientRecv(Client& client, void* buf, size_t len) {
+    if (client.ssl) {
+        int n = SSL_read(client.ssl, buf, static_cast<int>(len));
+        return n > 0 ? n : -1;
+    }
+    return ::recv(client.fd, buf, len, 0);
+}
+
+ssize_t StreamServer::clientSend(Client& client, const void* buf, size_t len) {
+    if (client.ssl) {
+        int n = SSL_write(client.ssl, buf, static_cast<int>(len));
+        return n > 0 ? n : -1;
+    }
+    return ::send(client.fd, buf, len, MSG_NOSIGNAL);
 }
 
 bool StreamServer::start() {
+    // 둘 다 있어야 TLS, 둘 다 없으면 평문 — 하나만 있으면 설정 실수이므로
+    // 조용히 평문으로 내려가지 않고 바로 실패시킨다.
+    if (cert_path_.empty() != key_path_.empty()) {
+        std::fprintf(stderr,
+                     "[stream] stream_cert_path/stream_key_path는 둘 다 지정하거나 "
+                     "둘 다 비워야 함\n");
+        return false;
+    }
+    if (!cert_path_.empty()) {
+        if (!initTls()) return false;
+        tls_enabled_ = true;
+        std::fprintf(stderr, "[stream] TLS 활성화: %s\n", cert_path_.c_str());
+    }
+
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
         std::perror("[stream] socket");
@@ -102,6 +170,13 @@ void StreamServer::closeClient(Client& client) {
     if (client.receiver.joinable()) {
         client.receiver.join();
     }
+    if (client.ssl) {
+        // SSL_shutdown()은 상대와 close_notify를 주고받으려 하는데, 이 시점엔 이미
+        // 위에서 fd를 shutdown() 해버려 응답을 못 받는다. 시도해봐야 블로킹/에러만
+        // 소모하므로 그냥 자원만 해제한다 — TCP RST와 동급의 비정상 종료로 취급.
+        SSL_free(client.ssl);
+        client.ssl = nullptr;
+    }
     if (client.fd >= 0) {
         ::close(client.fd);
         client.fd = -1;
@@ -128,8 +203,27 @@ void StreamServer::acceptLoop() {
         ::inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
         std::fprintf(stderr, "[stream] 클라이언트 접속: %s\n", ip);
 
+        SSL* ssl = nullptr;
+        if (tls_enabled_) {
+            ssl = SSL_new(ssl_ctx_);
+            SSL_set_fd(ssl, fd);
+            // 핸드셰이크는 여기서 동기로 한다 — accept 루프가 그동안 다음 연결을
+            // 못 받지만, 접속자가 소수(관제 PC 몇 대)인 LAN 환경이라 감내 가능한
+            // 수준으로 판단(느린/악의적 핸드셰이크로 accept가 막히는 것은 알려진
+            // 트레이드오프, 이 프로젝트 스코프에서는 인증 없는 제어채널과 동급 리스크).
+            if (SSL_accept(ssl) <= 0) {
+                std::fprintf(stderr, "[stream] TLS 핸드셰이크 실패: %s\n", ip);
+                ERR_print_errors_fp(stderr);
+                SSL_free(ssl);
+                ::close(fd);
+                continue;
+            }
+        }
+
         auto client = std::make_shared<Client>();
         client->fd = fd;
+        client->ssl = ssl;
+        client->id = next_client_id_.fetch_add(1);  // 검색 결과 회신 대상 식별용
         client->sender =
             std::thread(&StreamServer::senderLoop, this, std::ref(*client));
         client->receiver =
@@ -158,8 +252,7 @@ void StreamServer::senderLoop(Client& client) {
         const auto& buf = *packet;
         size_t sent = 0;
         while (sent < buf.size()) {
-            ssize_t n = ::send(client.fd, buf.data() + sent, buf.size() - sent,
-                               MSG_NOSIGNAL);
+            ssize_t n = clientSend(client, buf.data() + sent, buf.size() - sent);
             if (n <= 0) {
                 client.alive.store(false);  // 연결 끊김 — broadcast() 가 정리
                 break;
@@ -175,7 +268,7 @@ void StreamServer::receiverLoop(Client& client) {
     std::vector<uint8_t> buf;
     uint8_t chunk[1024];
     while (running_.load() && client.alive.load()) {
-        ssize_t n = ::recv(client.fd, chunk, sizeof(chunk), 0);
+        ssize_t n = clientRecv(client, chunk, sizeof(chunk));
         if (n <= 0) {
             client.alive.store(false);  // 끊김/오류 — broadcast() 가 정리
             break;
@@ -202,6 +295,8 @@ void StreamServer::receiverLoop(Client& client) {
                 need += sizeof(dbj_focus_t);         // 헤더 뒤에 포커스 파라미터
             } else if (h.type == DBJ_CTRL_ROI_BIND) {
                 need += sizeof(dbj_roi_bind_t);      // 헤더 뒤에 침대↔입소자 매핑
+            } else if (h.type == DBJ_CTRL_SEARCH_QUERY) {
+                need += h.reserved;  // 헤더 뒤에 질의 문자열(reserved 바이트, CAMERA_SET과 동일 패턴)
             }
             if (buf.size() - off < need) {
                 break;  // 데이터가 아직 덜 옴 — 다음 recv 대기
@@ -295,6 +390,16 @@ void StreamServer::receiverLoop(Client& client) {
                         break;
                     }
 
+                    case DBJ_CTRL_SEARCH_QUERY: {
+                        if (on_search_query_) {
+                            const char* p = reinterpret_cast<const char*>(
+                                buf.data() + off + sizeof(dbj_ctrl_header_t));
+                            std::string query(p, h.reserved);
+                            on_search_query_(h.channel, client.id, query);
+                        }
+                        break;
+                    }
+
                     case DBJ_CTRL_IMAGE_SET: {
                         if (on_image_set_) {
                             dbj_image_params_t ip;
@@ -377,6 +482,32 @@ void StreamServer::broadcastEvent(int channel, uint8_t type, float x, float y,
     auto packet = std::make_shared<std::vector<unsigned char>>(sizeof(evt));
     std::memcpy(packet->data(), &evt, sizeof(evt));
     enqueueAll(std::move(packet));
+}
+
+// [영상검색] enqueueAll(전체 방송)이 아니라 clientId 하나만 찾아 그 outbox에만
+// 적재한다 — 다른 관제 PC가 남의 검색 결과를 받는 일이 없어야 한다.
+void StreamServer::sendSearchResult(uint64_t clientId, int channel,
+                                    const std::string& text) {
+    dbj_search_result_header_t header{};
+    header.magic = DBJ_SEARCH_MAGIC;
+    header.version = DBJ_VS_VERSION;
+    header.channel = static_cast<uint8_t>(channel);
+    header.text_len = static_cast<uint32_t>(text.size());
+
+    auto packet = std::make_shared<std::vector<unsigned char>>(
+        sizeof(header) + text.size());
+    std::memcpy(packet->data(), &header, sizeof(header));
+    std::memcpy(packet->data() + sizeof(header), text.data(), text.size());
+
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    for (auto& c : clients_) {
+        if (c->id != clientId || !c->alive.load()) continue;
+        std::lock_guard<std::mutex> client_lock(c->mutex);
+        c->outbox.push_back(packet);  // 이벤트와 같은 급 — 드롭 대상 아님
+        c->cv.notify_one();
+        return;
+    }
+    // 그 사이 클라이언트가 끊겼다 — 회신 대상이 없으니 조용히 버림.
 }
 
 void StreamServer::enqueueAll(Packet packet) {

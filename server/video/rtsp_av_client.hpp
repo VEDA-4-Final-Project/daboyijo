@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "detection.hpp"
 #include "frame_queue.hpp"
@@ -55,8 +56,12 @@ public:
 
     // 메타데이터 감지 결과를 받을 콜백 등록 (start 전에 설정)
     void setDetectionCallback(DetectionCallback cb) { on_detections_ = std::move(cb); }
-    void setPacketCallback(PacketCallback cb) { on_packet_ = std::move(cb); }
-    void setStreamReadyCallback(StreamReadyCallback cb) { on_stream_ready_ = std::move(cb); }
+    // 압축 패킷/스트림준비 콜백은 블랙박스·NVR 등 복수 소비자가 각자 독립 등록한다
+    // (구독형 — start 전에 설정, 등록 순서대로 매 패킷/연결마다 순차 호출됨)
+    void addPacketCallback(PacketCallback cb) { on_packets_.push_back(std::move(cb)); }
+    void addStreamReadyCallback(StreamReadyCallback cb) {
+        on_stream_readys_.push_back(std::move(cb));
+    }
 
     void start();
     void stop();
@@ -85,8 +90,8 @@ private:
     std::atomic<bool> reload_{false};  // 진행 중 스트림을 끊고 URL을 다시 읽으라는 신호
     FrameQueue& queue_;
     DetectionCallback on_detections_;
-    PacketCallback on_packet_;
-    StreamReadyCallback on_stream_ready_;
+    std::vector<PacketCallback> on_packets_;
+    std::vector<StreamReadyCallback> on_stream_readys_;
     std::string meta_buf_;  // 메타데이터 XML 조각 재조립 버퍼 (수신 스레드 전용)
 
     std::thread thread_;
