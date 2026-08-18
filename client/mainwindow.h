@@ -484,6 +484,8 @@ private:
     QLabel* reportDateLabel = nullptr;   // 우측 상단 "2026-08-13 (목)"
     QDate   reportDate_ = QDate::currentDate();
     QWidget* buildReportCalendar();      // 좌측 날짜 선택 칼럼
+    // 달력 요일 머리글/주말 색 — QSS가 닿지 않는 부분이라 코드로 칠한다.
+    void     applyCalendarPalette(QCalendarWidget* cal);
 
     // ── 일일 리포트: 입소자 선택 + 지표 ────────────────────
     // 리포트는 "날짜 + 사람" 한 명 단위다(PDF 한 장, AI 요약 한 문단이 그 단위).

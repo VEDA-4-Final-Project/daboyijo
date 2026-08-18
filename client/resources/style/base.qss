@@ -68,7 +68,7 @@
         #themeToggle:hover { border-color: %(accent); background: %(card); }
 
         /* 도움말 버튼 — 원형 물음표 아이콘 + "도움말" 텍스트 (필 형태) */
-        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 15px;
+        #helpBtn { background: transparent; color: %(sub); border: none; border-radius: 4px;
                    padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
         #helpBtn:hover { background: %(card); color: %(text); }
 
@@ -77,7 +77,7 @@
                     border-right: 1px solid %(border); font-size: 13px; }
         #helpList::item { padding: 11px 16px; border: none; }
         #helpList::item:selected { background: %(panel); color: %(text); font-weight: 700;
-                                    border-left: 3px solid %(accent); }
+                                    border-left: 3px solid %(select); }
         #helpList::item:hover:!selected { color: %(text); }
 
         /* 도움말 창 — 본문 브라우저. renderHelpTopic()이 매번 다시 그리던
@@ -85,7 +85,7 @@
         QTextBrowser#helpBrowser { background: %(panel); border: none; padding: 20px 22px; }
 
         /* 연결 상태 pill 배지 */
-        #statusPill { background: %(card); border: 1px solid %(border); border-radius: 13px; }
+        #statusPill { background: %(card); border: 1px solid %(border); border-radius: 4px; }
         #statusText { color: %(sub); font-size: 12px; font-weight: 600; }
 
         /* 상태등(statusDot) — ISA-18.2 5단계 severity 동적 속성으로 색을 받는다.
@@ -108,7 +108,7 @@
            "critical"|"high"|"medium"|"info"|"normal"이며, C++ 필드명 warn↔QSS
            값 medium 불일치도 동일하게 승계한다. */
         #alertBanner { font-size: 48px; font-weight: 800; color: %(text);
-                        padding: 24px 32px; border-radius: 16px;
+                        padding: 24px 32px; border-radius: 4px;
                         border-left: 8px solid %(sub); background: %(card); }
         #alertBanner[severity="critical"] { border-left-color: %(critical);
             background: %(critical); color: white; }
@@ -119,7 +119,7 @@
         #alertBanner[severity="normal"] { border-left-color: %(normal); background: %(card); }
 
         #severityBadge { font-size: 32px; font-weight: 800; color: white;
-                          padding: 8px 16px; border-radius: 8px; background: %(sub); }
+                          padding: 8px 16px; border-radius: 3px; background: %(sub); }
         #severityBadge[severity="critical"] { background: %(critical); }
         #severityBadge[severity="high"] { background: %(high); }
         #severityBadge[severity="medium"] { background: %(warn); }
@@ -153,7 +153,7 @@
         /* 바이탈 상태 배지 — 배경은 기존 blendHex() 18% 혼합 대신 평평한
            %(card)로 단순화한다. QSS는 색을 계산하지 못하므로 다섯 개 혼합값을
            새로 정하는 대신 기존 토큰을 그대로 쓴다(차이는 미세하다). */
-        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 9px;
+        #vitalBadge { background: %(card); border: 1px solid %(border); border-radius: 3px;
                       padding: 1px 10px; font-size: 11px; font-weight: 800; color: %(sub); }
         #vitalBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
         #vitalBadge[severity="high"] { color: %(high); border-color: %(high); }
@@ -180,7 +180,7 @@
         #riskBar[severity="normal"] { background: %(normal); }
 
         /* 위험도 칩(목록 행) — 인라인 값 계승: 1px 9px 패딩, 11px/800, 반지름 9 */
-        #riskChip { color: %(sub); border: 1px solid %(sub); border-radius: 9px;
+        #riskChip { color: %(sub); border: 1px solid %(sub); border-radius: 3px;
                     padding: 1px 9px; font-size: 11px; font-weight: 800; background: transparent; }
         #riskChip[severity="critical"] { color: %(critical); border-color: %(critical); }
         #riskChip[severity="high"] { color: %(high); border-color: %(high); }
@@ -189,7 +189,7 @@
         #riskChip[severity="normal"] { color: %(normal); border-color: %(normal); }
 
         /* 상세 편집 패널 — 위험도 배지. 인라인 값 계승: 3px 12px 패딩, 12px/800, 반지름 11 */
-        #dlgRiskBadge { color: %(sub); border: 1px solid %(sub); border-radius: 11px;
+        #dlgRiskBadge { color: %(sub); border: 1px solid %(sub); border-radius: 3px;
                         padding: 3px 12px; font-size: 12px; font-weight: 800; background: transparent; }
         #dlgRiskBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
         #dlgRiskBadge[severity="high"] { color: %(high); border-color: %(high); }
@@ -201,14 +201,14 @@
            분류라 severity 어휘를 쓰지 않는다(02-03 Task3) — 전용 속성
            residency로만 재원 여부를 표시하고 도형은 붙이지 않는다.
            인라인 값 계승: dlgRiskBadge와 같은 크기. */
-        #dlgStatusBadge { color: %(sub); border: 1px solid %(sub); border-radius: 11px;
+        #dlgStatusBadge { color: %(sub); border: 1px solid %(sub); border-radius: 3px;
                           padding: 3px 12px; font-size: 12px; font-weight: 800; background: transparent; }
         #dlgStatusBadge[residency="active"] { color: %(normal); border-color: %(normal); }
 
         /* 알림 노드 온·오프라인 배지 — 카메라 인스펙터 배지(#camPill)와
            objectName 분리(정정 C). 기본 규칙은 #camPill과 동일하게 맞춰
            전환 전(Task1) 시점에 초기 렌더가 갈리지 않게 한다. */
-        #alertNodeBadge { color: %(sub); border: 1px solid %(border); border-radius: 9px;
+        #alertNodeBadge { color: %(sub); border: 1px solid %(border); border-radius: 3px;
                           padding: 1px 9px; font-size: 11px; font-weight: 800; }
         #alertNodeBadge[severity="critical"] { color: %(critical); border-color: %(critical); }
         #alertNodeBadge[severity="high"] { color: %(high); border-color: %(high); }
@@ -233,18 +233,18 @@
         #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
 
         /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
-        #userChip { background: %(card); border: 1px solid %(border); border-radius: 19px; }
+        #userChip { background: %(card); border: 1px solid %(border); border-radius: 4px; }
         #userChip:hover { border-color: %(accent); }
         #userAvatar { background: %(accent); color: %(onAccent); border-radius: 15px;
                       font-size: 13px; font-weight: 800; }
         #userName { color: %(text); font-size: 13px; font-weight: 700; }
         #logoutButton { background: transparent; color: %(sub); border: none;
-                        border-radius: 14px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
+                        border-radius: 4px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
         #logoutButton:hover { background: %(critical); color: #fff; }
 
         /* ── 좌측 네비 레일 ── */
         #navRail { background: %(panel); border-right: 1px solid %(border); }
-        #navBtn { background: transparent; color: %(sub); border: none; border-radius: 10px;
+        #navBtn { background: transparent; color: %(sub); border: none; border-radius: 3px;
                   padding: 0 12px; text-align: left;
                   font-size: 13px; font-weight: 700; letter-spacing: 0.2px; }
         #navBtn:hover { background: %(card); color: %(text); }
@@ -252,32 +252,36 @@
         /* 접힘 상태 — 라벨이 없으니 아이콘을 가운데로 */
         #navBtn[collapsed="true"] { padding: 0; text-align: center; }
         #navToggle { background: transparent; color: %(sub); border: none;
-                     border-radius: 8px; font-size: 15px; }
+                     border-radius: 3px; font-size: 15px; }
         #navToggle:hover { background: %(card); color: %(text); }
 
-        #panel { background: %(panel); border: 1px solid %(border); border-radius: 16px; }
+        #panel { background: %(panel); border: 1px solid %(border); border-radius: 4px; }
         /* 섹션 제목: 좌측 굵은 청록 악센트 바 + 큼직한 타이틀 */
+        /* 좌측 악센트 바 — QLabel에 border-left만 지정하면 Qt가 박스를 만들지 않아
+           바가 그려지지 않는다(패딩만 적용된다). 네 변을 모두 선언해 박스를
+           성립시킨 뒤 좌변에만 색을 준다. #filterCap·#camSectionCap도 같은 방식. */
         #panelTitle { color: %(text); font-size: 17px; font-weight: 800; letter-spacing: 0.3px;
-                      border-left: 4px solid %(accent); padding: 1px 0 1px 12px; }
+                      border: 1px solid transparent; border-left: 4px solid %(accent);
+                      padding: 1px 0 1px 12px; }
 
         #roiButton, #roiToggle, #roiClear { background: %(card); color: %(text); border: 1px solid %(border);
-                                 border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
+                                 border-radius: 3px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
         #roiButton:hover, #roiToggle:hover { border-color: %(accent); }
-        #roiToggle:checked { background: %(accent); color: %(onAccent); border-color: %(accent); }
+        #roiToggle:checked { background: %(select); color: %(onSelect); border-color: %(select); }
         #roiClear:hover { border-color: %(critical); color: %(critical); }
 
         /* ── 관제화면 ROI 세그먼트 그룹 ── */
-        #segGroup { background: %(bgDeep); border: 1px solid %(border); border-radius: 9px; }
+        #segGroup { background: %(bgDeep); border: 1px solid %(border); border-radius: 3px; }
         #segCaption { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
         #segBtn, #segBtnDanger, #segBtnToggle {
             background: transparent; color: %(text); border: none;
-            border-radius: 6px; padding: 5px 13px; font-size: 12px; font-weight: 600; }
+            border-radius: 3px; padding: 5px 13px; font-size: 12px; font-weight: 600; }
         #segBtn:hover, #segBtnToggle:hover { background: %(card); }
         #segBtnDanger:hover { background: %(card); color: %(critical); }
-        #segBtnToggle:checked { background: %(accent); color: %(onAccent); }
+        #segBtnToggle:checked { background: %(select); color: %(onSelect); }
 
         #micButton { background: %(card); color: %(text); border: 1px solid %(border);
-                     border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
+                     border-radius: 3px; padding: 7px 15px; font-size: 12px; font-weight: 600; }
         #micButton:hover { border-color: %(accent); }
         #micButton[active="true"] { color: #fff; border-color: %(critical);
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -285,7 +289,7 @@
 
         /* 경보 해제 — 평상시엔 차분한 아웃라인, 경보 활성 시(active=true)에만 빨강 그라데이션 */
         #alarmButton { background: %(card); color: %(sub); border: 1px solid %(border);
-                       border-radius: 10px; padding: 7px 15px; font-size: 12px; font-weight: 700; }
+                       border-radius: 3px; padding: 7px 15px; font-size: 12px; font-weight: 700; }
         #alarmButton:hover { border-color: %(critical); color: %(critical); }
         #alarmButton[active="true"] { color: #fff; border-color: %(critical); font-weight: 800;
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -294,10 +298,10 @@
 
         /* 경보 토스트 — 상단에서 내려오는 떠 있는 알림 카드 */
         #alarmToast { background: %(card); border: 1px solid %(border);
-                      border-left: 4px solid %(critical); border-radius: 12px; }
+                      border-left: 4px solid %(critical); border-radius: 4px; }
         #alarmDot { background: %(critical); border-radius: 4px; }
         #alarmToastText { color: %(text); font-size: 14px; font-weight: 800; letter-spacing: 0.2px; }
-        #alarmToastBtn { background: %(critical); color: #fff; border: none; border-radius: 8px;
+        #alarmToastBtn { background: %(critical); color: #fff; border: none; border-radius: 3px;
                          padding: 7px 16px; font-size: 13px; font-weight: 800; }
         #alarmToastBtn:hover { background: #ff6b62; }
 
@@ -305,7 +309,7 @@
            배경은 팔레트가 아니라 영상 캔버스 전용 단일 출처 토큰을 참조한다(D-07/IA-02) —
            videoview.cpp의 paintEvent()가 같은 상수(kVideoSurface)로 칠하는 영역과
            반드시 같은 검정이어야 카드 테두리 안쪽과 실제 영상 영역의 색이 갈리지 않는다. */
-        #videoCard { background: %(videoSurface); border: 1px solid %(border); border-radius: 12px; }
+        #videoCard { background: %(videoSurface); border: 1px solid %(border); border-radius: 4px; }
 
         /* ═══ Wisenet Viewer 스타일 관제 화면 ═══
            select 토큰은 "여러 개 중 지금 고른 하나"에만 쓴다(선택 타일 테두리,
@@ -313,7 +317,7 @@
            전용 — 둘을 섞으면 누를 것과 고른 것이 구분되지 않는다. */
 
         /* 좌측 리소스 패널 */
-        #resourcePanel { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+        #resourcePanel { background: %(panel); border: 1px solid %(border); border-radius: 4px; }
         #resourceHead { color: %(sub); font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
         #resourceToggle { background: transparent; color: %(sub); border: 1px solid %(border);
                           border-radius: 4px; font-size: 12px; font-weight: 700; }
@@ -377,16 +381,16 @@
         #playbackHint { background: %(videoSurface); color: %(sub); font-size: 13px;
                         line-height: 20px; }
 
-        #video { color: #9AA7B2; font-size: 13px; background: %(videoSurface); border-radius: 12px; }
+        #video { color: #9AA7B2; font-size: 13px; background: %(videoSurface); border-radius: 4px; }
 
         #vitalScroll { background: transparent; }
         #vitalScroll > QWidget > QWidget { background: transparent; }
-        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+        #vitalCard { background: %(card); border: 1px solid %(border); border-radius: 4px; }
         #vitalHead { background: %(panel); border-bottom: 1px solid %(border);
                      border-top-left-radius: 14px; border-top-right-radius: 14px; }
         #vitalName { color: %(text); font-size: 14px; font-weight: 800; }
         #vitalBed { color: %(sub); font-size: 12px; }
-        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+        #statBox { background: %(bgDeep); border: 1px solid %(border); border-radius: 4px; }
         #statCaption { color: %(sub); font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
         #statValue { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                      font-size: 32px; font-weight: 800; }
@@ -394,7 +398,7 @@
         #vitalUpdated { color: %(sub); font-size: 11px; }
 
         /* ── 카드형 위젯 공통 스타일(일일 리포트 달력/지표 카드가 사용) ── */
-        #careCard { background: %(card); border: 1px solid %(border); border-radius: 16px; }
+        #careCard { background: %(card); border: 1px solid %(border); border-radius: 4px; }
         #careMeta { color: %(sub); font-size: 12px; }
         #careBigCap { color: %(sub); font-size: 12px; font-weight: 600; }
         #careMiniCap { color: %(sub); font-size: 11px; font-weight: 600; }
@@ -420,28 +424,28 @@
         #reportCalendar QToolButton {
             background: transparent; color: %(text); border: none;
             font-size: 10pt; font-weight: 700; padding: 4px 8px; }
-        #reportCalendar QToolButton:hover { background: %(panel); border-radius: 6px; }
+        #reportCalendar QToolButton:hover { background: %(panel); border-radius: 3px; }
         #reportCalendar QToolButton::menu-indicator { image: none; }
         #reportCalendar QAbstractItemView:enabled {
             background: %(card); color: %(text); outline: none;
-            selection-background-color: %(accent); selection-color: %(onAccent); }
+            selection-background-color: %(select); selection-color: %(onSelect); }
         /* 이번 달 밖의 날짜 + 미래 날짜(선택 불가) */
         #reportCalendar QAbstractItemView:disabled { color: %(border); }
         #reportCalendar QTableView QHeaderView::section {
             background: %(card); color: %(sub); border: none;
             font-size: 8pt; font-weight: 700; padding: 4px 0; }
         #reportTodayBtn { background: transparent; color: %(text);
-                          border: 1px solid %(accent); border-radius: 8px;
+                          border: 1px solid %(accent); border-radius: 3px;
                           padding: 6px 0; font-size: 12px; font-weight: 700; }
         #reportTodayBtn:hover { border-color: %(accent); background: %(panel); }
         /* 입소자 이름 탭 — 선택된 하나만 강조색으로 채운다 */
         #residentTab { background: transparent; color: %(sub);
-                       border: 1px solid %(border); border-radius: 14px;
+                       border: 1px solid %(border); border-radius: 4px;
                        padding: 5px 14px; font-size: 13px; font-weight: 700; }
         #residentTab:hover { color: %(text); border-color: %(sub); }
-        #residentTab:checked { background: %(accent); color: %(onAccent); border-color: %(accent); }
+        #residentTab:checked { background: %(select); color: %(onSelect); border-color: %(select); }
         /* 지표 타일 */
-        #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+        #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 4px; }
         #reportTileVal { color: %(text); font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                          font-size: 26px; font-weight: 800; }
 
@@ -456,56 +460,73 @@
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         QAbstractScrollArea::corner { background: transparent; }
 
-        /* ── 이벤트 기록 ── */
+        /* ── 이벤트 기록 · 영상 검색 좌측 조건 컬럼 ── */
+        /* 결과(표·답변)와 조건을 표면 톤으로 구분한다 — 조건은 한 단계 낮은 판,
+           결과는 패널 위에 그대로. Wisenet Event search / AI search와 같은 관계. */
+        #filterBar { background: %(card); border: 1px solid %(border); border-radius: 4px; }
         #filterBar QLabel { color: %(sub); font-size: 12px; }
+        #filterBar QLabel#filterCap { color: %(text); font-size: 12px; font-weight: 800; }
+        #filterCap { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.6px;
+                     border: 1px solid transparent; border-left: 3px solid %(select);
+                     padding-left: 8px; }
+        #filterFieldCap { color: %(sub); font-size: 11px; font-weight: 700; }
+        #filterResetBtn { background: transparent; color: %(sub); border: 1px solid %(border);
+                          border-radius: 3px; padding: 5px 10px; font-size: 12px; font-weight: 600; }
+        #filterResetBtn:hover { color: %(text); border-color: %(select); }
+        /* 예시 질문 칩 — 왼쪽 정렬 텍스트 버튼. 눌러 보게 만드는 게 목적이라
+           테두리를 흐리게 두고 호버에서만 또렷해진다. */
+        #exampleChip { background: %(bgDeep); color: %(sub); border: 1px solid %(border);
+                       border-radius: 3px; padding: 6px 9px; font-size: 12px;
+                       text-align: left; }
+        #exampleChip:hover { color: %(text); border-color: %(select); }
         #filterBar QComboBox, #filterBar QDateEdit {
             background: %(card); color: %(text); border: 1px solid %(border);
-            border-radius: 8px; padding: 5px 10px; }
+            border-radius: 3px; padding: 5px 10px; }
         #logTable { background: %(panel); color: %(text); gridline-color: transparent;
-                    border: 1px solid %(border); border-radius: 12px;
+                    border: 1px solid %(border); border-radius: 4px;
                     alternate-background-color: %(card); }
         #logTable::item { padding: 4px 8px; border: none; }
         #logTable QHeaderView::section { background: %(bgDeep); color: %(sub);
                                          border: none; border-bottom: 1px solid %(border);
                                          padding: 9px 8px; font-weight: 700; }
-        #logTable::item:selected { background: %(accent); color: %(onAccent); }
+        #logTable::item:selected { background: %(select); color: %(onSelect); }
 
         /* NVR(연속녹화) 탐색 — QComboBox/QListWidget은 objectName 없이 두면
            플랫폼 기본 팔레트(대개 흰 배경)로 그려져 다크 테마에서 튄다.
            #logTable/#filterBar QComboBox와 같은 원리로 이름 붙여 명시적으로 칠한다. */
         #nvrChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
-                           border-radius: 8px; padding: 5px 10px; }
+                           border-radius: 3px; padding: 5px 10px; }
         #nvrChannelCombo QAbstractItemView { background: %(card); color: %(text);
                                              outline: none;
-                                             selection-background-color: %(accent);
-                                             selection-color: %(onAccent); }
+                                             selection-background-color: %(select);
+                                             selection-color: %(onSelect); }
         #nvrRefreshBtn, #nvrJumpButton, #clipDownloadButton {
             background: %(card); color: %(text); border: 1px solid %(border);
-            border-radius: 8px; padding: 5px 12px; font-weight: 700; }
+            border-radius: 3px; padding: 5px 12px; font-weight: 700; }
         #nvrRefreshBtn:hover, #nvrJumpButton:hover, #clipDownloadButton:hover { border-color: %(accent); }
         #nvrJumpButton:disabled, #clipDownloadButton:disabled { color: %(sub); border-color: %(border); }
         #nvrSegmentList { background: %(panel); color: %(text); border: 1px solid %(border);
-                          border-radius: 12px; outline: none; }
+                          border-radius: 4px; outline: none; }
         #nvrSegmentList::item { padding: 6px 10px; border: none; }
-        #nvrSegmentList::item:selected { background: %(accent); color: %(onAccent); }
+        #nvrSegmentList::item:selected { background: %(select); color: %(onSelect); }
 
         /* 영상검색(🔍) — NVR 탐색과 같은 이유로 objectName마다 명시적으로 칠한다. */
         #searchChannelCombo { background: %(card); color: %(text); border: 1px solid %(border);
-                              border-radius: 8px; padding: 5px 10px; }
+                              border-radius: 3px; padding: 5px 10px; }
         #searchChannelCombo QAbstractItemView { background: %(card); color: %(text);
                                                 outline: none;
-                                                selection-background-color: %(accent);
-                                                selection-color: %(onAccent); }
+                                                selection-background-color: %(select);
+                                                selection-color: %(onSelect); }
         #searchQueryEdit { background: %(card); color: %(text); border: 1px solid %(border);
-                           border-radius: 8px; padding: 5px 10px; }
-        #searchQueryEdit:focus { border-color: %(accent); }
+                           border-radius: 3px; padding: 5px 10px; }
+        #searchQueryEdit:focus { border-color: %(select); }
         #searchButton {
             background: %(card); color: %(text); border: 1px solid %(border);
-            border-radius: 8px; padding: 5px 14px; font-weight: 700; }
+            border-radius: 3px; padding: 5px 14px; font-weight: 700; }
         #searchButton:hover { border-color: %(accent); }
         #searchButton:disabled { color: %(sub); border-color: %(border); }
         #searchResultBrowser { background: %(panel); color: %(text); border: 1px solid %(border);
-                               border-radius: 12px; padding: 6px 10px; }
+                               border-radius: 4px; padding: 6px 10px; }
         #searchResultBrowser a { color: %(accent); }
 
 /* ── TAB3: DB 관리 ── */
@@ -516,42 +537,42 @@ QLabel {
 
 /* 검색창 */
 #searchEdit { background: %(card); color: %(text); border: 1px solid %(border);
-              border-radius: 17px; padding: 4px 14px; font-size: 13px; }
-#searchEdit:focus { border-color: %(accent); }
+              border-radius: 4px; padding: 4px 14px; font-size: 13px; }
+#searchEdit:focus { border-color: %(select); }
 
 /* 주요 액션 버튼(신규 등록·저장) */
 #primaryButton { background: %(accent); color: %(onAccent); border: none;
-                 border-radius: 8px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
+                 border-radius: 3px; padding: 6px 18px; font-size: 13px; font-weight: 700; }
 #primaryButton:hover { background: %(accent); opacity: 0.9; }
 #dangerButton { background: transparent; color: %(critical); border: 1px solid %(critical);
-                border-radius: 8px; padding: 6px 16px; font-size: 13px; font-weight: 700; }
+                border-radius: 3px; padding: 6px 16px; font-size: 13px; font-weight: 700; }
 #dangerButton:hover { background: %(critical); color: #fff; }
 #iconButton { background: %(card); color: %(text); border: 1px solid %(border);
-              border-radius: 8px; font-size: 16px; font-weight: 700; }
+              border-radius: 3px; font-size: 16px; font-weight: 700; }
 #iconButton:hover { border-color: %(accent); color: %(text); background: %(bgDeep); }
 
 /* ── 입소자 관리: 상단 요약 통계 ── */
-#resStat { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+#resStat { background: %(card); border: 1px solid %(border); border-radius: 4px; }
 /* 큰 숫자가 세로로 잘리지 않도록 라벨에 충분한 높이를 준다 */
 #resStatVal { font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
               font-size: 26px; font-weight: 800; min-height: 34px; padding: 0; }
 #resStatCap { color: %(sub); font-size: 12px; font-weight: 700; }
 
 /* ── 입소자 관리: 좌측 목록(마스터) ── */
-#listPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+#listPanel { background: %(card); border: 1px solid %(border); border-radius: 4px; }
 #cardHost { background: transparent; }
 
 /* 재원/전체/퇴원 세그먼트 탭 */
 #segTab { background: %(bgDeep); color: %(sub); border: 1px solid %(border);
           padding: 6px 0; font-size: 12px; font-weight: 700; }
 #segTab:hover { color: %(text); }
-#segTab:checked { background: %(accent); color: %(onAccent); border-color: %(accent); }
+#segTab:checked { background: %(select); color: %(onSelect); border-color: %(select); }
 
 /* 목록 행 카드 */
-#resRow { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px;
+#resRow { background: %(bgDeep); border: 1px solid %(border); border-radius: 4px;
           text-align: left; }
-#resRow:hover { border-color: %(accent); }
-#resRow[selected="true"] { border: 2px solid %(accent); background: %(panel); }
+#resRow:hover { border-color: %(select); }
+#resRow[selected="true"] { border: 2px solid %(select); background: %(panel); }
 #resRow[inactive="true"] { background: transparent; }
 #resName { color: %(text); font-size: 15px; font-weight: 800; }
 #resMeta { color: %(sub); font-size: 12px; }
@@ -571,19 +592,19 @@ QLabel {
 #dlgAvatar[active="false"] { background: %(border); color: %(text); }
 
 /* ── 입소자 관리: 우측 디테일(인라인 편집) ── */
-#detailPanel { background: %(card); border: 1px solid %(border); border-radius: 14px; }
+#detailPanel { background: %(card); border: 1px solid %(border); border-radius: 4px; }
 #detailPlaceholder { color: %(sub); font-size: 14px; }
 
 /* ── 카메라 설정: [채널 스트립] │ [스테이지] │ [인스펙터] 3단 워크스페이스 ── */
-#camStrip { background: %(card); border: 1px solid %(border); border-radius: 16px; }
+#camStrip { background: %(card); border: 1px solid %(border); border-radius: 4px; }
 #camRailCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 2px;
               padding-left: 2px; }
 /* 채널 타일 — 썸네일을 품은 체크 버튼. 선택은 '테두리 + 바탕'으로만 표시해서
    썸네일(진짜 정보)이 색에 묻히지 않게 한다. */
 #camTile { background: transparent; border: 2px solid transparent;
-           border-radius: 12px; padding: 0; text-align: left; }
+           border-radius: 4px; padding: 0; text-align: left; }
 #camTile:hover { background: %(bgDeep); border-color: %(border); }
-#camTile:checked { background: %(bgDeep); border-color: %(accent); }
+#camTile:checked { background: %(bgDeep); border-color: %(select); }
 #camTileCh { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px; }
 /* connected 속성 — 심각도가 아니라 연결 여부다. 텍스트의 ●/○ 접두(ALERT-02)와
    함께 같은 갱신 경로에서 설정돼야 색과 모양이 어긋나지 않는다. */
@@ -591,9 +612,9 @@ QLabel {
 #camChStatus[connected="true"] { color: %(normal); }
 #camChStatus[connected="false"] { color: %(sub); }
 
-#camControlPanel { background: %(card); border: 1px solid %(border); border-radius: 16px; }
+#camControlPanel { background: %(card); border: 1px solid %(border); border-radius: 4px; }
 #camInspCh { color: %(text); font-size: 19px; font-weight: 800; letter-spacing: 0.5px; }
-#camPill { color: %(sub); border: 1px solid %(border); border-radius: 9px;
+#camPill { color: %(sub); border: 1px solid %(border); border-radius: 3px;
            padding: 1px 9px; font-size: 11px; font-weight: 800; }
 #camPill[connected="true"] { color: %(normal); border: 1px solid %(normal); }
 #camPill[connected="false"] { color: %(sub); border: 1px solid %(sub); }
@@ -601,31 +622,32 @@ QLabel {
 #camRule { background: %(border); }
 
 /* 연결·ROI·이미지 세그먼트 — 트랙(#camSeg) 안에 얹힌 알약 버튼 */
-#camSeg { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
-#camSegBtn { background: transparent; color: %(sub); border: none; border-radius: 9px;
+#camSeg { background: %(bgDeep); border: 1px solid %(border); border-radius: 4px; }
+#camSegBtn { background: transparent; color: %(sub); border: none; border-radius: 3px;
              padding: 9px 0; font-size: 13px; font-weight: 700; }
 #camSegBtn:hover { color: %(text); }
-#camSegBtn:checked { background: %(accent); color: %(onAccent); font-weight: 800; }
+#camSegBtn:checked { background: %(select); color: %(onSelect); font-weight: 800; }
 
 #camSectionCap { color: %(text); font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
-                 border-left: 3px solid %(accent); padding-left: 8px; }
+                 border: 1px solid transparent; border-left: 3px solid %(accent);
+                 padding-left: 8px; }
 #camHint { color: %(sub); font-size: 12px; }
 /* 그 페이지의 주 액션(연결/적용) — 채워진 악센트 */
 #camPrimary { background: %(accent); color: %(onAccent); border: 1px solid %(accent);
-              border-radius: 10px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
+              border-radius: 3px; padding: 8px 16px; font-size: 12px; font-weight: 800; }
 #camPrimary:hover { background: %(accentHover); border-color: %(accentHover); }
 /* 우측 영상 스테이지 — 영상은 VideoView/FramePreview가 직접 둥글게 그린다.
    배경은 영상 캔버스 전용 단일 출처 토큰을 참조한다(D-07/IA-02) —
    FramePreview::paintEvent()의 kVideoSurface와 같은 검정이어야 한다. */
-#camStage { background: %(videoSurface); border: 1px solid %(border); border-radius: 14px; }
+#camStage { background: %(videoSurface); border: 1px solid %(border); border-radius: 4px; }
 #camStageCap { color: %(sub); font-size: 11px; font-weight: 800; letter-spacing: 1px; }
 
 /* ROI 페이지 — 단계 카드 + 주 액션 */
-#roiSteps { background: %(bgDeep); border: 1px solid %(border); border-radius: 12px; }
+#roiSteps { background: %(bgDeep); border: 1px solid %(border); border-radius: 4px; }
 #roiStepNum { background: %(accent); color: %(onAccent); border-radius: 11px;
               font-size: 12px; font-weight: 800; }
 #roiStepText { color: %(text); font-size: 13px; }
-#roiPrimary { background: %(accent); color: %(onAccent); border: none; border-radius: 10px;
+#roiPrimary { background: %(accent); color: %(onAccent); border: none; border-radius: 3px;
               font-size: 14px; font-weight: 800; }
 #roiPrimary:hover { background: %(accentHover); }
 #roiPrimary[drawing="true"] { background: %(critical); }
@@ -634,18 +656,18 @@ QLabel {
 /* 인스펙터 침대 목록 행 — 영상에서 고른 침대를 선택 강조로 알아볼 수 있게 한다.
    %(card)는 라이트·다크 두 팔레트 모두에서 주변 표면과 구분되는 톤이라
    어두운 배경을 전제한 반투명 흰색과 달리 라이트 테마에서도 보인다. */
-#roiBedRow { background: transparent; border-radius: 6px; }
-#roiBedRow[selected="true"] { background: %(card); }
+#roiBedRow { background: transparent; border-radius: 3px; }
+#roiBedRow[selected="true"] { background: %(card); border-left: 3px solid %(select); }
 
 /* 편집기 프로필 헤더 */
-#dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
+#dlgHeader { background: %(panel); border: 1px solid %(border); border-radius: 4px; }
 #dlgName { color: %(text); font-size: 19px; font-weight: 800; }
 #dlgSub  { color: %(sub); font-size: 13px; }
 
 QGroupBox#formGroup {
     color: %(text);
     border: 1px solid %(border);
-    border-radius: 8px;
+    border-radius: 3px;
     margin-top: 10px;
     padding: 14px 10px 10px 10px;
     font-weight: 700;
@@ -674,7 +696,7 @@ QDateEdit#formEdit {
     background: %(panel);
     color: %(text);
     border: 1px solid %(border);
-    border-radius: 6px;
+    border-radius: 3px;
     padding: 4px 8px;
 }
 
@@ -722,7 +744,7 @@ QTextEdit#formEdit:focus {
         QMessageBox QLabel, QInputDialog QLabel { color: %(text); }
         QMessageBox QPushButton, QInputDialog QPushButton {
             background: %(card); color: %(text); border: 1px solid %(border);
-            border-radius: 6px; padding: 5px 16px; font-size: 12px; font-weight: 600;
+            border-radius: 3px; padding: 5px 16px; font-size: 12px; font-weight: 600;
             min-width: 60px; }
         QMessageBox QPushButton:hover, QInputDialog QPushButton:hover { border-color: %(accent); }
         QMessageBox QPushButton:default, QInputDialog QPushButton:default {

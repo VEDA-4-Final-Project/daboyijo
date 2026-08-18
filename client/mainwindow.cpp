@@ -44,6 +44,7 @@
 #include <QComboBox>
 #include <QDateEdit>
 #include <QCalendarWidget>
+#include <QTextCharFormat>
 #include <QSlider>
 #include "activitychart.h"
 #include <QStyle>
@@ -2307,12 +2308,11 @@ QWidget* MainWindow::buildEventLogTab()
     title->setObjectName("panelTitle");
     outer->addWidget(title);
 
-    // 필터 바
-    outer->addWidget(buildSearchFilters());
-
-    // 본문: 좌측 로그 표 / 우측 인라인 블랙박스 재생 + NVR 탐색
+    // 본문 3단: 좌측 필터 컬럼 / 가운데 로그 표 / 우측 재생기 + NVR 탐색.
+    // Wisenet Viewer의 Event search 창과 같은 순서다 — 조건→결과→미리보기.
     auto* body = new QHBoxLayout();
-    body->setSpacing(16);
+    body->setSpacing(12);
+    body->addWidget(buildSearchFilters(), 0);
     body->addWidget(buildLogTable(), 5);
 
     auto* right = new QVBoxLayout();
@@ -2397,6 +2397,32 @@ QWidget* MainWindow::buildReportPage()
 }
 
 // 좌측 날짜 선택 칼럼 — 달력 + (앞으로) PDF·AI 요약 버튼이 붙을 자리.
+// QCalendarWidget의 요일 머리글(일~토)은 QSS의 QHeaderView::section 규칙이 닿지
+// 않는다 — 헤더는 위젯 내부에서 QTextCharFormat으로 그려지기 때문이다. 그래서
+// 다크 테마에서도 흰 바탕 한 줄이 남아 있었다. 배경/글자색을 코드로 직접 준다.
+// (주말 색은 QCalendarWidget 기본값인 빨강을 유지하되 팔레트 톤에 맞춘다.)
+void MainWindow::applyCalendarPalette(QCalendarWidget* cal)
+{
+    if (!cal) return;
+
+    QTextCharFormat head;
+    head.setBackground(QColor(QString::fromLatin1(kCard)));
+    head.setForeground(QColor(QString::fromLatin1(kTextSub)));
+    head.setFontWeight(QFont::Bold);
+    cal->setHeaderTextFormat(head);
+
+    // 평일/주말 본문 색도 같은 경로로 맞춘다 — QSS로는 요일별 색을 못 준다.
+    QTextCharFormat weekday;
+    weekday.setForeground(QColor(QString::fromLatin1(kTextMain)));
+    for (int d = Qt::Monday; d <= Qt::Friday; ++d)
+        cal->setWeekdayTextFormat(Qt::DayOfWeek(d), weekday);
+
+    QTextCharFormat weekend;
+    weekend.setForeground(QColor(QString::fromLatin1(kCritical)));
+    cal->setWeekdayTextFormat(Qt::Saturday, weekend);
+    cal->setWeekdayTextFormat(Qt::Sunday, weekend);
+}
+
 QWidget* MainWindow::buildReportCalendar()
 {
     auto* col = new QFrame();
@@ -2418,6 +2444,7 @@ QWidget* MainWindow::buildReportCalendar()
     reportCalendar->setSelectedDate(reportDate_);
     // 미래 날짜는 볼 자료가 없다 — 아예 못 고르게 막는다.
     reportCalendar->setMaximumDate(QDate::currentDate());
+    applyCalendarPalette(reportCalendar);
     lay->addWidget(reportCalendar);
 
     // 오늘로 되돌아오는 버튼 — 과거를 뒤지다 보면 오늘 찾아 돌아오기가 번거롭다.
@@ -2588,11 +2615,21 @@ void MainWindow::onReportDateChanged(const QDate& date)
 
 QWidget* MainWindow::buildSearchFilters()
 {
+    // Wisenet Viewer의 Event search 좌측 패널과 같은 배치 — 조건을 세로로 쌓고
+    // 결과 표는 오른쪽에 넓게 둔다. 가로 바에 몰아넣던 예전 배치는 조건이 하나만
+    // 늘어도 표 폭을 잡아먹었고, 어떤 조건이 걸려 있는지 한눈에 안 들어왔다.
     auto* bar = new QFrame();
     bar->setObjectName("filterBar");
-    auto* lay = new QHBoxLayout(bar);
-    lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(10);
+    bar->setFixedWidth(206);
+
+    auto* lay = new QVBoxLayout(bar);
+    lay->setContentsMargins(12, 12, 12, 12);
+    lay->setSpacing(6);
+
+    auto* cap = new QLabel(QStringLiteral("검색 조건"));
+    cap->setObjectName("filterCap");
+    lay->addWidget(cap);
+    lay->addSpacing(4);
 
     // 날짜/이벤트를 바꾸는 즉시 표에 필터가 적용된다 — 별도 '검색' 버튼은 없앴다.
     filterDateFrom = new QDateEdit(QDate::currentDate().addDays(-7));
@@ -2621,14 +2658,31 @@ QWidget* MainWindow::buildSearchFilters()
     connect(filterEventType, &QComboBox::currentTextChanged,
             this, [this](const QString&) { applyLogFilters(true); });
 
-    lay->addWidget(new QLabel(QStringLiteral("날짜")));
-    lay->addWidget(filterDateFrom);
-    lay->addWidget(new QLabel(QStringLiteral("~")));
-    lay->addWidget(filterDateTo);
-    lay->addWidget(new QLabel(QStringLiteral("병실")));
-    lay->addWidget(filterRoom);
-    lay->addWidget(new QLabel(QStringLiteral("이벤트")));
-    lay->addWidget(filterEventType);
+    // 라벨을 필드 위에 얹는다 — 좁은 컬럼에서 라벨과 값을 한 줄에 두면 값이 눌린다.
+    auto addField = [&](const QString& label, QWidget* w) {
+        auto* l = new QLabel(label);
+        l->setObjectName("filterFieldCap");
+        lay->addWidget(l);
+        lay->addWidget(w);
+        lay->addSpacing(6);
+    };
+    addField(QStringLiteral("시작일"), filterDateFrom);
+    addField(QStringLiteral("종료일"), filterDateTo);
+    addField(QStringLiteral("병실"), filterRoom);
+    addField(QStringLiteral("이벤트 종류"), filterEventType);
+
+    auto* resetBtn = new QPushButton(QStringLiteral("조건 초기화"));
+    resetBtn->setObjectName("filterResetBtn");
+    resetBtn->setCursor(Qt::PointingHandCursor);
+    connect(resetBtn, &QPushButton::clicked, this, [this] {
+        filterDateFrom->setDate(QDate::currentDate().addDays(-7));
+        filterDateTo->setDate(QDate::currentDate());
+        filterRoom->setCurrentIndex(0);
+        filterEventType->setCurrentIndex(0);
+        applyLogFilters(true);
+    });
+    lay->addWidget(resetBtn);
+
     lay->addStretch();
     return bar;
 }
@@ -3039,22 +3093,33 @@ QWidget* MainWindow::buildVideoSearchTab()
     panel->setObjectName("panel");
 
     auto* outer = new QVBoxLayout(panel);
-    outer->setContentsMargins(18, 16, 18, 16);
-    outer->setSpacing(14);
+    outer->setContentsMargins(14, 12, 14, 14);
+    outer->setSpacing(10);
 
-    auto* title = new QLabel(QStringLiteral("🔍 영상 검색"));
+    auto* title = new QLabel(QStringLiteral("영상 검색"));
     title->setObjectName("panelTitle");
     outer->addWidget(title);
 
-    auto* hint = new QLabel(
-        QStringLiteral("낙상·침상이탈 같은 사건을 자연어로 물어보면 지난 기록을 찾아드려요. "
-                       "예: \"어제 저녁에 낙상 있었어?\", \"이번 주에 침대에서 나간 적 있어?\" "
-                       "클립을 클릭하면 이벤트 기록 페이지에서 바로 재생됩니다."));
-    hint->setObjectName("subtitle");
-    hint->setWordWrap(true);
-    outer->addWidget(hint);
+    // Wisenet Viewer의 AI search와 같은 2단: 왼쪽에 조건, 오른쪽에 결과.
+    auto* body = new QHBoxLayout();
+    body->setSpacing(12);
 
-    auto* topRow = new QHBoxLayout();
+    // ── 좌측: 검색 조건 ──
+    auto* side = new QFrame();
+    side->setObjectName("filterBar");
+    side->setFixedWidth(248);
+    auto* sv = new QVBoxLayout(side);
+    sv->setContentsMargins(12, 12, 12, 12);
+    sv->setSpacing(6);
+
+    auto* cap = new QLabel(QStringLiteral("검색 조건"));
+    cap->setObjectName("filterCap");
+    sv->addWidget(cap);
+    sv->addSpacing(4);
+
+    auto* chCap = new QLabel(QStringLiteral("채널"));
+    chCap->setObjectName("filterFieldCap");
+    sv->addWidget(chCap);
     searchChannelCombo = new QComboBox();
     searchChannelCombo->setObjectName("searchChannelCombo");
     // 기본값 = 전체 채널 — 질문할 때 채널을 매번 고르지 않아도 전체에서
@@ -3062,24 +3127,79 @@ QWidget* MainWindow::buildVideoSearchTab()
     searchChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
     for (int ch = 0; ch < 4; ++ch)
         searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
-    topRow->addWidget(searchChannelCombo);
+    sv->addWidget(searchChannelCombo);
+    sv->addSpacing(6);
 
+    auto* qCap = new QLabel(QStringLiteral("질문"));
+    qCap->setObjectName("filterFieldCap");
+    sv->addWidget(qCap);
     searchQueryEdit = new QLineEdit();
     searchQueryEdit->setObjectName("searchQueryEdit");
     searchQueryEdit->setPlaceholderText(
         QStringLiteral("예: 어제 저녁에 낙상 있었어?"));
-    topRow->addWidget(searchQueryEdit, 1);
+    sv->addWidget(searchQueryEdit);
+    sv->addSpacing(8);
 
+    auto* btnRow = new QHBoxLayout();
+    btnRow->setSpacing(6);
     searchButton = new QPushButton(QStringLiteral("검색"));
-    searchButton->setObjectName("searchButton");
+    searchButton->setObjectName("camPrimary");   // 이 페이지의 주 액션 = 채워진 악센트
     searchButton->setCursor(Qt::PointingHandCursor);
-    topRow->addWidget(searchButton);
-    outer->addLayout(topRow);
+    btnRow->addWidget(searchButton, 1);
+    auto* resetBtn = new QPushButton(QStringLiteral("초기화"));
+    resetBtn->setObjectName("filterResetBtn");
+    resetBtn->setCursor(Qt::PointingHandCursor);
+    connect(resetBtn, &QPushButton::clicked, this, [this] {
+        searchQueryEdit->clear();
+        searchChannelCombo->setCurrentIndex(0);
+        searchResultBrowser->clear();
+    });
+    btnRow->addWidget(resetBtn);
+    sv->addLayout(btnRow);
+    sv->addSpacing(10);
 
+    // 예시 질문 — 누르면 질문칸이 채워진다. 자연어 검색은 "뭐라고 물어야
+    // 하는지"가 가장 큰 진입 장벽이라, 실제 통하는 문장을 눌러 보게 한다.
+    auto* exCap = new QLabel(QStringLiteral("예시 질문"));
+    exCap->setObjectName("filterFieldCap");
+    sv->addWidget(exCap);
+    const QString examples[3] = {
+        QStringLiteral("어제 저녁에 낙상 있었어?"),
+        QStringLiteral("이번 주에 침대에서 나간 적 있어?"),
+        QStringLiteral("오늘 새벽에 무슨 일 있었어?"),
+    };
+    for (const QString& ex : examples) {
+        auto* chip = new QPushButton(ex);
+        chip->setObjectName("exampleChip");
+        chip->setCursor(Qt::PointingHandCursor);
+        connect(chip, &QPushButton::clicked, this, [this, ex] {
+            searchQueryEdit->setText(ex);
+            sendSearchQuery();
+        });
+        sv->addWidget(chip);
+    }
+
+    sv->addStretch();
+    auto* hint = new QLabel(
+        QStringLiteral("낙상·침상이탈 같은 사건을 자연어로 물어보면 지난 기록을 "
+                       "찾아드려요. 결과의 클립을 누르면 이벤트 기록 페이지에서 "
+                       "바로 재생됩니다."));
+    hint->setObjectName("camHint");
+    hint->setWordWrap(true);
+    sv->addWidget(hint);
+
+    body->addWidget(side, 0);
+
+    // ── 우측: 결과 ──
     searchResultBrowser = new QTextBrowser();
     searchResultBrowser->setObjectName("searchResultBrowser");
     searchResultBrowser->setOpenLinks(false);  // 클립 링크는 인앱 재생기로 가로챈다
-    outer->addWidget(searchResultBrowser, 1);  // 재생기가 없으니 결과창이 페이지 전체를 씀
+    // 검색 전 빈 검은 판만 놓여 있으면 "고장인가"로 읽힌다 — 무엇을 하는 곳인지 적어 둔다.
+    searchResultBrowser->setPlaceholderText(
+        QStringLiteral("왼쪽에서 질문을 입력하고 [검색]을 누르면 결과가 여기에 나옵니다."));
+    body->addWidget(searchResultBrowser, 1);
+
+    outer->addLayout(body, 1);
 
     connect(searchButton, &QPushButton::clicked, this, &MainWindow::sendSearchQuery);
     connect(searchQueryEdit, &QLineEdit::returnPressed, this, &MainWindow::sendSearchQuery);
@@ -3901,6 +4021,8 @@ void MainWindow::showChangeLogDialog(int admissionId)
 // ═══════════════════════════════════════════════════════════
 void MainWindow::applyTheme()
 {
+    // 달력 요일 머리글은 QSS가 아니라 코드로 칠하므로 팔레트 전환 때 직접 다시 준다.
+    applyCalendarPalette(reportCalendar);
     // 적용 주체는 이 위젯이 아니라 qApp이다 — 이 창 하나가 아니라 앱 전체가
     // 같은 시트를 받아야 로그인 창까지 한 경로로 스타일이 흐른다.
     ThemeManager::applyStylesheet(darkMode ? kDark : kLight, darkMode);
@@ -5320,6 +5442,10 @@ QWidget* MainWindow::buildCamImagePage()
 
     auto* cap = new QLabel(QStringLiteral("밝기 · 대비 · 채도"));
     cap->setObjectName("camSectionCap");
+    // 좌측 악센트 바 높이 = 라벨 높이다. 레이아웃이 남는 세로 공간을
+    // 이 라벨에 나눠 주면 바가 글자보다 몇 배 길어진다 — 높이를 내용에 고정.
+    cap->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
     col->addWidget(cap);
 
     // 슬라이더 3종 (ClickSlider — 값 숫자 표시 + 트랙 클릭 점프)
@@ -5351,6 +5477,8 @@ QWidget* MainWindow::buildCamImagePage()
     // 포커스 구분선 캡션
     auto* fcap = new QLabel(QStringLiteral("초점"));
     fcap->setObjectName("camSectionCap");
+    fcap->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
     col->addWidget(fcap);
     auto* afBtn = new QPushButton(QStringLiteral("전체 자동초점"));
     afBtn->setObjectName("roiButton");
@@ -5545,6 +5673,8 @@ QWidget* MainWindow::buildAlertSettingsTab()
     // 밝기 · 음량 (섹션 캡션 + 폼 — 카메라 이미지 탭과 동일)
     auto* ctrlCap = new QLabel(QStringLiteral("밝기 · 음량"));
     ctrlCap->setObjectName("camSectionCap");
+    ctrlCap->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
     cl->addWidget(ctrlCap);
 
     alertBright_ = new ClickSlider();
@@ -5789,6 +5919,8 @@ QWidget* MainWindow::buildCamConnectPage()
 
     auto* cap = new QLabel(QStringLiteral("카메라 접속"));
     cap->setObjectName("camSectionCap");
+    cap->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+
     camV->addWidget(cap);
 
     // 접속 정보 폼 (마지막 값 복원)
