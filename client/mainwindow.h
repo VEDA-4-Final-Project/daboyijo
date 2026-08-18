@@ -15,6 +15,7 @@
 #include <QSet>
 #include <QMap>
 #include <QPixmap>
+#include <QColor>
 
 #include <QHash>
 #include <QVector>
@@ -155,6 +156,9 @@ class QPropertyAnimation;
 class QCalendarWidget;
 class QHBoxLayout;
 class ActivityChart;
+class QTreeWidget;
+class QTreeWidgetItem;
+class TimelineBar;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -173,6 +177,22 @@ struct NvrSegmentInfo {
     int channel = -1;
     qint64 startMs = 0;
     QString url;
+};
+
+// 이벤트 기록 표의 한 줄. DB 원장(events)에서 읽어온 것과 실시간으로 도착한 것이
+// 같은 모양을 갖도록 한 곳에 정의한다 — 두 경로가 따로 표를 채우면 열 순서·색·
+// 클립 URL 규칙이 조용히 갈라진다.
+struct EventLogRow {
+    qint64  eventId = -1;      // events.event_id (-1 = 방금 소켓으로 온 것, 아직 조회 전)
+    qint64  occurredMs = 0;
+    int     channel = -1;
+    QString typeCode;          // FALL / EGRESS / VITAL_ABNORMAL (DB ENUM과 같은 값)
+    QString source;            // CAMERA / WEARABLE
+    QString residentName;      // 비어 있으면 "미상"으로 표시
+    QString place;             // "101호 · 채널 2 · 침대 1"
+    QString clipUrl;           // 호스트까지 붙인 완성 URL (비어 있으면 재생 불가)
+    bool    confirmed = false;
+    QString confirmedBy;
 };
 
 // 입소자 한 명의 표시 정보. 한 채널에 여러 명이 있을 수 있어 채널 단위인
@@ -282,9 +302,77 @@ private:
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     QWidget* videoCards[4] = {};      // 영상 카드(스포트라이트 재배치용)
     QGridLayout* videoGrid = nullptr; // 영상 월 그리드(재배치 대상)
-    int focusedChannel_ = -2;         // 스포트라이트 채널(-1=균등 2×2, -2=아직 미배치)
+    // 마지막으로 실제 적용한 배치의 서명. relayoutGrid()가 이 값과 비교해
+    // 달라졌을 때만 위젯을 옮긴다 — 채널을 고를 때마다 4장을 떼었다 붙이면
+    // 영상이 깜빡인다. -1은 "아직 한 번도 배치 안 함".
+    int gridKey_ = -1;
     // 낙상·침상이탈 감지 시 그 채널을 크게, 나머지는 작게. -1이면 균등 2×2로 복귀.
     void setVideoFocus(int channel);
+    // ── Wisenet Viewer 스타일 관제 화면 구성 (2026-08) ─────────────
+    // 화면을 세 덩어리로 나눈다: [리소스 트리] [레이아웃 탭 + 영상 그리드 +
+    // 타임라인] [바이탈 패널]. 그리드 배치는 "프리셋(gridLayout_) × 선택 채널
+    // (selectedChannel_) × 숨긴 타일(tileHidden_)" 세 상태의 함수이며,
+    // 그 셋 중 무엇이 바뀌든 relayoutGrid() 한 곳에서만 배치가 결정된다 —
+    // 배치 코드가 여러 갈래로 흩어지면 경보 스포트라이트와 사용자가 고른
+    // 레이아웃이 서로를 덮어써 어긋난다.
+    enum class GridLayout { Quad, Spotlight, Single };
+    GridLayout gridLayout_ = GridLayout::Quad;
+    int  selectedChannel_ = 0;      // 지금 조작 대상 채널(선택 강조색 테두리)
+    bool tileHidden_[4] = {};       // 타일 ×로 레이아웃에서 뺀 채널(카메라 해제 아님)
+    void relayoutGrid();            // 위 세 상태 → videoGrid 실제 배치
+    void setGridLayout(GridLayout mode);
+    void selectChannel(int ch);     // 타일 선택 + 리소스 트리 강조 동기화
+    void setTileHidden(int ch, bool hidden);
+    QString channelDisplayName(int ch) const;   // "CH1 · 김복순" (타일/트리 공용)
+
+    // 좌측 리소스 패널 — Root > 그룹 > CH01~04 + 레이아웃 프리셋.
+    QWidget* buildResourcePanel();
+    void     refreshResourceTree();          // 카메라 연결/입소자 변경 시 라벨·색 갱신
+    void     setResourceCollapsed(bool on);
+    QFrame*          resourcePanel_ = nullptr;
+    QTreeWidget*     resourceTree_ = nullptr;
+    QLineEdit*       resourceSearch_ = nullptr;
+    QPushButton*     resourceToggle_ = nullptr;
+    QWidget*         resourceBody_ = nullptr;   // 접을 때 숨기는 부분(검색+트리)
+    bool             resourceCollapsed_ = false;
+    QTreeWidgetItem* camItems_[4] = {};
+
+    // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
+    QWidget*     buildLayoutTabs();
+    QWidget*     buildTileChrome(int channel, QWidget* card);
+    void         saveChannelSnapshot(int channel);   // 타일 툴바 스냅샷 저장
+    QPushButton* layoutTabBtns_[3] = {};
+    QPushButton* tileCloseBtns_[4] = {};
+    QWidget*     tileToolbars_[4] = {};
+
+    // ── 하단 타임라인 + 재생바 ──────────────────────────────────
+    // 라이브/재생 전환은 영상 영역을 통째로 갈아끼운다(liveOrPlaybackStack_):
+    // 0 = 실시간 그리드, 1 = NVR 재생 화면. 소켓 프레임은 라이브에서만 보이고
+    // 재생 중에도 계속 수신은 된다 — 되돌아오면 곧바로 최신 화면이 뜬다.
+    QWidget* buildTransportBar();
+    void     refreshTimeline();              // NVR 세그먼트·이벤트 → 타임라인 반영
+    void     setPlaybackMode(bool on);
+    void     seekPlaybackTo(qint64 ms);      // 그 시각을 담은 세그먼트를 찾아 재생
+    TimelineBar*    timeline_ = nullptr;
+    QStackedWidget* liveOrPlaybackStack_ = nullptr;
+    QVideoWidget*   playbackVideo_ = nullptr;
+    // 재생 모드로 막 넘어왔을 때(아직 시각을 안 고른 상태)와 그 시각에 녹화가
+    // 없을 때 보여주는 안내. 검은 화면만 띄우면 "고장인가"로 읽힌다.
+    QLabel*         playbackPlaceholder_ = nullptr;
+    QMediaPlayer*   playbackPlayer_ = nullptr;
+    QPushButton*    liveModeBtn_ = nullptr;
+    QPushButton*    playbackModeBtn_ = nullptr;
+    QPushButton*    transportPlayBtn_ = nullptr;
+    QLabel*         transportTimeLabel_ = nullptr;
+    QComboBox*      transportSpeedCombo_ = nullptr;
+    QTimer          timelineTimer_;          // 라이브일 때 창을 "지금"에 맞춰 미는 타이머
+    bool            playbackMode_ = false;
+    qint64          playbackSegStartMs_ = 0; // 지금 재생 중인 세그먼트의 시작 시각
+    // 낙상·침상이탈이 난 시각 — 타임라인 마커. 이벤트 로그와 별개로 가볍게 들고 있는다.
+    struct TimelineEvent { qint64 atMs; int channel; QColor color; };
+    QVector<TimelineEvent> timelineEvents_;
+    void pushTimelineEvent(int channel, qint64 atMs, const QColor& color);
+
     // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
     // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
     QString lastCameraUrl_[4];
@@ -370,6 +458,32 @@ private:
     QComboBox* filterRoom = nullptr;
     QComboBox* filterEventType = nullptr;
     QTableWidget* logTable = nullptr;
+    // 이벤트 기록 표의 열 순서. 인덱스를 코드 곳곳에 숫자로 흩뿌리면 열을 하나
+    // 끼워 넣을 때마다 조용히 어긋나므로 이름으로 고정한다.
+    enum LogCol { LogWhen = 0, LogType, LogPlace, LogResident, LogSource, LogStatus,
+                  LogColCount };
+    // 0열 아이템에 실어 두는 부가 데이터. Qt::UserRole+N 을 직접 쓰지 않는다.
+    enum LogRole { LogClipUrl = Qt::UserRole, LogChannel, LogTimestamp, LogEventId };
+
+    QComboBox* filterChannel = nullptr;     // 전체 채널 / CH1~4
+    QComboBox* filterConfirmed = nullptr;   // 전체 / 미확인만 / 확인만
+    QLabel*    logCountLabel = nullptr;     // "N건 · 미확인 M건"
+    QLabel*    logEmptyHint = nullptr;      // 조회 결과 0건일 때 표 위에 띄우는 안내
+    QLabel*    eventContextLabel = nullptr; // 우측 재생기 위 "누가 · 언제 · 어디서"
+
+    // events 원장을 현재 필터 조건으로 조회해 표를 통째로 다시 채운다.
+    // 이 함수가 표의 유일한 채움 경로다(실시간 도착분만 insertEventRow로 덧붙는다).
+    void reloadEventLog();
+    // 표에 한 줄 넣기 — DB 조회분/실시간 도착분 공용.
+    void insertEventRow(const EventLogRow& e);
+    // 실시간 이벤트를 표에 얹는다(서버는 같은 이벤트를 DB에도 쓴다 — 다음 조회 때 합쳐진다).
+    void appendLiveEvent(int channel, int roiId, qint64 occurredMs,
+                         const QString& typeCode, const QString& source);
+    // 종류 코드 → 화면 문구/색. 표·필터·요약이 같은 사전을 본다.
+    static QString eventTypeLabel(const QString& code);
+    static QString eventSourceLabel(const QString& code);
+    // 결과 건수·미확인 수 갱신 + 빈 상태 안내 표시
+    void refreshLogSummary();
     QLabel* blackboxPlaceholder = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
     QStackedWidget* blackboxStack = nullptr;
@@ -382,10 +496,10 @@ private:
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
     qint64 blackboxPendingSeekMs_ = -1;   // durationChanged 이후 한 번 적용할 탐색 위치(-1=없음)
 
-    // NVR(연속녹화) 탐색 — 같은 재생기(blackboxPlayer 등)를 그대로 재사용한다
-    QComboBox* nvrChannelCombo = nullptr;
-    QListWidget* nvrSegmentList = nullptr;
-    QVector<NvrSegmentInfo> nvrSegments_;   // /list로 받은 전체 목록(채널 필터링용 원본)
+    // NVR(연속녹화) 세그먼트 목록. 화면에 목록으로 띄우지는 않는다 — 관제화면
+    // 하단 타임라인이 이 데이터를 시간축 위에 그리고, 이벤트 기록의
+    // [이 시점 NVR에서 이어보기]가 여기서 해당 세그먼트를 찾아 쓴다.
+    QVector<NvrSegmentInfo> nvrSegments_;
 
     // 이벤트↔NVR 연결: 로그에서 마지막으로 연 이벤트의 채널/시각(NVR 시점 점프용)
     int selectedEventChannel_ = -1;
@@ -412,6 +526,8 @@ private:
     QLabel* reportDateLabel = nullptr;   // 우측 상단 "2026-08-13 (목)"
     QDate   reportDate_ = QDate::currentDate();
     QWidget* buildReportCalendar();      // 좌측 날짜 선택 칼럼
+    // 달력 요일 머리글/주말 색 — QSS가 닿지 않는 부분이라 코드로 칠한다.
+    void     applyCalendarPalette(QCalendarWidget* cal);
 
     // ── 일일 리포트: 입소자 선택 + 지표 ────────────────────
     // 리포트는 "날짜 + 사람" 한 명 단위다(PDF 한 장, AI 요약 한 문단이 그 단위).
@@ -564,9 +680,7 @@ private:
     QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
     void playBlackboxClipAt(const QString& url, qint64 seekMs);  // 재생 후 지정 위치로 탐색
-    QWidget* buildNvrBrowser();        // NVR(연속녹화) 채널+세그먼트 탐색 목록
-    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신
-    void repopulateNvrList();          // nvrChannelCombo 선택값 기준으로 nvrSegmentList 다시 채움
+    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신(→ refreshTimeline)
     void jumpToNvrContext();           // 선택된 로그 이벤트 시점의 NVR 세그먼트를 찾아 그 위치로 재생
     void downloadCurrentClip();        // 현재 재생 중인 클립을 로컬에 저장
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
@@ -740,8 +854,34 @@ private:
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
     ClickSlider* imgSaturation = nullptr;
+    // 이미지/초점 조작은 카메라가 붙어 있을 때만 의미가 있다. 미연결 채널에서
+    // 눌러도 아무 일도 일어나지 않으므로, 눌리는 것처럼 보이게 두지 않는다.
+    QPushButton* imgApplyBtn = nullptr;
+    QPushButton* imgResetBtn = nullptr;
+    QPushButton* imgFocusBtn = nullptr;
+    QLabel*      imgDisabledHint = nullptr;   // 왜 못 만지는지 알려주는 한 줄
+    // 채널별 마지막 적용값(밝기/대비/채도). 카메라의 실제 현재값을 읽어오는 게
+    // 아니라 "이 PC에서 마지막으로 보낸 값"이다 — 프로토콜에 조회가 없다.
+    // 채널을 오갈 때 값이 따라오게 하고, 앱을 껐다 켜도 남는다.
+    void loadImageParams(int channel);        // QSettings → 슬라이더
+    void saveImageParams(int channel);        // 슬라이더 → QSettings
+    // 현재 선택 채널의 연결 여부에 맞춰 ROI/이미지 컨트롤을 켜고 끈다.
+    void refreshCamControlsEnabled();
+    // 연결 탭의 4채널 상태 요약 배지(CH1~4)
+    QLabel* camConnBadges[4] = {};
     FramePreview* imgBefore = nullptr;                 // 적용 전 스냅샷
     FramePreview* imgAfter = nullptr;                   // 실시간(적용 후)
+    // 위 두 프리뷰를 영상 비율대로 잡아 주는 상자(실체는 mainwindow.cpp의 AspectBox).
+    // 상자가 영상보다 크면 그 차이가 검은 여백으로 남기 때문에 비율을 맞춰 준다.
+    QWidget* imgBeforeBox = nullptr;
+    QWidget* imgAfterBox = nullptr;
+    // 이미지 모드에서 스테이지 카드를 영상 폭에 딱 맞춰 줄이기 위해 들고 있는다.
+    // 16:9 두 장을 세로로 쌓으면 세로가 먼저 차서 폭이 남는데, 그 남는 폭이
+    // 카드 안에 있으면 "영상 옆 검은 여백"으로 보인다. 카드를 줄여 밖으로 뺀다.
+    QFrame*      camStageCard_ = nullptr;
+    QHBoxLayout* camBodyRow_ = nullptr;   // [채널스트립 | 스테이지 | 인스펙터]
+    void updateImageStageWidth();
+    void setImagePreviewFrame(const QPixmap& pm);      // 프레임 + 상자 비율 동시 갱신
     QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──

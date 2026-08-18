@@ -41,6 +41,10 @@ QString ThemeManager::substitute(QString qss, const Palette& p, bool darkMode)
         .replace("%(accentHover)", darkMode ? "#3AD4C4" : "#3AD1C3")
         .replace("%(accent)", p.accent)
         .replace("%(onAccent)", p.onAccent)
+        // onSelect가 select보다 먼저일 필요는 없다(%( 접두사 덕에 부분문자열이
+        // 아니다) — 그래도 accentHover 규칙과 같은 순서 감각으로 붙여 둔다.
+        .replace("%(onSelect)", p.onSelect)
+        .replace("%(select)", p.select)
         .replace("%(critical)", p.critical);
 }
 
@@ -60,5 +64,7 @@ QString ThemeManager::dialogStyleSheet()
         .replace("%(accentHover)", "#3AD4C4")   // accent(#17C7B6)보다 한 단계 밝은 톤
         .replace("%(accent)", kDark.accent)
         .replace("%(onAccent)", kDark.onAccent)
+        .replace("%(onSelect)", kDark.onSelect)
+        .replace("%(select)", kDark.select)
         .replace("%(critical)", kDark.critical);
 }
