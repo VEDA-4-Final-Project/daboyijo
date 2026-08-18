@@ -353,8 +353,9 @@ private:
 
     // ── TAB 구조 ──────────────────────────────────────────
     // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
-    static constexpr int kNavCount = 5;
-    QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 5개 + 접기 토글)
+    static constexpr int kNavCount = 6;
+    static constexpr int kNavEventLog = 1;  // 영상 재생기(블랙박스/NVR)가 있는 페이지 — 다른 페이지에서 클립 재생 시 이동 대상
+    QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 6개 + 접기 토글)
     void     refreshNavIcons();       // 팔레트 전환 시 아이콘 색 재생성
     void     setNavCollapsed(bool on);// 접기/펼치기 (QSettings에 저장)
     QFrame*         navRail = nullptr;
@@ -392,13 +393,14 @@ private:
     QPushButton* nvrJumpButton = nullptr;
     QPushButton* clipDownloadButton = nullptr;
 
-    // ── 영상검색(🔍) — 케어봇(video_search_module)과 같은 서버 로직을 관제
-    //    화면에서도 쓴다. 질의는 DBJ_CTRL_SEARCH_QUERY, 응답은 DBJ_SEARCH_MAGIC.
+    // ── 영상검색(🔍) — 좌측 네비의 독립 페이지(실제 VMS의 Search 섹션처럼).
+    //    케어봇(video_search_module)과 같은 서버 로직 재사용. 질의는
+    //    DBJ_CTRL_SEARCH_QUERY, 응답은 DBJ_SEARCH_MAGIC.
     QComboBox* searchChannelCombo = nullptr;
     QLineEdit* searchQueryEdit = nullptr;
     QPushButton* searchButton = nullptr;
     QTextBrowser* searchResultBrowser = nullptr;
-    QWidget* buildVideoSearchPanel();
+    QWidget* buildVideoSearchTab();          // 네비 "영상 검색" 페이지 전체
     void sendSearchQuery();
     // onReadyRead가 DBJ_SEARCH_MAGIC 패킷을 다 모으면 호출 — 답변 표시 + 버튼 복구
     void onSearchResultReceived(int channel, const QString& text);

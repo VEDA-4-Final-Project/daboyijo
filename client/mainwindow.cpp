@@ -704,7 +704,15 @@ QPixmap navIconPixmap(int kind, const QColor& c, int px = 20)
             }
             break;
         }
-        case 2: {   // 일일 리포트 — 문서(가로줄)
+        case 2: {   // 영상 검색 — 돋보기
+            const qreal r = w * 0.32;
+            const QPointF center(m + w * 0.38, m + w * 0.38);
+            p.drawEllipse(center, r, r);
+            p.drawLine(QPointF(center.x() + r * 0.72, center.y() + r * 0.72),
+                       QPointF(m + w, m + w));
+            break;
+        }
+        case 3: {   // 일일 리포트 — 문서(가로줄)
             p.drawRoundedRect(QRectF(m, m, w, w), 2.0, 2.0);
             for (int i = 0; i < 3; ++i) {
                 const qreal y = m + w * 0.30 + i * w * 0.22;
@@ -712,12 +720,12 @@ QPixmap navIconPixmap(int kind, const QColor& c, int px = 20)
             }
             break;
         }
-        case 3: {   // 입소자 관리 — 사람
+        case 4: {   // 입소자 관리 — 사람
             p.drawEllipse(QRectF(m + w * 0.29, m + w * 0.04, w * 0.42, w * 0.42));
             p.drawArc(QRectF(m + w * 0.06, m + w * 0.54, w * 0.88, w * 0.84), 0, 180 * 16);
             break;
         }
-        default: {  // 장치 설정 — 카메라 바디 + 렌즈
+        default: {  // 장치 설정(5) — 카메라 바디 + 렌즈
             p.drawRoundedRect(QRectF(m, m + w * 0.20, w, w * 0.62), 2.5, 2.5);
             p.drawEllipse(QRectF(m + w * 0.33, m + w * 0.36, w * 0.34, w * 0.32));
             p.drawLine(QPointF(m + w * 0.30, m + w * 0.20),
@@ -731,7 +739,7 @@ QPixmap navIconPixmap(int kind, const QColor& c, int px = 20)
 }
 }  // namespace
 
-// 좌측 네비 레일 — 아이콘+라벨 5개, 접으면 아이콘만. 상태는 QSettings에 남는다.
+// 좌측 네비 레일 — 아이콘+라벨 6개, 접으면 아이콘만. 상태는 QSettings에 남는다.
 QWidget* MainWindow::buildNavRail()
 {
     navRail = new QFrame();
@@ -755,8 +763,8 @@ QWidget* MainWindow::buildNavRail()
 
     const QString names[kNavCount] = {
         QStringLiteral("실시간 관제"), QStringLiteral("이벤트 기록"),
-        QStringLiteral("일일 리포트"), QStringLiteral("입소자 관리"),
-        QStringLiteral("장치 설정")};
+        QStringLiteral("영상 검색"),   QStringLiteral("일일 리포트"),
+        QStringLiteral("입소자 관리"), QStringLiteral("장치 설정")};
     for (int i = 0; i < kNavCount; ++i) {
         navBtns[i] = new QPushButton(names[i]);
         navBtns[i]->setObjectName("navBtn");
@@ -848,9 +856,10 @@ void MainWindow::buildUi()
     contentStack->addWidget(dashboardTab);
 
     contentStack->addWidget(buildEventLogTab());        // 2: 이벤트 기록
-    contentStack->addWidget(buildReportPage());         // 3: 일일 리포트
-    contentStack->addWidget(buildDbTab());              // 4: 입소자 관리
-    contentStack->addWidget(buildDeviceSettingsTab());  // 5: 장치 설정(카메라 + 알림)
+    contentStack->addWidget(buildVideoSearchTab());     // 3: 영상 검색
+    contentStack->addWidget(buildReportPage());         // 4: 일일 리포트
+    contentStack->addWidget(buildDbTab());              // 5: 입소자 관리
+    contentStack->addWidget(buildDeviceSettingsTab());  // 6: 장치 설정(카메라 + 알림)
 
     auto* shell = new QHBoxLayout();
     shell->setContentsMargins(0, 0, 0, 0);
@@ -1467,7 +1476,11 @@ VitalTile* MainWindow::buildVitalCard(int key, const QString& name, const QStrin
 }
 
 // ═══════════════════════════════════════════════════════════
-//  TAB2: 이벤트 기록 — 상단 요약 카드 + 필터 + [로그 표 | 인라인 블랙박스]
+//  TAB2: 이벤트 기록 — 상단 요약 카드 + 필터 + [로그 표 | 인라인 블랙박스+NVR].
+//  왼쪽 표의 행을 열면 페이지 이동 없이 바로 이 페이지 오른쪽에서 재생된다
+//  (onLogRowActivated). 영상 검색 페이지의 AI 검색 결과 클립도 같은 재생기로
+//  오게 하려면 이 페이지로 이동시키는 쪽을 택했다(재생기를 두 곳에 중복해서
+//  두지 않기 위해) — buildVideoSearchTab() 참고.
 // ═══════════════════════════════════════════════════════════
 QWidget* MainWindow::buildEventLogTab()
 {
@@ -1485,7 +1498,7 @@ QWidget* MainWindow::buildEventLogTab()
     // 필터 바
     outer->addWidget(buildSearchFilters());
 
-    // 본문: 좌측 로그 표 / 우측 인라인 블랙박스 재생
+    // 본문: 좌측 로그 표 / 우측 인라인 블랙박스 재생 + NVR 탐색
     auto* body = new QHBoxLayout();
     body->setSpacing(16);
     body->addWidget(buildLogTable(), 5);
@@ -1506,7 +1519,7 @@ QWidget* MainWindow::buildEventLogTab()
     nvrJumpButton = new QPushButton(QStringLiteral("이 시점 NVR에서 이어보기"));
     nvrJumpButton->setObjectName("nvrJumpButton");
     nvrJumpButton->setCursor(Qt::PointingHandCursor);
-    nvrJumpButton->setEnabled(false);   // 로그에서 이벤트를 열기 전까진 대상이 없음
+    nvrJumpButton->setEnabled(false);   // 행을 열기 전까진 대상이 없음
     connect(nvrJumpButton, &QPushButton::clicked, this, &MainWindow::jumpToNvrContext);
     actionRow->addWidget(nvrJumpButton, 1);
 
@@ -1519,7 +1532,6 @@ QWidget* MainWindow::buildEventLogTab()
     right->addLayout(actionRow);
 
     right->addWidget(buildNvrBrowser());
-    right->addWidget(buildVideoSearchPanel());
     body->addLayout(right, 4);
 
     outer->addLayout(body, 1);
@@ -1972,6 +1984,26 @@ void MainWindow::playBlackboxClip(const QString& url)
         blackboxUrl = url;
         blackboxRetries = 0;
     }
+
+    // "이 시점 NVR에서 이어보기" 대상(selectedEventChannel_/Timestamp_)을 URL의
+    // 파일명에서 직접 뽑아 채운다. 예전엔 이벤트 기록 행(onLogRowActivated)만
+    // 이 값을 채워서, 검색 결과 클립이나 NVR 목록을 직접 눌렀을 땐 채워지지
+    // 않아 버튼이 계속 비활성 상태였다 — 파일명 규칙(ch{N}_{ms}[_TYPE].mp4)이
+    // 블랙박스·NVR 둘 다 같아 여기 한 곳에서 재생 경로 전부를 커버할 수 있다.
+    const QString fileName = QUrl(url).fileName();
+    const QString stem = fileName.left(fileName.lastIndexOf('.'));
+    const QStringList parts = stem.split(QLatin1Char('_'));
+    if (parts.size() >= 2 && parts[0].startsWith(QLatin1String("ch"))) {
+        bool chOk = false, msOk = false;
+        const int ch = parts[0].mid(2).toInt(&chOk);
+        const qint64 ms = parts[1].toLongLong(&msOk);
+        if (chOk && msOk && ch >= 0 && ch < 4 && ms > 0) {
+            selectedEventChannel_ = ch;
+            selectedEventTimestampMs_ = ms;
+        }
+    }
+    if (nvrJumpButton)
+        nvrJumpButton->setEnabled(selectedEventChannel_ >= 0 && selectedEventTimestampMs_ >= 0);
     blackboxStack->setCurrentWidget(blackboxVideoWidget);
     blackboxSeek->setEnabled(true);
     blackboxPlayPauseButton->setEnabled(true);
@@ -2178,28 +2210,40 @@ void MainWindow::repopulateNvrList()
 }
 
 // ═══════════════════════════════════════════════════════════
-//  영상검색(🔍) — 케어봇과 같은 서버 로직(video_search_module)을 관제 화면에서도.
-//  질의는 DBJ_CTRL_SEARCH_QUERY로 그 채널 담당 Pi에 보내고, 응답(DBJ_SEARCH_MAGIC)은
-//  onReadyRead가 받아 onSearchResultReceived로 넘긴다.
+//  TAB: 영상 검색(🔍) — 좌측 네비의 독립 페이지. 케어봇과 같은 서버 로직
+//  (video_search_module)을 관제 화면에서도 쓴다. 질의는 DBJ_CTRL_SEARCH_QUERY로
+//  보내고, 응답(DBJ_SEARCH_MAGIC)은 onReadyRead가 받아 onSearchResultReceived로
+//  넘긴다.
+//  재생기는 이 페이지에 없다 — 이벤트 기록 페이지(kNavEventLog)의 인라인
+//  재생기를 그대로 쓴다(재생기를 두 곳에 중복해서 두지 않기 위해). 검색
+//  결과의 클립 링크를 누르면 그 페이지로 이동해 바로 재생된다.
 // ═══════════════════════════════════════════════════════════
-QWidget* MainWindow::buildVideoSearchPanel()
+QWidget* MainWindow::buildVideoSearchTab()
 {
-    auto* card = new QFrame();
-    card->setObjectName("videoCard");
+    auto* panel = new QFrame();
+    panel->setObjectName("panel");
 
-    auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(10, 10, 10, 10);
-    lay->setSpacing(6);
+    auto* outer = new QVBoxLayout(panel);
+    outer->setContentsMargins(18, 16, 18, 16);
+    outer->setSpacing(14);
 
-    auto* cap = new QLabel(QStringLiteral("🔍 영상 검색"));
-    cap->setObjectName("panelTitle");
-    lay->addWidget(cap);
+    auto* title = new QLabel(QStringLiteral("🔍 영상 검색"));
+    title->setObjectName("panelTitle");
+    outer->addWidget(title);
+
+    auto* hint = new QLabel(
+        QStringLiteral("낙상·침상이탈 같은 사건을 자연어로 물어보면 지난 기록을 찾아드려요. "
+                       "예: \"어제 저녁에 낙상 있었어?\", \"이번 주에 침대에서 나간 적 있어?\" "
+                       "클립을 클릭하면 이벤트 기록 페이지에서 바로 재생됩니다."));
+    hint->setObjectName("subtitle");
+    hint->setWordWrap(true);
+    outer->addWidget(hint);
 
     auto* topRow = new QHBoxLayout();
     searchChannelCombo = new QComboBox();
     searchChannelCombo->setObjectName("searchChannelCombo");
-    // 기본값 = 전체 채널(NVR 브라우저와 같은 패턴) — 질문할 때 채널을 매번
-    // 고르지 않아도 전체에서 찾아준다. 좁히고 싶을 때만 특정 채널로 바꾸면 됨.
+    // 기본값 = 전체 채널 — 질문할 때 채널을 매번 고르지 않아도 전체에서
+    // 찾아준다. 좁히고 싶을 때만 특정 채널로 바꾸면 됨.
     searchChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
     for (int ch = 0; ch < 4; ++ch)
         searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
@@ -2215,20 +2259,24 @@ QWidget* MainWindow::buildVideoSearchPanel()
     searchButton->setObjectName("searchButton");
     searchButton->setCursor(Qt::PointingHandCursor);
     topRow->addWidget(searchButton);
-    lay->addLayout(topRow);
+    outer->addLayout(topRow);
 
     searchResultBrowser = new QTextBrowser();
     searchResultBrowser->setObjectName("searchResultBrowser");
-    searchResultBrowser->setMaximumHeight(140);
     searchResultBrowser->setOpenLinks(false);  // 클립 링크는 인앱 재생기로 가로챈다
-    lay->addWidget(searchResultBrowser);
+    outer->addWidget(searchResultBrowser, 1);  // 재생기가 없으니 결과창이 페이지 전체를 씀
 
     connect(searchButton, &QPushButton::clicked, this, &MainWindow::sendSearchQuery);
     connect(searchQueryEdit, &QLineEdit::returnPressed, this, &MainWindow::sendSearchQuery);
     connect(searchResultBrowser, &QTextBrowser::anchorClicked, this,
-            [this](const QUrl& url) { playBlackboxClip(url.toString()); });
+            [this](const QUrl& url) {
+                // 재생기는 이벤트 기록 페이지에 있다 — 그쪽으로 이동해서 재생.
+                if (contentStack) contentStack->setCurrentIndex(kNavEventLog);
+                if (navBtns[kNavEventLog]) navBtns[kNavEventLog]->setChecked(true);
+                playBlackboxClip(url.toString());
+            });
 
-    return card;
+    return panel;
 }
 
 void MainWindow::sendSearchQuery()
@@ -5752,7 +5800,7 @@ void MainWindow::onLogRowActivated(int row, int /*column*/)
         nvrJumpButton->setEnabled(selectedEventChannel_ >= 0 && selectedEventTimestampMs_ >= 0);
 
     qDebug() << "블랙박스 재생 요청 —" << url;
-    // 인라인 플레이어(페이지 우측)에서 바로 재생 — 팝업 없음.
+    // 인라인 플레이어(이 페이지 우측)에서 바로 재생 — 페이지 이동 없음.
     playBlackboxClip(url);
 }
 
