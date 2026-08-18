@@ -243,8 +243,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.51";
-const char* kDefaultHostB  = "172.20.32.50";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -1646,10 +1646,17 @@ void MainWindow::onReportResidentChanged(int residentId)
             q.prepare(QStringLiteral(
                 "SELECT room, bed, COALESCE(risk_level,'—') FROM residents WHERE resident_id=?"));
             q.addBindValue(residentId);
-            if (q.exec() && q.next())
-                meta = QStringLiteral("%1호 · %2 · 위험도 %3")
-                           .arg(q.value(0).toString(), q.value(1).toString(),
-                                q.value(2).toString());
+            if (q.exec() && q.next()) {
+                // 호실·침대는 아직 안 채운 입소자가 많다. 빈 값을 그대로 이으면
+                // "호 ·  · 위험도 하" 처럼 구분점만 남아 오히려 지저분하다.
+                QStringList parts;
+                const QString room = q.value(0).toString().trimmed();
+                const QString bed  = q.value(1).toString().trimmed();
+                if (!room.isEmpty()) parts << QStringLiteral("%1호").arg(room);
+                if (!bed.isEmpty())  parts << bed;
+                parts << QStringLiteral("위험도 %1").arg(q.value(2).toString());
+                meta = parts.join(QStringLiteral(" · "));
+            }
         }
         reportResidentMeta->setText(meta);
     }

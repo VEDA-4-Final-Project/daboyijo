@@ -113,8 +113,13 @@ public:
     // resident_id 는 이 함수가 채널로 찾아 함께 박아둔다 — 조회할 때마다
     // camera_id 로 조인하면, 입소자가 방을 옮긴 뒤 과거 이벤트가 새 입주자
     // 것으로 바뀐다. 발생 시점의 사람을 그대로 남긴다(스냅샷).
-    //  residentId : -1 이면 cameraId 로 찾는다. 웨어러블이 근거인 이벤트는
-    //               getResidentByWearable 로 미리 정확히 구해서 여기에 넘길 것.
+    //  residentId : 세 값의 뜻이 다르다 —
+    //     > 0 : 호출부가 확정한 사람. 그대로 기록한다.
+    //           (웨어러블 → getResidentByWearable, 카메라 → IdentityTracker)
+    //       0 : "누구인지 모른다" 를 호출부가 확정한 경우. NULL 로 남긴다.
+    //           추적 신뢰도가 낮을 때 쓴다 — 잘못된 이름은 이름 없는 것보다 나쁘다.
+    //      -1 : 모르니 cameraId 로 찾아 달라(기본값). 그 방에 여럿이면 첫 사람으로
+    //           붙으므로, 사람을 알 수 있는 호출부는 0 이나 실제 id 를 넘길 것.
     long long insertEvent(EventType type, EventSource source, int cameraId,
                           long long occurredMs = 0,
                           const std::string& clipUrl = std::string(),

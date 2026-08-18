@@ -112,6 +112,10 @@ int main(int argc, char* argv[]) {
     BedEgressModule bed_egress;     // [침상탈출]
     fall.setBedZones(&bed_zones);
     bed_egress.setBedZones(&bed_zones);
+    // [일일 리포트] 침대 재실 시간(bed_sessions) 기록. identity 는 요양보호사를
+    // 재실에서 빼기 위한 것 — 보호사가 침대에 걸터앉으면 발끝이 ROI 안으로 들어온다.
+    bed_egress.setDatabase(&db);
+    bed_egress.setIdentity(&identity);
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
@@ -282,9 +286,17 @@ int main(int argc, char* argv[]) {
         mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송
         // [일일 리포트] 이벤트 원장에 기록. clip 은 파일명만 남긴다 —
         // 서버는 자기 외부 IP 를 모르고, Qt 는 채널별 호스트를 이미 안다.
+        //
+        // ★ 사람은 IdentityTracker 가 정한 값을 그대로 넘긴다. 넘기지 않으면
+        //   insertEvent 가 "이 채널의 재원자" 로 되짚는데, 한 방에 여러 명이면
+        //   그중 첫 사람으로 붙어 절반이 조용히 틀린다.
+        //   신뢰도가 낮으면(named()==false) 0 을 넘겨 resident_id 를 NULL(미상)로
+        //   남긴다 — 잘못된 이름은 이름 없는 것보다 나쁘다. (-1 은 "카메라로 찾아라"
+        //   라서 여기서 쓰면 방금 미상으로 판정한 걸 도로 추측하게 된다)
         char clip[64];
         std::snprintf(clip, sizeof(clip), "ch%d_%lld_FALL.mp4", ch, (long long)evt_ms);
-        db.insertEvent(EventType::Fall, EventSource::Camera, ch, evt_ms, clip);
+        db.insertEvent(EventType::Fall, EventSource::Camera, ch, evt_ms, clip,
+                       who.named() ? who.resident_id : 0);
     });
     // CCTV 기반 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](const EgressEvent& e) {
@@ -303,6 +315,15 @@ int main(int argc, char* argv[]) {
         int room = e.resident_id > 0 ? db.getRoomByResident(e.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(e.channel);
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
+        // [일일 리포트] 이벤트 원장에 기록.
+        // ★ 이탈은 어느 침대에서 나갔는지가 판정 자체라 사람이 이미 확정돼 있다
+        //   (EgressEvent.resident_id). 침대에 입소자를 아직 매핑하지 않았으면 0 이고,
+        //   그때는 NULL(미상)로 남는다 — 채널로 되짚지 않는다.
+        char eclip[64];
+        std::snprintf(eclip, sizeof(eclip), "ch%d_%lld_EGRESS.mp4",
+                      e.channel, (long long)evt_ms);
+        db.insertEvent(EventType::BedEgress, EventSource::Camera, e.channel, evt_ms,
+                       eclip, e.resident_id);
     });
     // 이 서버가 담당하는 채널인가 — cameras.conf 에 적힌 채널만 처리한다.
     //
@@ -394,6 +415,10 @@ int main(int argc, char* argv[]) {
                      z.camera_id + 1, z.roi_id + 1, z.points.size(), z.resident_id);
     }
     bed_egress.initializeFromDb(db);
+    // [일일 리포트] 지난 실행에서 열린 채 남은 재실 세션 정리. 서버가 죽으면
+    // 메모리의 session_id 가 사라져 그 행은 영영 안 닫히고, 리포트는 그걸
+    // "지금까지 계속 누워있음"으로 읽어 며칠짜리 재실시간을 만들어낸다.
+    db.closeDanglingBedSessions();
 
     for (const auto& cam : config.cameras) {
         // 이 채널 전용 큐 생성 (용량 8 — 버스티 디코딩 출력을 흡수해 드랍 방지.
@@ -462,6 +487,7 @@ int main(int argc, char* argv[]) {
     ai_worker.stop();     // AI 스레드 join
     caregiver.flush();    // 열린 케어 세션 마감 → DB 기록
     activity.flushAll();  // 아직 안 쓴 마지막 1분치 활동량 저장
+    bed_egress.flushBedSessions();  // 열린 재실 세션 마감 → 누워있던 시간 유실 방지
     blackbox.flushAll();  // 저장 중이던 클립 마무리 (유실 방지)
     for (auto& client : clients) {
         client->stop();
