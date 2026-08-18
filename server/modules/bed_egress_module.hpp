@@ -11,6 +11,7 @@
 #include "detection.hpp"
 
 class Database;
+class IdentityTracker;
 
 // 환자 위험도 등급(1: 하, 2: 중, 3: 상)
 enum class PatientStatus {
@@ -59,6 +60,22 @@ public:
     // roi_id == BedZoneStore::kRoiIdAll 이면 그 채널 전체.
     void resetZoneState(int channel, int roi_id);
 
+    // ── [일일 리포트] 침대 재실 시간 ────────────────────────────
+    // 이탈 "순간"(알람)과 별개로, 침대가 차 있던 "구간"을 bed_sessions 에 남긴다.
+    // 리포트의 "누워있는 시간"이 이 값이다.
+    //
+    // ★ 알람과 기록은 조건이 다르다. 알람은 위험도·야간으로 걸러지지만(위험도 '하'는
+    //   이탈해도 안 울림), 재실 기록은 무조건 남겨야 한다. 알람 조건에 묶어두면
+    //   '하' 등급 입소자는 세션이 영영 안 닫혀 리포트에 "72시간 누워있음"이 찍힌다.
+    //
+    // 둘 다 없으면 재실 기록만 조용히 꺼지고 이탈 알람은 평소대로 동작한다.
+    void setDatabase(Database* db) { db_ = db; }
+    // 요양보호사를 재실에서 빼려면 필요하다. 보호사가 침대에 걸터앉으면 발끝이
+    // ROI 안으로 들어와, 그대로 두면 "환자가 누워있던 시간"에 방문 시간이 섞인다.
+    void setIdentity(const IdentityTracker* identity) { identity_ = identity; }
+    // 서버 종료 직전 1회 — 열린 채로 남은 세션을 마감한다(케어로그 flush 와 같은 역할).
+    void flushBedSessions();
+
     // 카메라 메타데이터(바운딩 박스) 수신 시 처리
     void processDetections(int channel, const std::vector<Detection>& dets);
 
@@ -91,4 +108,23 @@ private:
     // 경계선 흔들림 노이즈로 인한 알람 버스트(폭주) 방지용 쿨다운 타이머
     // 구조: 채널 ID -> [ 객체 ID -> 마지막 알람 발생 시각 ]
     std::map<int, std::map<int, std::chrono::steady_clock::time_point>> last_alarm_time_;
+
+    // ── 재실 세션 상태 ────────────────────────────────────────
+    // mutex_ 를 쥔 채 부르는 내부 헬퍼. 침대의 재실 여부가 바뀌었으면 세션을
+    // 열거나 닫는다. DB 호출을 락 안에서 하는 이유는 .cpp 주석 참고.
+    void syncBedSessions(int channel, const std::map<int, BedZone>& zones,
+                         const std::map<int, int>& occupancy,
+                         std::chrono::steady_clock::time_point now);
+    // 그 침대의 열린 세션. 구조: 채널 → [ roi_id → bed_sessions.session_id ]
+    // ★ 세션의 주인은 객체가 아니라 "침대"다. 추적 ID는 사람이 가려지면 바뀌어서,
+    //   ID 단위로 세면 한 사람이 하룻밤 자는 동안 세션이 수십 개로 쪼개진다.
+    //   침대는 고정이고 주인도 고정이라 "이 침대가 차 있나"가 훨씬 안정적이다.
+    std::map<int, std::map<int, long long>> open_sessions_;
+    // 그 침대가 비어 보이기 시작한 시각. 다시 차면 지운다.
+    // ★ 카메라는 이불을 덮고 자는 사람을 자주 놓친다. 한 프레임 안 보인다고 바로
+    //   닫으면 밤새 세션이 수백 개 생긴다. 일정 시간 연속으로 비어야 이탈로 친다.
+    std::map<int, std::map<int, std::chrono::steady_clock::time_point>> empty_since_;
+
+    Database* db_ = nullptr;                       // 없으면 재실 기록만 꺼진다
+    const IdentityTracker* identity_ = nullptr;    // 요양보호사 제외용
 };
