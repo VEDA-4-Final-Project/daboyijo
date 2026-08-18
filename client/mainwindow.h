@@ -432,6 +432,36 @@ private:
     // 24시간 활동량 그래프 (걸음 막대 + 심박 선). 값은 updateCareTime()이 넣는다.
     ActivityChart* activityChart = nullptr;
 
+    // ── 리포트 지표 스냅샷 ────────────────────────────────────
+    // updateCareTime()이 계산한 값을 그대로 보관한다. PDF·AI 요약이 이걸 읽어야
+    // 화면에 보이는 숫자와 문서에 찍히는 숫자가 반드시 같아진다 — 각자 다시
+    // 조회하면 그 사이 데이터가 바뀌었을 때 "화면은 57분, PDF는 58분"이 된다.
+    struct ReportMetrics {
+        bool    valid = false;
+        QString residentName, residentMeta;
+        int     lyingSec = 0,  lyingCount = 0;
+        int     steps = 0,     activeMin = 0;
+        int     careSec = 0,   careCount = 0;
+        QString careLast;                      // "20:16" (없으면 빈 문자열)
+        int     eventTotal = 0;
+        QString eventDetail;                   // "낙상1 · 생체1"
+    };
+    ReportMetrics metrics_;
+    void exportReportPdf();      // [PDF 내보내기] 버튼 — 이 날짜·이 입소자 한 장
+
+    // ── AI 요약 (Gemini) ──────────────────────────────────────
+    // ★ 리포트의 숫자는 전부 SQL 이 만든다. AI 는 그 완성된 수치를 받아 문장만 쓴다.
+    //   AI 에게 계산을 시키면 같은 날짜를 두 번 열 때 값이 달라지고 근거도 못 댄다.
+    //   그래서 프롬프트에는 metrics_ 의 집계값만 넣고, 원본 로그는 보내지 않는다
+    //   (개인정보 노출도 줄고 토큰도 아낀다).
+    void requestAiSummary();          // [AI 요약] 버튼 — 없으면 생성, 있으면 캐시 표시
+    void loadCachedSummary();         // 날짜·입소자가 바뀔 때 daily_reports 에서 읽기
+    void setSummaryText(const QString& text, bool cached);
+    QString geminiApiKey() const;     // QSettings 에 저장된 키(없으면 빈 문자열)
+    QLabel*      summaryLabel = nullptr;   // 요약 문장 표시
+    QPushButton* summaryBtn = nullptr;     // [AI 요약] / [다시 생성]
+    bool         summaryBusy_ = false;     // 중복 요청 방지
+
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
     // ── 마스터(좌측 목록) ──

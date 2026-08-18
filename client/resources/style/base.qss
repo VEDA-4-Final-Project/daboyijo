@@ -373,6 +373,11 @@
         #reportTile { background: %(panel); border: 1px solid %(border); border-radius: 12px; }
         #reportTileVal { color: %(text); font-family: "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace;
                          font-size: 26px; font-weight: 800; }
+        /* AI 요약 — 위쪽 지표는 기계가 센 값이고 이 문단은 생성된 글이다.
+           감사(監査) 상황에서 그 구분이 중요하므로 배경을 달리해 떼어 놓는다. */
+        #aiSummary { background: %(card); border: 1px solid %(border); border-radius: 10px;
+                     color: %(text); padding: 10px 12px; font-size: 13px; }
+        #aiSummary[empty="true"] { color: %(sub); font-style: italic; }
 
         /* 스크롤바 — 세로/가로 모두 다크. 트랙(page)·코너의 기본 흰색을 없앤다 */
         QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }

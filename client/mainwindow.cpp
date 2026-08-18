@@ -44,6 +44,12 @@
 #include <QDateEdit>
 #include <QCalendarWidget>
 #include <QSlider>
+#include <QJsonObject>
+#include <QPdfWriter>
+#include <QTextDocument>
+#include <QBuffer>
+#include <QPageSize>
+#include <QDir>
 #include "activitychart.h"
 #include <QStyle>
 #include <QGroupBox>
@@ -1617,7 +1623,19 @@ QWidget* MainWindow::buildReportCalendar()
     });
     lay->addWidget(today);
 
-    // TODO(리포트): 이 아래에 [PDF 내보내기] [AI 요약] 버튼이 들어간다.
+    // TODO(리포트): AI 요약 버튼이 이 아래에 들어간다.
+    auto* pdfBtn = new QPushButton(QStringLiteral("PDF 내보내기"));
+    pdfBtn->setObjectName("reportTodayBtn");
+    pdfBtn->setCursor(Qt::PointingHandCursor);
+    connect(pdfBtn, &QPushButton::clicked, this, &MainWindow::exportReportPdf);
+    lay->addWidget(pdfBtn);
+
+    summaryBtn = new QPushButton(QStringLiteral("AI 요약"));
+    summaryBtn->setObjectName("reportTodayBtn");
+    summaryBtn->setCursor(Qt::PointingHandCursor);
+    connect(summaryBtn, &QPushButton::clicked, this, &MainWindow::requestAiSummary);
+    lay->addWidget(summaryBtn);
+
     lay->addStretch(1);
 
     connect(reportCalendar, &QCalendarWidget::selectionChanged, this, [this] {
@@ -1688,6 +1706,19 @@ QWidget* MainWindow::buildReportDetail()
 
     activityChart = new ActivityChart();
     lay->addWidget(activityChart, 1);
+
+    // ── AI 요약 ──
+    // 위쪽 숫자는 기계가 센 값이고 이 문단은 생성된 글이다. 감사 상황에서 그
+    // 구분이 중요하므로 배경을 달리해 시각적으로 떼어 놓는다.
+    auto* sumCap = new QLabel(QStringLiteral("AI 요약"));
+    sumCap->setObjectName("careBigCap");
+    lay->addWidget(sumCap);
+
+    summaryLabel = new QLabel();
+    summaryLabel->setObjectName("aiSummary");
+    summaryLabel->setWordWrap(true);
+    summaryLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    lay->addWidget(summaryLabel);
 
     // TODO(리포트): 이 아래에 이벤트 타임라인 · AI 요약이 온다.
     return host;
@@ -3447,6 +3478,8 @@ void MainWindow::updateCareTime()
     const int rid = reportResidentId_;
     if (!tileCareVal) return;              // 아직 화면이 만들어지기 전
 
+    metrics_ = ReportMetrics{};   // 이번 조회 결과로 새로 채운다(이전 값 잔류 방지)
+
     // 입소자가 없으면(전원 퇴원 등) 전부 비운다 — 남의 숫자가 남아 있으면 안 된다.
     if (rid <= 0) {
         for (QLabel* l : {tileLyingVal, tileActivityVal, tileCareVal, tileEventVal})
@@ -3472,8 +3505,11 @@ void MainWindow::updateCareTime()
         q.addBindValue(rid);
         q.addBindValue(reportDate_);
         if (q.exec() && q.next()) {
+            metrics_.careSec   = q.value(0).toInt();
+            metrics_.careCount = q.value(1).toInt();
             tileCareVal->setText(humanDuration(q.value(0).toInt()));
             const QDateTime last = q.value(2).toDateTime();
+            if (last.isValid()) metrics_.careLast = last.toString(QStringLiteral("HH:mm"));
             tileCareSub->setText(
                 q.value(1).toInt() == 0
                     ? QStringLiteral("기록 없음")
@@ -3504,6 +3540,8 @@ void MainWindow::updateCareTime()
         q.addBindValue(dayEnd);
         q.addBindValue(dayStart);
         if (q.exec() && q.next()) {
+            metrics_.lyingSec   = q.value(0).toInt();
+            metrics_.lyingCount = q.value(1).toInt();
             tileLyingVal->setText(humanDuration(q.value(0).toInt()));
             const int n = q.value(1).toInt();
             tileLyingSub->setText(n == 0 ? QStringLiteral("기록 없음")
@@ -3526,6 +3564,7 @@ void MainWindow::updateCareTime()
         if (q.exec() && q.next()) {
             const int steps = q.value(0).toInt();
             const int activeMin = q.value(1).toInt();
+            metrics_.steps = steps; metrics_.activeMin = activeMin;
             tileActivityVal->setText(steps > 0 ? QStringLiteral("%1걸음").arg(steps)
                                                : QStringLiteral("—"));
             tileActivitySub->setText(steps > 0 ? QStringLiteral("활동 %1분").arg(activeMin)
@@ -3539,7 +3578,7 @@ void MainWindow::updateCareTime()
     // 분 단위로 쌓아둔 걸 시간으로 묶어서 24칸을 만든다. 심박은 합계가 아니라
     // 평균이고, 측정 실패(0)는 평균에서 빼야 값이 통째로 내려앉지 않는다.
     if (activityChart) {
-        QVector<int> stepsByHour(24, 0), hrByHour(24, 0);
+        QVector<int> stepsByHour(24, 0);
         QSqlQuery q;
         q.prepare(QStringLiteral(
             "SELECT HOUR(minute_ts), COALESCE(SUM(steps_delta),0), "
@@ -3553,12 +3592,11 @@ void MainWindow::updateCareTime()
                 const int h = q.value(0).toInt();
                 if (h < 0 || h > 23) continue;
                 stepsByHour[h] = q.value(1).toInt();
-                hrByHour[h]    = q.value(2).toInt();   // NULL 이면 0 → 선이 끊긴다
             }
         } else {
             qDebug() << "시간별 활동량 조회 실패:" << q.lastError().text();
         }
-        activityChart->setData(stepsByHour, hrByHour);
+        activityChart->setData(stepsByHour);
     }
 
     // ── 이벤트 횟수 ──
@@ -3586,11 +3624,385 @@ void MainWindow::updateCareTime()
         } else {
             qDebug() << "이벤트 조회 실패:" << q.lastError().text();
         }
+        metrics_.eventTotal  = total;
+        metrics_.eventDetail = parts.join(QStringLiteral(" · "));
         tileEventVal->setText(total > 0 ? QStringLiteral("%1회").arg(total)
                                         : QStringLiteral("—"));
         tileEventSub->setText(parts.isEmpty() ? QStringLiteral("이벤트 없음")
                                               : parts.join(QStringLiteral(" · ")));
     }
+
+    // 이름·위치는 탭 전환에서 이미 정해진 값을 그대로 쓴다(다시 조회하지 않는다).
+    for (int i = 0; i < residentTabBtns.size(); ++i)
+        if (residentTabIds.value(i) == rid) metrics_.residentName = residentTabBtns[i]->text();
+    if (reportResidentMeta) metrics_.residentMeta = reportResidentMeta->text();
+    metrics_.valid = true;
+    loadCachedSummary();   // 이 날짜·입소자의 저장된 요약을 표시(API 호출 없음)
+}
+
+// ═══════════════════════════════════════════════════════════
+//  일일 리포트 PDF 내보내기 — 선택한 날짜·입소자 한 장
+//
+//  HTML(QTextDocument) → QPdfWriter 로 만든다. QPainter 로 직접 좌표를 찍으면
+//  페이지 넘김을 손으로 관리해야 하는데, HTML 은 표·여백을 알아서 흘려주고
+//  한글 폰트도 자동으로 임베딩된다.
+//  ★ QPdfWriter 는 Qt::Gui 에 있어 모듈 추가가 필요 없다(PrintSupport 불필요).
+// ═══════════════════════════════════════════════════════════
+void MainWindow::exportReportPdf()
+{
+    if (!metrics_.valid || reportResidentId_ <= 0) {
+        QMessageBox::information(this, QStringLiteral("PDF 내보내기"),
+                                 QStringLiteral("먼저 날짜와 입소자를 선택해 주세요."));
+        return;
+    }
+
+    const QString dateStr = reportDate_.toString(QStringLiteral("yyyy-MM-dd"));
+    const QString suggest = QStringLiteral("%1_%2_리포트.pdf")
+                                .arg(metrics_.residentName.isEmpty()
+                                         ? QStringLiteral("입소자") : metrics_.residentName)
+                                .arg(dateStr);
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("일일 리포트 저장"),
+        QDir::homePath() + QLatin1Char('/') + suggest,
+        QStringLiteral("PDF 파일 (*.pdf)"));
+    if (path.isEmpty()) return;   // 사용자가 취소
+
+    // ── 그래프를 이미지로 ──
+    // 화면에 그려진 위젯을 그대로 떠서 넣는다. PDF 용으로 다시 그리면 화면과
+    // 미묘하게 달라질 수 있는데, 리포트는 화면에서 본 것과 같아야 한다.
+    QString chartHtml;
+    if (activityChart && activityChart->width() > 0) {
+        const QPixmap shot = activityChart->grab();
+        QByteArray png;
+        QBuffer buf(&png);
+        buf.open(QIODevice::WriteOnly);
+        if (shot.save(&buf, "PNG")) {
+            chartHtml = QStringLiteral(
+                "<p style='margin-top:18px'><b>시간별 활동량</b></p>"
+                "<img src='data:image/png;base64,%1' width='700'>")
+                .arg(QString::fromLatin1(png.toBase64()));
+        }
+    }
+
+    // ── 이벤트 목록 ──
+    // 숫자만 있으면 "새벽 3시"인지 "낮 3시"인지 알 수 없다. 시각이 있어야
+    // 보호자가 읽을 수 있는 문서가 된다.
+    QString eventRows;
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT TIME(occurred_at), event_type, source, confirmed_at FROM events "
+            "WHERE resident_id=? AND DATE(occurred_at)=? ORDER BY occurred_at"));
+        q.addBindValue(reportResidentId_);
+        q.addBindValue(reportDate_);
+        if (q.exec()) {
+            while (q.next()) {
+                const QString t = q.value(1).toString();
+                const QString label = t == QLatin1String("FALL")   ? QStringLiteral("낙상")
+                                    : t == QLatin1String("EGRESS") ? QStringLiteral("침상이탈")
+                                                                   : QStringLiteral("생체신호 이상");
+                eventRows += QStringLiteral(
+                    "<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
+                    .arg(q.value(0).toString().left(5), label,
+                         q.value(2).toString() == QLatin1String("WEARABLE")
+                             ? QStringLiteral("웨어러블") : QStringLiteral("카메라"),
+                         q.value(3).isNull() ? QStringLiteral("미확인")
+                                             : QStringLiteral("확인됨"));
+            }
+        }
+    }
+    if (eventRows.isEmpty())
+        eventRows = QStringLiteral("<tr><td colspan='4'>이벤트 없음</td></tr>");
+
+    const QString html = QStringLiteral(R"HTML(
+<html><body style="font-family:'맑은 고딕',sans-serif; font-size:10pt; color:#1E2A32">
+<h1 style="font-size:19pt; margin-bottom:2px">일일 리포트</h1>
+<p style="color:#5C6B78; margin-top:0">%1 &middot; %2 &middot; %3</p>
+<hr>
+<table width="100%" cellspacing="0" cellpadding="7" border="0">
+  <tr bgcolor="#F0F4F8">
+    <th align="left">누워있는 시간</th><th align="left">활동량</th>
+    <th align="left">케어시간</th><th align="left">이벤트</th>
+  </tr>
+  <tr>
+    <td><b style="font-size:14pt">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
+    <td><b style="font-size:14pt">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
+    <td><b style="font-size:14pt">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
+    <td><b style="font-size:14pt">%11회</b><br><span style="color:#5C6B78">%12</span></td>
+  </tr>
+</table>
+%13
+<p style="margin-top:18px"><b>이벤트 내역</b></p>
+<table width="100%" cellspacing="0" cellpadding="6" border="1" bordercolor="#DCE4EC">
+  <tr bgcolor="#F0F4F8"><th align="left">시각</th><th align="left">종류</th>
+      <th align="left">감지</th><th align="left">확인</th></tr>
+  %14
+</table>
+<p style="margin-top:22px; color:#8B98A5; font-size:8pt">
+  다보이조 요양원 통합 모니터링 &middot; 생성 %15
+</p>
+</body></html>)HTML")
+        // ★ QString::arg 의 다중 인자 오버로드는 최대 9개다. 15개를 한 번에 넘기면
+        //   컴파일이 안 되므로 9 + 6 으로 나눈다. 낮은 번호 placeholder 부터
+        //   순서대로 채워지므로 이렇게 쪼개도 결과는 같다.
+        .arg(metrics_.residentName, metrics_.residentMeta,
+             reportDate_.toString(QStringLiteral("yyyy년 M월 d일 (ddd)")),
+             humanDuration(metrics_.lyingSec), QString::number(metrics_.lyingCount),
+             QString::number(metrics_.steps), QString::number(metrics_.activeMin),
+             humanDuration(metrics_.careSec), QString::number(metrics_.careCount))
+        .arg(metrics_.careLast.isEmpty() ? QString()
+                                         : QStringLiteral("· 마지막 %1").arg(metrics_.careLast),
+             QString::number(metrics_.eventTotal),
+             metrics_.eventDetail.isEmpty() ? QStringLiteral("이벤트 없음")
+                                            : metrics_.eventDetail,
+             chartHtml, eventRows,
+             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    writer.setPageMargins(QMarginsF(16, 16, 16, 16), QPageLayout::Millimeter);
+    writer.setTitle(QStringLiteral("%1 %2 일일 리포트").arg(metrics_.residentName, dateStr));
+
+    QTextDocument doc;
+    doc.setHtml(html);
+    doc.setPageSize(QSizeF(writer.width(), writer.height()));
+    doc.print(&writer);
+
+    QMessageBox::information(this, QStringLiteral("PDF 내보내기"),
+                             QStringLiteral("저장했습니다.\n%1").arg(path));
+}
+
+// ═══════════════════════════════════════════════════════════
+//  AI 요약 — Gemini 로 리포트 한 문단 만들기
+//
+//  ★ 숫자는 AI 가 만들지 않는다. SQL 이 만든 집계값(metrics_)을 그대로 넘기고
+//    AI 는 문장만 쓴다. 리포트는 요양 기록물이라 같은 날짜를 두 번 열었을 때
+//    값이 달라지면 안 되고, "이 낙상 1회가 어디서 나왔나"에 답할 수 있어야 한다.
+//  ★ 결과는 daily_reports 에 캐시한다. 같은 이유(재현성) + API 비용·지연 절감.
+// ═══════════════════════════════════════════════════════════
+
+
+namespace {
+// Gemini 모델.
+// ★ "gemini-flash-latest" 같은 별칭 대신 구체 버전을 쓴다. 별칭은 트래픽이 몰리는
+//   공용 풀로 라우팅돼 503(This model is currently experiencing high demand)이 잦다.
+//   버전을 못박으면 대체로 더 안정적으로 붙는다. 대신 모델이 은퇴하면 직접 올려야
+//   하므로, 404(model not found)가 뜨면 이 값을 최신 버전으로 바꾼다 — 다행히
+//   Google 이 404 응답에 "use models/... instead" 로 대체 모델을 알려준다.
+// 서버(gemini_client / cameras.conf)도 별도로 모델을 갖고 있다 — 바꿀 땐 양쪽 같이.
+constexpr const char* kGeminiModel = "gemini-3.6-flash";
+}  // namespace
+// 키 우선순위: 빌드에 박은 값 → QSettings.
+//
+// ★ 소스에 직접 적지 않는다. 이 저장소는 공개라 커밋되는 순간 유출된다.
+//   대신 빌드하는 사람이 -DDABOYIJO_GEMINI_KEY=... 로 주입하고, 사용자는
+//   아무것도 입력하지 않는다 — 키 발급은 서비스 제공자 몫이지 요양원 몫이 아니다.
+//   QSettings 폴백은 개발 중 임시로 다른 키를 물려 볼 때만 쓴다.
+QString MainWindow::geminiApiKey() const
+{
+#ifdef DABOYIJO_GEMINI_KEY
+    const QString baked = QString::fromLatin1(DABOYIJO_GEMINI_KEY).trimmed();
+    // 키 자체는 절대 찍지 않는다 — 길이만으로 "정의가 왔는지/비었는지"가 갈린다.
+    qDebug() << "[AI] 빌드 주입 키 길이:" << baked.size();
+    if (!baked.isEmpty()) return baked;
+#else
+    qDebug() << "[AI] DABOYIJO_GEMINI_KEY 매크로 자체가 정의되지 않음 — CMake 재실행 필요";
+#endif
+    const QString fromSettings =
+        QSettings().value(QStringLiteral("ai/geminiKey")).toString().trimmed();
+    qDebug() << "[AI] QSettings 폴백 키 길이:" << fromSettings.size();
+    return fromSettings;
+}
+
+void MainWindow::setSummaryText(const QString& text, bool cached)
+{
+    if (!summaryLabel) return;
+    if (text.isEmpty()) {
+        summaryLabel->setText(
+            QStringLiteral("AI 요약이 아직 없습니다. [AI 요약] 버튼을 눌러 생성하세요."));
+        summaryLabel->setProperty("empty", true);
+    } else {
+        // 생성된 문장임을 눈에 보이게 표시한다 — 위쪽 숫자는 기계가 센 값이고
+        // 이 문단은 AI 가 쓴 글이라는 구분이 감사(監査) 상황에서 중요하다.
+        summaryLabel->setText(cached ? text
+                                     : QStringLiteral("%1").arg(text));
+        summaryLabel->setProperty("empty", false);
+    }
+    summaryLabel->style()->unpolish(summaryLabel);
+    summaryLabel->style()->polish(summaryLabel);
+    if (summaryBtn)
+        summaryBtn->setText(text.isEmpty() ? QStringLiteral("AI 요약")
+                                           : QStringLiteral("AI 요약 다시 생성"));
+}
+
+// 날짜·입소자가 바뀔 때마다 캐시를 먼저 보여준다(API 호출 없음).
+void MainWindow::loadCachedSummary()
+{
+    if (!summaryLabel) return;
+    if (reportResidentId_ <= 0) { setSummaryText(QString(), true); return; }
+
+    QSqlQuery q;
+    q.prepare(QStringLiteral(
+        "SELECT summary_text FROM daily_reports WHERE report_date=? AND resident_id=?"));
+    q.addBindValue(reportDate_);
+    q.addBindValue(reportResidentId_);
+    setSummaryText((q.exec() && q.next()) ? q.value(0).toString() : QString(), true);
+}
+
+void MainWindow::requestAiSummary()
+{
+    if (summaryBusy_) return;                       // 응답 오기 전 중복 클릭 방지
+    if (!metrics_.valid || reportResidentId_ <= 0) {
+        QMessageBox::information(this, QStringLiteral("AI 요약"),
+                                 QStringLiteral("먼저 날짜와 입소자를 선택해 주세요."));
+        return;
+    }
+    const QString key = geminiApiKey();
+    if (key.isEmpty()) {
+        QMessageBox::information(
+            this, QStringLiteral("AI 요약"),
+            QStringLiteral("AI 요약 기능이 이 빌드에 설정되지 않았습니다.\n\n"
+                           "빌드할 때 DABOYIJO_GEMINI_KEY 를 지정해야 합니다.\n"
+                           "(Qt Creator: 프로젝트 > 빌드 설정 > CMake)\n\n"
+                           "나머지 리포트 기능은 그대로 사용할 수 있습니다."));
+        return;
+    }
+
+    // ── 프롬프트: 집계 수치만 ──
+    // 원본 로그(개별 이벤트 행, 분당 걸음)는 보내지 않는다. 요약에 필요하지도 않고
+    // 개인정보를 넓게 노출할 이유도 없다.
+    QString events;
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT TIME(occurred_at), event_type FROM events "
+            "WHERE resident_id=? AND DATE(occurred_at)=? ORDER BY occurred_at"));
+        q.addBindValue(reportResidentId_);
+        q.addBindValue(reportDate_);
+        if (q.exec()) {
+            while (q.next()) {
+                const QString t = q.value(1).toString();
+                events += QStringLiteral("%1 %2, ").arg(
+                    q.value(0).toString().left(5),
+                    t == QLatin1String("FALL")   ? QStringLiteral("낙상")
+                  : t == QLatin1String("EGRESS") ? QStringLiteral("침상이탈")
+                                                 : QStringLiteral("생체신호 이상"));
+            }
+        }
+    }
+    if (events.isEmpty()) events = QStringLiteral("없음");
+
+    const QString prompt = QStringLiteral(
+        "당신은 요양원 간호기록을 쓰는 담당자입니다. 아래는 입소자 한 명의 하루 기록입니다.\n"
+        "이 수치만 근거로 보호자가 읽을 3~4문장 요약을 한국어로 작성하세요.\n\n"
+        "[규칙]\n"
+        "- 주어진 수치 외의 어떤 숫자도 만들어내지 마세요. 특히 '평소 대비', '지난주보다' 같은\n"
+        "  비교는 비교할 자료가 없으므로 절대 쓰지 마세요.\n"
+        "- 의학적 진단이나 처방을 하지 마세요. 관찰된 사실과 그 의미만 서술하세요.\n"
+        "- 이벤트가 있었다면 시각과 함께 먼저 언급하세요.\n"
+        "- 문장만 출력하세요. 제목·머리말·목록 기호는 넣지 마세요.\n\n"
+        "[기록]\n"
+        "날짜: %1\n입소자: %2 (%3)\n"
+        "누워있던 시간: %4 (재실 %5회)\n"
+        "활동량: %6걸음 (움직인 시간 %7분)\n"
+        "요양사 케어: %8 (%9회)\n"
+        "이벤트: %10")
+        .arg(reportDate_.toString(QStringLiteral("yyyy년 M월 d일")),
+             metrics_.residentName, metrics_.residentMeta,
+             humanDuration(metrics_.lyingSec), QString::number(metrics_.lyingCount),
+             QString::number(metrics_.steps), QString::number(metrics_.activeMin),
+             humanDuration(metrics_.careSec), QString::number(metrics_.careCount))
+        .arg(events);
+
+    // ── Gemini 호출 ──
+    // 서버(gemini_client.cpp)와 같은 엔드포인트를 쓴다. 모델을 바꾸려면 양쪽을 같이.
+    QJsonObject part;   part.insert(QStringLiteral("text"), prompt);
+    QJsonObject content; content.insert(QStringLiteral("parts"), QJsonArray{part});
+    QJsonObject body;    body.insert(QStringLiteral("contents"), QJsonArray{content});
+
+    QNetworkRequest req(QUrl(QStringLiteral(
+        "https://generativelanguage.googleapis.com/v1beta/models/%1:generateContent")
+            .arg(QLatin1String(kGeminiModel))));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setRawHeader("x-goog-api-key", key.toUtf8());
+
+    summaryBusy_ = true;
+    if (summaryBtn) summaryBtn->setEnabled(false);
+    if (summaryLabel) summaryLabel->setText(QStringLiteral("AI 요약을 생성하는 중입니다…"));
+
+    // 응답이 오는 사이 사용자가 날짜·입소자를 바꿀 수 있다. 그때 엉뚱한 리포트에
+    // 요약이 붙지 않도록 요청 시점의 대상을 캡처해 두고 도착 시 비교한다.
+    const QDate reqDate = reportDate_;
+    const int   reqRid  = reportResidentId_;
+
+    auto* nam = new QNetworkAccessManager(this);
+    QNetworkReply* reply = nam->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, nam, reqDate, reqRid]() {
+        reply->deleteLater();
+        nam->deleteLater();
+        summaryBusy_ = false;
+        if (summaryBtn) summaryBtn->setEnabled(true);
+
+        if (reply->error() != QNetworkReply::NoError) {
+            // Gemini 는 실패해도 본문에 {"error":{"message":"..."}} 를 담아 보낸다.
+            // 상태 코드만 보면 "503" 밖에 안 나와 원인을 알 수 없으므로 본문을 읽는다.
+            const QByteArray raw = reply->readAll();
+            const QJsonObject err = QJsonDocument::fromJson(raw).object()
+                                        .value(QStringLiteral("error")).toObject();
+            const QString detail = err.value(QStringLiteral("message")).toString();
+            const int code = reply->attribute(
+                QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+            // 503/429 는 모델 과부하·쿼터라 대개 잠시 뒤 다시 누르면 된다.
+            const QString hint =
+                (code == 503) ? QStringLiteral(" (모델 과부하 — 잠시 후 다시 시도해 보세요)")
+              : (code == 429) ? QStringLiteral(" (요청 한도 초과 — 잠시 후 다시 시도해 보세요)")
+              : (code == 400 || code == 403)
+                    ? QStringLiteral(" (API 키를 확인해 주세요)")
+                    : QString();
+
+            const QString msg = detail.isEmpty() ? reply->errorString() : detail;
+            qDebug() << "AI 요약 실패:" << code << msg << raw;
+            if (summaryLabel)
+                summaryLabel->setText(QStringLiteral("AI 요약 실패: %1%2").arg(msg, hint));
+            return;
+        }
+
+        // candidates[0].content.parts[0].text 를 꺼낸다(서버 구현과 같은 경로).
+        const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+        const QJsonArray cands = root.value(QStringLiteral("candidates")).toArray();
+        QString text;
+        if (!cands.isEmpty()) {
+            const QJsonArray parts = cands.first().toObject()
+                                          .value(QStringLiteral("content")).toObject()
+                                          .value(QStringLiteral("parts")).toArray();
+            if (!parts.isEmpty())
+                text = parts.first().toObject().value(QStringLiteral("text")).toString().trimmed();
+        }
+        if (text.isEmpty()) {
+            if (summaryLabel)
+                summaryLabel->setText(QStringLiteral("AI 응답을 해석하지 못했습니다."));
+            return;
+        }
+
+        // 캐시는 요청 시점 대상에 저장한다(그 사이 화면이 바뀌었어도 기록은 제자리로).
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "INSERT INTO daily_reports (report_date, resident_id, summary_text, model, generated_at) "
+            "VALUES (?,?,?,?,NOW()) "
+            "ON DUPLICATE KEY UPDATE summary_text=VALUES(summary_text), "
+            "model=VALUES(model), generated_at=VALUES(generated_at)"));
+        q.addBindValue(reqDate);
+        q.addBindValue(reqRid);
+        q.addBindValue(text);
+        q.addBindValue(QLatin1String(kGeminiModel));
+        if (!q.exec()) qDebug() << "AI 요약 캐시 저장 실패:" << q.lastError().text();
+
+        // 화면이 아직 그 리포트를 보고 있을 때만 표시한다.
+        if (reqDate == reportDate_ && reqRid == reportResidentId_)
+            setSummaryText(text, false);
+    });
 }
 
 // ═══════════════════════════════════════════════════════════
