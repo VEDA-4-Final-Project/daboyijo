@@ -1709,10 +1709,9 @@ QWidget* MainWindow::buildResourcePanel()
     auto* head = new QHBoxLayout();
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(6);
-    auto* title = new QLabel(QStringLiteral("리소스"));
-    title->setObjectName("resourceHead");
-    head->addWidget(title);
-    head->addStretch();
+    resourceHead_ = new QLabel(QStringLiteral("리소스"));
+    resourceHead_->setObjectName("resourceHead");
+    head->addWidget(resourceHead_, 1);
     resourceToggle_ = new QPushButton(QStringLiteral("‹"));
     resourceToggle_->setObjectName("resourceToggle");
     resourceToggle_->setCursor(Qt::PointingHandCursor);
@@ -1801,8 +1800,35 @@ QWidget* MainWindow::buildResourcePanel()
 
     outer->addWidget(resourceBody_, 1);
 
+    // 접었을 때 보이는 세로 칩 레일 — 채널 번호 + 연결 상태색. 누르면 그 채널 선택.
+    resourceRail_ = new QWidget();
+    auto* rv = new QVBoxLayout(resourceRail_);
+    rv->setContentsMargins(0, 6, 0, 0);
+    rv->setSpacing(4);
+    for (int ch = 0; ch < 4; ++ch) {
+        auto* chip = new QPushButton(QString::number(ch + 1));
+        chip->setObjectName("resChip");
+        chip->setCheckable(true);
+        chip->setAutoExclusive(true);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFixedSize(30, 26);
+        connect(chip, &QPushButton::clicked, this, [this, ch] { selectChannel(ch); });
+        resChipBtns_[ch] = chip;
+        rv->addWidget(chip, 0, Qt::AlignHCenter);
+    }
+    rv->addStretch();
+    resourceRail_->hide();
+    outer->addWidget(resourceRail_, 1);
+
     QSettings st;
-    setResourceCollapsed(st.value(QStringLiteral("ui/resource_collapsed"), false).toBool());
+    // 기본은 접힘 — 좌측에 네비 레일과 이 패널이 나란히 펼쳐지면 크롬이
+    // 화면 폭의 절반 가까이를 먹는다. 필요할 때만 펴서 쓴다.
+    //
+    // 키 이름을 _v2로 바꾼 이유: setResourceCollapsed()가 값을 되쓰기 때문에
+    // 예전 키(ui/resource_collapsed)는 이미 모든 기존 사용자에게 false로 남아 있다.
+    // 같은 키를 그대로 쓰면 "기본 접힘"이 아무에게도 적용되지 않는다. 새 키로 한 번
+    // 초기화하고, 이후 사용자가 편 선택은 그대로 기억한다.
+    setResourceCollapsed(st.value(QStringLiteral("ui/resource_collapsed_v2"), true).toBool());
     refreshResourceTree();
     return resourcePanel_;
 }
@@ -1844,6 +1870,20 @@ void MainWindow::refreshResourceTree()
         // 검색어가 있으면 이름에 안 들어있는 카메라는 감춘다.
         it->setHidden(!filter.isEmpty() &&
                       !channelDisplayName(ch).contains(filter, Qt::CaseInsensitive));
+
+        // 접힘 상태의 칩도 같은 값으로 갱신한다(트리와 어긋나면 안 된다).
+        if (auto* chip = resChipBtns_[ch]) {
+            chip->setChecked(ch == selectedChannel_);
+            chip->setProperty("state", tileHidden_[ch] ? QStringLiteral("hidden")
+                                       : live         ? QStringLiteral("live")
+                                                      : QStringLiteral("off"));
+            chip->setToolTip(QStringLiteral("%1 · %2")
+                                 .arg(channelDisplayName(ch),
+                                      live ? QStringLiteral("수신 중")
+                                           : QStringLiteral("신호 없음")));
+            chip->style()->unpolish(chip);
+            chip->style()->polish(chip);
+        }
     }
 }
 
@@ -1851,11 +1891,32 @@ void MainWindow::setResourceCollapsed(bool on)
 {
     resourceCollapsed_ = on;
     if (resourceBody_) resourceBody_->setVisible(!on);
-    if (resourcePanel_) resourcePanel_->setFixedWidth(on ? 44 : 208);
-    if (resourceToggle_) resourceToggle_->setText(on ? QStringLiteral("›")
-                                                     : QStringLiteral("‹"));
+    if (resourceRail_) resourceRail_->setVisible(on);
+    // 제목까지 남겨 두면 "리소스" 세 글자가 폭을 못 줄여 토글 버튼이 밖으로
+    // 밀려 나간다 — 접힌 패널에 화살표조차 없어 다시 펼 수가 없었다.
+    if (resourceHead_) resourceHead_->setVisible(!on);
+
+    if (resourcePanel_) {
+        resourcePanel_->setFixedWidth(on ? 48 : 208);
+        if (auto* l = qobject_cast<QVBoxLayout*>(resourcePanel_->layout()))
+            l->setContentsMargins(on ? 9 : 10, 12, on ? 9 : 10, 12);
+    }
+    if (resourceToggle_) {
+        // 화살표는 "누르면 갈 방향"을 가리킨다: 접힘→오른쪽으로 펼침(›),
+        // 펼침→왼쪽으로 접힘(‹).
+        resourceToggle_->setText(on ? QStringLiteral("›") : QStringLiteral("‹"));
+        resourceToggle_->setToolTip(on ? QStringLiteral("리소스 목록 펼치기")
+                                       : QStringLiteral("리소스 목록 접기"));
+    }
+    // 접히면 토글만 남으므로 가운데로, 펼치면 제목 오른쪽 끝으로.
+    if (resourceToggle_ && resourceToggle_->parentWidget()) {
+        if (auto* lay = resourceToggle_->parentWidget()->layout())
+            lay->setAlignment(resourceToggle_, on ? Qt::AlignHCenter : Qt::AlignRight);
+    }
+
     QSettings st;
-    st.setValue(QStringLiteral("ui/resource_collapsed"), on);
+    st.setValue(QStringLiteral("ui/resource_collapsed_v2"), on);
+    refreshResourceTree();   // 칩 상태도 같은 경로에서 갱신
 }
 
 // 타일 오버레이·트리가 공유하는 채널 이름. "CH1 · 김복순" 형식.

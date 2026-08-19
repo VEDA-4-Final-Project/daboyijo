@@ -332,7 +332,12 @@ private:
     QTreeWidget*     resourceTree_ = nullptr;
     QLineEdit*       resourceSearch_ = nullptr;
     QPushButton*     resourceToggle_ = nullptr;
-    QWidget*         resourceBody_ = nullptr;   // 접을 때 숨기는 부분(검색+트리)
+    QWidget*         resourceBody_ = nullptr;   // 펼쳤을 때 보이는 부분(검색+트리)
+    QLabel*          resourceHead_ = nullptr;   // "리소스" 제목 — 접으면 숨긴다
+    // 접었을 때 대신 보이는 세로 칩 레일(CH1~4). 44px 빈 막대만 남기면 무엇을
+    // 접었는지도, 어떻게 펴는지도 알 수 없다 — 채널 상태는 접어도 남긴다.
+    QWidget*         resourceRail_ = nullptr;
+    QPushButton*     resChipBtns_[4] = {};
     bool             resourceCollapsed_ = false;
     QTreeWidgetItem* camItems_[4] = {};
 
