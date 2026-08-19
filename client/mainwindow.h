@@ -340,6 +340,8 @@ private:
     // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
     QWidget*     buildLayoutTabs();
     QWidget*     buildTileChrome(int channel, QWidget* card);
+    // 크롬(닫기·툴바)은 레이아웃 밖 자식이라 카드 크기에 맞춰 직접 옮겨 준다.
+    void         layoutTileChrome(int channel);
     void         saveChannelSnapshot(int channel);   // 타일 툴바 스냅샷 저장
     QPushButton* layoutTabBtns_[3] = {};
     QPushButton* tileCloseBtns_[4] = {};
