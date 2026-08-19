@@ -306,11 +306,17 @@ QString brokerCaPath() {
 // 영상 스트림 서버(Pi) 검증용 CA. MQTT 브로커와 같은 CA(DavoCA)로 서명하므로
 // 기본값은 brokerCaPath()와 같은 파일 — 새 인증서를 발급해도 이 파일 하나만
 // certs/에 있으면 되고, 배포된 클라이언트를 다시 건드릴 일이 없다.
+// MQTT의 certs/ca.crt와 일부러 다른 파일명을 쓴다. 같은 파일을 공유하면(예전
+// 방식) 영상 스트림 TLS를 끄려고 이 파일을 지웠을 때 MqttQtManager까지 같이
+// 끊긴다 — 그쪽은 경로 문자열이 비어있을 때만 평문으로 내려가고, 파일이 없으면
+// (경로는 있는데 못 읽으면) 조용히 평문으로 안 가고 아예 연결 실패로 처리하기
+// 때문이다. 그래서 두 인증서 파일을 분리해 "영상만 평문으로" 끌 수 있게 한다.
+// 서명한 CA는 같아도(DavoCA) 되고, 파일만 stream-ca.crt로 따로 배포하면 된다.
 QString streamCaPath() {
     QSettings s;
     return s.value(QStringLiteral("stream/caCert"),
                    QCoreApplication::applicationDirPath()
-                       + QStringLiteral("/certs/ca.crt")).toString();
+                       + QStringLiteral("/certs/stream-ca.crt")).toString();
 }
 
 // 영상 서버(Pi) 인증서에 적힌 이름(CN). MQTT/scripts/generate_stream_certs.sh 의
@@ -4378,9 +4384,6 @@ void MainWindow::connectToServer()
         // "이 Pi들은 stream_cert_path를 켜서 TLS로 띄웠다"는 선언으로 본다. 아직
         // 인증서를 안 놓은 개발 환경/미전환 Pi에서는 파일이 없어 기존처럼 평문 접속.
         const QString caPath = streamCaPath();
-        qDebug() << "[진단] CA 경로 확인:" << caPath
-                  << "존재함?" << QFile::exists(caPath)
-                  << "/ exe 위치:" << QCoreApplication::applicationDirPath();
         if (QFile::exists(caPath)) {
             QSslConfiguration conf = QSslConfiguration::defaultConfiguration();
             const QList<QSslCertificate> ca = QSslCertificate::fromPath(caPath);
