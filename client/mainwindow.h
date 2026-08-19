@@ -31,7 +31,6 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
-#include "alertbanner.h"
 
 
 
@@ -667,13 +666,6 @@ private:
     QWidget* buildAlarmBanner();            // 토스트 카드 생성(오버레이)
     void updateAlarmBanner();               // 활성 경보에 따라 문구·표시 갱신
     void animateAlarmToast(bool show);      // 위→아래 슬라이드 인/아웃
-
-    // 상시 노출용 경보 배너(Phase 3/02 신설) — #alarmToast와 별개 위젯.
-    // buildUi()에서 생성돼 hide() 상태로 Phase 4(ALERT-03)에 인계된다(D-03/PD-08).
-    AlertBanner* alertBanner_ = nullptr;
-    // 활성 경보 목록을 만드는 헬퍼 — 등급 판정(vitalSeverity)과 도형 선택
-    // (severityGlyph)이 전부 이 함수 안에서 끝나 배너로는 완성값만 넘어간다.
-    QList<AlertItem> collectAlertItems() const;
 
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스

@@ -887,17 +887,15 @@ void MainWindow::buildUi()
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
-    // 경보 배너(#alertBanner) — dashboardTab 최상단, body 위. 활성 경보가
-    // 있을 때만 보이고 0건이면 숨는다. 좌우는 body와 같은 세로선에 맞추고
-    // (18px) 상하는 최소로 둔다 — QSS가 이미 padding 24px 32px를 준다
-    // (ALERT-03 / D-01).
-    alertBanner_ = new AlertBanner();
-    alertBanner_->setContentsMargins(18, 12, 18, 0);
-
+    // [제거됨] 예전에는 여기 대시보드 최상단에 가로 전체를 먹는 48px 빨간 띠
+    // (#alertBanner)를 상시로 띄웠다. 경보 알림 경로가 이미 셋이라 뺐다:
+    //   · 위에서 내려오는 토스트(#alarmToast) — "무슨 일이 어디서"
+    //   · 창 전체 빨강 펄스 테두리(AlarmOverlay) — 시야 밖에 있어도 눈에 띔
+    //   · 해당 채널 타일 빨간 테두리 점멸(VideoView::setAlert) — "어느 화면"
+    // 띠까지 더하면 정작 봐야 할 영상이 그만큼 밀려 내려간다.
     auto* dashboardOuter = new QVBoxLayout();
     dashboardOuter->setContentsMargins(0, 0, 0, 0);
     dashboardOuter->setSpacing(0);
-    dashboardOuter->addWidget(alertBanner_);
     dashboardOuter->addLayout(body, 1);
 
     auto* dashboardTab = new QWidget();
@@ -7555,39 +7553,6 @@ void MainWindow::onAlarmClearClicked()
     }
 }
 
-// 활성 경보 목록을 만든다 — 등급 판정(critical/high/medium)과 도형 선택이 전부
-// 여기서 끝나 AlertBanner로는 완성된 값만 넘어간다(D-02). 채널당 최대
-// 3건(낙상/침상이탈/생체이상)이 나올 수 있다.
-QList<AlertItem> MainWindow::collectAlertItems() const
-{
-    QList<AlertItem> items;
-    for (int ch = 0; ch < 4; ++ch) {
-        if (fallActive[ch]) {
-            const QString severity = QStringLiteral("critical");
-            items.append({ch, severityGlyph(severity), QStringLiteral("낙상"),
-                          patients[ch].bed, severity});
-        }
-        if (bedEgressActive[ch]) {
-            const QString severity = QStringLiteral("high");
-            items.append({ch, severityGlyph(severity), QStringLiteral("침상이탈"),
-                          patients[ch].bed, severity});
-        }
-        if (vitalAbnormalActive[ch]) {
-            // 그 채널에 배정된 입소자의 현재 바이탈 등급을 쓴다 — 단일 출처는
-            // vitalSeverity()(D-02). 배정된 사람을 찾지 못하면 안전하게
-            // medium으로 내린다(UI-SPEC §4.2).
-            QString severity = QStringLiteral("medium");
-            const QVector<int>& ids = residentsByChannel_[ch];
-            if (!ids.isEmpty()) {
-                const VitalSample sample = vitals_.value(ids.first());
-                severity = vitalSeverity(sample.spo2, sample.heartRate);
-            }
-            items.append({ch, severityGlyph(severity), QStringLiteral("생체신호 이상"),
-                          patients[ch].bed, severity});
-        }
-    }
-    return items;
-}
 
 // 낙상/침상이탈이 하나라도 활성이면 경보 버튼을 빨강 채움으로, 아니면 차분한 아웃라인으로.
 void MainWindow::refreshAlarmButton()
@@ -7596,10 +7561,7 @@ void MainWindow::refreshAlarmButton()
     bool anyActive = false;
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch] || vitalAbnormalActive[ch]) { anyActive = true; break; }
-    updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
-    // 상시 노출용 배너(#alertBanner) 갱신 — 상태를 바꾸는 다섯 지점이 전부
-    // 이 함수를 거치므로 배선은 여기 한 곳뿐이다.
-    if (alertBanner_) alertBanner_->setActiveAlerts(collectAlertItems());
+    updateAlarmBanner();   // 경보 토스트 표시/문구 갱신 (활성 시에만 내려온다)
 
     // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
     if (alarmOverlay_) {
