@@ -3386,11 +3386,12 @@ QWidget* MainWindow::buildVideoSearchTab()
     title->setObjectName("panelTitle");
     outer->addWidget(title);
 
-    // Wisenet Viewer의 AI search와 같은 2단: 왼쪽에 조건, 오른쪽에 결과.
+    // 3단: 조건 | 결과 목록 | 재생기. 결과를 누르면 이 페이지 안에서 바로 재생된다
+    // — 예전엔 이벤트 기록 페이지로 튕겨 보내서, 검색을 이어가려면 되돌아와야 했다.
     auto* body = new QHBoxLayout();
     body->setSpacing(12);
 
-    // ── 좌측: 검색 조건 ──
+    // ── 좌: 검색 조건 ──
     auto* side = new QFrame();
     side->setObjectName("filterBar");
     side->setFixedWidth(248);
@@ -3408,8 +3409,7 @@ QWidget* MainWindow::buildVideoSearchTab()
     sv->addWidget(chCap);
     searchChannelCombo = new QComboBox();
     searchChannelCombo->setObjectName("searchChannelCombo");
-    // 기본값 = 전체 채널 — 질문할 때 채널을 매번 고르지 않아도 전체에서
-    // 찾아준다. 좁히고 싶을 때만 특정 채널로 바꾸면 됨.
+    // 기본값 = 전체 채널 — 질문할 때 채널을 매번 고르지 않아도 전체에서 찾아준다.
     searchChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
     for (int ch = 0; ch < 4; ++ch)
         searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
@@ -3429,7 +3429,7 @@ QWidget* MainWindow::buildVideoSearchTab()
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(6);
     searchButton = new QPushButton(QStringLiteral("검색"));
-    searchButton->setObjectName("camPrimary");   // 이 페이지의 주 액션 = 채워진 악센트
+    searchButton->setObjectName("camPrimary");
     searchButton->setCursor(Qt::PointingHandCursor);
     btnRow->addWidget(searchButton, 1);
     auto* resetBtn = new QPushButton(QStringLiteral("초기화"));
@@ -3438,14 +3438,20 @@ QWidget* MainWindow::buildVideoSearchTab()
     connect(resetBtn, &QPushButton::clicked, this, [this] {
         searchQueryEdit->clear();
         searchChannelCombo->setCurrentIndex(0);
-        searchResultBrowser->clear();
+        searchResultList_->clear();
+        searchResultList_->show();
+        if (searchPlayer_) searchPlayer_->stop();
+        if (searchPlayerStack_) searchPlayerStack_->setCurrentIndex(0);
+        if (searchContext_) searchContext_->hide();
+        if (searchMessage_) searchMessage_->hide();
+        if (searchCountLabel_) searchCountLabel_->clear();
     });
     btnRow->addWidget(resetBtn);
     sv->addLayout(btnRow);
     sv->addSpacing(10);
 
-    // 예시 질문 — 누르면 질문칸이 채워진다. 자연어 검색은 "뭐라고 물어야
-    // 하는지"가 가장 큰 진입 장벽이라, 실제 통하는 문장을 눌러 보게 한다.
+    // 예시 질문 — 누르면 질문칸이 채워지고 바로 검색된다. 자연어 검색은 "뭐라고
+    // 물어야 하는지"가 가장 큰 진입 장벽이라, 실제 통하는 문장을 눌러 보게 한다.
     auto* exCap = new QLabel(QStringLiteral("예시 질문"));
     exCap->setObjectName("filterFieldCap");
     sv->addWidget(exCap);
@@ -3464,45 +3470,204 @@ QWidget* MainWindow::buildVideoSearchTab()
         });
         sv->addWidget(chip);
     }
-
     sv->addStretch();
-    auto* hint = new QLabel(
-        QStringLiteral("낙상·침상이탈 같은 사건을 자연어로 물어보면 지난 기록을 "
-                       "찾아드려요. 결과의 클립을 누르면 이벤트 기록 페이지에서 "
-                       "바로 재생됩니다."));
-    hint->setObjectName("camHint");
-    hint->setWordWrap(true);
-    sv->addWidget(hint);
-
     body->addWidget(side, 0);
 
-    // ── 우측: 결과 ──
-    searchResultBrowser = new QTextBrowser();
-    searchResultBrowser->setObjectName("searchResultBrowser");
-    searchResultBrowser->setOpenLinks(false);  // 클립 링크는 인앱 재생기로 가로챈다
-    // 검색 전 빈 검은 판만 놓여 있으면 "고장인가"로 읽힌다 — 무엇을 하는 곳인지 적어 둔다.
-    searchResultBrowser->setPlaceholderText(
-        QStringLiteral("왼쪽에서 질문을 입력하고 [검색]을 누르면 결과가 여기에 나옵니다."));
-    body->addWidget(searchResultBrowser, 1);
+    // ── 중: 결과 목록 ──
+    auto* mid = new QWidget();
+    mid->setFixedWidth(300);
+    auto* mv = new QVBoxLayout(mid);
+    mv->setContentsMargins(0, 0, 0, 0);
+    mv->setSpacing(6);
 
+    searchCountLabel_ = new QLabel();
+    searchCountLabel_->setObjectName("logCount");
+    mv->addWidget(searchCountLabel_);
+
+    searchResultList_ = new QListWidget();
+    searchResultList_->setObjectName("searchResultList");
+    searchResultList_->setWordWrap(true);
+    searchResultList_->setCursor(Qt::PointingHandCursor);
+    // 한 번 클릭으로 재생 — 더블클릭까지 기다리게 하면 "왜 안 나오지"를 매번 겪는다.
+    connect(searchResultList_, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem* item) {
+                if (!item) return;
+                playSearchClip(item->data(Qt::UserRole).toString(),
+                               item->data(Qt::UserRole + 1).toString());
+            });
+    mv->addWidget(searchResultList_, 1);
+
+    // 목록으로 볼 수 없는 답변(안내문·오류)은 여기에 원문 그대로 띄운다.
+    searchMessage_ = new QLabel();
+    searchMessage_->setObjectName("searchMessage");
+    searchMessage_->setWordWrap(true);
+    searchMessage_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    // 목록이 숨은 자리에서 라벨이 세로로 늘어나 문구가 한가운데 뜨지 않도록
+    // 높이는 내용에 고정하고, 남는 공간은 아래 스트레치가 가져간다.
+    searchMessage_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    searchMessage_->hide();
+    mv->addWidget(searchMessage_);
+    mv->addStretch();
+
+    body->addWidget(mid, 0);
+
+    // ── 우: 재생기 ──
+    auto* right = new QVBoxLayout();
+    right->setSpacing(6);
+
+    searchContext_ = new QLabel();
+    searchContext_->setObjectName("eventContext");
+    searchContext_->setWordWrap(true);
+    searchContext_->hide();
+    right->addWidget(searchContext_);
+
+    searchPlayerStack_ = new QStackedWidget();
+    auto* hint = new QLabel(
+        QStringLiteral("왼쪽에서 질문하고, 가운데 목록에서 기록을 고르면 "
+                       "여기서 바로 재생됩니다."));
+    hint->setObjectName("camHint");
+    hint->setAlignment(Qt::AlignCenter);
+    hint->setWordWrap(true);
+    searchPlayerStack_->addWidget(hint);          // 0
+
+    searchVideo_ = new QVideoWidget();
+    searchVideo_->setObjectName("playbackVideo");
+    searchPlayerStack_->addWidget(searchVideo_);  // 1
+
+    auto* stageCard = new QFrame();
+    stageCard->setObjectName("camStage");
+    auto* scl = new QVBoxLayout(stageCard);
+    scl->setContentsMargins(0, 0, 0, 0);
+    scl->addWidget(searchPlayerStack_);
+    right->addWidget(stageCard, 1);
+
+    // 재생 컨트롤
+    auto* ctl = new QFrame();
+    ctl->setObjectName("transportBar");
+    auto* cl = new QHBoxLayout(ctl);
+    cl->setContentsMargins(10, 6, 10, 6);
+    cl->setSpacing(8);
+    searchPlayPause_ = new QPushButton(QStringLiteral("▶"));
+    searchPlayPause_->setObjectName("transportBtn");
+    searchPlayPause_->setCursor(Qt::PointingHandCursor);
+    searchPlayPause_->setFixedSize(30, 26);
+    cl->addWidget(searchPlayPause_);
+    searchSeek_ = new QSlider(Qt::Horizontal);
+    searchSeek_->setObjectName("blackboxSeek");
+    cl->addWidget(searchSeek_, 1);
+    searchTimeLabel_ = new QLabel(QStringLiteral("00:00 / 00:00"));
+    searchTimeLabel_->setObjectName("transportTime");
+    cl->addWidget(searchTimeLabel_);
+    right->addWidget(ctl);
+
+    body->addLayout(right, 1);
     outer->addLayout(body, 1);
 
     connect(searchButton, &QPushButton::clicked, this, &MainWindow::sendSearchQuery);
     connect(searchQueryEdit, &QLineEdit::returnPressed, this, &MainWindow::sendSearchQuery);
-    connect(searchResultBrowser, &QTextBrowser::anchorClicked, this,
-            [this](const QUrl& url) {
-                // 재생기는 이벤트 기록 페이지에 있다 — 그쪽으로 이동해서 재생.
-                if (contentStack) contentStack->setCurrentIndex(kNavEventLog);
-                if (navBtns[kNavEventLog]) navBtns[kNavEventLog]->setChecked(true);
-                playBlackboxClip(url.toString());
-            });
 
     return panel;
 }
 
+// 서버 답변을 결과 목록으로 쪼갠다.
+//
+// 형식(video_search_module.cpp):
+//   🔎 검색 결과 3건
+//   (빈 줄)
+//   · 2026-08-18 11:06 · 채널 4 · 낙상 · 전승현님
+//     http://host:5501/ch3_...mp4
+// "· "로 시작하면 새 결과, 들여쓴 http 줄은 직전 결과의 클립이다.
+// 목록이 아닌 답변(안내문·"기록을 찾지 못했어요")은 message 로 넘긴다.
+QVector<MainWindow::SearchHit> MainWindow::parseSearchReply(const QString& text,
+                                                            QString* message)
+{
+    QVector<SearchHit> hits;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+
+    for (const QString& raw : lines) {
+        const QString line = raw.trimmed();
+        if (line.startsWith(QString::fromUtf8("· "))) {
+            const QString rest = line.mid(2).trimmed();
+            SearchHit hit;
+            const int sep = rest.indexOf(QString::fromUtf8(" · "));
+            if (sep > 0) {
+                hit.when = rest.left(sep);
+                hit.meta = rest.mid(sep + 3);
+            } else {
+                hit.when = rest;
+            }
+            hits.push_back(hit);
+        } else if (!hits.isEmpty() && line.startsWith(QLatin1String("http")) &&
+                   line.endsWith(QLatin1String(".mp4"))) {
+            hits.back().url = line;
+        }
+    }
+
+    if (hits.isEmpty() && message) *message = text.trimmed();
+    return hits;
+}
+
+// 검색 결과 클립을 이 페이지 재생기에서 튼다.
+void MainWindow::playSearchClip(const QString& url, const QString& context)
+{
+    if (searchContext_) {
+        searchContext_->setText(context);
+        searchContext_->show();
+    }
+    if (url.isEmpty()) {
+        // 서버가 public_host 를 모르면 URL 없이 결과만 온다(모듈 주석 참고).
+        if (searchPlayerStack_) searchPlayerStack_->setCurrentIndex(0);
+        if (searchPlayer_) searchPlayer_->stop();
+        return;
+    }
+
+    if (!searchPlayer_) {
+        searchPlayer_ = new QMediaPlayer(this);
+        searchPlayer_->setVideoOutput(searchVideo_);
+        connect(searchPlayer_, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
+            if (!searchSeeking_ && searchSeek_) searchSeek_->setValue(int(pos));
+            if (searchTimeLabel_ && searchPlayer_) {
+                const auto fmt = [](qint64 ms) {
+                    return QStringLiteral("%1:%2")
+                        .arg(ms / 60000, 2, 10, QLatin1Char('0'))
+                        .arg((ms / 1000) % 60, 2, 10, QLatin1Char('0'));
+                };
+                searchTimeLabel_->setText(QStringLiteral("%1 / %2")
+                                              .arg(fmt(pos), fmt(searchPlayer_->duration())));
+            }
+        });
+        connect(searchPlayer_, &QMediaPlayer::durationChanged, this, [this](qint64 dur) {
+            if (searchSeek_) searchSeek_->setRange(0, int(qMax<qint64>(0, dur)));
+        });
+        connect(searchPlayer_, &QMediaPlayer::playbackStateChanged, this,
+                [this](QMediaPlayer::PlaybackState st) {
+                    if (searchPlayPause_)
+                        searchPlayPause_->setText(st == QMediaPlayer::PlayingState
+                                                      ? QStringLiteral("⏸")
+                                                      : QStringLiteral("▶"));
+                });
+        connect(searchPlayPause_, &QPushButton::clicked, this, [this] {
+            if (!searchPlayer_) return;
+            if (searchPlayer_->playbackState() == QMediaPlayer::PlayingState)
+                searchPlayer_->pause();
+            else
+                searchPlayer_->play();
+        });
+        connect(searchSeek_, &QSlider::sliderPressed, this, [this] { searchSeeking_ = true; });
+        connect(searchSeek_, &QSlider::sliderReleased, this, [this] {
+            searchSeeking_ = false;
+            if (searchPlayer_) searchPlayer_->setPosition(searchSeek_->value());
+        });
+    }
+
+    if (searchPlayerStack_) searchPlayerStack_->setCurrentIndex(1);
+    searchPlayer_->setSource(QUrl(url));
+    searchPlayer_->play();
+}
+
 void MainWindow::sendSearchQuery()
 {
-    if (!searchChannelCombo || !searchQueryEdit || !searchButton || !searchResultBrowser)
+    if (!searchChannelCombo || !searchQueryEdit || !searchButton || !searchResultList_)
         return;
 
     const QString query = searchQueryEdit->text().trimmed();
@@ -3524,8 +3689,11 @@ void MainWindow::sendSearchQuery()
         }
     }
     if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
-        searchResultBrowser->setPlainText(
-            QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
+        searchResultList_->clear();
+        searchResultList_->hide();
+        searchCountLabel_->clear();
+        searchMessage_->setText(QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
+        searchMessage_->show();
         return;
     }
 
@@ -3547,15 +3715,18 @@ void MainWindow::sendSearchQuery()
     sock->flush();
 
     searchButton->setEnabled(false);
-    searchResultBrowser->setPlainText(QStringLiteral("검색 중…"));
+    searchResultList_->clear();
+    searchResultList_->show();
+    searchCountLabel_->setText(QStringLiteral("검색 중…"));
+    searchMessage_->hide();
 
     // Gemini+DB 왕복이 수 초 걸릴 수 있어, 응답이 안 오면 버튼이 영원히 잠기지
     // 않도록 넉넉한 시간 후 자동 복구(서버 curl 타임아웃 20초보다 여유 있게).
     QTimer::singleShot(25000, this, [this]() {
         if (searchButton && !searchButton->isEnabled()) {
             searchButton->setEnabled(true);
-            if (searchResultBrowser)
-                searchResultBrowser->setPlainText(
+            if (searchMessage_)
+                searchMessage_->setText(
                     QStringLiteral("응답이 없어요. 다시 시도해 주세요."));
         }
     });
@@ -3564,17 +3735,44 @@ void MainWindow::sendSearchQuery()
 void MainWindow::onSearchResultReceived(int /*channel*/, const QString& text)
 {
     if (searchButton) searchButton->setEnabled(true);
-    if (!searchResultBrowser) return;
+    if (!searchResultList_) return;
 
-    // 답변에 섞인 클립 URL(http://…mp4)만 클릭 가능한 링크로 바꾼다. 나머지는
-    // HTML 특수문자를 이스케이프해 그대로 보여주고, 줄바꿈은 <br>로 치환.
-    QString html = text.toHtmlEscaped();
-    static const QRegularExpression kUrlRe(
-        QStringLiteral("(https?://\\S+\\.mp4)"));
-    html.replace(kUrlRe, QStringLiteral("<a href=\"\\1\">📹 클립 보기</a>"));
-    html.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+    QString message;
+    const QVector<SearchHit> hits = parseSearchReply(text, &message);
 
-    searchResultBrowser->setHtml(html);
+    searchResultList_->clear();
+    if (hits.isEmpty()) {
+        // 목록이 아닌 답변(안내문·"기록을 찾지 못했어요")은 원문 그대로 보여준다.
+        // 빈 목록 상자를 남겨 두면 안내문이 그 아래로 밀려 붙어 어색하다 —
+        // 둘 중 하나만 자리를 차지한다.
+        if (searchCountLabel_) searchCountLabel_->clear();
+        searchResultList_->hide();
+        if (searchMessage_) {
+            searchMessage_->setText(message);
+            searchMessage_->show();
+        }
+        return;
+    }
+
+    searchResultList_->show();
+    if (searchMessage_) searchMessage_->hide();
+    for (const SearchHit& h : hits) {
+        auto* item = new QListWidgetItem(
+            h.meta.isEmpty() ? h.when
+                             : QStringLiteral("%1\n%2").arg(h.when, h.meta));
+        item->setData(Qt::UserRole, h.url);
+        item->setData(Qt::UserRole + 1,
+                      h.meta.isEmpty() ? h.when
+                                       : QStringLiteral("%1  ·  %2").arg(h.when, h.meta));
+        // 클립이 없는 기록은 눌러도 재생할 게 없다 — 미리 알려 준다.
+        if (h.url.isEmpty()) {
+            item->setToolTip(QStringLiteral("저장된 클립이 없는 기록입니다"));
+            item->setForeground(QColor(QString::fromLatin1(kTextSub)));
+        }
+        searchResultList_->addItem(item);
+    }
+    if (searchCountLabel_)
+        searchCountLabel_->setText(QStringLiteral("%1건").arg(hits.size()));
 }
 
 // ═══════════════════════════════════════════════════════════

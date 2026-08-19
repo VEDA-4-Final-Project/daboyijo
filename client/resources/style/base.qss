@@ -539,9 +539,16 @@
             border-radius: 3px; padding: 5px 14px; font-weight: 700; }
         #searchButton:hover { border-color: %(accent); }
         #searchButton:disabled { color: %(sub); border-color: %(border); }
-        #searchResultBrowser { background: %(panel); color: %(text); border: 1px solid %(border);
-                               border-radius: 4px; padding: 6px 10px; }
-        #searchResultBrowser a { color: %(accent); }
+        /* 검색 결과 목록 — 한 항목이 두 줄(시각 / 채널·종류·이름)이다. */
+        #searchResultList { background: %(panel); color: %(text); border: 1px solid %(border);
+                            border-radius: 4px; outline: none; font-size: 12px; }
+        #searchResultList::item { padding: 8px 10px; border: none;
+                                  border-bottom: 1px solid %(border); }
+        #searchResultList::item:hover { background: %(card); }
+        #searchResultList::item:selected { background: %(select); color: %(onSelect); }
+        /* 목록으로 못 만드는 답변(안내문·오류) */
+        #searchMessage { background: %(panel); color: %(sub); border: 1px solid %(border);
+                         border-radius: 4px; padding: 12px 12px; font-size: 13px; }
 
 /* ── TAB3: DB 관리 ── */
 

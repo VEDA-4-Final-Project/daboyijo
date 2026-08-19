@@ -520,7 +520,31 @@ private:
     QComboBox* searchChannelCombo = nullptr;
     QLineEdit* searchQueryEdit = nullptr;
     QPushButton* searchButton = nullptr;
-    QTextBrowser* searchResultBrowser = nullptr;
+
+    // 검색 결과 한 건. 서버가 돌려주는 답변은 자유 문장이 아니라
+    //   "· 2026-08-18 11:06 · 채널 4 · 낙상 · 전승현님" + 다음 줄에 클립 URL
+    // 형식의 목록이라(video_search_module.cpp), 그대로 파싱해 리스트로 만든다.
+    struct SearchHit {
+        QString when;    // "2026-08-18 11:06"
+        QString meta;    // "채널 4 · 낙상 · 전승현님"
+        QString url;     // 클립 주소(없을 수 있다)
+    };
+    QListWidget*    searchResultList_ = nullptr;
+    QLabel*         searchCountLabel_ = nullptr;
+    QLabel*         searchMessage_ = nullptr;   // 결과가 목록이 아닐 때(안내·오류) 표시
+    QLabel*         searchContext_ = nullptr;   // 재생기 위 "언제 · 무슨 일"
+    // 재생기는 이 페이지 전용이다. 이벤트 기록 페이지의 재생기(blackboxPlayer)를
+    // 빌려 쓰려면 그쪽 페이지로 이동해야 해서, 검색하다 말고 화면이 튀었다.
+    QStackedWidget* searchPlayerStack_ = nullptr;   // 0=안내 / 1=영상
+    QVideoWidget*   searchVideo_ = nullptr;
+    QMediaPlayer*   searchPlayer_ = nullptr;
+    QSlider*        searchSeek_ = nullptr;
+    QPushButton*    searchPlayPause_ = nullptr;
+    QLabel*         searchTimeLabel_ = nullptr;
+    bool            searchSeeking_ = false;     // 사용자가 재생바를 잡고 있는 중
+    // 서버 답변 → 결과 목록. 목록으로 볼 수 없는 답변이면 message 에 원문을 담는다.
+    static QVector<SearchHit> parseSearchReply(const QString& text, QString* message);
+    void playSearchClip(const QString& url, const QString& context);
     QWidget* buildVideoSearchTab();          // 네비 "영상 검색" 페이지 전체
     void sendSearchQuery();
     // onReadyRead가 DBJ_SEARCH_MAGIC 패킷을 다 모으면 호출 — 답변 표시 + 버튼 복구
