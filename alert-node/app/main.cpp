@@ -148,7 +148,12 @@ std::string toAudioPath(const Config& cfg, const std::string& file)
 std::string resolveAudioPath(const Config& cfg, const AlarmCommand& cmd)
 {
     std::string primary = toAudioPath(cfg, cmd.audio_file);
-    if (primary.empty() || std::filesystem::exists(primary)) return primary;
+    // audio_file 은 네트워크에서 온 값이라 경로가 비정상일 수 있고(이름이 너무 길다든지),
+    // SD 카드 I/O 오류로도 조회가 실패할 수 있다. 예외를 던지는 exists(p) 를 쓰면
+    // 그 순간 알림 노드가 통째로 죽으므로 error_code 판을 쓴다 — 조회가 실패하면
+    // "파일이 없다" 로 보고 아래 공용 파일로 넘어간다.
+    std::error_code ec;
+    if (primary.empty() || std::filesystem::exists(primary, ec)) return primary;
 
     std::string fallbackName;
     if (cmd.type == "FALL")                fallbackName = "fall_alert.wav";
