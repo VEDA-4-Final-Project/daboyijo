@@ -31,7 +31,6 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
-#include "alertbanner.h"
 
 
 
@@ -133,7 +132,8 @@ static constexpr uint16_t kSearchMagic = 0xDB4E;
 
 #include "videoview.h"   // RoiZone / kMaxRoiZones — 침대 목록을 값으로 들고 있어 필요
 
-class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
+class FramePreview;  // 채널 스트립 썸네일 (videoview.h)
+class WipeCompare;   // 이미지 탭 적용 전/후 와이프 비교 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
@@ -332,13 +332,20 @@ private:
     QTreeWidget*     resourceTree_ = nullptr;
     QLineEdit*       resourceSearch_ = nullptr;
     QPushButton*     resourceToggle_ = nullptr;
-    QWidget*         resourceBody_ = nullptr;   // 접을 때 숨기는 부분(검색+트리)
+    QWidget*         resourceBody_ = nullptr;   // 펼쳤을 때 보이는 부분(검색+트리)
+    QLabel*          resourceHead_ = nullptr;   // "리소스" 제목 — 접으면 숨긴다
+    // 접었을 때 대신 보이는 세로 칩 레일(CH1~4). 44px 빈 막대만 남기면 무엇을
+    // 접었는지도, 어떻게 펴는지도 알 수 없다 — 채널 상태는 접어도 남긴다.
+    QWidget*         resourceRail_ = nullptr;
+    QPushButton*     resChipBtns_[4] = {};
     bool             resourceCollapsed_ = false;
     QTreeWidgetItem* camItems_[4] = {};
 
     // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
     QWidget*     buildLayoutTabs();
     QWidget*     buildTileChrome(int channel, QWidget* card);
+    // 크롬(닫기·툴바)은 레이아웃 밖 자식이라 카드 크기에 맞춰 직접 옮겨 준다.
+    void         layoutTileChrome(int channel);
     void         saveChannelSnapshot(int channel);   // 타일 툴바 스냅샷 저장
     QPushButton* layoutTabBtns_[3] = {};
     QPushButton* tileCloseBtns_[4] = {};
@@ -512,7 +519,31 @@ private:
     QComboBox* searchChannelCombo = nullptr;
     QLineEdit* searchQueryEdit = nullptr;
     QPushButton* searchButton = nullptr;
-    QTextBrowser* searchResultBrowser = nullptr;
+
+    // 검색 결과 한 건. 서버가 돌려주는 답변은 자유 문장이 아니라
+    //   "· 2026-08-18 11:06 · 채널 4 · 낙상 · 전승현님" + 다음 줄에 클립 URL
+    // 형식의 목록이라(video_search_module.cpp), 그대로 파싱해 리스트로 만든다.
+    struct SearchHit {
+        QString when;    // "2026-08-18 11:06"
+        QString meta;    // "채널 4 · 낙상 · 전승현님"
+        QString url;     // 클립 주소(없을 수 있다)
+    };
+    QListWidget*    searchResultList_ = nullptr;
+    QLabel*         searchCountLabel_ = nullptr;
+    QLabel*         searchMessage_ = nullptr;   // 결과가 목록이 아닐 때(안내·오류) 표시
+    QLabel*         searchContext_ = nullptr;   // 재생기 위 "언제 · 무슨 일"
+    // 재생기는 이 페이지 전용이다. 이벤트 기록 페이지의 재생기(blackboxPlayer)를
+    // 빌려 쓰려면 그쪽 페이지로 이동해야 해서, 검색하다 말고 화면이 튀었다.
+    QStackedWidget* searchPlayerStack_ = nullptr;   // 0=안내 / 1=영상
+    QVideoWidget*   searchVideo_ = nullptr;
+    QMediaPlayer*   searchPlayer_ = nullptr;
+    QSlider*        searchSeek_ = nullptr;
+    QPushButton*    searchPlayPause_ = nullptr;
+    QLabel*         searchTimeLabel_ = nullptr;
+    bool            searchSeeking_ = false;     // 사용자가 재생바를 잡고 있는 중
+    // 서버 답변 → 결과 목록. 목록으로 볼 수 없는 답변이면 message 에 원문을 담는다.
+    static QVector<SearchHit> parseSearchReply(const QString& text, QString* message);
+    void playSearchClip(const QString& url, const QString& context);
     QWidget* buildVideoSearchTab();          // 네비 "영상 검색" 페이지 전체
     void sendSearchQuery();
     // onReadyRead가 DBJ_SEARCH_MAGIC 패킷을 다 모으면 호출 — 답변 표시 + 버튼 복구
@@ -665,13 +696,6 @@ private:
     QWidget* buildAlarmBanner();            // 토스트 카드 생성(오버레이)
     void updateAlarmBanner();               // 활성 경보에 따라 문구·표시 갱신
     void animateAlarmToast(bool show);      // 위→아래 슬라이드 인/아웃
-
-    // 상시 노출용 경보 배너(Phase 3/02 신설) — #alarmToast와 별개 위젯.
-    // buildUi()에서 생성돼 hide() 상태로 Phase 4(ALERT-03)에 인계된다(D-03/PD-08).
-    AlertBanner* alertBanner_ = nullptr;
-    // 활성 경보 목록을 만드는 헬퍼 — 등급 판정(vitalSeverity)과 도형 선택
-    // (severityGlyph)이 전부 이 함수 안에서 끝나 배너로는 완성값만 넘어간다.
-    QList<AlertItem> collectAlertItems() const;
 
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스
@@ -849,7 +873,7 @@ private:
     void     sendImageParams(int channel, int b, int c, int s);
     // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
     void     sendFocus(int channel, bool area, float nx, float ny);
-    // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
+    // 영상 타일 호버 툴바 표시/숨김 + 타일 크롬 재배치.
     bool     eventFilter(QObject* obj, QEvent* ev) override;
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
@@ -869,19 +893,11 @@ private:
     void refreshCamControlsEnabled();
     // 연결 탭의 4채널 상태 요약 배지(CH1~4)
     QLabel* camConnBadges[4] = {};
-    FramePreview* imgBefore = nullptr;                 // 적용 전 스냅샷
-    FramePreview* imgAfter = nullptr;                   // 실시간(적용 후)
-    // 위 두 프리뷰를 영상 비율대로 잡아 주는 상자(실체는 mainwindow.cpp의 AspectBox).
-    // 상자가 영상보다 크면 그 차이가 검은 여백으로 남기 때문에 비율을 맞춰 준다.
-    QWidget* imgBeforeBox = nullptr;
-    QWidget* imgAfterBox = nullptr;
-    // 이미지 모드에서 스테이지 카드를 영상 폭에 딱 맞춰 줄이기 위해 들고 있는다.
-    // 16:9 두 장을 세로로 쌓으면 세로가 먼저 차서 폭이 남는데, 그 남는 폭이
-    // 카드 안에 있으면 "영상 옆 검은 여백"으로 보인다. 카드를 줄여 밖으로 뺀다.
-    QFrame*      camStageCard_ = nullptr;
-    QHBoxLayout* camBodyRow_ = nullptr;   // [채널스트립 | 스테이지 | 인스펙터]
-    void updateImageStageWidth();
-    void setImagePreviewFrame(const QPixmap& pm);      // 프레임 + 상자 비율 동시 갱신
+    // 적용 전/후 와이프 비교 화면(영상 1장 + 드래그 구분선).
+    // 두 장을 따로 놓으면 각 장이 절반으로 줄고 카드에 여백이 남아, 다른 탭과
+    // 틀도 어긋났다. 한 장으로 겹치면 연결·ROI 탭의 큰 영상과 크기가 같아진다.
+    WipeCompare* imgWipe_ = nullptr;
+    void setImagePreviewFrame(const QPixmap& pm);      // 실시간 프레임 주입
     QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──

@@ -270,8 +270,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.51";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -727,107 +727,26 @@ QPixmap tileToolIconPixmap(int kind, const QColor& c, int px = 15)
     p.setBrush(Qt::NoBrush);
 
     const qreal m = 2.0, w = px - 2 * m;
-    switch (kind) {
-        case 0: {   // 크게 보기 — 네 모서리 꺾쇠
-            const qreal a = w * 0.34;
-            p.drawPolyline(QPolygonF({QPointF(m, m + a), QPointF(m, m), QPointF(m + a, m)}));
-            p.drawPolyline(QPolygonF({QPointF(m + w - a, m), QPointF(m + w, m),
-                                      QPointF(m + w, m + a)}));
-            p.drawPolyline(QPolygonF({QPointF(m + w, m + w - a), QPointF(m + w, m + w),
-                                      QPointF(m + w - a, m + w)}));
-            p.drawPolyline(QPolygonF({QPointF(m + a, m + w), QPointF(m, m + w),
-                                      QPointF(m, m + w - a)}));
-            break;
-        }
-        case 1: {   // ROI 표시 — 점선 사각형 + 안쪽 채움
-            QPen dashed(c, 1.3);
-            dashed.setStyle(Qt::DashLine);
-            p.setPen(dashed);
-            p.drawRect(QRectF(m, m, w, w));
-            p.setPen(Qt::NoPen);
-            QColor fill = c;
-            fill.setAlpha(90);
-            p.setBrush(fill);
-            p.drawRect(QRectF(m + w * 0.26, m + w * 0.26, w * 0.48, w * 0.48));
-            break;
-        }
-        case 2: {   // 침대 추가 — 연필
-            p.drawLine(QPointF(m + w * 0.18, m + w * 0.82), QPointF(m + w * 0.72, m + w * 0.14));
-            p.drawLine(QPointF(m + w * 0.34, m + w * 0.98), QPointF(m + w * 0.88, m + w * 0.30));
-            p.drawLine(QPointF(m + w * 0.72, m + w * 0.14), QPointF(m + w * 0.88, m + w * 0.30));
-            p.drawLine(QPointF(m + w * 0.18, m + w * 0.82), QPointF(m + w * 0.34, m + w * 0.98));
-            break;
-        }
-        default: {  // 스냅샷 — 아래로 향한 화살표 + 받침
-            const qreal cx = m + w / 2.0;
-            p.drawLine(QPointF(cx, m), QPointF(cx, m + w * 0.62));
-            p.drawPolyline(QPolygonF({QPointF(cx - w * 0.22, m + w * 0.40), QPointF(cx, m + w * 0.66),
-                                      QPointF(cx + w * 0.22, m + w * 0.40)}));
-            p.drawLine(QPointF(m, m + w), QPointF(m + w, m + w));
-            break;
-        }
+    if (kind == 0) {   // 크게 보기 — 네 모서리 꺾쇠
+        const qreal a = w * 0.34;
+        p.drawPolyline(QPolygonF({QPointF(m, m + a), QPointF(m, m), QPointF(m + a, m)}));
+        p.drawPolyline(QPolygonF({QPointF(m + w - a, m), QPointF(m + w, m),
+                                  QPointF(m + w, m + a)}));
+        p.drawPolyline(QPolygonF({QPointF(m + w, m + w - a), QPointF(m + w, m + w),
+                                  QPointF(m + w - a, m + w)}));
+        p.drawPolyline(QPolygonF({QPointF(m + a, m + w), QPointF(m, m + w),
+                                  QPointF(m, m + w - a)}));
+    } else {           // 스냅샷 — 아래로 향한 화살표 + 받침
+        const qreal cx = m + w / 2.0;
+        p.drawLine(QPointF(cx, m), QPointF(cx, m + w * 0.62));
+        p.drawPolyline(QPolygonF({QPointF(cx - w * 0.22, m + w * 0.40), QPointF(cx, m + w * 0.66),
+                                  QPointF(cx + w * 0.22, m + w * 0.40)}));
+        p.drawLine(QPointF(m, m + w), QPointF(m + w, m + w));
     }
     return pm;
 }
 
-// 자식 위젯을 정해진 가로:세로 비로, 들어갈 수 있는 최대 크기로 키워 가운데 놓는 상자.
-//
-// FramePreview는 자기 사각형 전체를 검정으로 칠한 뒤 그 안에 영상을 비율 유지로
-// 그린다. 그래서 상자가 영상보다 크면 그 차이가 통째로 검은 여백이 된다
-// (16:9 영상을 세로로 긴 칸에 넣으면 위아래가 새까맣게 남는다). 상자 쪽을 영상
-// 비율에 맞춰 두면 레터박스가 생길 자리가 아예 없어진다.
-class AspectBox : public QWidget {
-public:
-    explicit AspectBox(QWidget* child, QWidget* parent = nullptr)
-        : QWidget(parent), child_(child) {
-        child_->setParent(this);
-    }
-    // 비율의 출처는 자식이 들고 있는 프레임 하나다 — 바깥에서 숫자를 따로 넘기면
-    // 프레임과 상자가 어긋날 여지가 생긴다. 프레임이 바뀐 뒤 이걸 부르면 된다.
-    void refresh() { relayout(); }
 
-protected:
-    void resizeEvent(QResizeEvent*) override { relayout(); }
-
-private:
-    void relayout() {
-        if (!child_ || width() <= 0 || height() <= 0) return;
-        // 프레임이 없으면 FramePreview가 16:9를 돌려준다.
-        if (auto* fp = dynamic_cast<FramePreview*>(child_)) aspect_ = fp->frameAspect();
-        int cw = width();
-        int ch = int(qRound(cw / aspect_));
-        if (ch > height()) {          // 세로가 모자라면 세로에 맞춘다
-            ch = height();
-            cw = int(qRound(ch * aspect_));
-        }
-        child_->setGeometry((width() - cw) / 2, (height() - ch) / 2, cw, ch);
-    }
-
-    QWidget* child_ = nullptr;
-    qreal aspect_ = 16.0 / 9.0;
-};
-
-// 영상 타일 위에 얹는 투명 오버레이 — 부모(타일 카드) 크기를 늘 그대로 따라간다.
-// 자기 자신은 마우스를 통과시키므로(WA_TransparentForMouseEvents) 아래의 VideoView가
-// ROI 그리기 클릭을 그대로 받고, 오버레이 "위에 놓인 버튼들"만 클릭을 가져간다.
-// (레이아웃으로 얹으면 영상 위젯이 버튼 자리만큼 줄어들어 화면이 잘린다.)
-class TileOverlay : public QWidget {
-public:
-    explicit TileOverlay(QWidget* parent) : QWidget(parent) {
-        setAttribute(Qt::WA_TransparentForMouseEvents, true);
-        setAttribute(Qt::WA_NoSystemBackground, true);
-        setAttribute(Qt::WA_TranslucentBackground, true);
-        parent->installEventFilter(this);
-        setGeometry(parent->rect());
-    }
-
-protected:
-    bool eventFilter(QObject* o, QEvent* e) override {
-        if (o == parentWidget() && e->type() == QEvent::Resize)
-            setGeometry(parentWidget()->rect());
-        return QWidget::eventFilter(o, e);
-    }
-};
 }  // namespace
 
 // 좌측 네비 레일 — 아이콘+라벨 6개, 접으면 아이콘만. 상태는 QSettings에 남는다.
@@ -933,17 +852,15 @@ void MainWindow::buildUi()
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
-    // 경보 배너(#alertBanner) — dashboardTab 최상단, body 위. 활성 경보가
-    // 있을 때만 보이고 0건이면 숨는다. 좌우는 body와 같은 세로선에 맞추고
-    // (18px) 상하는 최소로 둔다 — QSS가 이미 padding 24px 32px를 준다
-    // (ALERT-03 / D-01).
-    alertBanner_ = new AlertBanner();
-    alertBanner_->setContentsMargins(18, 12, 18, 0);
-
+    // [제거됨] 예전에는 여기 대시보드 최상단에 가로 전체를 먹는 48px 빨간 띠
+    // (#alertBanner)를 상시로 띄웠다. 경보 알림 경로가 이미 셋이라 뺐다:
+    //   · 위에서 내려오는 토스트(#alarmToast) — "무슨 일이 어디서"
+    //   · 창 전체 빨강 펄스 테두리(AlarmOverlay) — 시야 밖에 있어도 눈에 띔
+    //   · 해당 채널 타일 빨간 테두리 점멸(VideoView::setAlert) — "어느 화면"
+    // 띠까지 더하면 정작 봐야 할 영상이 그만큼 밀려 내려간다.
     auto* dashboardOuter = new QVBoxLayout();
     dashboardOuter->setContentsMargins(0, 0, 0, 0);
     dashboardOuter->setSpacing(0);
-    dashboardOuter->addWidget(alertBanner_);
     dashboardOuter->addLayout(body, 1);
 
     auto* dashboardTab = new QWidget();
@@ -982,8 +899,6 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     QMainWindow::resizeEvent(e);
     if (alarmOverlay_ && ui && ui->centralwidget)
         alarmOverlay_->setGeometry(ui->centralwidget->rect());
-    // 창 크기가 바뀌면 이미지 스테이지의 "내용 폭"도 다시 계산해야 한다.
-    updateImageStageWidth();
     // 경보 토스트가 떠 있으면 가로 중앙으로 다시 맞춘다.
     if (alarmToastShown_ && alarmBanner_ && ui && ui->centralwidget) {
         const int x = qMax(12, (ui->centralwidget->width() - alarmBanner_->width()) / 2);
@@ -1480,15 +1395,13 @@ QWidget* MainWindow::buildVideoCard(int channel)
     video->setObjectName("video");
     video->setCornerRadius(0);   // Wisenet 톤 — 관제 타일은 각진 모서리
     channelViews[channel] = video;
-    connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    // 시작할 때부터 이름을 얹는다. refreshPatientLabels()는 입소자를 편집한 뒤에만
+    // 불려서, 예전엔 첫 화면의 타일만 "CH1"로 남고 리소스 트리는 "CH1 · 김복순"으로
+    // 떠 같은 채널이 두 이름으로 보였다(loadPatientsFromDb는 buildUi보다 먼저 돈다).
+    video->setDisplayName(channelDisplayName(channel));
+    // 침대 ROI는 장치 설정에서만 그린다 — 관제 타일은 표시만 한다.
+    // (refreshRoiZones()가 여기에 영역을 밀어 넣어 오버레이로 보여준다)
     connect(video, &VideoView::tileClicked, this, &MainWindow::selectChannel);
-    connect(video, &VideoView::drawModeChanged, this,
-            [this](int, bool on) {
-                roiDrawing = on;
-                if (roiButton)
-                    roiButton->setText(on ? QStringLiteral("취소")
-                                          : QStringLiteral("침대 추가"));
-            });
     lay->addWidget(video, 1);
 
     buildTileChrome(channel, card);
@@ -1498,18 +1411,20 @@ QWidget* MainWindow::buildVideoCard(int channel)
 // 타일 위에 얹는 크롬 — 우상단 닫기(x) + 하단 가운데 호버 툴바.
 // Wisenet Viewer의 타일과 같은 자리다. 툴바는 평소 숨어 있다가 마우스를 올리면
 // 뜬다 — 4분할 화면에서 버튼이 늘 떠 있으면 영상보다 버튼이 먼저 눈에 들어온다.
+// 타일 위에 얹는 크롬 — 우상단 닫기(x) + 하단 가운데 호버 툴바.
+//
+// 이 둘은 카드의 "직접 자식"이다. 예전엔 투명 오버레이(WA_TransparentForMouseEvents)
+// 안에 레이아웃으로 넣었는데, 그 속성은 위젯뿐 아니라 그 자식들에게 가는 마우스
+// 이벤트까지 끊는다 — 버튼이 보이고 호버도 되는데 눌리지는 않았다.
+// 카드의 자식으로 두면 아래 VideoView와 형제가 되어, 버튼 위 클릭은 버튼이,
+// 나머지 영역 클릭은 영상이 그대로 받는다(ROI 그리기가 막히지 않는다).
+// 위치는 레이아웃이 아니라 layoutTileChrome()이 카드 크기에 맞춰 직접 잡는다.
 QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
 {
-    auto* overlay = new TileOverlay(card);
-
-    auto* v = new QVBoxLayout(overlay);
-    v->setContentsMargins(6, 6, 6, 8);
-    v->setSpacing(0);
-
     // 우상단: 레이아웃에서 이 타일 빼기.
     // 카메라 연결을 끊는 게 아니라 "이 화면에서 안 본다"는 뜻이다(Wisenet과 동일).
     // 서버는 계속 녹화·분석하고, 리소스 트리에서 다시 누르면 돌아온다.
-    auto* closeBtn = new QPushButton(QStringLiteral("✕"));
+    auto* closeBtn = new QPushButton(QStringLiteral("✕"), card);
     closeBtn->setObjectName("tileClose");
     closeBtn->setCursor(Qt::PointingHandCursor);
     closeBtn->setFixedSize(20, 20);
@@ -1518,27 +1433,22 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
             [this, channel] { setTileHidden(channel, true); });
     tileCloseBtns_[channel] = closeBtn;
 
-    auto* topRow = new QHBoxLayout();
-    topRow->setContentsMargins(0, 0, 0, 0);
-    topRow->addStretch();
-    topRow->addWidget(closeBtn);
-    v->addLayout(topRow);
-    v->addStretch();
-
-    // 하단 가운데: 호버 툴바
-    auto* toolbar = new QFrame();
+    // 하단 가운데: 호버 툴바. 평소 숨어 있다가 마우스를 올리면 뜬다 — 4분할
+    // 화면에서 버튼이 늘 떠 있으면 영상보다 버튼이 먼저 눈에 들어온다.
+    auto* toolbar = new QFrame(card);
     toolbar->setObjectName("tileToolbar");
     auto* tb = new QHBoxLayout(toolbar);
     tb->setContentsMargins(6, 4, 6, 4);
     tb->setSpacing(2);
 
-    const char16_t* tips[4] = {
-        u"이 채널만 크게 보기",
-        u"침대 ROI 표시 켜기/끄기",
-        u"침대 추가 — 영역 그리기",
+    // 관제 화면 타일에는 "보는 동작"만 둔다. 침대 ROI를 그리고 표시하는 건 설정이라
+    // 장치 설정 → 카메라 → ROI 탭에서 한다 — 관제하다 실수로 영역을 다시 그리면
+    // 낙상·이탈 판정 기준이 조용히 바뀐다.
+    const char16_t* tips[2] = {
+        u"이 채널만 크게 보기 (다시 누르면 2×2로)",
         u"현재 화면 저장(스냅샷)",
     };
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 2; ++i) {
         auto* b = new QPushButton();
         b->setObjectName("tileToolBtn");
         // 영상(검정) 위에 늘 얹히는 버튼이라 아이콘 색은 팔레트가 아니라 고정 회백이다.
@@ -1549,41 +1459,39 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
         b->setToolTip(QString::fromUtf16(tips[i]));
         connect(b, &QPushButton::clicked, this, [this, channel, i] {
             selectChannel(channel);
-            switch (i) {
-                case 0:   // 단일 <-> 2x2 토글
-                    setGridLayout(gridLayout_ == GridLayout::Single
-                                      ? GridLayout::Quad
-                                      : GridLayout::Single);
-                    break;
-                case 1:
-                    // ROI 표시 상태의 단일 출처는 장치 설정의 토글 버튼이다.
-                    // 여기서 별도 플래그를 두면 두 화면의 상태가 갈라진다.
-                    if (roiToggleButton) roiToggleButton->toggle();
-                    break;
-                case 2:
-                    // 장치 설정의 ROI 편집기(roiEditorView)가 아니라 이 타일에
-                    // 바로 그린다 — 관제 화면에서 본 그대로 영역을 잡게.
-                    if (channelViews[channel]) channelViews[channel]->setDrawMode(true);
-                    break;
-                default:
-                    saveChannelSnapshot(channel);
-                    break;
+            if (i == 0) {
+                setGridLayout(gridLayout_ == GridLayout::Single ? GridLayout::Quad
+                                                                : GridLayout::Single);
+            } else {
+                saveChannelSnapshot(channel);
             }
         });
         tb->addWidget(b);
     }
+    toolbar->adjustSize();
     toolbar->hide();   // 호버 전까지 숨김
     tileToolbars_[channel] = toolbar;
 
-    auto* botRow = new QHBoxLayout();
-    botRow->setContentsMargins(0, 0, 0, 0);
-    botRow->addStretch();
-    botRow->addWidget(toolbar);
-    botRow->addStretch();
-    v->addLayout(botRow);
+    closeBtn->raise();
+    toolbar->raise();
+    layoutTileChrome(channel);
+    return card;
+}
 
-    overlay->raise();
-    return overlay;
+// 카드 크기에 맞춰 크롬 위치를 다시 잡는다(레이아웃을 쓰지 않으므로 직접).
+void MainWindow::layoutTileChrome(int channel)
+{
+    if (channel < 0 || channel >= 4) return;
+    QWidget* card = videoCards[channel];
+    if (!card) return;
+
+    const int m = 6;
+    if (auto* b = tileCloseBtns_[channel])
+        b->move(card->width() - m - b->width(), m);
+    if (auto* t = tileToolbars_[channel]) {
+        t->adjustSize();
+        t->move((card->width() - t->width()) / 2, card->height() - 8 - t->height());
+    }
 }
 
 // 지금 보고 있는 화면 그대로 PNG로 저장한다(Wisenet 타일 스냅샷과 같은 동작).
@@ -1766,10 +1674,9 @@ QWidget* MainWindow::buildResourcePanel()
     auto* head = new QHBoxLayout();
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(6);
-    auto* title = new QLabel(QStringLiteral("리소스"));
-    title->setObjectName("resourceHead");
-    head->addWidget(title);
-    head->addStretch();
+    resourceHead_ = new QLabel(QStringLiteral("리소스"));
+    resourceHead_->setObjectName("resourceHead");
+    head->addWidget(resourceHead_, 1);
     resourceToggle_ = new QPushButton(QStringLiteral("‹"));
     resourceToggle_->setObjectName("resourceToggle");
     resourceToggle_->setCursor(Qt::PointingHandCursor);
@@ -1858,8 +1765,35 @@ QWidget* MainWindow::buildResourcePanel()
 
     outer->addWidget(resourceBody_, 1);
 
+    // 접었을 때 보이는 세로 칩 레일 — 채널 번호 + 연결 상태색. 누르면 그 채널 선택.
+    resourceRail_ = new QWidget();
+    auto* rv = new QVBoxLayout(resourceRail_);
+    rv->setContentsMargins(0, 6, 0, 0);
+    rv->setSpacing(4);
+    for (int ch = 0; ch < 4; ++ch) {
+        auto* chip = new QPushButton(QString::number(ch + 1));
+        chip->setObjectName("resChip");
+        chip->setCheckable(true);
+        chip->setAutoExclusive(true);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFixedSize(30, 26);
+        connect(chip, &QPushButton::clicked, this, [this, ch] { selectChannel(ch); });
+        resChipBtns_[ch] = chip;
+        rv->addWidget(chip, 0, Qt::AlignHCenter);
+    }
+    rv->addStretch();
+    resourceRail_->hide();
+    outer->addWidget(resourceRail_, 1);
+
     QSettings st;
-    setResourceCollapsed(st.value(QStringLiteral("ui/resource_collapsed"), false).toBool());
+    // 기본은 접힘 — 좌측에 네비 레일과 이 패널이 나란히 펼쳐지면 크롬이
+    // 화면 폭의 절반 가까이를 먹는다. 필요할 때만 펴서 쓴다.
+    //
+    // 키 이름을 _v2로 바꾼 이유: setResourceCollapsed()가 값을 되쓰기 때문에
+    // 예전 키(ui/resource_collapsed)는 이미 모든 기존 사용자에게 false로 남아 있다.
+    // 같은 키를 그대로 쓰면 "기본 접힘"이 아무에게도 적용되지 않는다. 새 키로 한 번
+    // 초기화하고, 이후 사용자가 편 선택은 그대로 기억한다.
+    setResourceCollapsed(st.value(QStringLiteral("ui/resource_collapsed_v2"), true).toBool());
     refreshResourceTree();
     return resourcePanel_;
 }
@@ -1901,6 +1835,20 @@ void MainWindow::refreshResourceTree()
         // 검색어가 있으면 이름에 안 들어있는 카메라는 감춘다.
         it->setHidden(!filter.isEmpty() &&
                       !channelDisplayName(ch).contains(filter, Qt::CaseInsensitive));
+
+        // 접힘 상태의 칩도 같은 값으로 갱신한다(트리와 어긋나면 안 된다).
+        if (auto* chip = resChipBtns_[ch]) {
+            chip->setChecked(ch == selectedChannel_);
+            chip->setProperty("state", tileHidden_[ch] ? QStringLiteral("hidden")
+                                       : live         ? QStringLiteral("live")
+                                                      : QStringLiteral("off"));
+            chip->setToolTip(QStringLiteral("%1 · %2")
+                                 .arg(channelDisplayName(ch),
+                                      live ? QStringLiteral("수신 중")
+                                           : QStringLiteral("신호 없음")));
+            chip->style()->unpolish(chip);
+            chip->style()->polish(chip);
+        }
     }
 }
 
@@ -1908,11 +1856,32 @@ void MainWindow::setResourceCollapsed(bool on)
 {
     resourceCollapsed_ = on;
     if (resourceBody_) resourceBody_->setVisible(!on);
-    if (resourcePanel_) resourcePanel_->setFixedWidth(on ? 44 : 208);
-    if (resourceToggle_) resourceToggle_->setText(on ? QStringLiteral("›")
-                                                     : QStringLiteral("‹"));
+    if (resourceRail_) resourceRail_->setVisible(on);
+    // 제목까지 남겨 두면 "리소스" 세 글자가 폭을 못 줄여 토글 버튼이 밖으로
+    // 밀려 나간다 — 접힌 패널에 화살표조차 없어 다시 펼 수가 없었다.
+    if (resourceHead_) resourceHead_->setVisible(!on);
+
+    if (resourcePanel_) {
+        resourcePanel_->setFixedWidth(on ? 48 : 208);
+        if (auto* l = qobject_cast<QVBoxLayout*>(resourcePanel_->layout()))
+            l->setContentsMargins(on ? 9 : 10, 12, on ? 9 : 10, 12);
+    }
+    if (resourceToggle_) {
+        // 화살표는 "누르면 갈 방향"을 가리킨다: 접힘→오른쪽으로 펼침(›),
+        // 펼침→왼쪽으로 접힘(‹).
+        resourceToggle_->setText(on ? QStringLiteral("›") : QStringLiteral("‹"));
+        resourceToggle_->setToolTip(on ? QStringLiteral("리소스 목록 펼치기")
+                                       : QStringLiteral("리소스 목록 접기"));
+    }
+    // 접히면 토글만 남으므로 가운데로, 펼치면 제목 오른쪽 끝으로.
+    if (resourceToggle_ && resourceToggle_->parentWidget()) {
+        if (auto* lay = resourceToggle_->parentWidget()->layout())
+            lay->setAlignment(resourceToggle_, on ? Qt::AlignHCenter : Qt::AlignRight);
+    }
+
     QSettings st;
-    st.setValue(QStringLiteral("ui/resource_collapsed"), on);
+    st.setValue(QStringLiteral("ui/resource_collapsed_v2"), on);
+    refreshResourceTree();   // 칩 상태도 같은 경로에서 갱신
 }
 
 // 타일 오버레이·트리가 공유하는 채널 이름. "CH1 · 김복순" 형식.
@@ -1924,11 +1893,22 @@ QString MainWindow::channelDisplayName(int ch) const
     const QVector<int>& ids = residentsByChannel_[ch];
     if (ids.isEmpty()) return tag;
 
-    const QString first = residentInfo_.value(ids.first()).name;
-    if (first.isEmpty()) return tag;
-    if (ids.size() > 1)
-        return QStringLiteral("%1 · %2 외 %3명").arg(tag, first).arg(ids.size() - 1);
-    return QStringLiteral("%1 · %2").arg(tag, first);
+    // 한 채널(=한 방의 한 시야)에 여러 명이 함께 누워 있는 게 이 시스템의 기본
+    // 구성이다. 그런데 대표 한 명만 쓰고 "외 N명"으로 접으면, 정작 그 방에 누가
+    // 있는지를 화면에서 알 수 없다 — 두 명까지는 다 적는다.
+    // 세 명 이상은 한 줄짜리 이름표가 감당이 안 되므로 그때만 접는다.
+    QStringList names;
+    for (int rid : ids) {
+        const QString n = residentInfo_.value(rid).name;
+        if (!n.isEmpty()) names << n;
+    }
+    if (names.isEmpty()) return tag;
+
+    if (names.size() <= 2)
+        return QStringLiteral("%1 · %2").arg(tag, names.join(QStringLiteral(", ")));
+    return QStringLiteral("%1 · %2 외 %3명")
+        .arg(tag, names.mid(0, 2).join(QStringLiteral(", ")))
+        .arg(names.size() - 2);
 }
 
 // ═════════════════════════════════════════════════════════
@@ -3408,11 +3388,12 @@ QWidget* MainWindow::buildVideoSearchTab()
     title->setObjectName("panelTitle");
     outer->addWidget(title);
 
-    // Wisenet Viewer의 AI search와 같은 2단: 왼쪽에 조건, 오른쪽에 결과.
+    // 3단: 조건 | 결과 목록 | 재생기. 결과를 누르면 이 페이지 안에서 바로 재생된다
+    // — 예전엔 이벤트 기록 페이지로 튕겨 보내서, 검색을 이어가려면 되돌아와야 했다.
     auto* body = new QHBoxLayout();
     body->setSpacing(12);
 
-    // ── 좌측: 검색 조건 ──
+    // ── 좌: 검색 조건 ──
     auto* side = new QFrame();
     side->setObjectName("filterBar");
     side->setFixedWidth(248);
@@ -3430,8 +3411,7 @@ QWidget* MainWindow::buildVideoSearchTab()
     sv->addWidget(chCap);
     searchChannelCombo = new QComboBox();
     searchChannelCombo->setObjectName("searchChannelCombo");
-    // 기본값 = 전체 채널 — 질문할 때 채널을 매번 고르지 않아도 전체에서
-    // 찾아준다. 좁히고 싶을 때만 특정 채널로 바꾸면 됨.
+    // 기본값 = 전체 채널 — 질문할 때 채널을 매번 고르지 않아도 전체에서 찾아준다.
     searchChannelCombo->addItem(QStringLiteral("전체 채널"), -1);
     for (int ch = 0; ch < 4; ++ch)
         searchChannelCombo->addItem(QStringLiteral("채널 %1").arg(ch + 1), ch);
@@ -3451,7 +3431,7 @@ QWidget* MainWindow::buildVideoSearchTab()
     auto* btnRow = new QHBoxLayout();
     btnRow->setSpacing(6);
     searchButton = new QPushButton(QStringLiteral("검색"));
-    searchButton->setObjectName("camPrimary");   // 이 페이지의 주 액션 = 채워진 악센트
+    searchButton->setObjectName("camPrimary");
     searchButton->setCursor(Qt::PointingHandCursor);
     btnRow->addWidget(searchButton, 1);
     auto* resetBtn = new QPushButton(QStringLiteral("초기화"));
@@ -3460,14 +3440,20 @@ QWidget* MainWindow::buildVideoSearchTab()
     connect(resetBtn, &QPushButton::clicked, this, [this] {
         searchQueryEdit->clear();
         searchChannelCombo->setCurrentIndex(0);
-        searchResultBrowser->clear();
+        searchResultList_->clear();
+        searchResultList_->show();
+        if (searchPlayer_) searchPlayer_->stop();
+        if (searchPlayerStack_) searchPlayerStack_->setCurrentIndex(0);
+        if (searchContext_) searchContext_->hide();
+        if (searchMessage_) searchMessage_->hide();
+        if (searchCountLabel_) searchCountLabel_->clear();
     });
     btnRow->addWidget(resetBtn);
     sv->addLayout(btnRow);
     sv->addSpacing(10);
 
-    // 예시 질문 — 누르면 질문칸이 채워진다. 자연어 검색은 "뭐라고 물어야
-    // 하는지"가 가장 큰 진입 장벽이라, 실제 통하는 문장을 눌러 보게 한다.
+    // 예시 질문 — 누르면 질문칸이 채워지고 바로 검색된다. 자연어 검색은 "뭐라고
+    // 물어야 하는지"가 가장 큰 진입 장벽이라, 실제 통하는 문장을 눌러 보게 한다.
     auto* exCap = new QLabel(QStringLiteral("예시 질문"));
     exCap->setObjectName("filterFieldCap");
     sv->addWidget(exCap);
@@ -3486,45 +3472,204 @@ QWidget* MainWindow::buildVideoSearchTab()
         });
         sv->addWidget(chip);
     }
-
     sv->addStretch();
-    auto* hint = new QLabel(
-        QStringLiteral("낙상·침상이탈 같은 사건을 자연어로 물어보면 지난 기록을 "
-                       "찾아드려요. 결과의 클립을 누르면 이벤트 기록 페이지에서 "
-                       "바로 재생됩니다."));
-    hint->setObjectName("camHint");
-    hint->setWordWrap(true);
-    sv->addWidget(hint);
-
     body->addWidget(side, 0);
 
-    // ── 우측: 결과 ──
-    searchResultBrowser = new QTextBrowser();
-    searchResultBrowser->setObjectName("searchResultBrowser");
-    searchResultBrowser->setOpenLinks(false);  // 클립 링크는 인앱 재생기로 가로챈다
-    // 검색 전 빈 검은 판만 놓여 있으면 "고장인가"로 읽힌다 — 무엇을 하는 곳인지 적어 둔다.
-    searchResultBrowser->setPlaceholderText(
-        QStringLiteral("왼쪽에서 질문을 입력하고 [검색]을 누르면 결과가 여기에 나옵니다."));
-    body->addWidget(searchResultBrowser, 1);
+    // ── 중: 결과 목록 ──
+    auto* mid = new QWidget();
+    mid->setFixedWidth(300);
+    auto* mv = new QVBoxLayout(mid);
+    mv->setContentsMargins(0, 0, 0, 0);
+    mv->setSpacing(6);
 
+    searchCountLabel_ = new QLabel();
+    searchCountLabel_->setObjectName("logCount");
+    mv->addWidget(searchCountLabel_);
+
+    searchResultList_ = new QListWidget();
+    searchResultList_->setObjectName("searchResultList");
+    searchResultList_->setWordWrap(true);
+    searchResultList_->setCursor(Qt::PointingHandCursor);
+    // 한 번 클릭으로 재생 — 더블클릭까지 기다리게 하면 "왜 안 나오지"를 매번 겪는다.
+    connect(searchResultList_, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem* item) {
+                if (!item) return;
+                playSearchClip(item->data(Qt::UserRole).toString(),
+                               item->data(Qt::UserRole + 1).toString());
+            });
+    mv->addWidget(searchResultList_, 1);
+
+    // 목록으로 볼 수 없는 답변(안내문·오류)은 여기에 원문 그대로 띄운다.
+    searchMessage_ = new QLabel();
+    searchMessage_->setObjectName("searchMessage");
+    searchMessage_->setWordWrap(true);
+    searchMessage_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    // 목록이 숨은 자리에서 라벨이 세로로 늘어나 문구가 한가운데 뜨지 않도록
+    // 높이는 내용에 고정하고, 남는 공간은 아래 스트레치가 가져간다.
+    searchMessage_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    searchMessage_->hide();
+    mv->addWidget(searchMessage_);
+    mv->addStretch();
+
+    body->addWidget(mid, 0);
+
+    // ── 우: 재생기 ──
+    auto* right = new QVBoxLayout();
+    right->setSpacing(6);
+
+    searchContext_ = new QLabel();
+    searchContext_->setObjectName("eventContext");
+    searchContext_->setWordWrap(true);
+    searchContext_->hide();
+    right->addWidget(searchContext_);
+
+    searchPlayerStack_ = new QStackedWidget();
+    auto* hint = new QLabel(
+        QStringLiteral("왼쪽에서 질문하고, 가운데 목록에서 기록을 고르면 "
+                       "여기서 바로 재생됩니다."));
+    hint->setObjectName("camHint");
+    hint->setAlignment(Qt::AlignCenter);
+    hint->setWordWrap(true);
+    searchPlayerStack_->addWidget(hint);          // 0
+
+    searchVideo_ = new QVideoWidget();
+    searchVideo_->setObjectName("playbackVideo");
+    searchPlayerStack_->addWidget(searchVideo_);  // 1
+
+    auto* stageCard = new QFrame();
+    stageCard->setObjectName("camStage");
+    auto* scl = new QVBoxLayout(stageCard);
+    scl->setContentsMargins(0, 0, 0, 0);
+    scl->addWidget(searchPlayerStack_);
+    right->addWidget(stageCard, 1);
+
+    // 재생 컨트롤
+    auto* ctl = new QFrame();
+    ctl->setObjectName("transportBar");
+    auto* cl = new QHBoxLayout(ctl);
+    cl->setContentsMargins(10, 6, 10, 6);
+    cl->setSpacing(8);
+    searchPlayPause_ = new QPushButton(QStringLiteral("▶"));
+    searchPlayPause_->setObjectName("transportBtn");
+    searchPlayPause_->setCursor(Qt::PointingHandCursor);
+    searchPlayPause_->setFixedSize(30, 26);
+    cl->addWidget(searchPlayPause_);
+    searchSeek_ = new QSlider(Qt::Horizontal);
+    searchSeek_->setObjectName("blackboxSeek");
+    cl->addWidget(searchSeek_, 1);
+    searchTimeLabel_ = new QLabel(QStringLiteral("00:00 / 00:00"));
+    searchTimeLabel_->setObjectName("transportTime");
+    cl->addWidget(searchTimeLabel_);
+    right->addWidget(ctl);
+
+    body->addLayout(right, 1);
     outer->addLayout(body, 1);
 
     connect(searchButton, &QPushButton::clicked, this, &MainWindow::sendSearchQuery);
     connect(searchQueryEdit, &QLineEdit::returnPressed, this, &MainWindow::sendSearchQuery);
-    connect(searchResultBrowser, &QTextBrowser::anchorClicked, this,
-            [this](const QUrl& url) {
-                // 재생기는 이벤트 기록 페이지에 있다 — 그쪽으로 이동해서 재생.
-                if (contentStack) contentStack->setCurrentIndex(kNavEventLog);
-                if (navBtns[kNavEventLog]) navBtns[kNavEventLog]->setChecked(true);
-                playBlackboxClip(url.toString());
-            });
 
     return panel;
 }
 
+// 서버 답변을 결과 목록으로 쪼갠다.
+//
+// 형식(video_search_module.cpp):
+//   🔎 검색 결과 3건
+//   (빈 줄)
+//   · 2026-08-18 11:06 · 채널 4 · 낙상 · 전승현님
+//     http://host:5501/ch3_...mp4
+// "· "로 시작하면 새 결과, 들여쓴 http 줄은 직전 결과의 클립이다.
+// 목록이 아닌 답변(안내문·"기록을 찾지 못했어요")은 message 로 넘긴다.
+QVector<MainWindow::SearchHit> MainWindow::parseSearchReply(const QString& text,
+                                                            QString* message)
+{
+    QVector<SearchHit> hits;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+
+    for (const QString& raw : lines) {
+        const QString line = raw.trimmed();
+        if (line.startsWith(QString::fromUtf8("· "))) {
+            const QString rest = line.mid(2).trimmed();
+            SearchHit hit;
+            const int sep = rest.indexOf(QString::fromUtf8(" · "));
+            if (sep > 0) {
+                hit.when = rest.left(sep);
+                hit.meta = rest.mid(sep + 3);
+            } else {
+                hit.when = rest;
+            }
+            hits.push_back(hit);
+        } else if (!hits.isEmpty() && line.startsWith(QLatin1String("http")) &&
+                   line.endsWith(QLatin1String(".mp4"))) {
+            hits.back().url = line;
+        }
+    }
+
+    if (hits.isEmpty() && message) *message = text.trimmed();
+    return hits;
+}
+
+// 검색 결과 클립을 이 페이지 재생기에서 튼다.
+void MainWindow::playSearchClip(const QString& url, const QString& context)
+{
+    if (searchContext_) {
+        searchContext_->setText(context);
+        searchContext_->show();
+    }
+    if (url.isEmpty()) {
+        // 서버가 public_host 를 모르면 URL 없이 결과만 온다(모듈 주석 참고).
+        if (searchPlayerStack_) searchPlayerStack_->setCurrentIndex(0);
+        if (searchPlayer_) searchPlayer_->stop();
+        return;
+    }
+
+    if (!searchPlayer_) {
+        searchPlayer_ = new QMediaPlayer(this);
+        searchPlayer_->setVideoOutput(searchVideo_);
+        connect(searchPlayer_, &QMediaPlayer::positionChanged, this, [this](qint64 pos) {
+            if (!searchSeeking_ && searchSeek_) searchSeek_->setValue(int(pos));
+            if (searchTimeLabel_ && searchPlayer_) {
+                const auto fmt = [](qint64 ms) {
+                    return QStringLiteral("%1:%2")
+                        .arg(ms / 60000, 2, 10, QLatin1Char('0'))
+                        .arg((ms / 1000) % 60, 2, 10, QLatin1Char('0'));
+                };
+                searchTimeLabel_->setText(QStringLiteral("%1 / %2")
+                                              .arg(fmt(pos), fmt(searchPlayer_->duration())));
+            }
+        });
+        connect(searchPlayer_, &QMediaPlayer::durationChanged, this, [this](qint64 dur) {
+            if (searchSeek_) searchSeek_->setRange(0, int(qMax<qint64>(0, dur)));
+        });
+        connect(searchPlayer_, &QMediaPlayer::playbackStateChanged, this,
+                [this](QMediaPlayer::PlaybackState st) {
+                    if (searchPlayPause_)
+                        searchPlayPause_->setText(st == QMediaPlayer::PlayingState
+                                                      ? QStringLiteral("⏸")
+                                                      : QStringLiteral("▶"));
+                });
+        connect(searchPlayPause_, &QPushButton::clicked, this, [this] {
+            if (!searchPlayer_) return;
+            if (searchPlayer_->playbackState() == QMediaPlayer::PlayingState)
+                searchPlayer_->pause();
+            else
+                searchPlayer_->play();
+        });
+        connect(searchSeek_, &QSlider::sliderPressed, this, [this] { searchSeeking_ = true; });
+        connect(searchSeek_, &QSlider::sliderReleased, this, [this] {
+            searchSeeking_ = false;
+            if (searchPlayer_) searchPlayer_->setPosition(searchSeek_->value());
+        });
+    }
+
+    if (searchPlayerStack_) searchPlayerStack_->setCurrentIndex(1);
+    searchPlayer_->setSource(QUrl(url));
+    searchPlayer_->play();
+}
+
 void MainWindow::sendSearchQuery()
 {
-    if (!searchChannelCombo || !searchQueryEdit || !searchButton || !searchResultBrowser)
+    if (!searchChannelCombo || !searchQueryEdit || !searchButton || !searchResultList_)
         return;
 
     const QString query = searchQueryEdit->text().trimmed();
@@ -3546,8 +3691,11 @@ void MainWindow::sendSearchQuery()
         }
     }
     if (!sock || sock->state() != QAbstractSocket::ConnectedState) {
-        searchResultBrowser->setPlainText(
-            QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
+        searchResultList_->clear();
+        searchResultList_->hide();
+        searchCountLabel_->clear();
+        searchMessage_->setText(QStringLiteral("영상 서버에 연결되어 있지 않습니다."));
+        searchMessage_->show();
         return;
     }
 
@@ -3569,15 +3717,18 @@ void MainWindow::sendSearchQuery()
     sock->flush();
 
     searchButton->setEnabled(false);
-    searchResultBrowser->setPlainText(QStringLiteral("검색 중…"));
+    searchResultList_->clear();
+    searchResultList_->show();
+    searchCountLabel_->setText(QStringLiteral("검색 중…"));
+    searchMessage_->hide();
 
     // Gemini+DB 왕복이 수 초 걸릴 수 있어, 응답이 안 오면 버튼이 영원히 잠기지
     // 않도록 넉넉한 시간 후 자동 복구(서버 curl 타임아웃 20초보다 여유 있게).
     QTimer::singleShot(25000, this, [this]() {
         if (searchButton && !searchButton->isEnabled()) {
             searchButton->setEnabled(true);
-            if (searchResultBrowser)
-                searchResultBrowser->setPlainText(
+            if (searchMessage_)
+                searchMessage_->setText(
                     QStringLiteral("응답이 없어요. 다시 시도해 주세요."));
         }
     });
@@ -3586,17 +3737,44 @@ void MainWindow::sendSearchQuery()
 void MainWindow::onSearchResultReceived(int /*channel*/, const QString& text)
 {
     if (searchButton) searchButton->setEnabled(true);
-    if (!searchResultBrowser) return;
+    if (!searchResultList_) return;
 
-    // 답변에 섞인 클립 URL(http://…mp4)만 클릭 가능한 링크로 바꾼다. 나머지는
-    // HTML 특수문자를 이스케이프해 그대로 보여주고, 줄바꿈은 <br>로 치환.
-    QString html = text.toHtmlEscaped();
-    static const QRegularExpression kUrlRe(
-        QStringLiteral("(https?://\\S+\\.mp4)"));
-    html.replace(kUrlRe, QStringLiteral("<a href=\"\\1\">📹 클립 보기</a>"));
-    html.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+    QString message;
+    const QVector<SearchHit> hits = parseSearchReply(text, &message);
 
-    searchResultBrowser->setHtml(html);
+    searchResultList_->clear();
+    if (hits.isEmpty()) {
+        // 목록이 아닌 답변(안내문·"기록을 찾지 못했어요")은 원문 그대로 보여준다.
+        // 빈 목록 상자를 남겨 두면 안내문이 그 아래로 밀려 붙어 어색하다 —
+        // 둘 중 하나만 자리를 차지한다.
+        if (searchCountLabel_) searchCountLabel_->clear();
+        searchResultList_->hide();
+        if (searchMessage_) {
+            searchMessage_->setText(message);
+            searchMessage_->show();
+        }
+        return;
+    }
+
+    searchResultList_->show();
+    if (searchMessage_) searchMessage_->hide();
+    for (const SearchHit& h : hits) {
+        auto* item = new QListWidgetItem(
+            h.meta.isEmpty() ? h.when
+                             : QStringLiteral("%1\n%2").arg(h.when, h.meta));
+        item->setData(Qt::UserRole, h.url);
+        item->setData(Qt::UserRole + 1,
+                      h.meta.isEmpty() ? h.when
+                                       : QStringLiteral("%1  ·  %2").arg(h.when, h.meta));
+        // 클립이 없는 기록은 눌러도 재생할 게 없다 — 미리 알려 준다.
+        if (h.url.isEmpty()) {
+            item->setToolTip(QStringLiteral("저장된 클립이 없는 기록입니다"));
+            item->setForeground(QColor(QString::fromLatin1(kTextSub)));
+        }
+        searchResultList_->addItem(item);
+    }
+    if (searchCountLabel_)
+        searchCountLabel_->setText(QStringLiteral("%1건").arg(hits.size()));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5503,7 +5681,7 @@ void MainWindow::onReadyRead()
             camThumbs[ch]->setFrame(pix);
         // 이미지 탭 '적용 후(실시간)' 프리뷰도 같은 프레임으로 즉시 갱신 — 라이브 영상과
         // 동일 경로라 지연이 붙지 않는다. (이미지 모드일 때만: 나머지 모드에선 안 보임)
-        if (imgAfter && roiEditChannel == ch && cameraSettingsVisible() &&
+        if (imgWipe_ && roiEditChannel == ch && cameraSettingsVisible() &&
             camMode_ == QStringLiteral("이미지"))
             setImagePreviewFrame(pix);   // 첫 프레임에서 상자 비율도 함께 잡힌다
     }
@@ -6180,8 +6358,8 @@ void MainWindow::sendFocus(int channel, bool area, float nx, float ny)
     sock->flush();
 }
 
-// imgAfter(실시간 프리뷰) 클릭 → 클릭한 지점에 영역 초점. 레터박스(KeepAspectRatio)
-// 여백을 빼고 실제 표시된 이미지 안에서의 정규화 좌표를 계산한다.
+// 영상 타일의 호버 툴바 표시/숨김과 크롬 재배치를 맡는다.
+// (초점 클릭은 WipeCompare::focusRequested 시그널로 따로 들어온다)
 bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
 {
     // 영상 타일 호버 → 하단 툴바 표시/숨김. 버튼이 늘 떠 있으면 4분할 화면에서
@@ -6189,24 +6367,25 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
     if (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave) {
         for (int ch = 0; ch < 4; ++ch) {
             if (obj != videoCards[ch] || !tileToolbars_[ch]) continue;
-            tileToolbars_[ch]->setVisible(ev->type() == QEvent::Enter);
+            bool show = (ev->type() == QEvent::Enter);
+            if (!show) {
+                // 커서가 아직 카드 안(툴바 버튼 위 등)이면 숨기지 않는다.
+                QWidget* card = videoCards[ch];
+                show = card->rect().contains(card->mapFromGlobal(QCursor::pos()));
+            }
+            tileToolbars_[ch]->setVisible(show);
+            break;
+        }
+    }
+    // 크롬은 레이아웃 밖에 놓인 자식이라 카드가 커지면 직접 따라가야 한다.
+    if (ev->type() == QEvent::Resize) {
+        for (int ch = 0; ch < 4; ++ch) {
+            if (obj != videoCards[ch]) continue;
+            layoutTileChrome(ch);
             break;
         }
     }
 
-    if (obj == imgAfter && ev->type() == QEvent::MouseButtonPress) {
-        if (imgAfter->hasFrame()) {
-            const QRectF r = imgAfter->imageRect();   // 레터박스 안 실제 영상 사각형
-            auto* me = static_cast<QMouseEvent*>(ev);
-            const double px = me->position().x() - r.left();
-            const double py = me->position().y() - r.top();
-            if (px >= 0 && py >= 0 && px < r.width() && py < r.height()) {
-                sendFocus(roiEditChannel, true,
-                          float(px / r.width()), float(py / r.height()));
-            }
-        }
-        return true;   // 이 클릭은 소비
-    }
     return QMainWindow::eventFilter(obj, ev);
 }
 
@@ -6282,7 +6461,8 @@ QWidget* MainWindow::buildCamImagePage()
     auto* afBtn = imgFocusBtn;
     col->addWidget(afBtn);
     auto* focusHint = new QLabel(
-        QStringLiteral("💡 오른쪽 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
+        QStringLiteral("💡 가운데 영상을 클릭하면 그 지점에 초점을 맞춥니다. "
+                       "구분선을 좌우로 끌면 적용 전과 지금을 비교할 수 있습니다."));
     focusHint->setObjectName("camHint");
     focusHint->setWordWrap(true);
     col->addWidget(focusHint);
@@ -6303,10 +6483,8 @@ QWidget* MainWindow::buildCamImagePage()
     connect(apply, &QPushButton::clicked, this, [this]() {
         const int ch = roiEditChannel;
         // 적용 직전 현재 프레임을 Before 스냅샷으로 고정
-        if (imgBefore && !lastFramePix_[ch].isNull()) {
-            imgBefore->setFrame(lastFramePix_[ch]);
-            if (auto* b = dynamic_cast<AspectBox*>(imgBeforeBox)) b->refresh();
-        }
+        if (imgWipe_ && !lastFramePix_[ch].isNull())
+            imgWipe_->setBefore(lastFramePix_[ch]);
         sendImageParams(ch, imgBright->value(), imgContrast->value(),
                         imgSaturation->value());
         saveImageParams(ch);   // 채널을 오갔다 돌아와도 같은 값이 보이게
@@ -6347,14 +6525,12 @@ QWidget* MainWindow::buildCameraSettingsTab()
 
     // 본문 3단: 채널 스트립(썸네일) │ 스테이지(큰 영상) │ 인스펙터(모드별 설정).
     // 영상 편집 도구의 표준 배치 — 왼쪽에서 대상을 고르고, 가운데를 보며, 오른쪽에서 만진다.
-    camBodyRow_ = new QHBoxLayout();
-    camBodyRow_->setSpacing(14);
-    camBodyRow_->addWidget(buildCamChannelStrip(), 0);   // [0]
-    camBodyRow_->addWidget(buildCamStagePanel(), 1);     // [1]
-    camBodyRow_->addWidget(buildCamInspector(), 0);      // [2]
-    outer->addLayout(camBodyRow_, 1);
-    auto* body = camBodyRow_;
-    Q_UNUSED(body)
+    auto* body = new QHBoxLayout();
+    body->setSpacing(14);
+    body->addWidget(buildCamChannelStrip(), 0);
+    body->addWidget(buildCamStagePanel(), 1);
+    body->addWidget(buildCamInspector(), 0);
+    outer->addLayout(body, 1);
 
     selectCamChannel(0);
     setCamMode(QStringLiteral("연결"));
@@ -7107,45 +7283,9 @@ void MainWindow::rebuildBedList()
 // 이미지 탭 실시간(적용 후) 프리뷰에 프레임을 넣는다. 상자 비율도 함께 맞춘다 —
 // 세 곳(채널 전환·모드 전환·프레임 수신)에서 각자 setFrame만 부르면 상자는 계속
 // 16:9 가정으로 남아, 카메라 해상도가 다를 때 다시 검은 여백이 생긴다.
-// 이미지 모드에서 스테이지 카드 폭을 "영상 두 장이 딱 들어가는 폭"으로 줄인다.
-//
-// 16:9 두 장을 세로로 쌓으면 세로가 먼저 차서(각 355px) 폭이 631px밖에 안 쓰인다.
-// 카드가 776px 그대로면 좌우로 각각 72px씩 검은 띠가 남는다 — 카드를 내용 폭으로
-// 줄이고 남는 폭은 인스펙터에게 넘기면 그 띠가 사라진다(설정 폼도 넓어진다).
-// 카드 높이는 폭과 무관하게 행 높이로 정해지므로 폭→높이→폭 되먹임은 없다.
-void MainWindow::updateImageStageWidth()
-{
-    if (!camStageCard_ || !camBodyRow_) return;
-
-    if (camMode_ != QStringLiteral("이미지")) {
-        camStageCard_->setMinimumWidth(0);
-        camStageCard_->setMaximumWidth(QWIDGETSIZE_MAX);
-        camBodyRow_->setStretch(1, 1);   // 남는 폭은 스테이지(큰 영상)가 갖는다
-        camBodyRow_->setStretch(2, 0);
-        return;
-    }
-
-    const int boxH = imgAfterBox ? imgAfterBox->height() : 0;
-    if (boxH <= 0) return;   // 아직 배치 전 — 다음 호출(리사이즈/프레임)에서 잡힌다
-    const qreal aspect = imgAfter ? imgAfter->frameAspect() : 16.0 / 9.0;
-    // + 24 = 이미지 페이지의 좌우 여백(12+12)
-    // stretch 0 + 최대폭만 주면 레이아웃은 sizeHint 만큼만 준다 — "정확히 이 폭"이
-    // 되도록 최소·최대를 함께 묶는다.
-    camStageCard_->setFixedWidth(qMax(360, int(qRound(boxH * aspect)) + 24));
-    camBodyRow_->setStretch(1, 0);
-    camBodyRow_->setStretch(2, 1);   // 남는 폭은 인스펙터가 가져간다
-}
-
 void MainWindow::setImagePreviewFrame(const QPixmap& pm)
 {
-    if (imgAfter) imgAfter->setFrame(pm);
-    // 상자에게 "프레임이 바뀌었으니 다시 재 봐"라고만 알린다 — 비율 계산은 상자가
-    // 자식(FramePreview)에게 직접 묻는다.
-    // qobject_cast는 Q_OBJECT를 요구하는데 AspectBox는 파일 로컬(익명 네임스페이스)이라
-    // moc를 못 태운다 → RTTI로 내려간다.
-    if (auto* b = dynamic_cast<AspectBox*>(imgBeforeBox)) b->refresh();
-    if (auto* b = dynamic_cast<AspectBox*>(imgAfterBox)) b->refresh();
-    updateImageStageWidth();   // 비율이 바뀌면 카드 폭도 따라가야 여백이 안 생긴다
+    if (imgWipe_) imgWipe_->setAfter(pm);
 }
 
 QWidget* MainWindow::buildCamStagePanel()
@@ -7172,35 +7312,13 @@ QWidget* MainWindow::buildCamStagePanel()
     connect(roiEditorView, &VideoView::zoneSelected, this, &MainWindow::onRoiZoneSelected);
     camStageStack->addWidget(roiEditorView);
 
-    // 1) 이미지 Before/After 프리뷰
-    auto* imgPage = new QWidget();
-    auto* iv = new QVBoxLayout(imgPage);
-    iv->setContentsMargins(12, 10, 12, 12);   // 스테이지 카드 안쪽 여백
-    iv->setSpacing(8);
-    // 이름표는 영상 위에 얹는다(FramePreview가 직접 그린다) — 영상 밖 라벨은
-    // 검은 배경 위 작은 회색 글씨라 잘 안 읽혔고, 캡션 줄 높이만큼 영상도 작아졌다.
-    // FramePreview는 원본 프레임을 그대로 들고 paintEvent에서 한 번만 그린다
-    // (QLabel::setPixmap처럼 매 프레임 레이아웃을 무효화하지 않는다 — 지연의 원인이었다).
-    imgBefore = new FramePreview(QStringLiteral("적용 전"));
-    imgAfter  = new FramePreview(QStringLiteral("실시간"));
-    // 위아래로 쌓는다. 스테이지는 세로로 긴 칸이라, 나란히 놓으면 각 영상이
-    // 폭의 절반(≈450px)까지밖에 못 커지고 위아래로 큰 검은 띠가 남았다.
-    // 세로로 쌓으면 각 영상이 폭을 다 쓰면서 오히려 커진다.
-    imgBeforeBox = new AspectBox(imgBefore);
-    imgAfterBox  = new AspectBox(imgAfter);
-    for (QWidget* b : {imgBeforeBox, imgAfterBox}) {
-        b->setMinimumHeight(140);
-        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    }
-    imgBefore->setCaption(QStringLiteral("적용 전"));
-    imgAfter->setCaption(QStringLiteral("적용 후 · 실시간"), /*live=*/true);
-    iv->addWidget(imgBeforeBox, 1);
-    iv->addWidget(imgAfterBox, 1);
-    camStageStack->addWidget(imgPage);
-
-    // 실시간 프리뷰 클릭 → 클릭 지점 영역 초점 (eventFilter가 처리)
-    imgAfter->installEventFilter(this);
-    imgAfter->setCursor(Qt::PointingHandCursor);
+    // 1) 적용 전/후 와이프 비교 — 영상 한 장이 스테이지를 그대로 채운다.
+    //    연결·ROI 탭의 큰 영상과 같은 위젯 크기·같은 cover 규칙이라 틀이 어긋나지 않는다.
+    imgWipe_ = new WipeCompare();
+    imgWipe_->setObjectName("video");
+    connect(imgWipe_, &WipeCompare::focusRequested, this,
+            [this](float nx, float ny) { sendFocus(roiEditChannel, true, nx, ny); });
+    camStageStack->addWidget(imgWipe_);
 
     // 실시간(After) 갱신은 폴링하지 않는다 — onReadyRead가 프레임이 도착할 때마다
     // 라이브/ROI 영상과 같은 타이밍으로 직접 넣어준다(200ms 타이머 폴링 시절의
@@ -7210,10 +7328,6 @@ QWidget* MainWindow::buildCamStagePanel()
     // 짝을 맞춰야 영상이 페이지에 '얹힌' 게 아니라 '들어앉은' 것처럼 보인다.
     auto* stageCard = new QFrame();
     stageCard->setObjectName("camStage");
-    // 이미지 모드에서 폭을 내용에 맞춰 줄이기 위해 들고 있는다(updateImageStageWidth).
-    // ★ 알림 설정 페이지의 LED 미리보기 카드도 스타일 재사용 목적으로 같은
-    //   objectName("camStage")을 쓴다 — 그쪽 카드를 여기에 대입하지 말 것.
-    camStageCard_ = stageCard;
     auto* sl = new QVBoxLayout(stageCard);
     sl->setContentsMargins(0, 0, 0, 0);
     sl->addWidget(camStageStack);
@@ -7230,8 +7344,8 @@ void MainWindow::selectCamChannel(int ch)
 
     // 이미지 프리뷰: 채널이 바뀌면 '적용 전'은 검은 화면으로 리셋(아직 이 채널에
     // 적용한 적 없으니), '적용 후(실시간)'는 새 채널 프레임으로 즉시 교체.
-    if (imgBefore) imgBefore->clearFrame();
-    setImagePreviewFrame(lastFramePix_[ch]);   // 빈 프레임이면 안내 문구
+    if (imgWipe_) imgWipe_->clearBefore();   // 채널이 바뀌면 비교 대상도 새로 잡는다
+    setImagePreviewFrame(lastFramePix_[ch]);
 
     loadImageParams(ch);         // 이 채널에 마지막으로 보낸 값으로 슬라이더를 맞춘다
     refreshCamChannelStatus();   // 배지·헤더·컨트롤 활성화까지 여기서 이어진다
@@ -7256,9 +7370,6 @@ void MainWindow::setCamMode(const QString& mode)
     // 전환 직후 빈 화면이 깜빡이지 않게 최신 프레임으로 한 번 채운다
     // (이후는 onReadyRead가 프레임마다 갱신).
     if (imageMode) setImagePreviewFrame(lastFramePix_[roiEditChannel]);
-    // 전환 직후엔 아직 배치 전이라 상자 높이가 0이다 — 배치가 끝난 뒤 한 번 더.
-    updateImageStageWidth();
-    QTimer::singleShot(0, this, [this] { updateImageStageWidth(); });
 }
 
 // 채널별 연결·ROI 지정 여부를 레일 배지에 반영.
@@ -7499,8 +7610,7 @@ void MainWindow::onCameraClearClicked()
         roiEditorView->setLive(false);
         roiEditorView->setCameraConnected(false);
     }
-    if (imgAfter) imgAfter->clearFrame();
-    if (imgBefore) imgBefore->clearFrame();
+    if (imgWipe_) imgWipe_->clearFrames();
     persistCameraActive();
     refreshCamChannelStatus();   // 채널 타일 배지 + 인스펙터 헤더에 해제 상태 반영
 }
@@ -7612,39 +7722,6 @@ void MainWindow::onAlarmClearClicked()
     }
 }
 
-// 활성 경보 목록을 만든다 — 등급 판정(critical/high/medium)과 도형 선택이 전부
-// 여기서 끝나 AlertBanner로는 완성된 값만 넘어간다(D-02). 채널당 최대
-// 3건(낙상/침상이탈/생체이상)이 나올 수 있다.
-QList<AlertItem> MainWindow::collectAlertItems() const
-{
-    QList<AlertItem> items;
-    for (int ch = 0; ch < 4; ++ch) {
-        if (fallActive[ch]) {
-            const QString severity = QStringLiteral("critical");
-            items.append({ch, severityGlyph(severity), QStringLiteral("낙상"),
-                          patients[ch].bed, severity});
-        }
-        if (bedEgressActive[ch]) {
-            const QString severity = QStringLiteral("high");
-            items.append({ch, severityGlyph(severity), QStringLiteral("침상이탈"),
-                          patients[ch].bed, severity});
-        }
-        if (vitalAbnormalActive[ch]) {
-            // 그 채널에 배정된 입소자의 현재 바이탈 등급을 쓴다 — 단일 출처는
-            // vitalSeverity()(D-02). 배정된 사람을 찾지 못하면 안전하게
-            // medium으로 내린다(UI-SPEC §4.2).
-            QString severity = QStringLiteral("medium");
-            const QVector<int>& ids = residentsByChannel_[ch];
-            if (!ids.isEmpty()) {
-                const VitalSample sample = vitals_.value(ids.first());
-                severity = vitalSeverity(sample.spo2, sample.heartRate);
-            }
-            items.append({ch, severityGlyph(severity), QStringLiteral("생체신호 이상"),
-                          patients[ch].bed, severity});
-        }
-    }
-    return items;
-}
 
 // 낙상/침상이탈이 하나라도 활성이면 경보 버튼을 빨강 채움으로, 아니면 차분한 아웃라인으로.
 void MainWindow::refreshAlarmButton()
@@ -7653,10 +7730,7 @@ void MainWindow::refreshAlarmButton()
     bool anyActive = false;
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch] || vitalAbnormalActive[ch]) { anyActive = true; break; }
-    updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
-    // 상시 노출용 배너(#alertBanner) 갱신 — 상태를 바꾸는 다섯 지점이 전부
-    // 이 함수를 거치므로 배선은 여기 한 곳뿐이다.
-    if (alertBanner_) alertBanner_->setActiveAlerts(collectAlertItems());
+    updateAlarmBanner();   // 경보 토스트 표시/문구 갱신 (활성 시에만 내려온다)
 
     // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
     if (alarmOverlay_) {

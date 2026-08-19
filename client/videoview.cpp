@@ -369,15 +369,31 @@ void VideoView::paintEvent(QPaintEvent*) {
         }
     }
 
-    // 그리기 모드 안내 배너 — 지금 몇 번 침대를 그리는 중인지 같이 보여준다
+    // 그리기 모드 안내 배너 — 지금 몇 번 침대를 그리는 중인지 같이 보여준다.
+    // 좌상단 이름표(LIVE·채널명) 아래에 놓는다: 예전엔 y=6에 그려서 이름표와
+    // 글자가 겹쳐 둘 다 못 읽었다. 배경 캡슐도 깔아 밝은 영상 위에서도 읽히게 한다.
     if (drawMode_) {
         const int id = nextFreeZoneId();
+        const QString msg =
+            id < 0 ? QStringLiteral("침대가 가득 찼습니다 (최대 %1개)").arg(kMaxRoiZones)
+                   : QStringLiteral("침대 %1 영역 클릭 · 더블클릭(또는 우클릭)으로 완료").arg(id + 1);
+
+        QFont bf = font();
+        bf.setBold(true);
+        p.setFont(bf);
+        const QFontMetrics bfm(bf);
+        const int tw = bfm.horizontalAdvance(msg);
+        const int bh = bfm.height() + 8;
+        // 이름표(높이 = fm.height()+6, 위 여백 8)보다 아래로 내린다.
+        const int top = 8 + bfm.height() + 6 + 6;
+        QRectF banner((width() - tw - 24) / 2.0, top, tw + 24, bh);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 175));
+        p.drawRoundedRect(banner, 4, 4);
         p.setPen(kDraftLine);
-        p.drawText(QRectF(0, 6, width(), 20), Qt::AlignHCenter,
-                   id < 0 ? QStringLiteral("침대가 가득 찼습니다 (최대 %1개)")
-                                .arg(kMaxRoiZones)
-                          : QStringLiteral("침대 %1 영역 클릭 · 더블클릭(또는 우클릭)으로 완료")
-                                .arg(id + 1));
+        p.drawText(banner, Qt::AlignCenter, msg);
+        p.setFont(font());
+        p.setBrush(Qt::NoBrush);
     }
 
     // 낙상 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
@@ -565,4 +581,171 @@ void FramePreview::paintEvent(QPaintEvent*) {
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(QColor(QString::fromLatin1(kBorder)), 1));
     p.drawRoundedRect(box, 8, 8);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WipeCompare — 적용 전/후 와이프 비교
+// ═══════════════════════════════════════════════════════════
+namespace {
+constexpr qreal kWipeGrab = 14.0;   // 구분선을 잡을 수 있는 좌우 여유(px)
+}
+
+WipeCompare::WipeCompare(QWidget* parent) : QWidget(parent) {
+    setMouseTracking(true);
+    setCursor(Qt::PointingHandCursor);
+    setAttribute(Qt::WA_OpaquePaintEvent);
+}
+
+void WipeCompare::setAfter(const QPixmap& pm) {
+    after_ = pm;
+    update();
+}
+
+void WipeCompare::setBefore(const QPixmap& pm) {
+    before_ = pm;
+    update();
+}
+
+void WipeCompare::clearBefore() {
+    before_ = QPixmap();
+    update();
+}
+
+void WipeCompare::clearFrames() {
+    before_ = QPixmap();
+    after_ = QPixmap();
+    update();
+}
+
+// VideoView::displayRect()와 같은 cover 규칙 — 칸을 꽉 채우고 넘치면 중앙 크롭.
+// 그래야 연결·ROI 탭의 큰 영상과 같은 크기·같은 잘림으로 보인다.
+QRectF WipeCompare::imageRect() const {
+    const QPixmap& ref = after_.isNull() ? before_ : after_;
+    if (ref.isNull()) return QRectF(rect());
+    QSizeF fs = ref.size();
+    fs.scale(size(), Qt::KeepAspectRatioByExpanding);
+    return QRectF((width() - fs.width()) / 2.0, (height() - fs.height()) / 2.0,
+                  fs.width(), fs.height());
+}
+
+void WipeCompare::drawChip(QPainter& p, const QRectF& box, const QString& text,
+                           bool live) const {
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 0, 0, 165));
+    p.drawRoundedRect(box, 4, 4);
+    qreal tx = box.left() + 10;
+    if (live) {
+        const qreal dr = 7;
+        p.setBrush(QColor(0xFF, 0x5A, 0x5F));
+        p.drawEllipse(QPointF(tx + dr / 2, box.center().y()), dr / 2, dr / 2);
+        tx += dr + 7;
+    }
+    p.setPen(QColor(0xF2, 0xF6, 0xFA));
+    p.drawText(QRectF(tx, box.top(), box.right() - tx, box.height()),
+               Qt::AlignVCenter | Qt::AlignLeft, text);
+}
+
+void WipeCompare::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), QColor(QString::fromLatin1(kVideoSurface)));
+
+    if (after_.isNull() && before_.isNull()) {
+        p.setPen(QColor(QString::fromLatin1(kTextSub)));
+        p.drawText(rect(), Qt::AlignCenter,
+                   QStringLiteral("카메라 영상이 없습니다"));
+        return;
+    }
+
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QRectF dst = imageRect();
+
+    // 오른쪽(실시간)을 먼저 전면에 깔고, 그 위에 왼쪽(적용 전)을 구분선까지만 덮는다.
+    if (!after_.isNull()) p.drawPixmap(dst, after_, QRectF(after_.rect()));
+
+    QFont cf = font();
+    cf.setBold(true);
+    cf.setPixelSize(13);
+    p.setFont(cf);
+    const QFontMetrics fm(cf);
+    const int chipH = fm.height() + 8;
+
+    if (before_.isNull()) {
+        // 비교할 스냅샷이 아직 없다 — 실시간만 보여주고 어떻게 만드는지 알려준다.
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QString msg = QStringLiteral("실시간");
+        drawChip(p, QRectF(8, 8, fm.horizontalAdvance(msg) + 34, chipH), msg, true);
+        const QString hint =
+            QStringLiteral("[적용]을 누르면 그 직전 화면이 왼쪽에 고정되어 비교할 수 있습니다");
+        const int hw = fm.horizontalAdvance(hint);
+        drawChip(p, QRectF((width() - hw - 20) / 2.0, height() - chipH - 10, hw + 20,
+                           chipH),
+                 hint, false);
+        return;
+    }
+
+    const qreal sx = splitX();
+    p.save();
+    p.setClipRect(QRectF(0, 0, sx, height()));
+    p.drawPixmap(dst, before_, QRectF(before_.rect()));
+    p.restore();
+
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    // 구분선 + 손잡이
+    p.setPen(QPen(QColor(0xF2, 0xF6, 0xFA, 220), 2));
+    p.drawLine(QPointF(sx, 0), QPointF(sx, height()));
+    const qreal hr = 13;
+    p.setPen(QPen(QColor(0xF2, 0xF6, 0xFA, 230), 2));
+    p.setBrush(QColor(0, 0, 0, 150));
+    p.drawEllipse(QPointF(sx, height() / 2.0), hr, hr);
+    // 좌우 화살촉
+    p.setPen(QPen(QColor(0xF2, 0xF6, 0xFA, 230), 2));
+    const qreal cy = height() / 2.0;
+    p.drawPolyline(QPolygonF({QPointF(sx - 3, cy - 4), QPointF(sx - 7, cy), QPointF(sx - 3, cy + 4)}));
+    p.drawPolyline(QPolygonF({QPointF(sx + 3, cy - 4), QPointF(sx + 7, cy), QPointF(sx + 3, cy + 4)}));
+
+    // 양쪽 이름표 — 각자 자기 영역 안쪽에 붙인다.
+    const QString lb = QStringLiteral("적용 전");
+    const QString rb = QStringLiteral("실시간");
+    const int lw = fm.horizontalAdvance(lb) + 20;
+    const int rw = fm.horizontalAdvance(rb) + 34;
+    if (sx > lw + 16) drawChip(p, QRectF(8, 8, lw, chipH), lb, false);
+    if (width() - sx > rw + 16)
+        drawChip(p, QRectF(width() - rw - 8, 8, rw, chipH), rb, true);
+}
+
+void WipeCompare::mousePressEvent(QMouseEvent* e) {
+    if (e->button() != Qt::LeftButton) return;
+    pressPos_ = e->position();
+    // 구분선 근처를 잡으면 끌기, 그 밖이면 초점 클릭(놓을 때 판정).
+    dragging_ = !before_.isNull() && qAbs(e->position().x() - splitX()) <= kWipeGrab;
+    if (dragging_) setCursor(Qt::SplitHCursor);
+}
+
+void WipeCompare::mouseMoveEvent(QMouseEvent* e) {
+    if (dragging_) {
+        split_ = qBound(0.0, e->position().x() / qreal(qMax(1, width())), 1.0);
+        update();
+        return;
+    }
+    // 구분선 위에 오면 커서로 끌 수 있다고 알린다.
+    const bool onLine = !before_.isNull() && qAbs(e->position().x() - splitX()) <= kWipeGrab;
+    setCursor(onLine ? Qt::SplitHCursor : Qt::PointingHandCursor);
+}
+
+void WipeCompare::mouseReleaseEvent(QMouseEvent* e) {
+    if (e->button() != Qt::LeftButton) return;
+    if (dragging_) {
+        dragging_ = false;
+        setCursor(Qt::PointingHandCursor);
+        return;
+    }
+    // 끌지 않고 눌렀다 뗐으면 그 지점 초점. 손이 살짝 흔들린 정도는 클릭으로 본다.
+    if ((e->position() - pressPos_).manhattanLength() > 4) return;
+    const QRectF r = imageRect();
+    if (r.width() <= 0 || r.height() <= 0) return;
+    const qreal nx = (e->position().x() - r.left()) / r.width();
+    const qreal ny = (e->position().y() - r.top()) / r.height();
+    if (nx < 0 || ny < 0 || nx > 1 || ny > 1) return;
+    emit focusRequested(float(nx), float(ny));
 }
