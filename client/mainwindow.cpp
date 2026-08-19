@@ -1637,6 +1637,12 @@ void MainWindow::selectChannel(int ch)
     if (gridLayout_ != GridLayout::Quad) relayoutGrid();
     refreshResourceTree();
     refreshTimeline();   // 타임라인은 선택 채널의 녹화 구간을 보여준다
+
+    // 녹화 재생 중 채널을 바꾸면 그 채널의 같은 시각으로 다시 불러온다.
+    // 예전엔 타임라인만 갱신되고 실제 영상 소스는 안 바뀌어서, 채널만 바꾸고
+    // ▶를 눌러도 이전 채널 화면에 대고 재생/정지만 토글될 뿐 반응이 없었다
+    // (영상 로드는 seekPlaybackTo 한 곳뿐이라 타임라인을 직접 눌러야만 됐음).
+    if (playbackMode_ && timeline_) seekPlaybackTo(timeline_->playhead());
 }
 
 // 배치의 유일한 결정 지점. gridLayout_ x selectedChannel_ x tileHidden_ 만 본다.
@@ -2138,6 +2144,15 @@ void MainWindow::seekPlaybackTo(qint64 ms)
                         transportTimeLabel_->setText(
                             QDateTime::fromMSecsSinceEpoch(at)
                                 .toString("yyyy-MM-dd HH:mm:ss"));
+                });
+        // ▶ 버튼 글리프를 실제 재생 상태에 맞춰 토글(블랙박스 재생기의
+        // playbackStateChanged 연결과 같은 패턴 — 예전엔 이 트랜스포트 바에만 빠져있었음).
+        connect(playbackPlayer_, &QMediaPlayer::playbackStateChanged, this,
+                [this](QMediaPlayer::PlaybackState st) {
+                    if (transportPlayBtn_)
+                        transportPlayBtn_->setText(st == QMediaPlayer::PlayingState
+                                                        ? QStringLiteral("⏸")
+                                                        : QStringLiteral("▶"));
                 });
     }
 
@@ -3196,13 +3211,18 @@ void MainWindow::playBlackboxClip(const QString& url)
 
     // "이 시점 NVR에서 이어보기" 대상(selectedEventChannel_/Timestamp_)을 URL의
     // 파일명에서 직접 뽑아 채운다. 예전엔 이벤트 기록 행(onLogRowActivated)만
-    // 이 값을 채워서, 검색 결과 클립이나 NVR 목록을 직접 눌렀을 땐 채워지지
-    // 않아 버튼이 계속 비활성 상태였다 — 파일명 규칙(ch{N}_{ms}[_TYPE].mp4)이
-    // 블랙박스·NVR 둘 다 같아 여기 한 곳에서 재생 경로 전부를 커버할 수 있다.
+    // 이 값을 채워서, 검색 결과 클립을 직접 눌렀을 땐 채워지지 않아 버튼이
+    // 계속 비활성 상태였다.
+    // ★ 블랙박스 이벤트 클립(ch{N}_{ms}_{TYPE}.mp4, 3토큰)에서만 채운다 — NVR
+    //   세그먼트(ch{N}_{ms}.mp4, 2토큰)까지 여기 걸리면, "이 시점 NVR에서
+    //   이어보기"로 방금 도착한 세그먼트를 볼 때 그 세그먼트 자신의 시작시각으로
+    //   원래 이벤트 시각을 덮어써버려서, 다음 판정이 엉뚱한 세그먼트/오프셋을
+    //   가리키게 되는 버그가 있었다. NVR 세그먼트 재생 중엔 이 값을 그대로 둬서
+    //   "원래 보러 온 이벤트"를 계속 가리키게 한다.
     const QString fileName = QUrl(url).fileName();
     const QString stem = fileName.left(fileName.lastIndexOf('.'));
     const QStringList parts = stem.split(QLatin1Char('_'));
-    if (parts.size() >= 2 && parts[0].startsWith(QLatin1String("ch"))) {
+    if (parts.size() >= 3 && parts[0].startsWith(QLatin1String("ch"))) {
         bool chOk = false, msOk = false;
         const int ch = parts[0].mid(2).toInt(&chOk);
         const qint64 ms = parts[1].toLongLong(&msOk);
