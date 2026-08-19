@@ -247,8 +247,7 @@ private slots:
     // 그리기 완료 → 서버 전송 + 로컬 목록 반영
     void onRoiCompleted(int channel, int roiId, const QPolygonF& normPts);
     void onRoiZoneSelected(int channel, int roiId);  // 영상에서 침대 클릭 → 목록 강조
-    void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
-    void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
+    void onMicToggled(bool on);  // 마이크 버튼 토글 — 한 번 클릭하면 방송 시작, 다시 누르면 종료
     void onAlarmClearClicked();  // 경보 해제
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
@@ -786,7 +785,7 @@ private:
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
-    QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
+    QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — 클릭 토글
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
     QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
