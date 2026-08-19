@@ -36,6 +36,10 @@ struct AlarmCommand {
     std::string type;           // FALL | EGRESS | VITAL_ABNORMAL | CONTROL
     std::string message;        // 로그 기록용 + 알림 노드 LED 표시용
 
+    // 입소자 이름 — 가운데 글자를 O 로 가린 상태로 서버가 채워 보낸다(원본은 서버 밖으로
+    // 안 나감). 없으면(신원 미상 등) 빈 문자열 — 알림 노드는 이때 이름 없이 표시한다.
+    std::string name;
+
     // 오디오
     std::string audio_action;
     std::string audio_file;
@@ -72,6 +76,7 @@ inline void to_json(nlohmann::json& j, const AlarmCommand& c) {
         {"brightness", c.brightness},
         {"timestamp", c.timestamp},
         {"is_test", c.is_test},
+        {"name", c.name},
     };
 }
 inline void from_json(const nlohmann::json& j, AlarmCommand& c) {
@@ -88,6 +93,7 @@ inline void from_json(const nlohmann::json& j, AlarmCommand& c) {
     j.at("brightness").get_to(c.brightness);
     j.at("timestamp").get_to(c.timestamp);
     c.is_test = j.value("is_test", false);   // 없으면 false(실제 알람 취급) — 구버전 발신자 호환
+    c.name = j.value("name", std::string());  // 없으면 빈 문자열(이름 없이 표시) — 구버전 발신자 호환
 }
 
 #endif // VEDA_MESSAGES_HPP

@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
         // 호실은 사람이 특정되면 그 사람 것, 아니면 예전처럼 채널 대표값.
         int room = who.named() ? db.getRoomByResident(who.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(ch);
-        mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송
+        mqtt.sendAlarmCommand(AlarmEventType::FALL,room,name); // mqtt 알림전송
         // [일일 리포트] 이벤트 원장에 기록. clip 은 파일명만 남긴다 —
         // 서버는 자기 외부 IP 를 모르고, Qt 는 채널별 호스트를 이미 안다.
         //
@@ -335,7 +335,7 @@ int main(int argc, char* argv[]) {
         telegram.notifyEgress(e.channel);
         int room = e.resident_id > 0 ? db.getRoomByResident(e.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(e.channel);
-        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
+        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room,name);
         // [일일 리포트] 이벤트 원장에 기록.
         // ★ 이탈은 어느 침대에서 나갔는지가 판정 자체라 사람이 이미 확정돼 있다
         //   (EgressEvent.resident_id). 침대에 입소자를 아직 매핑하지 않았으면 0 이고,
@@ -371,6 +371,7 @@ int main(int argc, char* argv[]) {
         // [일일 리포트] 웨어러블은 사람마다 다르므로 카메라와 달리 입소자를
         // 정확히 특정할 수 있다. 아래 insertEvent 에 이 값을 넘긴다.
         int rid = db.getResidentByWearable(device_id);
+        const std::string name = rid > 0 ? db.getResidentName(rid) : std::string();
         // 남의 Pi 담당 채널이면 조용히 넘기는 게 맞지만, 미등록 웨어러블(ch=-1)은
         // 설정 실수라 알려야 한다 — 조용히 버리면 "왜 알람이 안 오지"로 며칠 샌다.
         if(ch < 0)
@@ -387,7 +388,7 @@ int main(int argc, char* argv[]) {
                                              DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyFall(ch);
                 care_qa.reportFall(ch);
-                mqtt.sendAlarmCommand(AlarmEventType::FALL,room);
+                mqtt.sendAlarmCommand(AlarmEventType::FALL,room,name);
                 // ★ 같은 낙상이 카메라 경로로도 들어오면 두 줄이 남는다. 일부러
                 //   지우지 않는다 — source 로 구분되고, 어느 쪽이 먼저 잡았는지가
                 //   튜닝에 필요하다. 리포트에서 "낙상 N회" 를 셀 때 짧은 시간창
@@ -403,7 +404,7 @@ int main(int argc, char* argv[]) {
                 stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyVitalAbnormal(ch);
-                mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room);
+                mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room,name);
                 char clip[64];
                 std::snprintf(clip, sizeof(clip), "ch%d_%lld_VITAL_ABNORMAL.mp4",
                               ch, (long long)evt_ms);

@@ -2,6 +2,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <chrono>
+#include <vector>
 
 namespace {
 // 알람 발동 기준
@@ -13,6 +14,29 @@ constexpr int kHrClearHigh   = 175;
 constexpr int kSpo2ClearLow  = 93;
 // 한 번 튄 값으로 성급히 "정상 복귀"라고 하지 않도록 연속 N회를 요구한다.
 constexpr int kNormalStreakToClear = 3;
+
+// 이름 가운데 글자를 O 로 가린다 — 원본 이름이 MQTT 로 안 나가게 여기서 미리 가린다.
+// UTF-8 완성형 한글은 3바이트라 바이트 단위로 자르면 글자가 깨지므로, 리드바이트
+// 상위비트로 코드포인트 경계를 찾아 글자 단위로 자른다. 알림노드 LED 폰트가 지금은
+// 딱 정해진 이름 몇 개만 지원하므로(hub75-font16.h), 여기서도 일반적인 임의 이름이
+// 아니라 그 글자들만 상정한다.
+std::string maskMiddleChar(const std::string& name) {
+    std::vector<std::pair<size_t, size_t>> spans;   // (offset, byte 길이) — 코드포인트별
+    for (size_t i = 0; i < name.size(); ) {
+        unsigned char lead = static_cast<unsigned char>(name[i]);
+        size_t len = 1;
+        if      ((lead & 0xE0) == 0xC0) len = 2;
+        else if ((lead & 0xF0) == 0xE0) len = 3;
+        else if ((lead & 0xF8) == 0xF0) len = 4;
+        if (i + len > name.size()) len = 1;   // 깨진 바이트열 방어
+        spans.emplace_back(i, len);
+        i += len;
+    }
+    if (spans.size() <= 2) return name;   // 두 글자 이하는 가릴 "가운데"가 마땅치 않음
+
+    const auto& mid = spans[spans.size() / 2];
+    return name.substr(0, mid.first) + "O" + name.substr(mid.first + mid.second);
+}
 }  // namespace
 
 MqttMasterManager::MqttMasterManager() {
@@ -76,10 +100,11 @@ bool MqttMasterManager::checkFallStatus(const WearableData& data, AlarmCommand& 
 }
 
 
-void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int room ) {
+void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int room, const std::string& name) {
 
     AlarmCommand cmd;
     cmd.room = room;
+    cmd.name = maskMiddleChar(name);
 
     // 방번호를 알면 방 전용 음성으로, 모르면(room<=0) 공용 음성으로.
     // 알림노드가 방 전용 파일이 없으면 자동으로 공용 파일로 대체하므로
