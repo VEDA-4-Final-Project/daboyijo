@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS residents (
 ALTER TABLE residents ADD COLUMN IF NOT EXISTS wearable_id VARCHAR(32);
 ALTER TABLE residents ADD UNIQUE KEY IF NOT EXISTS uk_wearable_id (wearable_id);
 
+-- 쓰지 않는 컬럼 정리 (생년월일·보호자 정보) — 폼/조회 어디서도 읽지 않는다.
+ALTER TABLE residents DROP COLUMN IF EXISTS birth_date;
+ALTER TABLE residents DROP COLUMN IF EXISTS guardian_name;
+ALTER TABLE residents DROP COLUMN IF EXISTS guardian_phone;
+ALTER TABLE residents DROP COLUMN IF EXISTS guardian_relation;
+
 -- 케어로그 (세션마다 한 줄, camera_id 기준으로 기록)
 -- ★ duration_sec 는 실제로 요양사가 감지된 시간의 합이라 end_time - start_time 과
 --    다를 수 있다. 요양사가 3분 안에 돌아오면 새 줄을 만들지 않고 이 줄의

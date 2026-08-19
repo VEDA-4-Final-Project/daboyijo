@@ -160,9 +160,7 @@ const LoggedField kLoggedFields[] = {
     {"카메라 채널", "camera_id"},
     {"웨어러블 ID", "wearable_id"}, {"위험도", "risk_level"},
     {"입원일", "admitted_at"},      {"퇴원 예정일", "discharge_due"},
-    {"상태", "status"},             {"보호자 이름", "guardian_name"},
-    {"보호자 전화", "guardian_phone"}, {"보호자 관계", "guardian_relation"},
-    {"특이사항", "notes"},
+    {"상태", "status"},             {"특이사항", "notes"},
     };
 
 // 상태 판정 — 웨어러블이 실제로 보내오는 두 값(산소포화도·심박)만 본다.
@@ -4259,17 +4257,6 @@ QWidget* MainWindow::buildResidentFormBody()
     careForm->addRow(QStringLiteral("상태"), editStatus);
     lay->addWidget(careGroup);
 
-    // ── 보호자 정보 ──
-    auto* guardianGroup = makeGroup(QStringLiteral("보호자 정보"));
-    auto* guardianForm = new QFormLayout(guardianGroup);
-    guardianForm->setSpacing(8);
-    guardianForm->setLabelAlignment(Qt::AlignLeft);
-    guardianForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    guardianForm->addRow(QStringLiteral("이름"),     makeField("보호자 이름", editGuardianName));
-    guardianForm->addRow(QStringLiteral("관계"),     makeField("자녀/배우자 등", editGuardianRelation));
-    guardianForm->addRow(QStringLiteral("전화번호"), makeField("010-0000-0000", editGuardianPhone));
-    lay->addWidget(guardianGroup);
-
     // ── 특이사항 ──
     auto* notesGroup = makeGroup(QStringLiteral("특이사항"));
     auto* notesLay = new QVBoxLayout(notesGroup);
@@ -8025,8 +8012,8 @@ void MainWindow::loadResidentIntoForm(int id)
     QSqlQuery q;
     q.prepare(QStringLiteral(
         "SELECT name, room, bed, camera_id, wearable_id, risk_level, "
-        "admitted_at, discharge_due, status, guardian_name, guardian_phone, "
-        "guardian_relation, notes FROM residents WHERE resident_id = ?"));
+        "admitted_at, discharge_due, status, notes "
+        "FROM residents WHERE resident_id = ?"));
     q.addBindValue(id);
     if (!q.exec() || !q.next()) {
         qDebug() << "입소자 상세 조회 실패:" << q.lastError().text();
@@ -8052,10 +8039,7 @@ void MainWindow::loadResidentIntoForm(int id)
     if (q.value(6).toDate().isValid())  editAdmittedAt->setDate(q.value(6).toDate());
     if (q.value(7).toDate().isValid())  editDischargeDue->setDate(q.value(7).toDate());
     setCombo(editStatus, q.value(8).toString());
-    editGuardianName->setText(q.value(9).toString());
-    editGuardianPhone->setText(q.value(10).toString());
-    editGuardianRelation->setText(q.value(11).toString());
-    editNotes->setPlainText(q.value(12).toString());
+    editNotes->setPlainText(q.value(9).toString());
 
     refreshAdmissionTable(selectedResidentId);
 
@@ -8069,9 +8053,6 @@ void MainWindow::onNewResident()
     editRoom->clear();
     editCameraId->clear();
     editWearableId->clear();
-    editGuardianName->clear();
-    editGuardianPhone->clear();
-    editGuardianRelation->clear();
     editNotes->clear();
     editRiskLevel->setCurrentIndex(1);   // 위험도 기본 '중'
     editStatus->setCurrentText(QStringLiteral("재원"));  // 신규는 항상 재원으로 시작
@@ -8118,9 +8099,6 @@ QMap<QString, QString> MainWindow::formSnapshot() const
     m[QStringLiteral("입원일")]      = editAdmittedAt->date().toString(Qt::ISODate);
     m[QStringLiteral("퇴원 예정일")] = editDischargeDue->date().toString(Qt::ISODate);
     m[QStringLiteral("상태")]        = editStatus->currentText();
-    m[QStringLiteral("보호자 이름")] = editGuardianName->text().trimmed();
-    m[QStringLiteral("보호자 전화")] = editGuardianPhone->text().trimmed();
-    m[QStringLiteral("보호자 관계")] = editGuardianRelation->text().trimmed();
     m[QStringLiteral("특이사항")]    = editNotes->toPlainText();
     return m;
 }
@@ -8206,15 +8184,13 @@ void MainWindow::onSaveResident()
         q.prepare(QStringLiteral(
             "INSERT INTO residents "
             "(name, room, bed, camera_id, wearable_id, risk_level, admitted_at, "
-            " discharge_due, status, guardian_name, guardian_phone, "
-            " guardian_relation, notes) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+            " discharge_due, status, notes) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)"));
     } else {
         q.prepare(QStringLiteral(
             "UPDATE residents SET name=?, room=?, bed=?, camera_id=?, "
             " wearable_id=?, risk_level=?, admitted_at=?, discharge_due=?, "
-            " status=?, guardian_name=?, guardian_phone=?, guardian_relation=?, "
-            " notes=? WHERE resident_id=?"));
+            " status=?, notes=? WHERE resident_id=?"));
     }
 
     q.addBindValue(editName->text().trimmed());
@@ -8228,9 +8204,6 @@ void MainWindow::onSaveResident()
     q.addBindValue(editAdmittedAt->date());
     q.addBindValue(editDischargeDue->date());
     q.addBindValue(editStatus->currentText());
-    q.addBindValue(editGuardianName->text().trimmed());
-    q.addBindValue(editGuardianPhone->text().trimmed());
-    q.addBindValue(editGuardianRelation->text().trimmed());
     q.addBindValue(editNotes->toPlainText());
     if (!isNew)
         q.addBindValue(selectedResidentId);

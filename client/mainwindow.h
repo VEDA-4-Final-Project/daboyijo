@@ -654,11 +654,6 @@ private:
     QDateEdit* editDischargeDue  = nullptr;  // 퇴원 예정일
     QComboBox* editStatus        = nullptr;  // 재원/퇴원
 
-    // 상세/편집 폼 — 보호자 정보
-    QLineEdit* editGuardianName     = nullptr;
-    QLineEdit* editGuardianPhone    = nullptr;
-    QLineEdit* editGuardianRelation = nullptr;
-
     // 특이사항
     QTextEdit* editNotes = nullptr;
 
