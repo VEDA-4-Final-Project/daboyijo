@@ -31,7 +31,6 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
-#include "alertbanner.h"
 
 
 
@@ -333,7 +332,12 @@ private:
     QTreeWidget*     resourceTree_ = nullptr;
     QLineEdit*       resourceSearch_ = nullptr;
     QPushButton*     resourceToggle_ = nullptr;
-    QWidget*         resourceBody_ = nullptr;   // 접을 때 숨기는 부분(검색+트리)
+    QWidget*         resourceBody_ = nullptr;   // 펼쳤을 때 보이는 부분(검색+트리)
+    QLabel*          resourceHead_ = nullptr;   // "리소스" 제목 — 접으면 숨긴다
+    // 접었을 때 대신 보이는 세로 칩 레일(CH1~4). 44px 빈 막대만 남기면 무엇을
+    // 접었는지도, 어떻게 펴는지도 알 수 없다 — 채널 상태는 접어도 남긴다.
+    QWidget*         resourceRail_ = nullptr;
+    QPushButton*     resChipBtns_[4] = {};
     bool             resourceCollapsed_ = false;
     QTreeWidgetItem* camItems_[4] = {};
 
@@ -668,13 +672,6 @@ private:
     QWidget* buildAlarmBanner();            // 토스트 카드 생성(오버레이)
     void updateAlarmBanner();               // 활성 경보에 따라 문구·표시 갱신
     void animateAlarmToast(bool show);      // 위→아래 슬라이드 인/아웃
-
-    // 상시 노출용 경보 배너(Phase 3/02 신설) — #alarmToast와 별개 위젯.
-    // buildUi()에서 생성돼 hide() 상태로 Phase 4(ALERT-03)에 인계된다(D-03/PD-08).
-    AlertBanner* alertBanner_ = nullptr;
-    // 활성 경보 목록을 만드는 헬퍼 — 등급 판정(vitalSeverity)과 도형 선택
-    // (severityGlyph)이 전부 이 함수 안에서 끝나 배너로는 완성값만 넘어간다.
-    QList<AlertItem> collectAlertItems() const;
 
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스

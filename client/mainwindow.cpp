@@ -727,48 +727,25 @@ QPixmap tileToolIconPixmap(int kind, const QColor& c, int px = 15)
     p.setBrush(Qt::NoBrush);
 
     const qreal m = 2.0, w = px - 2 * m;
-    switch (kind) {
-        case 0: {   // 크게 보기 — 네 모서리 꺾쇠
-            const qreal a = w * 0.34;
-            p.drawPolyline(QPolygonF({QPointF(m, m + a), QPointF(m, m), QPointF(m + a, m)}));
-            p.drawPolyline(QPolygonF({QPointF(m + w - a, m), QPointF(m + w, m),
-                                      QPointF(m + w, m + a)}));
-            p.drawPolyline(QPolygonF({QPointF(m + w, m + w - a), QPointF(m + w, m + w),
-                                      QPointF(m + w - a, m + w)}));
-            p.drawPolyline(QPolygonF({QPointF(m + a, m + w), QPointF(m, m + w),
-                                      QPointF(m, m + w - a)}));
-            break;
-        }
-        case 1: {   // ROI 표시 — 점선 사각형 + 안쪽 채움
-            QPen dashed(c, 1.3);
-            dashed.setStyle(Qt::DashLine);
-            p.setPen(dashed);
-            p.drawRect(QRectF(m, m, w, w));
-            p.setPen(Qt::NoPen);
-            QColor fill = c;
-            fill.setAlpha(90);
-            p.setBrush(fill);
-            p.drawRect(QRectF(m + w * 0.26, m + w * 0.26, w * 0.48, w * 0.48));
-            break;
-        }
-        case 2: {   // 침대 추가 — 연필
-            p.drawLine(QPointF(m + w * 0.18, m + w * 0.82), QPointF(m + w * 0.72, m + w * 0.14));
-            p.drawLine(QPointF(m + w * 0.34, m + w * 0.98), QPointF(m + w * 0.88, m + w * 0.30));
-            p.drawLine(QPointF(m + w * 0.72, m + w * 0.14), QPointF(m + w * 0.88, m + w * 0.30));
-            p.drawLine(QPointF(m + w * 0.18, m + w * 0.82), QPointF(m + w * 0.34, m + w * 0.98));
-            break;
-        }
-        default: {  // 스냅샷 — 아래로 향한 화살표 + 받침
-            const qreal cx = m + w / 2.0;
-            p.drawLine(QPointF(cx, m), QPointF(cx, m + w * 0.62));
-            p.drawPolyline(QPolygonF({QPointF(cx - w * 0.22, m + w * 0.40), QPointF(cx, m + w * 0.66),
-                                      QPointF(cx + w * 0.22, m + w * 0.40)}));
-            p.drawLine(QPointF(m, m + w), QPointF(m + w, m + w));
-            break;
-        }
+    if (kind == 0) {   // 크게 보기 — 네 모서리 꺾쇠
+        const qreal a = w * 0.34;
+        p.drawPolyline(QPolygonF({QPointF(m, m + a), QPointF(m, m), QPointF(m + a, m)}));
+        p.drawPolyline(QPolygonF({QPointF(m + w - a, m), QPointF(m + w, m),
+                                  QPointF(m + w, m + a)}));
+        p.drawPolyline(QPolygonF({QPointF(m + w, m + w - a), QPointF(m + w, m + w),
+                                  QPointF(m + w - a, m + w)}));
+        p.drawPolyline(QPolygonF({QPointF(m + a, m + w), QPointF(m, m + w),
+                                  QPointF(m, m + w - a)}));
+    } else {           // 스냅샷 — 아래로 향한 화살표 + 받침
+        const qreal cx = m + w / 2.0;
+        p.drawLine(QPointF(cx, m), QPointF(cx, m + w * 0.62));
+        p.drawPolyline(QPolygonF({QPointF(cx - w * 0.22, m + w * 0.40), QPointF(cx, m + w * 0.66),
+                                  QPointF(cx + w * 0.22, m + w * 0.40)}));
+        p.drawLine(QPointF(m, m + w), QPointF(m + w, m + w));
     }
     return pm;
 }
+
 
 // 자식 위젯을 정해진 가로:세로 비로, 들어갈 수 있는 최대 크기로 키워 가운데 놓는 상자.
 //
@@ -806,7 +783,6 @@ private:
     QWidget* child_ = nullptr;
     qreal aspect_ = 16.0 / 9.0;
 };
-
 }  // namespace
 
 // 좌측 네비 레일 — 아이콘+라벨 6개, 접으면 아이콘만. 상태는 QSettings에 남는다.
@@ -912,17 +888,15 @@ void MainWindow::buildUi()
     body->addWidget(buildVideoWall(), 1);
     body->addWidget(buildVitalsPanel(), 0);
 
-    // 경보 배너(#alertBanner) — dashboardTab 최상단, body 위. 활성 경보가
-    // 있을 때만 보이고 0건이면 숨는다. 좌우는 body와 같은 세로선에 맞추고
-    // (18px) 상하는 최소로 둔다 — QSS가 이미 padding 24px 32px를 준다
-    // (ALERT-03 / D-01).
-    alertBanner_ = new AlertBanner();
-    alertBanner_->setContentsMargins(18, 12, 18, 0);
-
+    // [제거됨] 예전에는 여기 대시보드 최상단에 가로 전체를 먹는 48px 빨간 띠
+    // (#alertBanner)를 상시로 띄웠다. 경보 알림 경로가 이미 셋이라 뺐다:
+    //   · 위에서 내려오는 토스트(#alarmToast) — "무슨 일이 어디서"
+    //   · 창 전체 빨강 펄스 테두리(AlarmOverlay) — 시야 밖에 있어도 눈에 띔
+    //   · 해당 채널 타일 빨간 테두리 점멸(VideoView::setAlert) — "어느 화면"
+    // 띠까지 더하면 정작 봐야 할 영상이 그만큼 밀려 내려간다.
     auto* dashboardOuter = new QVBoxLayout();
     dashboardOuter->setContentsMargins(0, 0, 0, 0);
     dashboardOuter->setSpacing(0);
-    dashboardOuter->addWidget(alertBanner_);
     dashboardOuter->addLayout(body, 1);
 
     auto* dashboardTab = new QWidget();
@@ -1461,15 +1435,9 @@ QWidget* MainWindow::buildVideoCard(int channel)
     // 불려서, 예전엔 첫 화면의 타일만 "CH1"로 남고 리소스 트리는 "CH1 · 김복순"으로
     // 떠 같은 채널이 두 이름으로 보였다(loadPatientsFromDb는 buildUi보다 먼저 돈다).
     video->setDisplayName(channelDisplayName(channel));
-    connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    // 침대 ROI는 장치 설정에서만 그린다 — 관제 타일은 표시만 한다.
+    // (refreshRoiZones()가 여기에 영역을 밀어 넣어 오버레이로 보여준다)
     connect(video, &VideoView::tileClicked, this, &MainWindow::selectChannel);
-    connect(video, &VideoView::drawModeChanged, this,
-            [this](int, bool on) {
-                roiDrawing = on;
-                if (roiButton)
-                    roiButton->setText(on ? QStringLiteral("취소")
-                                          : QStringLiteral("침대 추가"));
-            });
     lay->addWidget(video, 1);
 
     buildTileChrome(channel, card);
@@ -1509,13 +1477,14 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
     tb->setContentsMargins(6, 4, 6, 4);
     tb->setSpacing(2);
 
-    const char16_t* tips[4] = {
-        u"이 채널만 크게 보기",
-        u"침대 ROI 표시 켜기/끄기",
-        u"침대 추가 — 영역 그리기",
+    // 관제 화면 타일에는 "보는 동작"만 둔다. 침대 ROI를 그리고 표시하는 건 설정이라
+    // 장치 설정 → 카메라 → ROI 탭에서 한다 — 관제하다 실수로 영역을 다시 그리면
+    // 낙상·이탈 판정 기준이 조용히 바뀐다.
+    const char16_t* tips[2] = {
+        u"이 채널만 크게 보기 (다시 누르면 2×2로)",
         u"현재 화면 저장(스냅샷)",
     };
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 2; ++i) {
         auto* b = new QPushButton();
         b->setObjectName("tileToolBtn");
         // 영상(검정) 위에 늘 얹히는 버튼이라 아이콘 색은 팔레트가 아니라 고정 회백이다.
@@ -1526,25 +1495,11 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
         b->setToolTip(QString::fromUtf16(tips[i]));
         connect(b, &QPushButton::clicked, this, [this, channel, i] {
             selectChannel(channel);
-            switch (i) {
-                case 0:   // 단일 <-> 2x2 토글
-                    setGridLayout(gridLayout_ == GridLayout::Single
-                                      ? GridLayout::Quad
-                                      : GridLayout::Single);
-                    break;
-                case 1:
-                    // ROI 표시 상태의 단일 출처는 장치 설정의 토글 버튼이다.
-                    // 여기서 별도 플래그를 두면 두 화면의 상태가 갈라진다.
-                    if (roiToggleButton) roiToggleButton->toggle();
-                    break;
-                case 2:
-                    // 장치 설정의 ROI 편집기(roiEditorView)가 아니라 이 타일에
-                    // 바로 그린다 — 관제 화면에서 본 그대로 영역을 잡게.
-                    if (channelViews[channel]) channelViews[channel]->setDrawMode(true);
-                    break;
-                default:
-                    saveChannelSnapshot(channel);
-                    break;
+            if (i == 0) {
+                setGridLayout(gridLayout_ == GridLayout::Single ? GridLayout::Quad
+                                                                : GridLayout::Single);
+            } else {
+                saveChannelSnapshot(channel);
             }
         });
         tb->addWidget(b);
@@ -1755,10 +1710,9 @@ QWidget* MainWindow::buildResourcePanel()
     auto* head = new QHBoxLayout();
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(6);
-    auto* title = new QLabel(QStringLiteral("리소스"));
-    title->setObjectName("resourceHead");
-    head->addWidget(title);
-    head->addStretch();
+    resourceHead_ = new QLabel(QStringLiteral("리소스"));
+    resourceHead_->setObjectName("resourceHead");
+    head->addWidget(resourceHead_, 1);
     resourceToggle_ = new QPushButton(QStringLiteral("‹"));
     resourceToggle_->setObjectName("resourceToggle");
     resourceToggle_->setCursor(Qt::PointingHandCursor);
@@ -1847,8 +1801,35 @@ QWidget* MainWindow::buildResourcePanel()
 
     outer->addWidget(resourceBody_, 1);
 
+    // 접었을 때 보이는 세로 칩 레일 — 채널 번호 + 연결 상태색. 누르면 그 채널 선택.
+    resourceRail_ = new QWidget();
+    auto* rv = new QVBoxLayout(resourceRail_);
+    rv->setContentsMargins(0, 6, 0, 0);
+    rv->setSpacing(4);
+    for (int ch = 0; ch < 4; ++ch) {
+        auto* chip = new QPushButton(QString::number(ch + 1));
+        chip->setObjectName("resChip");
+        chip->setCheckable(true);
+        chip->setAutoExclusive(true);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFixedSize(30, 26);
+        connect(chip, &QPushButton::clicked, this, [this, ch] { selectChannel(ch); });
+        resChipBtns_[ch] = chip;
+        rv->addWidget(chip, 0, Qt::AlignHCenter);
+    }
+    rv->addStretch();
+    resourceRail_->hide();
+    outer->addWidget(resourceRail_, 1);
+
     QSettings st;
-    setResourceCollapsed(st.value(QStringLiteral("ui/resource_collapsed"), false).toBool());
+    // 기본은 접힘 — 좌측에 네비 레일과 이 패널이 나란히 펼쳐지면 크롬이
+    // 화면 폭의 절반 가까이를 먹는다. 필요할 때만 펴서 쓴다.
+    //
+    // 키 이름을 _v2로 바꾼 이유: setResourceCollapsed()가 값을 되쓰기 때문에
+    // 예전 키(ui/resource_collapsed)는 이미 모든 기존 사용자에게 false로 남아 있다.
+    // 같은 키를 그대로 쓰면 "기본 접힘"이 아무에게도 적용되지 않는다. 새 키로 한 번
+    // 초기화하고, 이후 사용자가 편 선택은 그대로 기억한다.
+    setResourceCollapsed(st.value(QStringLiteral("ui/resource_collapsed_v2"), true).toBool());
     refreshResourceTree();
     return resourcePanel_;
 }
@@ -1890,6 +1871,20 @@ void MainWindow::refreshResourceTree()
         // 검색어가 있으면 이름에 안 들어있는 카메라는 감춘다.
         it->setHidden(!filter.isEmpty() &&
                       !channelDisplayName(ch).contains(filter, Qt::CaseInsensitive));
+
+        // 접힘 상태의 칩도 같은 값으로 갱신한다(트리와 어긋나면 안 된다).
+        if (auto* chip = resChipBtns_[ch]) {
+            chip->setChecked(ch == selectedChannel_);
+            chip->setProperty("state", tileHidden_[ch] ? QStringLiteral("hidden")
+                                       : live         ? QStringLiteral("live")
+                                                      : QStringLiteral("off"));
+            chip->setToolTip(QStringLiteral("%1 · %2")
+                                 .arg(channelDisplayName(ch),
+                                      live ? QStringLiteral("수신 중")
+                                           : QStringLiteral("신호 없음")));
+            chip->style()->unpolish(chip);
+            chip->style()->polish(chip);
+        }
     }
 }
 
@@ -1897,11 +1892,32 @@ void MainWindow::setResourceCollapsed(bool on)
 {
     resourceCollapsed_ = on;
     if (resourceBody_) resourceBody_->setVisible(!on);
-    if (resourcePanel_) resourcePanel_->setFixedWidth(on ? 44 : 208);
-    if (resourceToggle_) resourceToggle_->setText(on ? QStringLiteral("›")
-                                                     : QStringLiteral("‹"));
+    if (resourceRail_) resourceRail_->setVisible(on);
+    // 제목까지 남겨 두면 "리소스" 세 글자가 폭을 못 줄여 토글 버튼이 밖으로
+    // 밀려 나간다 — 접힌 패널에 화살표조차 없어 다시 펼 수가 없었다.
+    if (resourceHead_) resourceHead_->setVisible(!on);
+
+    if (resourcePanel_) {
+        resourcePanel_->setFixedWidth(on ? 48 : 208);
+        if (auto* l = qobject_cast<QVBoxLayout*>(resourcePanel_->layout()))
+            l->setContentsMargins(on ? 9 : 10, 12, on ? 9 : 10, 12);
+    }
+    if (resourceToggle_) {
+        // 화살표는 "누르면 갈 방향"을 가리킨다: 접힘→오른쪽으로 펼침(›),
+        // 펼침→왼쪽으로 접힘(‹).
+        resourceToggle_->setText(on ? QStringLiteral("›") : QStringLiteral("‹"));
+        resourceToggle_->setToolTip(on ? QStringLiteral("리소스 목록 펼치기")
+                                       : QStringLiteral("리소스 목록 접기"));
+    }
+    // 접히면 토글만 남으므로 가운데로, 펼치면 제목 오른쪽 끝으로.
+    if (resourceToggle_ && resourceToggle_->parentWidget()) {
+        if (auto* lay = resourceToggle_->parentWidget()->layout())
+            lay->setAlignment(resourceToggle_, on ? Qt::AlignHCenter : Qt::AlignRight);
+    }
+
     QSettings st;
-    st.setValue(QStringLiteral("ui/resource_collapsed"), on);
+    st.setValue(QStringLiteral("ui/resource_collapsed_v2"), on);
+    refreshResourceTree();   // 칩 상태도 같은 경로에서 갱신
 }
 
 // 타일 오버레이·트리가 공유하는 채널 이름. "CH1 · 김복순" 형식.
@@ -7623,39 +7639,6 @@ void MainWindow::onAlarmClearClicked()
     }
 }
 
-// 활성 경보 목록을 만든다 — 등급 판정(critical/high/medium)과 도형 선택이 전부
-// 여기서 끝나 AlertBanner로는 완성된 값만 넘어간다(D-02). 채널당 최대
-// 3건(낙상/침상이탈/생체이상)이 나올 수 있다.
-QList<AlertItem> MainWindow::collectAlertItems() const
-{
-    QList<AlertItem> items;
-    for (int ch = 0; ch < 4; ++ch) {
-        if (fallActive[ch]) {
-            const QString severity = QStringLiteral("critical");
-            items.append({ch, severityGlyph(severity), QStringLiteral("낙상"),
-                          patients[ch].bed, severity});
-        }
-        if (bedEgressActive[ch]) {
-            const QString severity = QStringLiteral("high");
-            items.append({ch, severityGlyph(severity), QStringLiteral("침상이탈"),
-                          patients[ch].bed, severity});
-        }
-        if (vitalAbnormalActive[ch]) {
-            // 그 채널에 배정된 입소자의 현재 바이탈 등급을 쓴다 — 단일 출처는
-            // vitalSeverity()(D-02). 배정된 사람을 찾지 못하면 안전하게
-            // medium으로 내린다(UI-SPEC §4.2).
-            QString severity = QStringLiteral("medium");
-            const QVector<int>& ids = residentsByChannel_[ch];
-            if (!ids.isEmpty()) {
-                const VitalSample sample = vitals_.value(ids.first());
-                severity = vitalSeverity(sample.spo2, sample.heartRate);
-            }
-            items.append({ch, severityGlyph(severity), QStringLiteral("생체신호 이상"),
-                          patients[ch].bed, severity});
-        }
-    }
-    return items;
-}
 
 // 낙상/침상이탈이 하나라도 활성이면 경보 버튼을 빨강 채움으로, 아니면 차분한 아웃라인으로.
 void MainWindow::refreshAlarmButton()
@@ -7664,10 +7647,7 @@ void MainWindow::refreshAlarmButton()
     bool anyActive = false;
     for (int ch = 0; ch < 4; ++ch)
         if (fallActive[ch] || bedEgressActive[ch] || vitalAbnormalActive[ch]) { anyActive = true; break; }
-    updateAlarmBanner();   // 경보 배너 표시/문구 갱신 (활성 시에만 노출)
-    // 상시 노출용 배너(#alertBanner) 갱신 — 상태를 바꾸는 다섯 지점이 전부
-    // 이 함수를 거치므로 배선은 여기 한 곳뿐이다.
-    if (alertBanner_) alertBanner_->setActiveAlerts(collectAlertItems());
+    updateAlarmBanner();   // 경보 토스트 표시/문구 갱신 (활성 시에만 내려온다)
 
     // 경보가 하나라도 활성이면 창 전체 테두리 빨강 펄스, 아니면 끈다.
     if (alarmOverlay_) {
