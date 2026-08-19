@@ -10,7 +10,13 @@
 // events.event_type / source 가 ENUM 컬럼이라 오타가 나면 INSERT 가 통째로
 // 실패한다. 여기서 막으면 호출부가 오타를 낼 수 없다.
 enum class EventType   { Fall, BedEgress, VitalAbnormal };
-enum class EventSource { Camera, Wearable };   // 같은 낙상이라도 근거가 다르다
+enum class EventSource {
+    Camera,    // 영상 판정
+    Wearable,  // 기기 판정
+    // 양쪽이 같은 사건을 각각 잡아 한 줄로 합쳐진 상태. 호출부가 이 값을 넘길 일은
+    // 없고, insertEvent 가 중복을 발견했을 때 기존 행을 이 값으로 바꾼다.
+    Both
+};
 
 // events 조회 결과 1건 (영상검색 등 조회 전용 — insertEvent의 반대 방향).
 struct EventRow {

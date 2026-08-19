@@ -443,6 +443,10 @@ int Database::getRoomByCh(int channel){
 // ═══════════════════════════════════════════════════════════
 
 namespace {
+// 같은 사건으로 볼 시간 창. 펌웨어가 낙상 플래그를 유지하는 시간과 맞춘다
+// (firmware HM10_FALL_HOLD_MS = 5000ms) — 그 창을 넘으면 별개 사건으로 센다.
+constexpr int kDedupWindowSec = 5;
+
 // 열거형 → ENUM 컬럼 문자열. report_schema.sql 의 ENUM 정의와 글자가
 // 하나라도 어긋나면 INSERT 가 실패한다 — 값을 늘릴 땐 양쪽을 같이 고칠 것.
 const char* toSql(EventType t) {
@@ -454,7 +458,12 @@ const char* toSql(EventType t) {
     return "FALL";   // 도달 불가 — 컴파일러 경고 억제용
 }
 const char* toSql(EventSource s) {
-    return s == EventSource::Wearable ? "WEARABLE" : "CAMERA";
+    switch (s) {
+        case EventSource::Wearable: return "WEARABLE";
+        case EventSource::Both:     return "BOTH";
+        case EventSource::Camera:   break;
+    }
+    return "CAMERA";
 }
 }  // namespace
 
@@ -571,6 +580,66 @@ long long Database::insertEvent(EventType type, EventSource source, int cameraId
         std::snprintf(when, sizeof(when), "FROM_UNIXTIME(%lld/1000.0)", occurredMs);
     else
         std::snprintf(when, sizeof(when), "NOW(3)");
+
+    // ── 같은 사건이 두 경로로 들어온 경우 합치기 ──────────────────
+    // 한 번 넘어져도 카메라(자세 판정)와 웨어러블(가속도)이 각각 잡아 두 줄이 된다.
+    // 그대로 두면 리포트가 "낙상 2회"로 센다 — 실제로는 1회다.
+    //
+    // ★ 기다리지 않는다. 먼저 온 쪽은 즉시 INSERT 하고, 나중에 온 쪽이 앞을 돌아봐
+    //   같은 사건이 있으면 그 줄의 source 를 BOTH 로 바꾼다. 대기가 없으니 알람도
+    //   늦지 않는다(알람은 이 함수와 무관하게 이미 나간 뒤다).
+    // ★ 창은 5초 — 펌웨어가 낙상 플래그를 들고 있는 시간(HM10_FALL_HOLD_MS)과 같다.
+    //   그 안에 들어온 같은 사람·같은 종류는 한 사건으로 본다.
+    // ★ 같은 source 끼리는 합치지 않는다. 카메라는 fired 플래그로, 웨어러블은 래치로
+    //   이미 중복을 막고 있어서, 같은 쪽이 5초 안에 두 번 오면 그건 진짜 두 번이다.
+    // ★ BOTH 는 정보가 주는 게 아니라 는다 — 양쪽이 함께 본 낙상이라 더 확실하다.
+    {
+        // 사람을 모르면(resident_id NULL) 채널로 짝을 찾는다. 사람이 없는 기록끼리
+        // 합치는 것은 근거가 약하지만, 같은 채널·같은 종류·5초 안이라면 같은 사건일
+        // 가능성이 훨씬 높다 — 두 줄로 남겨 2회로 세는 쪽이 더 틀린다.
+        char match[256];
+        if (residentId > 0)
+            std::snprintf(match, sizeof(match), "resident_id = %d", residentId);
+        else
+            std::snprintf(match, sizeof(match), "resident_id IS NULL AND camera_id = %d",
+                          cameraId);
+
+        char sql[768];
+        std::snprintf(sql, sizeof(sql),
+            "SELECT event_id FROM events "
+            "WHERE %s AND event_type = '%s' AND source <> '%s' "
+            "  AND occurred_at BETWEEN %s - INTERVAL %d SECOND "
+            "                      AND %s + INTERVAL %d SECOND "
+            "ORDER BY event_id DESC LIMIT 1",
+            match, toSql(type), toSql(source),
+            when, kDedupWindowSec, when, kDedupWindowSec);
+
+        if (!mysql_query(conn_, sql)) {
+            if (MYSQL_RES* res = mysql_store_result(conn_)) {
+                long long twinId = 0;
+                if (MYSQL_ROW row = mysql_fetch_row(res))
+                    if (row[0]) twinId = std::atoll(row[0]);
+                mysql_free_result(res);
+
+                if (twinId > 0) {
+                    char up[128];
+                    std::snprintf(up, sizeof(up),
+                        "UPDATE events SET source = 'BOTH' WHERE event_id = %lld", twinId);
+                    if (mysql_query(conn_, up)) {
+                        std::cerr << "[DB] 이벤트 병합 실패: " << mysql_error(conn_) << "\n";
+                        // 병합에 실패했으면 새 줄이라도 남긴다 — 아래로 흘려보낸다.
+                    } else {
+                        std::cout << "[DB] 이벤트 병합 (" << toSql(type)
+                                  << ", event_id=" << twinId << " → BOTH)\n";
+                        return twinId;   // 새 줄을 만들지 않는다
+                    }
+                }
+            }
+        } else {
+            std::cerr << "[DB] 이벤트 중복 조회 실패: " << mysql_error(conn_) << "\n";
+            // 조회가 안 되면 합치기를 포기하고 그냥 새 줄로 남긴다.
+        }
+    }
 
     // resident_id 는 지금 값을 그대로 박는다(발생 시점 스냅샷 — 헤더 주석 참고).
     char sql[1024];

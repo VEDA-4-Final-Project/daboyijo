@@ -1,0 +1,15 @@
+stream_port=5500
+
+# DB 호스트. 이 줄이 없으면 기본값 127.0.0.1 — 즉 서버가 도는 기기의 로컬 DB 를 쓴다.
+# ★ 서버를 WSL/개발 PC 에서 돌리면서 이 줄을 빼먹으면, Qt 는 파이 DB 를 보는데
+#   서버는 로컬 DB 에 쓰게 되어 두 쪽이 서로 다른 데이터를 본다. 침대 ROI 를
+#   그려도 Qt 를 재시작하면 사라지고, 이벤트·재실 기록도 Qt 화면에 안 나타난다.
+db_host=172.20.32.51
+# 0=rtsp://admin:5hanwha!@172.20.35.141:554/0/profile2/media.smp
+# 1=rtsp://admin:5hanwha!@172.20.35.141:554/1/profile2/media.smp
+# 2=rtsp://admin:5hanwha!@172.20.35.141:554/2/profile2/media.smp
+# 3=rtsp://admin:5hanwha!@172.20.35.141:554/3/profile2/media.smp
+0=
+1=
+2=
+3=
