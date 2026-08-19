@@ -726,48 +726,25 @@ QPixmap tileToolIconPixmap(int kind, const QColor& c, int px = 15)
     p.setBrush(Qt::NoBrush);
 
     const qreal m = 2.0, w = px - 2 * m;
-    switch (kind) {
-        case 0: {   // 크게 보기 — 네 모서리 꺾쇠
-            const qreal a = w * 0.34;
-            p.drawPolyline(QPolygonF({QPointF(m, m + a), QPointF(m, m), QPointF(m + a, m)}));
-            p.drawPolyline(QPolygonF({QPointF(m + w - a, m), QPointF(m + w, m),
-                                      QPointF(m + w, m + a)}));
-            p.drawPolyline(QPolygonF({QPointF(m + w, m + w - a), QPointF(m + w, m + w),
-                                      QPointF(m + w - a, m + w)}));
-            p.drawPolyline(QPolygonF({QPointF(m + a, m + w), QPointF(m, m + w),
-                                      QPointF(m, m + w - a)}));
-            break;
-        }
-        case 1: {   // ROI 표시 — 점선 사각형 + 안쪽 채움
-            QPen dashed(c, 1.3);
-            dashed.setStyle(Qt::DashLine);
-            p.setPen(dashed);
-            p.drawRect(QRectF(m, m, w, w));
-            p.setPen(Qt::NoPen);
-            QColor fill = c;
-            fill.setAlpha(90);
-            p.setBrush(fill);
-            p.drawRect(QRectF(m + w * 0.26, m + w * 0.26, w * 0.48, w * 0.48));
-            break;
-        }
-        case 2: {   // 침대 추가 — 연필
-            p.drawLine(QPointF(m + w * 0.18, m + w * 0.82), QPointF(m + w * 0.72, m + w * 0.14));
-            p.drawLine(QPointF(m + w * 0.34, m + w * 0.98), QPointF(m + w * 0.88, m + w * 0.30));
-            p.drawLine(QPointF(m + w * 0.72, m + w * 0.14), QPointF(m + w * 0.88, m + w * 0.30));
-            p.drawLine(QPointF(m + w * 0.18, m + w * 0.82), QPointF(m + w * 0.34, m + w * 0.98));
-            break;
-        }
-        default: {  // 스냅샷 — 아래로 향한 화살표 + 받침
-            const qreal cx = m + w / 2.0;
-            p.drawLine(QPointF(cx, m), QPointF(cx, m + w * 0.62));
-            p.drawPolyline(QPolygonF({QPointF(cx - w * 0.22, m + w * 0.40), QPointF(cx, m + w * 0.66),
-                                      QPointF(cx + w * 0.22, m + w * 0.40)}));
-            p.drawLine(QPointF(m, m + w), QPointF(m + w, m + w));
-            break;
-        }
+    if (kind == 0) {   // 크게 보기 — 네 모서리 꺾쇠
+        const qreal a = w * 0.34;
+        p.drawPolyline(QPolygonF({QPointF(m, m + a), QPointF(m, m), QPointF(m + a, m)}));
+        p.drawPolyline(QPolygonF({QPointF(m + w - a, m), QPointF(m + w, m),
+                                  QPointF(m + w, m + a)}));
+        p.drawPolyline(QPolygonF({QPointF(m + w, m + w - a), QPointF(m + w, m + w),
+                                  QPointF(m + w - a, m + w)}));
+        p.drawPolyline(QPolygonF({QPointF(m + a, m + w), QPointF(m, m + w),
+                                  QPointF(m, m + w - a)}));
+    } else {           // 스냅샷 — 아래로 향한 화살표 + 받침
+        const qreal cx = m + w / 2.0;
+        p.drawLine(QPointF(cx, m), QPointF(cx, m + w * 0.62));
+        p.drawPolyline(QPolygonF({QPointF(cx - w * 0.22, m + w * 0.40), QPointF(cx, m + w * 0.66),
+                                  QPointF(cx + w * 0.22, m + w * 0.40)}));
+        p.drawLine(QPointF(m, m + w), QPointF(m + w, m + w));
     }
     return pm;
 }
+
 
 // 자식 위젯을 정해진 가로:세로 비로, 들어갈 수 있는 최대 크기로 키워 가운데 놓는 상자.
 //
@@ -805,7 +782,6 @@ private:
     QWidget* child_ = nullptr;
     qreal aspect_ = 16.0 / 9.0;
 };
-
 }  // namespace
 
 // 좌측 네비 레일 — 아이콘+라벨 6개, 접으면 아이콘만. 상태는 QSettings에 남는다.
@@ -1460,15 +1436,9 @@ QWidget* MainWindow::buildVideoCard(int channel)
     // 불려서, 예전엔 첫 화면의 타일만 "CH1"로 남고 리소스 트리는 "CH1 · 김복순"으로
     // 떠 같은 채널이 두 이름으로 보였다(loadPatientsFromDb는 buildUi보다 먼저 돈다).
     video->setDisplayName(channelDisplayName(channel));
-    connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
+    // 침대 ROI는 장치 설정에서만 그린다 — 관제 타일은 표시만 한다.
+    // (refreshRoiZones()가 여기에 영역을 밀어 넣어 오버레이로 보여준다)
     connect(video, &VideoView::tileClicked, this, &MainWindow::selectChannel);
-    connect(video, &VideoView::drawModeChanged, this,
-            [this](int, bool on) {
-                roiDrawing = on;
-                if (roiButton)
-                    roiButton->setText(on ? QStringLiteral("취소")
-                                          : QStringLiteral("침대 추가"));
-            });
     lay->addWidget(video, 1);
 
     buildTileChrome(channel, card);
@@ -1508,13 +1478,14 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
     tb->setContentsMargins(6, 4, 6, 4);
     tb->setSpacing(2);
 
-    const char16_t* tips[4] = {
-        u"이 채널만 크게 보기",
-        u"침대 ROI 표시 켜기/끄기",
-        u"침대 추가 — 영역 그리기",
+    // 관제 화면 타일에는 "보는 동작"만 둔다. 침대 ROI를 그리고 표시하는 건 설정이라
+    // 장치 설정 → 카메라 → ROI 탭에서 한다 — 관제하다 실수로 영역을 다시 그리면
+    // 낙상·이탈 판정 기준이 조용히 바뀐다.
+    const char16_t* tips[2] = {
+        u"이 채널만 크게 보기 (다시 누르면 2×2로)",
         u"현재 화면 저장(스냅샷)",
     };
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 2; ++i) {
         auto* b = new QPushButton();
         b->setObjectName("tileToolBtn");
         // 영상(검정) 위에 늘 얹히는 버튼이라 아이콘 색은 팔레트가 아니라 고정 회백이다.
@@ -1525,25 +1496,11 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
         b->setToolTip(QString::fromUtf16(tips[i]));
         connect(b, &QPushButton::clicked, this, [this, channel, i] {
             selectChannel(channel);
-            switch (i) {
-                case 0:   // 단일 <-> 2x2 토글
-                    setGridLayout(gridLayout_ == GridLayout::Single
-                                      ? GridLayout::Quad
-                                      : GridLayout::Single);
-                    break;
-                case 1:
-                    // ROI 표시 상태의 단일 출처는 장치 설정의 토글 버튼이다.
-                    // 여기서 별도 플래그를 두면 두 화면의 상태가 갈라진다.
-                    if (roiToggleButton) roiToggleButton->toggle();
-                    break;
-                case 2:
-                    // 장치 설정의 ROI 편집기(roiEditorView)가 아니라 이 타일에
-                    // 바로 그린다 — 관제 화면에서 본 그대로 영역을 잡게.
-                    if (channelViews[channel]) channelViews[channel]->setDrawMode(true);
-                    break;
-                default:
-                    saveChannelSnapshot(channel);
-                    break;
+            if (i == 0) {
+                setGridLayout(gridLayout_ == GridLayout::Single ? GridLayout::Quad
+                                                                : GridLayout::Single);
+            } else {
+                saveChannelSnapshot(channel);
             }
         });
         tb->addWidget(b);
