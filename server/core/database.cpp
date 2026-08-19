@@ -32,33 +32,81 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     std::vector<long long> ids;
     if (!conn_) return ids;
 
-    // 그 방에 있는 재원자 전원. 요양사가 둘 중 누구를 돌봤는지는 영상에 없으므로
-    // 전원에게 같은 시간을 남긴다(헤더 주석 참고). 아무도 없으면 -1 하나를 넣어
-    // resident_id = NULL 로 한 행만 만든다 — 케어가 있었다는 사실은 지우지 않는다.
     std::vector<int> residents = residentsByCameraLocked(cameraId);
     if (residents.empty()) residents.push_back(-1);
 
+    // 케어 구간을 한 번만 정해 세션 변수에 담는다. NOW() 를 여러 문장에서 각각
+    // 부르면 사람마다 몇 밀리초씩 어긋난 창으로 계산돼 같은 방인데 값이 달라진다.
+    char win[128];
+    std::snprintf(win, sizeof(win),
+        "SET @cs = NOW() - INTERVAL %d SECOND, @ce = NOW()", durationSec);
+    if (mysql_query(conn_, win)) {
+        std::cerr << "[DB] 케어 구간 설정 실패: " << mysql_error(conn_) << "\n";
+        return ids;
+    }
+
+    // ── 침대 추적이 이 채널에서 실제로 돌고 있는가 ────────────────
+    // ★ 안전장치. 재실 기록이 없는데 교집합만 믿으면 모든 케어시간이 0 이 된다.
+    //   침대 ROI 를 아직 안 그렸거나 추적이 멈춘 상태가 그렇다. 그때는 "자리에
+    //   없었다"가 아니라 "모른다"이므로, 예전처럼 전원에게 전체 시간을 남긴다.
+    //   기록이 부풀려지는 것보다 통째로 사라지는 쪽이 더 나쁘다.
+    bool bedTracked = false;
+    {
+        char sql[384];
+        std::snprintf(sql, sizeof(sql),
+            "SELECT COUNT(*) FROM bed_sessions "
+            "WHERE camera_id = %d AND in_at < @ce AND COALESCE(out_at, @ce) > @cs",
+            cameraId);
+        if (!mysql_query(conn_, sql)) {
+            if (MYSQL_RES* res = mysql_store_result(conn_)) {
+                if (MYSQL_ROW row = mysql_fetch_row(res))
+                    bedTracked = (row[0] && std::atoi(row[0]) > 0);
+                mysql_free_result(res);
+            }
+        }
+    }
+
     for (int residentId : residents) {
-        // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
-        // (문자열 필드를 넣을 땐 반드시 이스케이프 필요)
-        // end_time = 지금(NOW()), start_time = 거기서 duration만큼 역산.
-        //
-        // resident_id 를 같이 박는 이유: 조회할 때마다 camera_id 로 조인하면
-        // 입소자가 방을 옮긴 뒤 과거 케어가 새 입주자 것으로 바뀐다.
-        // 기록 시점의 사람을 그대로 남긴다.
         char resident[16];
         if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
         else                std::snprintf(resident, sizeof(resident), "NULL");
 
-        char sql[512];
+        // ── 이 사람에게 실제로 기록할 시간 ────────────────────────
+        // 요양사가 방에 있던 구간과 이 사람이 침대에 있던 구간의 교집합.
+        // 요양사가 둘 중 누구를 돌봤는지는 여전히 알 수 없지만, 그 시간에 아예
+        // 자리에 없던 사람에게 케어시간이 붙는 것은 막을 수 있다.
+        //
+        // ※ 한계: "침대에 있었나"를 보는 것이지 "방에 있었나"가 아니다. 의자에
+        //   앉아 케어받으면 ROI 밖이라 덜 세어진다. 침대 ROI 를 협탁·보조의자까지
+        //   넉넉히 그리면 이 오차가 줄어든다(코드 변경 없이 ROI 만 크게).
+        char durExpr[512];
+        if (bedTracked && residentId > 0) {
+            std::snprintf(durExpr, sizeof(durExpr),
+                "(SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, GREATEST(in_at, @cs), "
+                "                                   LEAST(COALESCE(out_at, @ce), @ce))), 0) "
+                "   FROM bed_sessions WHERE resident_id = %d "
+                "    AND in_at < @ce AND COALESCE(out_at, @ce) > @cs)",
+                residentId);
+        } else {
+            std::snprintf(durExpr, sizeof(durExpr), "%d", durationSec);
+        }
+
+        char sql[1024];
         std::snprintf(sql, sizeof(sql),
             "INSERT INTO care_logs (camera_id, resident_id, duration_sec, start_time, end_time) "
-            "VALUES (%d, %s, %d, NOW() - INTERVAL %d SECOND, NOW())",
-            cameraId, resident, durationSec, durationSec);
+            "SELECT %d, %s, d, @cs, @ce FROM (SELECT %s AS d) t WHERE d > 0",
+            cameraId, resident, durExpr);
 
         if (mysql_query(conn_, sql)) {
             std::cerr << "[DB] 케어로그 INSERT 실패: " << mysql_error(conn_) << "\n";
             continue;   // 한 사람이 실패해도 나머지는 남긴다
+        }
+        // WHERE d > 0 이라 겹친 시간이 0 이면 행이 안 만들어진다 — 요양사가 왔을 때
+        // 자리에 없던 사람이다. 0초짜리 행을 남기면 "케어 N회" 가 부풀려진다.
+        if (mysql_affected_rows(conn_) == 0) {
+            std::cout << "[DB] 케어 제외 (카메라 " << (cameraId + 1)
+                      << ", 입소자 " << residentId << " — 그 시간 자리에 없었음)\n";
+            continue;
         }
         // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
         // INSERT 해서 남의 id를 집어올 수 있다.
@@ -66,7 +114,8 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     }
 
     std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1) << ", "
-              << durationSec << "초, " << ids.size() << "명)\n";
+              << durationSec << "초, " << ids.size() << "명"
+              << (bedTracked ? ", 재실 교집합 적용" : ", 재실 기록 없어 전체 시간") << ")\n";
     return ids;
 }
 
