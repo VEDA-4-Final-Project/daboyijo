@@ -794,27 +794,6 @@ private:
     qreal aspect_ = 16.0 / 9.0;
 };
 
-// 영상 타일 위에 얹는 투명 오버레이 — 부모(타일 카드) 크기를 늘 그대로 따라간다.
-// 자기 자신은 마우스를 통과시키므로(WA_TransparentForMouseEvents) 아래의 VideoView가
-// ROI 그리기 클릭을 그대로 받고, 오버레이 "위에 놓인 버튼들"만 클릭을 가져간다.
-// (레이아웃으로 얹으면 영상 위젯이 버튼 자리만큼 줄어들어 화면이 잘린다.)
-class TileOverlay : public QWidget {
-public:
-    explicit TileOverlay(QWidget* parent) : QWidget(parent) {
-        setAttribute(Qt::WA_TransparentForMouseEvents, true);
-        setAttribute(Qt::WA_NoSystemBackground, true);
-        setAttribute(Qt::WA_TranslucentBackground, true);
-        parent->installEventFilter(this);
-        setGeometry(parent->rect());
-    }
-
-protected:
-    bool eventFilter(QObject* o, QEvent* e) override {
-        if (o == parentWidget() && e->type() == QEvent::Resize)
-            setGeometry(parentWidget()->rect());
-        return QWidget::eventFilter(o, e);
-    }
-};
 }  // namespace
 
 // 좌측 네비 레일 — 아이콘+라벨 6개, 접으면 아이콘만. 상태는 QSettings에 남는다.
@@ -1465,6 +1444,10 @@ QWidget* MainWindow::buildVideoCard(int channel)
     video->setObjectName("video");
     video->setCornerRadius(0);   // Wisenet 톤 — 관제 타일은 각진 모서리
     channelViews[channel] = video;
+    // 시작할 때부터 이름을 얹는다. refreshPatientLabels()는 입소자를 편집한 뒤에만
+    // 불려서, 예전엔 첫 화면의 타일만 "CH1"로 남고 리소스 트리는 "CH1 · 김복순"으로
+    // 떠 같은 채널이 두 이름으로 보였다(loadPatientsFromDb는 buildUi보다 먼저 돈다).
+    video->setDisplayName(channelDisplayName(channel));
     connect(video, &VideoView::roiCompleted, this, &MainWindow::onRoiCompleted);
     connect(video, &VideoView::tileClicked, this, &MainWindow::selectChannel);
     connect(video, &VideoView::drawModeChanged, this,
@@ -1483,18 +1466,20 @@ QWidget* MainWindow::buildVideoCard(int channel)
 // 타일 위에 얹는 크롬 — 우상단 닫기(x) + 하단 가운데 호버 툴바.
 // Wisenet Viewer의 타일과 같은 자리다. 툴바는 평소 숨어 있다가 마우스를 올리면
 // 뜬다 — 4분할 화면에서 버튼이 늘 떠 있으면 영상보다 버튼이 먼저 눈에 들어온다.
+// 타일 위에 얹는 크롬 — 우상단 닫기(x) + 하단 가운데 호버 툴바.
+//
+// 이 둘은 카드의 "직접 자식"이다. 예전엔 투명 오버레이(WA_TransparentForMouseEvents)
+// 안에 레이아웃으로 넣었는데, 그 속성은 위젯뿐 아니라 그 자식들에게 가는 마우스
+// 이벤트까지 끊는다 — 버튼이 보이고 호버도 되는데 눌리지는 않았다.
+// 카드의 자식으로 두면 아래 VideoView와 형제가 되어, 버튼 위 클릭은 버튼이,
+// 나머지 영역 클릭은 영상이 그대로 받는다(ROI 그리기가 막히지 않는다).
+// 위치는 레이아웃이 아니라 layoutTileChrome()이 카드 크기에 맞춰 직접 잡는다.
 QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
 {
-    auto* overlay = new TileOverlay(card);
-
-    auto* v = new QVBoxLayout(overlay);
-    v->setContentsMargins(6, 6, 6, 8);
-    v->setSpacing(0);
-
     // 우상단: 레이아웃에서 이 타일 빼기.
     // 카메라 연결을 끊는 게 아니라 "이 화면에서 안 본다"는 뜻이다(Wisenet과 동일).
     // 서버는 계속 녹화·분석하고, 리소스 트리에서 다시 누르면 돌아온다.
-    auto* closeBtn = new QPushButton(QStringLiteral("✕"));
+    auto* closeBtn = new QPushButton(QStringLiteral("✕"), card);
     closeBtn->setObjectName("tileClose");
     closeBtn->setCursor(Qt::PointingHandCursor);
     closeBtn->setFixedSize(20, 20);
@@ -1503,15 +1488,9 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
             [this, channel] { setTileHidden(channel, true); });
     tileCloseBtns_[channel] = closeBtn;
 
-    auto* topRow = new QHBoxLayout();
-    topRow->setContentsMargins(0, 0, 0, 0);
-    topRow->addStretch();
-    topRow->addWidget(closeBtn);
-    v->addLayout(topRow);
-    v->addStretch();
-
-    // 하단 가운데: 호버 툴바
-    auto* toolbar = new QFrame();
+    // 하단 가운데: 호버 툴바. 평소 숨어 있다가 마우스를 올리면 뜬다 — 4분할
+    // 화면에서 버튼이 늘 떠 있으면 영상보다 버튼이 먼저 눈에 들어온다.
+    auto* toolbar = new QFrame(card);
     toolbar->setObjectName("tileToolbar");
     auto* tb = new QHBoxLayout(toolbar);
     tb->setContentsMargins(6, 4, 6, 4);
@@ -1557,18 +1536,30 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
         });
         tb->addWidget(b);
     }
+    toolbar->adjustSize();
     toolbar->hide();   // 호버 전까지 숨김
     tileToolbars_[channel] = toolbar;
 
-    auto* botRow = new QHBoxLayout();
-    botRow->setContentsMargins(0, 0, 0, 0);
-    botRow->addStretch();
-    botRow->addWidget(toolbar);
-    botRow->addStretch();
-    v->addLayout(botRow);
+    closeBtn->raise();
+    toolbar->raise();
+    layoutTileChrome(channel);
+    return card;
+}
 
-    overlay->raise();
-    return overlay;
+// 카드 크기에 맞춰 크롬 위치를 다시 잡는다(레이아웃을 쓰지 않으므로 직접).
+void MainWindow::layoutTileChrome(int channel)
+{
+    if (channel < 0 || channel >= 4) return;
+    QWidget* card = videoCards[channel];
+    if (!card) return;
+
+    const int m = 6;
+    if (auto* b = tileCloseBtns_[channel])
+        b->move(card->width() - m - b->width(), m);
+    if (auto* t = tileToolbars_[channel]) {
+        t->adjustSize();
+        t->move((card->width() - t->width()) / 2, card->height() - 8 - t->height());
+    }
 }
 
 // 지금 보고 있는 화면 그대로 PNG로 저장한다(Wisenet 타일 스냅샷과 같은 동작).
@@ -6052,7 +6043,21 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
     if (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave) {
         for (int ch = 0; ch < 4; ++ch) {
             if (obj != videoCards[ch] || !tileToolbars_[ch]) continue;
-            tileToolbars_[ch]->setVisible(ev->type() == QEvent::Enter);
+            bool show = (ev->type() == QEvent::Enter);
+            if (!show) {
+                // 커서가 아직 카드 안(툴바 버튼 위 등)이면 숨기지 않는다.
+                QWidget* card = videoCards[ch];
+                show = card->rect().contains(card->mapFromGlobal(QCursor::pos()));
+            }
+            tileToolbars_[ch]->setVisible(show);
+            break;
+        }
+    }
+    // 크롬은 레이아웃 밖에 놓인 자식이라 카드가 커지면 직접 따라가야 한다.
+    if (ev->type() == QEvent::Resize) {
+        for (int ch = 0; ch < 4; ++ch) {
+            if (obj != videoCards[ch]) continue;
+            layoutTileChrome(ch);
             break;
         }
     }

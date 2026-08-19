@@ -369,15 +369,31 @@ void VideoView::paintEvent(QPaintEvent*) {
         }
     }
 
-    // 그리기 모드 안내 배너 — 지금 몇 번 침대를 그리는 중인지 같이 보여준다
+    // 그리기 모드 안내 배너 — 지금 몇 번 침대를 그리는 중인지 같이 보여준다.
+    // 좌상단 이름표(LIVE·채널명) 아래에 놓는다: 예전엔 y=6에 그려서 이름표와
+    // 글자가 겹쳐 둘 다 못 읽었다. 배경 캡슐도 깔아 밝은 영상 위에서도 읽히게 한다.
     if (drawMode_) {
         const int id = nextFreeZoneId();
+        const QString msg =
+            id < 0 ? QStringLiteral("침대가 가득 찼습니다 (최대 %1개)").arg(kMaxRoiZones)
+                   : QStringLiteral("침대 %1 영역 클릭 · 더블클릭(또는 우클릭)으로 완료").arg(id + 1);
+
+        QFont bf = font();
+        bf.setBold(true);
+        p.setFont(bf);
+        const QFontMetrics bfm(bf);
+        const int tw = bfm.horizontalAdvance(msg);
+        const int bh = bfm.height() + 8;
+        // 이름표(높이 = fm.height()+6, 위 여백 8)보다 아래로 내린다.
+        const int top = 8 + bfm.height() + 6 + 6;
+        QRectF banner((width() - tw - 24) / 2.0, top, tw + 24, bh);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 175));
+        p.drawRoundedRect(banner, 4, 4);
         p.setPen(kDraftLine);
-        p.drawText(QRectF(0, 6, width(), 20), Qt::AlignHCenter,
-                   id < 0 ? QStringLiteral("침대가 가득 찼습니다 (최대 %1개)")
-                                .arg(kMaxRoiZones)
-                          : QStringLiteral("침대 %1 영역 클릭 · 더블클릭(또는 우클릭)으로 완료")
-                                .arg(id + 1));
+        p.drawText(banner, Qt::AlignCenter, msg);
+        p.setFont(font());
+        p.setBrush(Qt::NoBrush);
     }
 
     // 낙상 경보 — 발생 위치 마커(상시) + 빨간 테두리/배지(점멸)
