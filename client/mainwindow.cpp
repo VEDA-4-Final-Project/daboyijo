@@ -270,8 +270,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.51";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -747,42 +747,6 @@ QPixmap tileToolIconPixmap(int kind, const QColor& c, int px = 15)
 }
 
 
-// 자식 위젯을 정해진 가로:세로 비로, 들어갈 수 있는 최대 크기로 키워 가운데 놓는 상자.
-//
-// FramePreview는 자기 사각형 전체를 검정으로 칠한 뒤 그 안에 영상을 비율 유지로
-// 그린다. 그래서 상자가 영상보다 크면 그 차이가 통째로 검은 여백이 된다
-// (16:9 영상을 세로로 긴 칸에 넣으면 위아래가 새까맣게 남는다). 상자 쪽을 영상
-// 비율에 맞춰 두면 레터박스가 생길 자리가 아예 없어진다.
-class AspectBox : public QWidget {
-public:
-    explicit AspectBox(QWidget* child, QWidget* parent = nullptr)
-        : QWidget(parent), child_(child) {
-        child_->setParent(this);
-    }
-    // 비율의 출처는 자식이 들고 있는 프레임 하나다 — 바깥에서 숫자를 따로 넘기면
-    // 프레임과 상자가 어긋날 여지가 생긴다. 프레임이 바뀐 뒤 이걸 부르면 된다.
-    void refresh() { relayout(); }
-
-protected:
-    void resizeEvent(QResizeEvent*) override { relayout(); }
-
-private:
-    void relayout() {
-        if (!child_ || width() <= 0 || height() <= 0) return;
-        // 프레임이 없으면 FramePreview가 16:9를 돌려준다.
-        if (auto* fp = dynamic_cast<FramePreview*>(child_)) aspect_ = fp->frameAspect();
-        int cw = width();
-        int ch = int(qRound(cw / aspect_));
-        if (ch > height()) {          // 세로가 모자라면 세로에 맞춘다
-            ch = height();
-            cw = int(qRound(ch * aspect_));
-        }
-        child_->setGeometry((width() - cw) / 2, (height() - ch) / 2, cw, ch);
-    }
-
-    QWidget* child_ = nullptr;
-    qreal aspect_ = 16.0 / 9.0;
-};
 }  // namespace
 
 // 좌측 네비 레일 — 아이콘+라벨 6개, 접으면 아이콘만. 상태는 QSettings에 남는다.
@@ -935,8 +899,6 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     QMainWindow::resizeEvent(e);
     if (alarmOverlay_ && ui && ui->centralwidget)
         alarmOverlay_->setGeometry(ui->centralwidget->rect());
-    // 창 크기가 바뀌면 이미지 스테이지의 "내용 폭"도 다시 계산해야 한다.
-    updateImageStageWidth();
     // 경보 토스트가 떠 있으면 가로 중앙으로 다시 맞춘다.
     if (alarmToastShown_ && alarmBanner_ && ui && ui->centralwidget) {
         const int x = qMax(12, (ui->centralwidget->width() - alarmBanner_->width()) / 2);
@@ -1929,11 +1891,22 @@ QString MainWindow::channelDisplayName(int ch) const
     const QVector<int>& ids = residentsByChannel_[ch];
     if (ids.isEmpty()) return tag;
 
-    const QString first = residentInfo_.value(ids.first()).name;
-    if (first.isEmpty()) return tag;
-    if (ids.size() > 1)
-        return QStringLiteral("%1 · %2 외 %3명").arg(tag, first).arg(ids.size() - 1);
-    return QStringLiteral("%1 · %2").arg(tag, first);
+    // 한 채널(=한 방의 한 시야)에 여러 명이 함께 누워 있는 게 이 시스템의 기본
+    // 구성이다. 그런데 대표 한 명만 쓰고 "외 N명"으로 접으면, 정작 그 방에 누가
+    // 있는지를 화면에서 알 수 없다 — 두 명까지는 다 적는다.
+    // 세 명 이상은 한 줄짜리 이름표가 감당이 안 되므로 그때만 접는다.
+    QStringList names;
+    for (int rid : ids) {
+        const QString n = residentInfo_.value(rid).name;
+        if (!n.isEmpty()) names << n;
+    }
+    if (names.isEmpty()) return tag;
+
+    if (names.size() <= 2)
+        return QStringLiteral("%1 · %2").arg(tag, names.join(QStringLiteral(", ")));
+    return QStringLiteral("%1 · %2 외 %3명")
+        .arg(tag, names.mid(0, 2).join(QStringLiteral(", ")))
+        .arg(names.size() - 2);
 }
 
 // ═════════════════════════════════════════════════════════
@@ -5508,7 +5481,7 @@ void MainWindow::onReadyRead()
             camThumbs[ch]->setFrame(pix);
         // 이미지 탭 '적용 후(실시간)' 프리뷰도 같은 프레임으로 즉시 갱신 — 라이브 영상과
         // 동일 경로라 지연이 붙지 않는다. (이미지 모드일 때만: 나머지 모드에선 안 보임)
-        if (imgAfter && roiEditChannel == ch && cameraSettingsVisible() &&
+        if (imgWipe_ && roiEditChannel == ch && cameraSettingsVisible() &&
             camMode_ == QStringLiteral("이미지"))
             setImagePreviewFrame(pix);   // 첫 프레임에서 상자 비율도 함께 잡힌다
     }
@@ -6185,8 +6158,8 @@ void MainWindow::sendFocus(int channel, bool area, float nx, float ny)
     sock->flush();
 }
 
-// imgAfter(실시간 프리뷰) 클릭 → 클릭한 지점에 영역 초점. 레터박스(KeepAspectRatio)
-// 여백을 빼고 실제 표시된 이미지 안에서의 정규화 좌표를 계산한다.
+// 영상 타일의 호버 툴바 표시/숨김과 크롬 재배치를 맡는다.
+// (초점 클릭은 WipeCompare::focusRequested 시그널로 따로 들어온다)
 bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
 {
     // 영상 타일 호버 → 하단 툴바 표시/숨김. 버튼이 늘 떠 있으면 4분할 화면에서
@@ -6213,19 +6186,6 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
         }
     }
 
-    if (obj == imgAfter && ev->type() == QEvent::MouseButtonPress) {
-        if (imgAfter->hasFrame()) {
-            const QRectF r = imgAfter->imageRect();   // 레터박스 안 실제 영상 사각형
-            auto* me = static_cast<QMouseEvent*>(ev);
-            const double px = me->position().x() - r.left();
-            const double py = me->position().y() - r.top();
-            if (px >= 0 && py >= 0 && px < r.width() && py < r.height()) {
-                sendFocus(roiEditChannel, true,
-                          float(px / r.width()), float(py / r.height()));
-            }
-        }
-        return true;   // 이 클릭은 소비
-    }
     return QMainWindow::eventFilter(obj, ev);
 }
 
@@ -6301,7 +6261,8 @@ QWidget* MainWindow::buildCamImagePage()
     auto* afBtn = imgFocusBtn;
     col->addWidget(afBtn);
     auto* focusHint = new QLabel(
-        QStringLiteral("💡 오른쪽 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."));
+        QStringLiteral("💡 가운데 영상을 클릭하면 그 지점에 초점을 맞춥니다. "
+                       "구분선을 좌우로 끌면 적용 전과 지금을 비교할 수 있습니다."));
     focusHint->setObjectName("camHint");
     focusHint->setWordWrap(true);
     col->addWidget(focusHint);
@@ -6322,10 +6283,8 @@ QWidget* MainWindow::buildCamImagePage()
     connect(apply, &QPushButton::clicked, this, [this]() {
         const int ch = roiEditChannel;
         // 적용 직전 현재 프레임을 Before 스냅샷으로 고정
-        if (imgBefore && !lastFramePix_[ch].isNull()) {
-            imgBefore->setFrame(lastFramePix_[ch]);
-            if (auto* b = dynamic_cast<AspectBox*>(imgBeforeBox)) b->refresh();
-        }
+        if (imgWipe_ && !lastFramePix_[ch].isNull())
+            imgWipe_->setBefore(lastFramePix_[ch]);
         sendImageParams(ch, imgBright->value(), imgContrast->value(),
                         imgSaturation->value());
         saveImageParams(ch);   // 채널을 오갔다 돌아와도 같은 값이 보이게
@@ -6366,14 +6325,12 @@ QWidget* MainWindow::buildCameraSettingsTab()
 
     // 본문 3단: 채널 스트립(썸네일) │ 스테이지(큰 영상) │ 인스펙터(모드별 설정).
     // 영상 편집 도구의 표준 배치 — 왼쪽에서 대상을 고르고, 가운데를 보며, 오른쪽에서 만진다.
-    camBodyRow_ = new QHBoxLayout();
-    camBodyRow_->setSpacing(14);
-    camBodyRow_->addWidget(buildCamChannelStrip(), 0);   // [0]
-    camBodyRow_->addWidget(buildCamStagePanel(), 1);     // [1]
-    camBodyRow_->addWidget(buildCamInspector(), 0);      // [2]
-    outer->addLayout(camBodyRow_, 1);
-    auto* body = camBodyRow_;
-    Q_UNUSED(body)
+    auto* body = new QHBoxLayout();
+    body->setSpacing(14);
+    body->addWidget(buildCamChannelStrip(), 0);
+    body->addWidget(buildCamStagePanel(), 1);
+    body->addWidget(buildCamInspector(), 0);
+    outer->addLayout(body, 1);
 
     selectCamChannel(0);
     setCamMode(QStringLiteral("연결"));
@@ -7126,45 +7083,9 @@ void MainWindow::rebuildBedList()
 // 이미지 탭 실시간(적용 후) 프리뷰에 프레임을 넣는다. 상자 비율도 함께 맞춘다 —
 // 세 곳(채널 전환·모드 전환·프레임 수신)에서 각자 setFrame만 부르면 상자는 계속
 // 16:9 가정으로 남아, 카메라 해상도가 다를 때 다시 검은 여백이 생긴다.
-// 이미지 모드에서 스테이지 카드 폭을 "영상 두 장이 딱 들어가는 폭"으로 줄인다.
-//
-// 16:9 두 장을 세로로 쌓으면 세로가 먼저 차서(각 355px) 폭이 631px밖에 안 쓰인다.
-// 카드가 776px 그대로면 좌우로 각각 72px씩 검은 띠가 남는다 — 카드를 내용 폭으로
-// 줄이고 남는 폭은 인스펙터에게 넘기면 그 띠가 사라진다(설정 폼도 넓어진다).
-// 카드 높이는 폭과 무관하게 행 높이로 정해지므로 폭→높이→폭 되먹임은 없다.
-void MainWindow::updateImageStageWidth()
-{
-    if (!camStageCard_ || !camBodyRow_) return;
-
-    if (camMode_ != QStringLiteral("이미지")) {
-        camStageCard_->setMinimumWidth(0);
-        camStageCard_->setMaximumWidth(QWIDGETSIZE_MAX);
-        camBodyRow_->setStretch(1, 1);   // 남는 폭은 스테이지(큰 영상)가 갖는다
-        camBodyRow_->setStretch(2, 0);
-        return;
-    }
-
-    const int boxH = imgAfterBox ? imgAfterBox->height() : 0;
-    if (boxH <= 0) return;   // 아직 배치 전 — 다음 호출(리사이즈/프레임)에서 잡힌다
-    const qreal aspect = imgAfter ? imgAfter->frameAspect() : 16.0 / 9.0;
-    // + 24 = 이미지 페이지의 좌우 여백(12+12)
-    // stretch 0 + 최대폭만 주면 레이아웃은 sizeHint 만큼만 준다 — "정확히 이 폭"이
-    // 되도록 최소·최대를 함께 묶는다.
-    camStageCard_->setFixedWidth(qMax(360, int(qRound(boxH * aspect)) + 24));
-    camBodyRow_->setStretch(1, 0);
-    camBodyRow_->setStretch(2, 1);   // 남는 폭은 인스펙터가 가져간다
-}
-
 void MainWindow::setImagePreviewFrame(const QPixmap& pm)
 {
-    if (imgAfter) imgAfter->setFrame(pm);
-    // 상자에게 "프레임이 바뀌었으니 다시 재 봐"라고만 알린다 — 비율 계산은 상자가
-    // 자식(FramePreview)에게 직접 묻는다.
-    // qobject_cast는 Q_OBJECT를 요구하는데 AspectBox는 파일 로컬(익명 네임스페이스)이라
-    // moc를 못 태운다 → RTTI로 내려간다.
-    if (auto* b = dynamic_cast<AspectBox*>(imgBeforeBox)) b->refresh();
-    if (auto* b = dynamic_cast<AspectBox*>(imgAfterBox)) b->refresh();
-    updateImageStageWidth();   // 비율이 바뀌면 카드 폭도 따라가야 여백이 안 생긴다
+    if (imgWipe_) imgWipe_->setAfter(pm);
 }
 
 QWidget* MainWindow::buildCamStagePanel()
@@ -7191,35 +7112,13 @@ QWidget* MainWindow::buildCamStagePanel()
     connect(roiEditorView, &VideoView::zoneSelected, this, &MainWindow::onRoiZoneSelected);
     camStageStack->addWidget(roiEditorView);
 
-    // 1) 이미지 Before/After 프리뷰
-    auto* imgPage = new QWidget();
-    auto* iv = new QVBoxLayout(imgPage);
-    iv->setContentsMargins(12, 10, 12, 12);   // 스테이지 카드 안쪽 여백
-    iv->setSpacing(8);
-    // 이름표는 영상 위에 얹는다(FramePreview가 직접 그린다) — 영상 밖 라벨은
-    // 검은 배경 위 작은 회색 글씨라 잘 안 읽혔고, 캡션 줄 높이만큼 영상도 작아졌다.
-    // FramePreview는 원본 프레임을 그대로 들고 paintEvent에서 한 번만 그린다
-    // (QLabel::setPixmap처럼 매 프레임 레이아웃을 무효화하지 않는다 — 지연의 원인이었다).
-    imgBefore = new FramePreview(QStringLiteral("적용 전"));
-    imgAfter  = new FramePreview(QStringLiteral("실시간"));
-    // 위아래로 쌓는다. 스테이지는 세로로 긴 칸이라, 나란히 놓으면 각 영상이
-    // 폭의 절반(≈450px)까지밖에 못 커지고 위아래로 큰 검은 띠가 남았다.
-    // 세로로 쌓으면 각 영상이 폭을 다 쓰면서 오히려 커진다.
-    imgBeforeBox = new AspectBox(imgBefore);
-    imgAfterBox  = new AspectBox(imgAfter);
-    for (QWidget* b : {imgBeforeBox, imgAfterBox}) {
-        b->setMinimumHeight(140);
-        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    }
-    imgBefore->setCaption(QStringLiteral("적용 전"));
-    imgAfter->setCaption(QStringLiteral("적용 후 · 실시간"), /*live=*/true);
-    iv->addWidget(imgBeforeBox, 1);
-    iv->addWidget(imgAfterBox, 1);
-    camStageStack->addWidget(imgPage);
-
-    // 실시간 프리뷰 클릭 → 클릭 지점 영역 초점 (eventFilter가 처리)
-    imgAfter->installEventFilter(this);
-    imgAfter->setCursor(Qt::PointingHandCursor);
+    // 1) 적용 전/후 와이프 비교 — 영상 한 장이 스테이지를 그대로 채운다.
+    //    연결·ROI 탭의 큰 영상과 같은 위젯 크기·같은 cover 규칙이라 틀이 어긋나지 않는다.
+    imgWipe_ = new WipeCompare();
+    imgWipe_->setObjectName("video");
+    connect(imgWipe_, &WipeCompare::focusRequested, this,
+            [this](float nx, float ny) { sendFocus(roiEditChannel, true, nx, ny); });
+    camStageStack->addWidget(imgWipe_);
 
     // 실시간(After) 갱신은 폴링하지 않는다 — onReadyRead가 프레임이 도착할 때마다
     // 라이브/ROI 영상과 같은 타이밍으로 직접 넣어준다(200ms 타이머 폴링 시절의
@@ -7229,10 +7128,6 @@ QWidget* MainWindow::buildCamStagePanel()
     // 짝을 맞춰야 영상이 페이지에 '얹힌' 게 아니라 '들어앉은' 것처럼 보인다.
     auto* stageCard = new QFrame();
     stageCard->setObjectName("camStage");
-    // 이미지 모드에서 폭을 내용에 맞춰 줄이기 위해 들고 있는다(updateImageStageWidth).
-    // ★ 알림 설정 페이지의 LED 미리보기 카드도 스타일 재사용 목적으로 같은
-    //   objectName("camStage")을 쓴다 — 그쪽 카드를 여기에 대입하지 말 것.
-    camStageCard_ = stageCard;
     auto* sl = new QVBoxLayout(stageCard);
     sl->setContentsMargins(0, 0, 0, 0);
     sl->addWidget(camStageStack);
@@ -7249,8 +7144,8 @@ void MainWindow::selectCamChannel(int ch)
 
     // 이미지 프리뷰: 채널이 바뀌면 '적용 전'은 검은 화면으로 리셋(아직 이 채널에
     // 적용한 적 없으니), '적용 후(실시간)'는 새 채널 프레임으로 즉시 교체.
-    if (imgBefore) imgBefore->clearFrame();
-    setImagePreviewFrame(lastFramePix_[ch]);   // 빈 프레임이면 안내 문구
+    if (imgWipe_) imgWipe_->clearBefore();   // 채널이 바뀌면 비교 대상도 새로 잡는다
+    setImagePreviewFrame(lastFramePix_[ch]);
 
     loadImageParams(ch);         // 이 채널에 마지막으로 보낸 값으로 슬라이더를 맞춘다
     refreshCamChannelStatus();   // 배지·헤더·컨트롤 활성화까지 여기서 이어진다
@@ -7275,9 +7170,6 @@ void MainWindow::setCamMode(const QString& mode)
     // 전환 직후 빈 화면이 깜빡이지 않게 최신 프레임으로 한 번 채운다
     // (이후는 onReadyRead가 프레임마다 갱신).
     if (imageMode) setImagePreviewFrame(lastFramePix_[roiEditChannel]);
-    // 전환 직후엔 아직 배치 전이라 상자 높이가 0이다 — 배치가 끝난 뒤 한 번 더.
-    updateImageStageWidth();
-    QTimer::singleShot(0, this, [this] { updateImageStageWidth(); });
 }
 
 // 채널별 연결·ROI 지정 여부를 레일 배지에 반영.
@@ -7518,8 +7410,7 @@ void MainWindow::onCameraClearClicked()
         roiEditorView->setLive(false);
         roiEditorView->setCameraConnected(false);
     }
-    if (imgAfter) imgAfter->clearFrame();
-    if (imgBefore) imgBefore->clearFrame();
+    if (imgWipe_) imgWipe_->clearFrames();
     persistCameraActive();
     refreshCamChannelStatus();   // 채널 타일 배지 + 인스펙터 헤더에 해제 상태 반영
 }
