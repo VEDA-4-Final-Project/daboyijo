@@ -270,8 +270,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.51";
-const char* kDefaultHostB  = "172.20.32.51";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -928,8 +928,10 @@ QWidget* MainWindow::buildHeader()
     micButton = new QPushButton(QStringLiteral("🎤 방송"));
     micButton->setObjectName("micButton");
     micButton->setCursor(Qt::PointingHandCursor);
-    connect(micButton, &QPushButton::pressed, this, &MainWindow::onMicPressed);
-    connect(micButton, &QPushButton::released, this, &MainWindow::onMicReleased);
+    // 누르고 있는 동안만 방송하던 방식(press-and-hold)에서,
+    // 한 번 클릭하면 방송 시작 · 다시 클릭하면 종료되는 토글 방식으로 변경.
+    micButton->setCheckable(true);
+    connect(micButton, &QPushButton::toggled, this, &MainWindow::onMicToggled);
     lay->addWidget(micButton);
 
     // 연결 상태 — pill 배지
@@ -7657,22 +7659,14 @@ void MainWindow::resendCamerasForServer(int serverIdx)
 // ═══════════════════════════════════════════════════════════
 //  원격 방송(인터콤)
 // ═══════════════════════════════════════════════════════════
-void MainWindow::onMicPressed()
+void MainWindow::onMicToggled(bool on)
 {
-    micButton->setText(QStringLiteral("🔴 방송 중"));
-    micButton->setProperty("active", true);
+    micButton->setText(on ? QStringLiteral("🔴 방송 중")
+                          : QStringLiteral("🎤 방송"));
+    micButton->setProperty("active", on);
     micButton->style()->unpolish(micButton);
     micButton->style()->polish(micButton);
-    qDebug() << "인터콤 방송 시작";
-}
-
-void MainWindow::onMicReleased()
-{
-    micButton->setText(QStringLiteral("🎤 방송"));
-    micButton->setProperty("active", false);
-    micButton->style()->unpolish(micButton);
-    micButton->style()->polish(micButton);
-    qDebug() << "인터콤 방송 종료";
+    qDebug() << (on ? "인터콤 방송 시작" : "인터콤 방송 종료");
 }
 
 // ═══════════════════════════════════════════════════════════
