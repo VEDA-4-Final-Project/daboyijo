@@ -24,8 +24,10 @@ public:
     // 판단 함수(아마 안쓰게 될 가능성이 큽니다.)
     bool checkFallStatus(const WearableData& data, AlarmCommand& out_cmd);
 
-    // 알림노드로 제어 명령어 전송 함수 
-    void sendAlarmCommand(AlarmEventType event_type, int room);
+    // 알림노드로 제어 명령어 전송 함수
+    // name: 입소자 이름(신원 미상이면 빈 문자열) — 가운데 글자를 O 로 가려서
+    //       AlarmCommand.name 에 실어 보낸다(원본 이름은 서버 밖으로 안 나감).
+    void sendAlarmCommand(AlarmEventType event_type, int room, const std::string& name = std::string());
 
     // 함수 타입 정의 (c에서의 typedef)
     // 이벤트 종류 + 어느 웨어러블에서 왔는지(device_id) 를 함께 넘긴다.

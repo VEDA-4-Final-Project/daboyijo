@@ -107,22 +107,34 @@ severity toSeverity(const std::string& type)
     return SEV_INFO;
 }
 
-// 패널에 흘릴 문구 — 호실을 알면 노드가 조립, 모르면 서버 문구 사용
+// 패널에 흘릴 문구 — 아는 이벤트면 노드가 조립(호실·이름은 아는 만큼만),
+// 모르는 이벤트일 때만 서버 문구 사용
 std::string toText(const AlarmCommand& c)
 {
+    // 이벤트 문구는 노드가 정한다 — 서버 message 는 로그용 영문("room101 FALL")이라
+    // 폰트에 글자가 없어 그대로 띄우면 숫자만 남고 사실상 안 보인다.
+    std::string phrase;
+    if      (c.type == "FALL")           phrase = "낙상 발생";
+    else if (c.type == "EGRESS")         phrase = "침상 이탈";
+    else if (c.type == "VITAL_ABNORMAL") phrase = "생체 이상";
+
     // room 은 네트워크에서 온 값이라 범위를 안 믿음 — 보내는 쪽이 초기화를 빠뜨리면
     // 쓰레기 정수가 실려 옴 (실측: -589012800)
     // 그대로 띄우면 표시도 틀리고 자릿수만큼 스크롤이 길어져(10자리 = 13초)
     // 뒤따르는 진짜 경보가 밀림, 0 은 원래부터 "모름"
-    if (c.room <= 0 || c.room > 9999) return c.message;
+    const bool roomKnown = (c.room > 0 && c.room <= 9999);
+    const std::string where = roomKnown ? std::to_string(c.room) + "호 " : std::string();
+
+    // 아는 이벤트가 아니면(관제 앱 CONTROL 등) 서버 문구를 그대로 쓴다 —
+    // 그쪽은 폰트에 있는 문구를 보내도록 발신부에서 맞춰 둔다(client kAlertTestText).
+    if (phrase.empty()) return where + c.message;
 
     // 64px 를 한 바퀴 흘리는 데 문구 길이만큼 시간이 듦
-    // 바뀌는 정보(호실)를 맨 앞에 두고 나머지는 최소한으로
-    const std::string room = std::to_string(c.room);
-    if (c.type == "FALL")           return room + "호 낙상 발생";
-    if (c.type == "EGRESS")         return room + "호 침상 이탈";
-    if (c.type == "VITAL_ABNORMAL") return room + "호 생체 이상";
-    return room + "호 " + c.message;
+    // 바뀌는 정보(호실·이름)를 맨 앞에 두고 나머지는 최소한으로
+    // c.name 은 서버가 가운데 글자를 O 로 가려서 보낸 것 — 여기선 그대로 붙이기만 한다.
+    // 호실이나 이름을 모르면 그 부분만 빼고, 이벤트 문구는 어떤 경우에도 남긴다.
+    const std::string who = c.name.empty() ? std::string() : (c.name + " ");
+    return where + who + phrase;
 }
 
 // 절대 경로면 그대로, 파일명만 오면 audio_dir 에서 찾음
