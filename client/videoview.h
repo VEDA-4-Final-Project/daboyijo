@@ -171,4 +171,47 @@ private:
     bool captionLive_ = false;
 };
 
+// 카메라 이미지 조정용 "적용 전 / 적용 후" 와이프 비교 화면.
+//
+// 영상 한 장이 스테이지를 꽉 채우고(VideoView와 같은 cover 방식 — 넘치는 부분은
+// 중앙 크롭), 가운데 세로 구분선을 끌면 왼쪽은 적용 전 스냅샷, 오른쪽은 실시간이
+// 보인다. 두 장을 따로 놓으면 각 장이 절반 크기로 줄고 남는 여백이 생기는데,
+// 겹쳐 놓으면 같은 지점의 밝기 차이를 경계선 하나로 바로 비교할 수 있다.
+//
+// 적용 전 스냅샷이 없으면 구분선 없이 실시간 화면만 보여준다.
+class WipeCompare : public QWidget {
+    Q_OBJECT
+public:
+    explicit WipeCompare(QWidget* parent = nullptr);
+
+    void setAfter(const QPixmap& pm);    // 실시간(적용 후)
+    void setBefore(const QPixmap& pm);   // [적용] 직전에 굳힌 스냅샷
+    void clearBefore();
+    void clearFrames();
+    bool hasBefore() const { return !before_.isNull(); }
+
+    // 화면을 채운 영상의 배치 사각형(위젯 밖으로 넘칠 수 있다).
+    // 클릭 지점을 프레임 정규화 좌표로 바꿀 때 쓴다 — VideoView::displayRect와 같은 규칙.
+    QRectF imageRect() const;
+
+signals:
+    // 구분선을 끌지 않고 화면을 그냥 클릭 — 그 지점에 초점을 맞춰 달라는 뜻.
+    void focusRequested(float nx, float ny);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+
+private:
+    qreal splitX() const { return width() * split_; }
+    void drawChip(QPainter& p, const QRectF& box, const QString& text, bool live) const;
+
+    QPixmap before_, after_;
+    qreal split_ = 0.5;      // 구분선 위치(0~1)
+    bool dragging_ = false;
+    QPointF pressPos_;
+};
+
 #endif  // VIDEOVIEW_H
