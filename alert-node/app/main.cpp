@@ -8,7 +8,9 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -128,6 +130,23 @@ std::string toAudioPath(const Config& cfg, const std::string& file)
 {
     if (file.empty() || file[0] == '/') return file;
     return exeDir() + "/" + cfg.audio_dir + "/" + file;
+}
+
+// 방번호 파일이 없으면(아직 안 녹음된 방) 타입 기반 공용 파일로 대체
+std::string resolveAudioPath(const Config& cfg, const AlarmCommand& cmd)
+{
+    std::string primary = toAudioPath(cfg, cmd.audio_file);
+    if (primary.empty() || std::filesystem::exists(primary)) return primary;
+
+    std::string fallbackName;
+    if (cmd.type == "FALL")                fallbackName = "fall_alert.wav";
+    else if (cmd.type == "EGRESS")         fallbackName = "egress_alert.wav";
+    else if (cmd.type == "VITAL_ABNORMAL") fallbackName = "vital_alert.wav";
+    else return primary;   // CONTROL(테스트) 등은 그대로 — 대체 대상 아님
+
+    std::string fallback = toAudioPath(cfg, fallbackName);
+    std::cerr << "[Audio] " << cmd.audio_file << " 없음 — " << fallbackName << " 로 대체\n";
+    return fallback;
 }
 
 } // namespace
@@ -267,7 +286,7 @@ int main(int argc, char* argv[])
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.setVolume(playVolume);   // 테스트=그 음량 / 이벤트=평상시 음량
-            player.playWav(toAudioPath(cfg, cmd.audio_file), cmd.loop);   // 비동기
+            player.playWav(resolveAudioPath(cfg, cmd), cmd.loop);   // 비동기
         } else if (cmd.audio_action == "STOP") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.stop();   // 대개 MQTT 콜백이 이미 껐다 — 두 번째 호출은 무해

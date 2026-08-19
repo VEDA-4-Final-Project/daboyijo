@@ -80,19 +80,27 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int room ) {
 
     AlarmCommand cmd;
     cmd.room = room;
-    
+
+    // 방번호를 알면 방 전용 음성으로, 모르면(room<=0) 공용 음성으로.
+    // 알림노드가 방 전용 파일이 없으면 자동으로 공용 파일로 대체하므로
+    // 여기서 room 값의 유효성은 따로 검증하지 않는다.
+    auto roomAudioFile = [&](const std::string& base) {
+        return cmd.room > 0 ? base + "_" + std::to_string(cmd.room) + ".wav"
+                            : base + ".wav";
+    };
+
     if(event_type == AlarmEventType::FALL){
         cmd.type= "FALL";
         cmd.message = "room" + std::to_string(cmd.room) + " FALL";
-        cmd.audio_file = "fall_alert.wav";
+        cmd.audio_file = roomAudioFile("fall_alert");
     }else if(event_type == AlarmEventType::EGRESS){
         cmd.type = "EGRESS";
         cmd.message = "room" + std::to_string(cmd.room) + " EGRESS";
-        cmd.audio_file = "egress_alert.wav";
+        cmd.audio_file = roomAudioFile("egress_alert");
     }else if(event_type == AlarmEventType::VITAL_ABNORMAL){
         cmd.type = "VITAL_ABNORMAL";
         cmd.message = "room"+ std::to_string(cmd.room) + " VITAL_ABNORMAL";
-        cmd.audio_file = "vital_alert.wav";
+        cmd.audio_file = roomAudioFile("vital_alert");
     }
 
 
