@@ -257,8 +257,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.50";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -306,11 +306,17 @@ QString brokerCaPath() {
 // 영상 스트림 서버(Pi) 검증용 CA. MQTT 브로커와 같은 CA(DavoCA)로 서명하므로
 // 기본값은 brokerCaPath()와 같은 파일 — 새 인증서를 발급해도 이 파일 하나만
 // certs/에 있으면 되고, 배포된 클라이언트를 다시 건드릴 일이 없다.
+// MQTT의 certs/ca.crt와 일부러 다른 파일명을 쓴다. 같은 파일을 공유하면(예전
+// 방식) 영상 스트림 TLS를 끄려고 이 파일을 지웠을 때 MqttQtManager까지 같이
+// 끊긴다 — 그쪽은 경로 문자열이 비어있을 때만 평문으로 내려가고, 파일이 없으면
+// (경로는 있는데 못 읽으면) 조용히 평문으로 안 가고 아예 연결 실패로 처리하기
+// 때문이다. 그래서 두 인증서 파일을 분리해 "영상만 평문으로" 끌 수 있게 한다.
+// 서명한 CA는 같아도(DavoCA) 되고, 파일만 stream-ca.crt로 따로 배포하면 된다.
 QString streamCaPath() {
     QSettings s;
     return s.value(QStringLiteral("stream/caCert"),
                    QCoreApplication::applicationDirPath()
-                       + QStringLiteral("/certs/ca.crt")).toString();
+                       + QStringLiteral("/certs/stream-ca.crt")).toString();
 }
 
 // 영상 서버(Pi) 인증서에 적힌 이름(CN). MQTT/scripts/generate_stream_certs.sh 의
@@ -1637,6 +1643,12 @@ void MainWindow::selectChannel(int ch)
     if (gridLayout_ != GridLayout::Quad) relayoutGrid();
     refreshResourceTree();
     refreshTimeline();   // 타임라인은 선택 채널의 녹화 구간을 보여준다
+
+    // 녹화 재생 중 채널을 바꾸면 그 채널의 같은 시각으로 다시 불러온다.
+    // 예전엔 타임라인만 갱신되고 실제 영상 소스는 안 바뀌어서, 채널만 바꾸고
+    // ▶를 눌러도 이전 채널 화면에 대고 재생/정지만 토글될 뿐 반응이 없었다
+    // (영상 로드는 seekPlaybackTo 한 곳뿐이라 타임라인을 직접 눌러야만 됐음).
+    if (playbackMode_ && timeline_) seekPlaybackTo(timeline_->playhead());
 }
 
 // 배치의 유일한 결정 지점. gridLayout_ x selectedChannel_ x tileHidden_ 만 본다.
@@ -2138,6 +2150,15 @@ void MainWindow::seekPlaybackTo(qint64 ms)
                         transportTimeLabel_->setText(
                             QDateTime::fromMSecsSinceEpoch(at)
                                 .toString("yyyy-MM-dd HH:mm:ss"));
+                });
+        // ▶ 버튼 글리프를 실제 재생 상태에 맞춰 토글(블랙박스 재생기의
+        // playbackStateChanged 연결과 같은 패턴 — 예전엔 이 트랜스포트 바에만 빠져있었음).
+        connect(playbackPlayer_, &QMediaPlayer::playbackStateChanged, this,
+                [this](QMediaPlayer::PlaybackState st) {
+                    if (transportPlayBtn_)
+                        transportPlayBtn_->setText(st == QMediaPlayer::PlayingState
+                                                        ? QStringLiteral("⏸")
+                                                        : QStringLiteral("▶"));
                 });
     }
 
@@ -3196,13 +3217,18 @@ void MainWindow::playBlackboxClip(const QString& url)
 
     // "이 시점 NVR에서 이어보기" 대상(selectedEventChannel_/Timestamp_)을 URL의
     // 파일명에서 직접 뽑아 채운다. 예전엔 이벤트 기록 행(onLogRowActivated)만
-    // 이 값을 채워서, 검색 결과 클립이나 NVR 목록을 직접 눌렀을 땐 채워지지
-    // 않아 버튼이 계속 비활성 상태였다 — 파일명 규칙(ch{N}_{ms}[_TYPE].mp4)이
-    // 블랙박스·NVR 둘 다 같아 여기 한 곳에서 재생 경로 전부를 커버할 수 있다.
+    // 이 값을 채워서, 검색 결과 클립을 직접 눌렀을 땐 채워지지 않아 버튼이
+    // 계속 비활성 상태였다.
+    // ★ 블랙박스 이벤트 클립(ch{N}_{ms}_{TYPE}.mp4, 3토큰)에서만 채운다 — NVR
+    //   세그먼트(ch{N}_{ms}.mp4, 2토큰)까지 여기 걸리면, "이 시점 NVR에서
+    //   이어보기"로 방금 도착한 세그먼트를 볼 때 그 세그먼트 자신의 시작시각으로
+    //   원래 이벤트 시각을 덮어써버려서, 다음 판정이 엉뚱한 세그먼트/오프셋을
+    //   가리키게 되는 버그가 있었다. NVR 세그먼트 재생 중엔 이 값을 그대로 둬서
+    //   "원래 보러 온 이벤트"를 계속 가리키게 한다.
     const QString fileName = QUrl(url).fileName();
     const QString stem = fileName.left(fileName.lastIndexOf('.'));
     const QStringList parts = stem.split(QLatin1Char('_'));
-    if (parts.size() >= 2 && parts[0].startsWith(QLatin1String("ch"))) {
+    if (parts.size() >= 3 && parts[0].startsWith(QLatin1String("ch"))) {
         bool chOk = false, msOk = false;
         const int ch = parts[0].mid(2).toInt(&chOk);
         const qint64 ms = parts[1].toLongLong(&msOk);
