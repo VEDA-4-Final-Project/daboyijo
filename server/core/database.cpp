@@ -32,33 +32,81 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     std::vector<long long> ids;
     if (!conn_) return ids;
 
-    // 그 방에 있는 재원자 전원. 요양사가 둘 중 누구를 돌봤는지는 영상에 없으므로
-    // 전원에게 같은 시간을 남긴다(헤더 주석 참고). 아무도 없으면 -1 하나를 넣어
-    // resident_id = NULL 로 한 행만 만든다 — 케어가 있었다는 사실은 지우지 않는다.
     std::vector<int> residents = residentsByCameraLocked(cameraId);
     if (residents.empty()) residents.push_back(-1);
 
+    // 케어 구간을 한 번만 정해 세션 변수에 담는다. NOW() 를 여러 문장에서 각각
+    // 부르면 사람마다 몇 밀리초씩 어긋난 창으로 계산돼 같은 방인데 값이 달라진다.
+    char win[128];
+    std::snprintf(win, sizeof(win),
+        "SET @cs = NOW() - INTERVAL %d SECOND, @ce = NOW()", durationSec);
+    if (mysql_query(conn_, win)) {
+        std::cerr << "[DB] 케어 구간 설정 실패: " << mysql_error(conn_) << "\n";
+        return ids;
+    }
+
+    // ── 침대 추적이 이 채널에서 실제로 돌고 있는가 ────────────────
+    // ★ 안전장치. 재실 기록이 없는데 교집합만 믿으면 모든 케어시간이 0 이 된다.
+    //   침대 ROI 를 아직 안 그렸거나 추적이 멈춘 상태가 그렇다. 그때는 "자리에
+    //   없었다"가 아니라 "모른다"이므로, 예전처럼 전원에게 전체 시간을 남긴다.
+    //   기록이 부풀려지는 것보다 통째로 사라지는 쪽이 더 나쁘다.
+    bool bedTracked = false;
+    {
+        char sql[384];
+        std::snprintf(sql, sizeof(sql),
+            "SELECT COUNT(*) FROM bed_sessions "
+            "WHERE camera_id = %d AND in_at < @ce AND COALESCE(out_at, @ce) > @cs",
+            cameraId);
+        if (!mysql_query(conn_, sql)) {
+            if (MYSQL_RES* res = mysql_store_result(conn_)) {
+                if (MYSQL_ROW row = mysql_fetch_row(res))
+                    bedTracked = (row[0] && std::atoi(row[0]) > 0);
+                mysql_free_result(res);
+            }
+        }
+    }
+
     for (int residentId : residents) {
-        // camera_id·duration은 정수라 인젝션 위험이 없어 snprintf로 안전하게 조립.
-        // (문자열 필드를 넣을 땐 반드시 이스케이프 필요)
-        // end_time = 지금(NOW()), start_time = 거기서 duration만큼 역산.
-        //
-        // resident_id 를 같이 박는 이유: 조회할 때마다 camera_id 로 조인하면
-        // 입소자가 방을 옮긴 뒤 과거 케어가 새 입주자 것으로 바뀐다.
-        // 기록 시점의 사람을 그대로 남긴다.
         char resident[16];
         if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
         else                std::snprintf(resident, sizeof(resident), "NULL");
 
-        char sql[512];
+        // ── 이 사람에게 실제로 기록할 시간 ────────────────────────
+        // 요양사가 방에 있던 구간과 이 사람이 침대에 있던 구간의 교집합.
+        // 요양사가 둘 중 누구를 돌봤는지는 여전히 알 수 없지만, 그 시간에 아예
+        // 자리에 없던 사람에게 케어시간이 붙는 것은 막을 수 있다.
+        //
+        // ※ 한계: "침대에 있었나"를 보는 것이지 "방에 있었나"가 아니다. 의자에
+        //   앉아 케어받으면 ROI 밖이라 덜 세어진다. 침대 ROI 를 협탁·보조의자까지
+        //   넉넉히 그리면 이 오차가 줄어든다(코드 변경 없이 ROI 만 크게).
+        char durExpr[512];
+        if (bedTracked && residentId > 0) {
+            std::snprintf(durExpr, sizeof(durExpr),
+                "(SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, GREATEST(in_at, @cs), "
+                "                                   LEAST(COALESCE(out_at, @ce), @ce))), 0) "
+                "   FROM bed_sessions WHERE resident_id = %d "
+                "    AND in_at < @ce AND COALESCE(out_at, @ce) > @cs)",
+                residentId);
+        } else {
+            std::snprintf(durExpr, sizeof(durExpr), "%d", durationSec);
+        }
+
+        char sql[1024];
         std::snprintf(sql, sizeof(sql),
             "INSERT INTO care_logs (camera_id, resident_id, duration_sec, start_time, end_time) "
-            "VALUES (%d, %s, %d, NOW() - INTERVAL %d SECOND, NOW())",
-            cameraId, resident, durationSec, durationSec);
+            "SELECT %d, %s, d, @cs, @ce FROM (SELECT %s AS d) t WHERE d > 0",
+            cameraId, resident, durExpr);
 
         if (mysql_query(conn_, sql)) {
             std::cerr << "[DB] 케어로그 INSERT 실패: " << mysql_error(conn_) << "\n";
             continue;   // 한 사람이 실패해도 나머지는 남긴다
+        }
+        // WHERE d > 0 이라 겹친 시간이 0 이면 행이 안 만들어진다 — 요양사가 왔을 때
+        // 자리에 없던 사람이다. 0초짜리 행을 남기면 "케어 N회" 가 부풀려진다.
+        if (mysql_affected_rows(conn_) == 0) {
+            std::cout << "[DB] 케어 제외 (카메라 " << (cameraId + 1)
+                      << ", 입소자 " << residentId << " — 그 시간 자리에 없었음)\n";
+            continue;
         }
         // 뮤텍스를 쥔 채로 읽어야 한다 — 놓고 읽으면 다른 채널 스레드가 그 사이에
         // INSERT 해서 남의 id를 집어올 수 있다.
@@ -66,7 +114,8 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     }
 
     std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1) << ", "
-              << durationSec << "초, " << ids.size() << "명)\n";
+              << durationSec << "초, " << ids.size() << "명"
+              << (bedTracked ? ", 재실 교집합 적용" : ", 재실 기록 없어 전체 시간") << ")\n";
     return ids;
 }
 
@@ -443,6 +492,10 @@ int Database::getRoomByCh(int channel){
 // ═══════════════════════════════════════════════════════════
 
 namespace {
+// 같은 사건으로 볼 시간 창. 펌웨어가 낙상 플래그를 유지하는 시간과 맞춘다
+// (firmware HM10_FALL_HOLD_MS = 5000ms) — 그 창을 넘으면 별개 사건으로 센다.
+constexpr int kDedupWindowSec = 5;
+
 // 열거형 → ENUM 컬럼 문자열. report_schema.sql 의 ENUM 정의와 글자가
 // 하나라도 어긋나면 INSERT 가 실패한다 — 값을 늘릴 땐 양쪽을 같이 고칠 것.
 const char* toSql(EventType t) {
@@ -454,7 +507,12 @@ const char* toSql(EventType t) {
     return "FALL";   // 도달 불가 — 컴파일러 경고 억제용
 }
 const char* toSql(EventSource s) {
-    return s == EventSource::Wearable ? "WEARABLE" : "CAMERA";
+    switch (s) {
+        case EventSource::Wearable: return "WEARABLE";
+        case EventSource::Both:     return "BOTH";
+        case EventSource::Camera:   break;
+    }
+    return "CAMERA";
 }
 }  // namespace
 
@@ -571,6 +629,66 @@ long long Database::insertEvent(EventType type, EventSource source, int cameraId
         std::snprintf(when, sizeof(when), "FROM_UNIXTIME(%lld/1000.0)", occurredMs);
     else
         std::snprintf(when, sizeof(when), "NOW(3)");
+
+    // ── 같은 사건이 두 경로로 들어온 경우 합치기 ──────────────────
+    // 한 번 넘어져도 카메라(자세 판정)와 웨어러블(가속도)이 각각 잡아 두 줄이 된다.
+    // 그대로 두면 리포트가 "낙상 2회"로 센다 — 실제로는 1회다.
+    //
+    // ★ 기다리지 않는다. 먼저 온 쪽은 즉시 INSERT 하고, 나중에 온 쪽이 앞을 돌아봐
+    //   같은 사건이 있으면 그 줄의 source 를 BOTH 로 바꾼다. 대기가 없으니 알람도
+    //   늦지 않는다(알람은 이 함수와 무관하게 이미 나간 뒤다).
+    // ★ 창은 5초 — 펌웨어가 낙상 플래그를 들고 있는 시간(HM10_FALL_HOLD_MS)과 같다.
+    //   그 안에 들어온 같은 사람·같은 종류는 한 사건으로 본다.
+    // ★ 같은 source 끼리는 합치지 않는다. 카메라는 fired 플래그로, 웨어러블은 래치로
+    //   이미 중복을 막고 있어서, 같은 쪽이 5초 안에 두 번 오면 그건 진짜 두 번이다.
+    // ★ BOTH 는 정보가 주는 게 아니라 는다 — 양쪽이 함께 본 낙상이라 더 확실하다.
+    {
+        // 사람을 모르면(resident_id NULL) 채널로 짝을 찾는다. 사람이 없는 기록끼리
+        // 합치는 것은 근거가 약하지만, 같은 채널·같은 종류·5초 안이라면 같은 사건일
+        // 가능성이 훨씬 높다 — 두 줄로 남겨 2회로 세는 쪽이 더 틀린다.
+        char match[256];
+        if (residentId > 0)
+            std::snprintf(match, sizeof(match), "resident_id = %d", residentId);
+        else
+            std::snprintf(match, sizeof(match), "resident_id IS NULL AND camera_id = %d",
+                          cameraId);
+
+        char sql[768];
+        std::snprintf(sql, sizeof(sql),
+            "SELECT event_id FROM events "
+            "WHERE %s AND event_type = '%s' AND source <> '%s' "
+            "  AND occurred_at BETWEEN %s - INTERVAL %d SECOND "
+            "                      AND %s + INTERVAL %d SECOND "
+            "ORDER BY event_id DESC LIMIT 1",
+            match, toSql(type), toSql(source),
+            when, kDedupWindowSec, when, kDedupWindowSec);
+
+        if (!mysql_query(conn_, sql)) {
+            if (MYSQL_RES* res = mysql_store_result(conn_)) {
+                long long twinId = 0;
+                if (MYSQL_ROW row = mysql_fetch_row(res))
+                    if (row[0]) twinId = std::atoll(row[0]);
+                mysql_free_result(res);
+
+                if (twinId > 0) {
+                    char up[128];
+                    std::snprintf(up, sizeof(up),
+                        "UPDATE events SET source = 'BOTH' WHERE event_id = %lld", twinId);
+                    if (mysql_query(conn_, up)) {
+                        std::cerr << "[DB] 이벤트 병합 실패: " << mysql_error(conn_) << "\n";
+                        // 병합에 실패했으면 새 줄이라도 남긴다 — 아래로 흘려보낸다.
+                    } else {
+                        std::cout << "[DB] 이벤트 병합 (" << toSql(type)
+                                  << ", event_id=" << twinId << " → BOTH)\n";
+                        return twinId;   // 새 줄을 만들지 않는다
+                    }
+                }
+            }
+        } else {
+            std::cerr << "[DB] 이벤트 중복 조회 실패: " << mysql_error(conn_) << "\n";
+            // 조회가 안 되면 합치기를 포기하고 그냥 새 줄로 남긴다.
+        }
+    }
 
     // resident_id 는 지금 값을 그대로 박는다(발생 시점 스냅샷 — 헤더 주석 참고).
     char sql[1024];

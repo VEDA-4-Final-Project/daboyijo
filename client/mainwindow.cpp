@@ -47,6 +47,8 @@
 #include <QTextCharFormat>
 #include <QSlider>
 #include <QJsonObject>
+#include <QPageLayout>
+#include <QRect>
 #include <QPdfWriter>
 #include <QTextDocument>
 #include <QBuffer>
@@ -93,6 +95,16 @@
 
 // 디자인 토큰(kLight/kDark/kAccent…)은 theme.h로 분리했다 — 로그인 화면과 공유.
 namespace {
+
+// 한글 요일 한 글자. QDate::toString("ddd") 는 시스템 로케일을 따라가서 윈도우
+// 영문 환경에선 "Thu" 가 나온다 — 화면과 PDF 가 같은 문서라 표기를 고정한다.
+// (리포트 화면·PDF 두 곳에서 쓰므로 여기 파일 위쪽에 둔다)
+QString koreanDow(const QDate& d)
+{
+    static const char* kDow[] = {"월", "화", "수", "목", "금", "토", "일"};
+    const int i = d.dayOfWeek() - 1;   // Qt: 1=월 … 7=일
+    return (i >= 0 && i < 7) ? QString::fromUtf8(kDow[i]) : QString();
+}
 
 // 폭에 맞춰 자식 위젯을 좌→우로 채우고 넘치면 다음 줄로 접는 레이아웃.
 // 입소자 카드 그리드가 창 크기에 따라 열 수를 자동 조절하도록 쓴다(Qt 공식 예제 기반).
@@ -257,8 +269,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.51";
-const char* kDefaultHostB  = "172.20.32.50";
+const char* kDefaultHostA  = "172.23.131.8";
+const char* kDefaultHostB  = "172.23.131.8";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -2651,10 +2663,9 @@ void MainWindow::onReportDateChanged(const QDate& date)
     reportDate_ = date;
 
     if (reportDateLabel) {
-        static const char* kDow[] = {"월", "화", "수", "목", "금", "토", "일"};
         const QString when = QStringLiteral("%1 (%2)")
-                                 .arg(date.toString(QStringLiteral("yyyy-MM-dd")))
-                                 .arg(QString::fromUtf8(kDow[date.dayOfWeek() - 1]));
+                                 .arg(date.toString(QStringLiteral("yyyy-MM-dd")),
+                                      koreanDow(date));
         reportDateLabel->setText(date == QDate::currentDate()
                                      ? QStringLiteral("%1 · 오늘").arg(when)
                                      : when);
@@ -4853,20 +4864,68 @@ void MainWindow::exportReportPdf()
         QStringLiteral("PDF 파일 (*.pdf)"));
     if (path.isEmpty()) return;   // 사용자가 취소
 
+    // ── PDF 장치를 먼저 만든다 ──
+    // ★ 해상도를 300dpi 로 낮춰 잡는다. QPdfWriter 기본값은 1200dpi 인데, 그러면
+    //   본문 폭이 device 픽셀로 ~9900 이 되어 이미지 폭 같은 픽셀 값을 가늠하기
+    //   어렵다. 글자는 pt(해상도 무관)라 300dpi 로도 벡터로 또렷하게 나온다.
+    // ★ 이미지 폭을 여기서 구해 HTML 에 넣어야 한다. HTML 의 width 는 device
+    //   픽셀이라, 본문 폭을 모르고 700 같은 상수를 쓰면 종이 한구석에만 찍힌다.
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    writer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout::Millimeter);
+    writer.setResolution(300);
+    writer.setTitle(QStringLiteral("%1 %2 일일 리포트").arg(metrics_.residentName, dateStr));
+    // 실제로 인쇄되는 영역(여백 제외). writer.width() 는 여백을 포함한 종이 전체라
+    // 이미지 폭 기준으로 쓰면 오른쪽이 잘린다.
+    const QRect bodyPx = writer.pageLayout().paintRectPixels(writer.resolution());
+
+
     // ── 그래프를 이미지로 ──
-    // 화면에 그려진 위젯을 그대로 떠서 넣는다. PDF 용으로 다시 그리면 화면과
-    // 미묘하게 달라질 수 있는데, 리포트는 화면에서 본 것과 같아야 한다.
+    // ★ 크기: writer.width() 는 여백을 포함한 종이 전체 폭이라 그대로 쓰면 본문을
+    //   넘어 오른쪽이 잘린다. paintRectPixels() 로 "실제 인쇄되는 영역"을 받아 쓴다.
+    //   가로세로를 둘 다 지정해 비율이 흐트러지지 않게 하고, 세로가 페이지의 1/3 을
+    //   넘으면 세로 기준으로 다시 줄여 그래프 혼자 한 장을 차지하지 않게 한다.
+    // ★ 색: 화면은 다크 테마일 수 있는데 종이는 흰색이다. 그대로 뜨면 어두운 상자가
+    //   찍히고 회색 눈금이 잘 안 보인다. 그리는 동안만 팔레트를 라이트로 바꿔
+    //   렌더하고 곧바로 되돌린다(같은 스레드에서 동기 렌더라 화면에는 영향 없다).
+    // ★ 해상도: grab() 은 화면 dpi 로 떠서 300dpi 종이에선 흐리다. 3배로 렌더한다.
     QString chartHtml;
     if (activityChart && activityChart->width() > 0) {
-        const QPixmap shot = activityChart->grab();
+        constexpr int kScale = 3;
+        QPixmap shot(activityChart->size() * kScale);
+
+        const Palette saved{kBgDeep, kPanel, kCard, kBorder, kTextMain, kTextSub,
+                            kAccent, kOnAccent, kNormal, kWarn, kHigh, kCritical,
+                            kInfo, kSelect, kOnSelect};
+        applyPalette(kLight);
+        shot.fill(Qt::white);
+        QPainter pp(&shot);
+        pp.scale(kScale, kScale);
+        activityChart->render(&pp, QPoint(), QRegion(), QWidget::DrawChildren);
+        pp.end();
+        applyPalette(saved);
+        activityChart->update();   // 화면은 원래 팔레트로 다시 그린다
+
         QByteArray png;
         QBuffer buf(&png);
         buf.open(QIODevice::WriteOnly);
         if (shot.save(&buf, "PNG")) {
+            // ★ HTML 의 width/height 는 96dpi 논리 픽셀로 읽히고, 인쇄할 때 장치
+            //   해상도만큼 다시 확대된다. 300dpi 면 3.125 배다. bodyPx(장치 픽셀)를
+            //   그대로 넣으면 그 배율로 또 커져 종이 밖으로 나간다 — 나눠서 넣는다.
+            const double dpiScale = writer.resolution() / 96.0;
+            int w = int(bodyPx.width() * 0.98 / dpiScale);
+            int h = shot.width() > 0 ? w * shot.height() / shot.width() : 0;
+            const int hMax = int(bodyPx.height() / 3.0 / dpiScale);
+            if (h > hMax && h > 0) { w = w * hMax / h; h = hMax; }
             chartHtml = QStringLiteral(
-                "<p style='margin-top:18px'><b>시간별 활동량</b></p>"
-                "<img src='data:image/png;base64,%1' width='700'>")
-                .arg(QString::fromLatin1(png.toBase64()));
+                "<p style='margin-top:26px'><b>시간별 활동량</b></p>"
+                "<p style='color:#5C6B78; margin-top:2px'>"
+                "막대 하나가 한 시간 동안 걸은 걸음 수입니다. "
+                "가장 활발했던 시간대는 진하게 표시됩니다.</p>"
+                "<img src='data:image/png;base64,%1' width='%2' height='%3'>")
+                .arg(QString::fromLatin1(png.toBase64()))
+                .arg(w).arg(h);
         }
     }
 
@@ -4900,39 +4959,92 @@ void MainWindow::exportReportPdf()
     if (eventRows.isEmpty())
         eventRows = QStringLiteral("<tr><td colspan='4'>이벤트 없음</td></tr>");
 
+    // ── AI 요약 (있을 때만) ──
+    // PDF 는 AI 요약에 의존하지 않는다. 생성해 둔 적이 있으면 넣고, 없으면 그 칸 없이
+    // 나온다 — 요약이 없다고 리포트를 못 뽑으면 안 되기 때문이다.
+    // ★ 회색 상자로 감싸 위쪽 수치와 시각적으로 떼어 놓는다. 위 숫자는 기계가 센
+    //   값이고 이 문단은 생성된 글이라, 감사(監査) 상황에서 그 구분이 중요하다.
+    QString summaryHtml;
+    {
+        QSqlQuery q;
+        q.prepare(QStringLiteral(
+            "SELECT summary_text, model, generated_at FROM daily_reports "
+            "WHERE report_date=? AND resident_id=?"));
+        q.addBindValue(reportDate_);
+        q.addBindValue(reportResidentId_);
+        if (q.exec() && q.next() && !q.value(0).toString().trimmed().isEmpty()) {
+            summaryHtml = QStringLiteral(
+                "<p style='margin-top:18px'><b>AI 요약</b></p>"
+                "<table width='100%' cellspacing='0' cellpadding='10' border='1'"
+                "       bordercolor='#DCE4EC'><tr bgcolor='#F0F4F8'><td>%1"
+                "<br><span style='color:#8B98A5; font-size:8pt'>"
+                "%2 생성 · 이 문단은 위 수치를 근거로 자동 작성된 것입니다</span>"
+                "</td></tr></table>")
+                .arg(q.value(0).toString().toHtmlEscaped().replace(QLatin1Char('\n'),
+                                                                   QStringLiteral("<br>")),
+                     q.value(2).toDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+        }
+    }
+
     const QString html = QStringLiteral(R"HTML(
-<html><body style="font-family:'맑은 고딕',sans-serif; font-size:10pt; color:#1E2A32">
-<h1 style="font-size:19pt; margin-bottom:2px">일일 리포트</h1>
-<p style="color:#5C6B78; margin-top:0">%1 &middot; %2 &middot; %3</p>
-<hr>
-<table width="100%" cellspacing="0" cellpadding="7" border="0">
+<html><body style="font-family:'맑은 고딕',sans-serif; font-size:11pt; color:#1E2A32; line-height:150%">
+<h1 style="font-size:24pt; margin-bottom:0">일일 리포트</h1>
+<p style="color:#5C6B78; margin-top:4px; font-size:12pt">%1 &middot; %2 &middot; %3</p>
+<p style="color:#5C6B78; margin-top:10px">
+  이 문서는 병실 카메라와 웨어러블이 하루 동안 자동으로 기록한 값을 정리한 것입니다.
+  아래 수치는 모두 기기가 측정한 값이며 사람이 입력하지 않았습니다.
+</p>
+<hr style="border:1px solid #DCE4EC">
+
+<table width="100%" cellspacing="0" cellpadding="12" border="0">
   <tr bgcolor="#F0F4F8">
-    <th align="left">누워있는 시간</th><th align="left">활동량</th>
-    <th align="left">케어시간</th><th align="left">이벤트</th>
+    <th align="left" width="25%">누워있는 시간</th><th align="left" width="25%">활동량</th>
+    <th align="left" width="25%">케어시간</th><th align="left" width="25%">이벤트</th>
   </tr>
   <tr>
-    <td><b style="font-size:14pt">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
-    <td><b style="font-size:14pt">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
-    <td><b style="font-size:14pt">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
-    <td><b style="font-size:14pt">%11회</b><br><span style="color:#5C6B78">%12</span></td>
+    <td><b style="font-size:18pt">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
+    <td><b style="font-size:18pt">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
+    <td><b style="font-size:18pt">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
+    <td><b style="font-size:18pt">%11회</b><br><span style="color:#5C6B78">%12</span></td>
+  </tr>
+</table>
+
+<table width="100%" cellspacing="0" cellpadding="8" border="0">
+  <tr style="color:#5C6B78">
+    <td width="25%">침대에 계셨던 시간의 합계입니다.</td>
+    <td width="25%">웨어러블이 센 걸음 수와, 실제로 움직인 시간입니다.</td>
+    <td width="25%">요양사가 병실에 머문 시간 중 이분이 침대에 계셨던 시간입니다.</td>
+    <td width="25%">낙상 &middot; 침상이탈 &middot; 생체신호 이상이 감지된 횟수입니다.</td>
   </tr>
 </table>
 %13
-<p style="margin-top:18px"><b>이벤트 내역</b></p>
-<table width="100%" cellspacing="0" cellpadding="6" border="1" bordercolor="#DCE4EC">
+<p style="margin-top:26px"><b>이벤트 내역</b></p>
+<p style="color:#5C6B78; margin-top:2px">
+  감지된 시각과 종류입니다. ‘확인’은 관제 담당자가 영상을 확인해 처리한 건입니다.
+</p>
+<table width="100%" cellspacing="0" cellpadding="10" border="1" bordercolor="#DCE4EC">
   <tr bgcolor="#F0F4F8"><th align="left">시각</th><th align="left">종류</th>
-      <th align="left">감지</th><th align="left">확인</th></tr>
+      <th align="left">감지 방식</th><th align="left">확인 여부</th></tr>
   %14
 </table>
-<p style="margin-top:22px; color:#8B98A5; font-size:8pt">
+%16
+<p style="margin-top:30px; color:#8B98A5; font-size:9pt; line-height:140%">
+  측정 방식 안내 &middot; 누워있는 시간과 케어시간은 병실 카메라가 침대 영역을 기준으로 판단합니다.
+  침대를 벗어나 의자 등에서 보낸 시간은 포함되지 않을 수 있습니다.
+  활동량과 생체신호는 손목 웨어러블에서 수집합니다.
+  기기 특성상 실제와 차이가 있을 수 있으며, 의료적 판단의 근거로 사용하지 마십시오.
+</p>
+<p style="margin-top:8px; color:#8B98A5; font-size:9pt">
   다보이조 요양원 통합 모니터링 &middot; 생성 %15
 </p>
 </body></html>)HTML")
+
         // ★ QString::arg 의 다중 인자 오버로드는 최대 9개다. 15개를 한 번에 넘기면
         //   컴파일이 안 되므로 9 + 6 으로 나눈다. 낮은 번호 placeholder 부터
         //   순서대로 채워지므로 이렇게 쪼개도 결과는 같다.
         .arg(metrics_.residentName, metrics_.residentMeta,
-             reportDate_.toString(QStringLiteral("yyyy년 M월 d일 (ddd)")),
+             QStringLiteral("%1 (%2)").arg(reportDate_.toString(QStringLiteral("yyyy년 M월 d일")),
+                                           koreanDow(reportDate_)),
              humanDuration(metrics_.lyingSec), QString::number(metrics_.lyingCount),
              QString::number(metrics_.steps), QString::number(metrics_.activeMin),
              humanDuration(metrics_.careSec), QString::number(metrics_.careCount))
@@ -4942,16 +5054,14 @@ void MainWindow::exportReportPdf()
              metrics_.eventDetail.isEmpty() ? QStringLiteral("이벤트 없음")
                                             : metrics_.eventDetail,
              chartHtml, eventRows,
-             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
+             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+             summaryHtml);
 
-    QPdfWriter writer(path);
-    writer.setPageSize(QPageSize(QPageSize::A4));
-    writer.setPageMargins(QMarginsF(16, 16, 16, 16), QPageLayout::Millimeter);
-    writer.setTitle(QStringLiteral("%1 %2 일일 리포트").arg(metrics_.residentName, dateStr));
-
+    // ★ doc.setPageSize 를 직접 주지 않는다. 주면 QTextDocument 가 화면 DPI 로
+    //   배치된 채 고해상도 페이지에 그대로 얹혀 글자가 1/10 크기로 나온다.
+    //   비워 두면 print() 가 문서를 복제해 인쇄 장치 DPI 로 다시 배치해 준다.
     QTextDocument doc;
     doc.setHtml(html);
-    doc.setPageSize(QSizeF(writer.width(), writer.height()));
     doc.print(&writer);
 
     QMessageBox::information(this, QStringLiteral("PDF 내보내기"),
