@@ -270,8 +270,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.51";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -1891,11 +1891,22 @@ QString MainWindow::channelDisplayName(int ch) const
     const QVector<int>& ids = residentsByChannel_[ch];
     if (ids.isEmpty()) return tag;
 
-    const QString first = residentInfo_.value(ids.first()).name;
-    if (first.isEmpty()) return tag;
-    if (ids.size() > 1)
-        return QStringLiteral("%1 · %2 외 %3명").arg(tag, first).arg(ids.size() - 1);
-    return QStringLiteral("%1 · %2").arg(tag, first);
+    // 한 채널(=한 방의 한 시야)에 여러 명이 함께 누워 있는 게 이 시스템의 기본
+    // 구성이다. 그런데 대표 한 명만 쓰고 "외 N명"으로 접으면, 정작 그 방에 누가
+    // 있는지를 화면에서 알 수 없다 — 두 명까지는 다 적는다.
+    // 세 명 이상은 한 줄짜리 이름표가 감당이 안 되므로 그때만 접는다.
+    QStringList names;
+    for (int rid : ids) {
+        const QString n = residentInfo_.value(rid).name;
+        if (!n.isEmpty()) names << n;
+    }
+    if (names.isEmpty()) return tag;
+
+    if (names.size() <= 2)
+        return QStringLiteral("%1 · %2").arg(tag, names.join(QStringLiteral(", ")));
+    return QStringLiteral("%1 · %2 외 %3명")
+        .arg(tag, names.mid(0, 2).join(QStringLiteral(", ")))
+        .arg(names.size() - 2);
 }
 
 // ═════════════════════════════════════════════════════════
