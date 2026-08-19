@@ -132,7 +132,8 @@ static constexpr uint16_t kSearchMagic = 0xDB4E;
 
 #include "videoview.h"   // RoiZone / kMaxRoiZones — 침대 목록을 값으로 들고 있어 필요
 
-class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
+class FramePreview;  // 채널 스트립 썸네일 (videoview.h)
+class WipeCompare;   // 이미지 탭 적용 전/후 와이프 비교 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
@@ -849,7 +850,7 @@ private:
     void     sendImageParams(int channel, int b, int c, int s);
     // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
     void     sendFocus(int channel, bool area, float nx, float ny);
-    // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
+    // 영상 타일 호버 툴바 표시/숨김 + 타일 크롬 재배치.
     bool     eventFilter(QObject* obj, QEvent* ev) override;
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
@@ -869,19 +870,11 @@ private:
     void refreshCamControlsEnabled();
     // 연결 탭의 4채널 상태 요약 배지(CH1~4)
     QLabel* camConnBadges[4] = {};
-    FramePreview* imgBefore = nullptr;                 // 적용 전 스냅샷
-    FramePreview* imgAfter = nullptr;                   // 실시간(적용 후)
-    // 위 두 프리뷰를 영상 비율대로 잡아 주는 상자(실체는 mainwindow.cpp의 AspectBox).
-    // 상자가 영상보다 크면 그 차이가 검은 여백으로 남기 때문에 비율을 맞춰 준다.
-    QWidget* imgBeforeBox = nullptr;
-    QWidget* imgAfterBox = nullptr;
-    // 이미지 모드에서 스테이지 카드를 영상 폭에 딱 맞춰 줄이기 위해 들고 있는다.
-    // 16:9 두 장을 세로로 쌓으면 세로가 먼저 차서 폭이 남는데, 그 남는 폭이
-    // 카드 안에 있으면 "영상 옆 검은 여백"으로 보인다. 카드를 줄여 밖으로 뺀다.
-    QFrame*      camStageCard_ = nullptr;
-    QHBoxLayout* camBodyRow_ = nullptr;   // [채널스트립 | 스테이지 | 인스펙터]
-    void updateImageStageWidth();
-    void setImagePreviewFrame(const QPixmap& pm);      // 프레임 + 상자 비율 동시 갱신
+    // 적용 전/후 와이프 비교 화면(영상 1장 + 드래그 구분선).
+    // 두 장을 따로 놓으면 각 장이 절반으로 줄고 카드에 여백이 남아, 다른 탭과
+    // 틀도 어긋났다. 한 장으로 겹치면 연결·ROI 탭의 큰 영상과 크기가 같아진다.
+    WipeCompare* imgWipe_ = nullptr;
+    void setImagePreviewFrame(const QPixmap& pm);      // 실시간 프레임 주입
     QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──
