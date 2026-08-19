@@ -4378,6 +4378,9 @@ void MainWindow::connectToServer()
         // "이 Pi들은 stream_cert_path를 켜서 TLS로 띄웠다"는 선언으로 본다. 아직
         // 인증서를 안 놓은 개발 환경/미전환 Pi에서는 파일이 없어 기존처럼 평문 접속.
         const QString caPath = streamCaPath();
+        qDebug() << "[진단] CA 경로 확인:" << caPath
+                  << "존재함?" << QFile::exists(caPath)
+                  << "/ exe 위치:" << QCoreApplication::applicationDirPath();
         if (QFile::exists(caPath)) {
             QSslConfiguration conf = QSslConfiguration::defaultConfiguration();
             const QList<QSslCertificate> ca = QSslCertificate::fromPath(caPath);
