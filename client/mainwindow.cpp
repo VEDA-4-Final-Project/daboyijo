@@ -156,7 +156,8 @@ private:
 // 변경 로그에 남길 필드 (라벨, residents 컬럼) — 이 배열만 고치면 로그 대상이 바뀐다.
 struct LoggedField { const char* label; const char* column; };
 const LoggedField kLoggedFields[] = {
-    {"이름", "name"},               {"카메라 채널", "camera_id"},
+    {"이름", "name"},               {"호실", "room"},
+    {"카메라 채널", "camera_id"},
     {"웨어러블 ID", "wearable_id"}, {"위험도", "risk_level"},
     {"입원일", "admitted_at"},      {"퇴원 예정일", "discharge_due"},
     {"상태", "status"},             {"보호자 이름", "guardian_name"},
@@ -2501,7 +2502,7 @@ QWidget* MainWindow::buildReportCalendar()
     connect(pdfBtn, &QPushButton::clicked, this, &MainWindow::exportReportPdf);
     lay->addWidget(pdfBtn);
 
-    summaryBtn = new QPushButton(QStringLiteral("AI 요약"));
+    summaryBtn = new QPushButton(QStringLiteral("요약"));
     summaryBtn->setObjectName("reportTodayBtn");
     summaryBtn->setCursor(Qt::PointingHandCursor);
     connect(summaryBtn, &QPushButton::clicked, this, &MainWindow::requestAiSummary);
@@ -2581,7 +2582,7 @@ QWidget* MainWindow::buildReportDetail()
     // ── AI 요약 ──
     // 위쪽 숫자는 기계가 센 값이고 이 문단은 생성된 글이다. 감사 상황에서 그
     // 구분이 중요하므로 배경을 달리해 시각적으로 떼어 놓는다.
-    auto* sumCap = new QLabel(QStringLiteral("AI 요약"));
+    auto* sumCap = new QLabel(QStringLiteral("요약"));
     sumCap->setObjectName("careBigCap");
     lay->addWidget(sumCap);
 
@@ -4038,6 +4039,7 @@ QWidget* MainWindow::buildResidentFormBody()
     basicForm->setLabelAlignment(Qt::AlignLeft);
     basicForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     basicForm->addRow(QStringLiteral("이름"),        makeField("홍길동", editName));
+    basicForm->addRow(QStringLiteral("호실"),        makeField("예: 101", editRoom));
     basicForm->addRow(QStringLiteral("카메라 채널"), makeField("1~4", editCameraId));
     basicForm->addRow(QStringLiteral("웨어러블 ID"), makeField("기기 번호", editWearableId));
     lay->addWidget(basicGroup);
@@ -4983,11 +4985,11 @@ void MainWindow::exportReportPdf()
         q.addBindValue(reportResidentId_);
         if (q.exec() && q.next() && !q.value(0).toString().trimmed().isEmpty()) {
             summaryHtml = QStringLiteral(
-                "<p style='margin-top:18px'><b>AI 요약</b></p>"
+                "<p style='margin-top:24px'><b>요약</b></p>"
                 "<table width='100%' cellspacing='0' cellpadding='10' border='1'"
                 "       bordercolor='#DCE4EC'><tr bgcolor='#F0F4F8'><td>%1"
                 "<br><span style='color:#8B98A5; font-size:8pt'>"
-                "%2 생성 · 이 문단은 위 수치를 근거로 자동 작성된 것입니다</span>"
+                "%2 자동 생성 · 위 수치를 근거로 작성되었습니다</span>"
                 "</td></tr></table>")
                 .arg(q.value(0).toString().toHtmlEscaped().replace(QLatin1Char('\n'),
                                                                    QStringLiteral("<br>")),
@@ -4996,60 +4998,80 @@ void MainWindow::exportReportPdf()
     }
 
     const QString html = QStringLiteral(R"HTML(
-<html><body style="font-family:'맑은 고딕',sans-serif; font-size:11pt; color:#1E2A32; line-height:150%">
-<h1 style="font-size:24pt; margin-bottom:0">일일 리포트</h1>
-<p style="color:#5C6B78; margin-top:4px; font-size:12pt">%1 &middot; %2 &middot; %3</p>
-<p style="color:#5C6B78; margin-top:10px">
-  이 문서는 병실 카메라와 웨어러블이 하루 동안 자동으로 기록한 값을 정리한 것입니다.
-  아래 수치는 모두 기기가 측정한 값이며 사람이 입력하지 않았습니다.
-</p>
-<hr style="border:1px solid #DCE4EC">
+<html><body style="font-family:'맑은 고딕',sans-serif; font-size:11pt; color:#1E2A32; line-height:155%">
 
-<table width="100%" cellspacing="0" cellpadding="12" border="0">
+<table width="100%" cellspacing="0" cellpadding="0" border="0">
+  <tr>
+    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">다보이조 요양원 통합 모니터링</span>
+        <h1 style="font-size:26pt; margin:2px 0 0 0">일일 리포트</h1></td>
+    <td align="right" valign="bottom">
+        <span style="font-size:9pt; color:#8B98A5">문서번호 %17<br>생성 %15</span></td>
+  </tr>
+</table>
+<hr style="border:2px solid #1E2A32; margin-top:6px">
+
+<table width="100%" cellspacing="0" cellpadding="9" border="0" style="margin-top:10px">
+  <tr bgcolor="#F0F4F8">
+    <td width="14%"><b>성명</b></td><td width="36%">%1</td>
+    <td width="14%"><b>대상일</b></td><td width="36%">%3</td>
+  </tr>
+  <tr>
+    <td><b>구분</b></td><td>%2</td>
+    <td><b>작성</b></td><td>자동 기록 (담당자 입력 없음)</td>
+  </tr>
+</table>
+
+<p style="margin-top:20px; font-size:13pt"><b>1. 요약 지표</b></p>
+<table width="100%" cellspacing="0" cellpadding="11" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
   <tr bgcolor="#F0F4F8">
     <th align="left" width="25%">누워있는 시간</th><th align="left" width="25%">활동량</th>
     <th align="left" width="25%">케어시간</th><th align="left" width="25%">이벤트</th>
   </tr>
   <tr>
-    <td><b style="font-size:18pt">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
-    <td><b style="font-size:18pt">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
-    <td><b style="font-size:18pt">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
-    <td><b style="font-size:18pt">%11회</b><br><span style="color:#5C6B78">%12</span></td>
+    <td><b style="font-size:17pt">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
+    <td><b style="font-size:17pt">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
+    <td><b style="font-size:17pt">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
+    <td><b style="font-size:17pt">%11회</b><br><span style="color:#5C6B78">%12</span></td>
+  </tr>
+  <tr style="color:#5C6B78">
+    <td>침대에 계셨던 시간의 합계</td>
+    <td>웨어러블이 센 걸음 수와 실제로 움직인 시간</td>
+    <td>요양사가 병실에 머문 시간 중 침대에 계셨던 시간</td>
+    <td>낙상 · 침상이탈 · 생체신호 이상 감지 횟수</td>
   </tr>
 </table>
 
-<table width="100%" cellspacing="0" cellpadding="8" border="0">
-  <tr style="color:#5C6B78">
-    <td width="25%">침대에 계셨던 시간의 합계입니다.</td>
-    <td width="25%">웨어러블이 센 걸음 수와, 실제로 움직인 시간입니다.</td>
-    <td width="25%">요양사가 병실에 머문 시간 중 이분이 침대에 계셨던 시간입니다.</td>
-    <td width="25%">낙상 &middot; 침상이탈 &middot; 생체신호 이상이 감지된 횟수입니다.</td>
-  </tr>
-</table>
+<p style="margin-top:24px; font-size:13pt"><b>2. 시간별 활동량</b></p>
 %13
-<p style="margin-top:26px"><b>이벤트 내역</b></p>
+
+<p style="page-break-before:always; font-size:13pt"><b>3. 이벤트 내역</b></p>
 <p style="color:#5C6B78; margin-top:2px">
   감지된 시각과 종류입니다. ‘확인’은 관제 담당자가 영상을 확인해 처리한 건입니다.
 </p>
-<table width="100%" cellspacing="0" cellpadding="10" border="1" bordercolor="#DCE4EC">
-  <tr bgcolor="#F0F4F8"><th align="left">시각</th><th align="left">종류</th>
-      <th align="left">감지 방식</th><th align="left">확인 여부</th></tr>
+<table width="100%" cellspacing="0" cellpadding="10" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
+  <tr bgcolor="#F0F4F8"><th align="left" width="14%">시각</th><th align="left" width="30%">종류</th>
+      <th align="left" width="28%">감지 방식</th><th align="left" width="28%">확인 여부</th></tr>
   %14
 </table>
 %16
-<p style="margin-top:30px; color:#8B98A5; font-size:9pt; line-height:140%">
-  측정 방식 안내 &middot; 누워있는 시간과 케어시간은 병실 카메라가 침대 영역을 기준으로 판단합니다.
-  침대를 벗어나 의자 등에서 보낸 시간은 포함되지 않을 수 있습니다.
-  활동량과 생체신호는 손목 웨어러블에서 수집합니다.
-  기기 특성상 실제와 차이가 있을 수 있으며, 의료적 판단의 근거로 사용하지 마십시오.
-</p>
-<p style="margin-top:8px; color:#8B98A5; font-size:9pt">
-  다보이조 요양원 통합 모니터링 &middot; 생성 %15
+
+<p style="margin-top:30px; font-size:10pt"><b>측정 방식 안내</b></p>
+<table width="100%" cellspacing="0" cellpadding="8" border="1" bordercolor="#DCE4EC">
+  <tr><td style="color:#5C6B78; font-size:9pt; line-height:150%">
+    누워있는 시간과 케어시간은 병실 카메라가 침대 영역을 기준으로 판단합니다.
+    침대를 벗어나 의자 등에서 보낸 시간은 포함되지 않을 수 있습니다.<br>
+    활동량과 생체신호는 손목 웨어러블에서 수집합니다.<br>
+    기기 특성상 실제와 차이가 있을 수 있으며, <b>의료적 판단의 근거로 사용하지 마십시오.</b>
+  </td></tr>
+</table>
+<p style="margin-top:14px; color:#8B98A5; font-size:8pt">
+  다보이조 요양원 통합 모니터링 &middot; 이 문서는 시스템이 자동 생성했습니다.
 </p>
 </body></html>)HTML")
 
-        // ★ QString::arg 의 다중 인자 오버로드는 최대 9개다. 15개를 한 번에 넘기면
-        //   컴파일이 안 되므로 9 + 6 으로 나눈다. 낮은 번호 placeholder 부터
+
+        // ★ QString::arg 의 다중 인자 오버로드는 최대 9개다. 17개를 한 번에 넘기면
+        //   컴파일이 안 되므로 9 + 8 로 나눈다. 낮은 번호 placeholder 부터
         //   순서대로 채워지므로 이렇게 쪼개도 결과는 같다.
         .arg(metrics_.residentName, metrics_.residentMeta,
              QStringLiteral("%1 (%2)").arg(reportDate_.toString(QStringLiteral("yyyy년 M월 d일")),
@@ -5064,7 +5086,10 @@ void MainWindow::exportReportPdf()
                                             : metrics_.eventDetail,
              chartHtml, eventRows,
              QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
-             summaryHtml);
+             summaryHtml,
+             // 문서번호 — 같은 입소자·같은 날짜면 항상 같은 값이라 재발행해도 안 바뀐다.
+             QStringLiteral("%1-%2").arg(reportDate_.toString(QStringLiteral("yyyyMMdd")))
+                                    .arg(reportResidentId_, 4, 10, QLatin1Char('0')));
 
     // ★ doc.setPageSize 를 직접 주지 않는다. 주면 QTextDocument 가 화면 DPI 로
     //   배치된 채 고해상도 페이지에 그대로 얹혀 글자가 1/10 크기로 나온다.
@@ -5124,7 +5149,7 @@ void MainWindow::setSummaryText(const QString& text, bool cached)
     if (!summaryLabel) return;
     if (text.isEmpty()) {
         summaryLabel->setText(
-            QStringLiteral("AI 요약이 아직 없습니다. [AI 요약] 버튼을 눌러 생성하세요."));
+            QStringLiteral("요약이 아직 없습니다. [요약] 버튼을 눌러 생성하세요."));
         summaryLabel->setProperty("empty", true);
     } else {
         // 생성된 문장임을 눈에 보이게 표시한다 — 위쪽 숫자는 기계가 센 값이고
@@ -5136,8 +5161,8 @@ void MainWindow::setSummaryText(const QString& text, bool cached)
     summaryLabel->style()->unpolish(summaryLabel);
     summaryLabel->style()->polish(summaryLabel);
     if (summaryBtn)
-        summaryBtn->setText(text.isEmpty() ? QStringLiteral("AI 요약")
-                                           : QStringLiteral("AI 요약 다시 생성"));
+        summaryBtn->setText(text.isEmpty() ? QStringLiteral("요약")
+                                           : QStringLiteral("요약 다시 생성"));
 }
 
 // 날짜·입소자가 바뀔 때마다 캐시를 먼저 보여준다(API 호출 없음).
@@ -5158,15 +5183,15 @@ void MainWindow::requestAiSummary()
 {
     if (summaryBusy_) return;                       // 응답 오기 전 중복 클릭 방지
     if (!metrics_.valid || reportResidentId_ <= 0) {
-        QMessageBox::information(this, QStringLiteral("AI 요약"),
+        QMessageBox::information(this, QStringLiteral("요약"),
                                  QStringLiteral("먼저 날짜와 입소자를 선택해 주세요."));
         return;
     }
     const QString key = geminiApiKey();
     if (key.isEmpty()) {
         QMessageBox::information(
-            this, QStringLiteral("AI 요약"),
-            QStringLiteral("AI 요약 기능이 이 빌드에 설정되지 않았습니다.\n\n"
+            this, QStringLiteral("요약"),
+            QStringLiteral("요약 기능이 이 빌드에 설정되지 않았습니다.\n\n"
                            "빌드할 때 DABOYIJO_GEMINI_KEY 를 지정해야 합니다.\n"
                            "(Qt Creator: 프로젝트 > 빌드 설정 > CMake)\n\n"
                            "나머지 리포트 기능은 그대로 사용할 수 있습니다."));
@@ -5233,7 +5258,7 @@ void MainWindow::requestAiSummary()
 
     summaryBusy_ = true;
     if (summaryBtn) summaryBtn->setEnabled(false);
-    if (summaryLabel) summaryLabel->setText(QStringLiteral("AI 요약을 생성하는 중입니다…"));
+    if (summaryLabel) summaryLabel->setText(QStringLiteral("요약을 생성하는 중입니다…"));
 
     // 응답이 오는 사이 사용자가 날짜·입소자를 바꿀 수 있다. 그때 엉뚱한 리포트에
     // 요약이 붙지 않도록 요청 시점의 대상을 캡처해 두고 도착 시 비교한다.
@@ -5270,7 +5295,7 @@ void MainWindow::requestAiSummary()
             const QString msg = detail.isEmpty() ? reply->errorString() : detail;
             qDebug() << "AI 요약 실패:" << code << msg << raw;
             if (summaryLabel)
-                summaryLabel->setText(QStringLiteral("AI 요약 실패: %1%2").arg(msg, hint));
+                summaryLabel->setText(QStringLiteral("요약 생성 실패: %1%2").arg(msg, hint));
             return;
         }
 
@@ -5287,7 +5312,7 @@ void MainWindow::requestAiSummary()
         }
         if (text.isEmpty()) {
             if (summaryLabel)
-                summaryLabel->setText(QStringLiteral("AI 응답을 해석하지 못했습니다."));
+                summaryLabel->setText(QStringLiteral("요약 응답을 해석하지 못했습니다."));
             return;
         }
 
@@ -7949,7 +7974,8 @@ void MainWindow::loadResidentIntoForm(int id)
     };
 
     editName->setText(q.value(0).toString());
-    // value(1)=room, value(2)=bed 는 병실/침대 제거로 폼에 반영하지 않는다.
+    editRoom->setText(q.value(1).toString());
+    // value(2)=bed 는 침대 항목 제거로 폼에 반영하지 않는다.
     // DB는 0~3으로 저장, 화면엔 1~4로 보여준다(사람이 읽기 쉬운 채널 번호).
     editCameraId->setText(q.value(3).isNull() ? QString()
                                               : QString::number(q.value(3).toInt() + 1));
@@ -7972,6 +7998,7 @@ void MainWindow::onNewResident()
 {
     selectedResidentId = -1;
     editName->clear();
+    editRoom->clear();
     editCameraId->clear();
     editWearableId->clear();
     editGuardianName->clear();
@@ -8016,6 +8043,7 @@ QMap<QString, QString> MainWindow::formSnapshot() const
 {
     QMap<QString, QString> m;
     m[QStringLiteral("이름")]        = editName->text().trimmed();
+    m[QStringLiteral("호실")]        = editRoom->text().trimmed();
     m[QStringLiteral("카메라 채널")] = editCameraId->text().trimmed();
     m[QStringLiteral("웨어러블 ID")] = editWearableId->text().trimmed();
     m[QStringLiteral("위험도")]      = editRiskLevel->currentText();
@@ -8122,9 +8150,9 @@ void MainWindow::onSaveResident()
     }
 
     q.addBindValue(editName->text().trimmed());
-    // 병실/침대는 UI에서 제거했지만 컬럼이 NOT NULL이라 빈 문자열로 채운다(위치는 채널로 표기).
+    // room/bed 컬럼은 NOT NULL이라 빈 칸도 빈 문자열로 채운다(침대는 UI에서 제거).
     // 주의: QString()은 SQL NULL로 들어가 NOT NULL 위반 → 반드시 non-null 빈 문자열.
-    q.addBindValue(QStringLiteral(""));
+    q.addBindValue(editRoom->text().trimmed());
     q.addBindValue(QStringLiteral(""));
     q.addBindValue(channelOrNull(editCameraId->text()));
     q.addBindValue(textOrNull(editWearableId->text()));

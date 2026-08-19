@@ -611,8 +611,9 @@ private:
     QWidget* admissionBox = nullptr;   // 입원 이력 패널(신규 등록 시 숨김)
 
 
-    // 상세/편집 폼 — 기본정보 (병실/침대는 제거, 위치는 카메라 채널로 표기)
+    // 상세/편집 폼 — 기본정보 (침대는 제거, 위치는 호실·카메라 채널로 표기)
     QLineEdit* editName       = nullptr;
+    QLineEdit* editRoom       = nullptr;   // 호실 배정 (residents.room)
     QLineEdit* editCameraId   = nullptr;
     QLineEdit* editWearableId = nullptr;
 
