@@ -340,6 +340,13 @@ private:
     QPushButton*     resChipBtns_[4] = {};
     bool             resourceCollapsed_ = false;
     QTreeWidgetItem* camItems_[4] = {};
+    // 지금 영상월이 보여 주는 방. 0 = 실제 카메라가 붙은 방, 1 이상 = 아직 빈 자리로
+    // 화면엔 "카메라 미연결" 타일 4장만 뜬다. 서버 스트림은 그대로 살아 있고
+    // (101호는 계속 녹화·감지된다) 표시만 끊는 개념이다.
+    int selectedRoom_ = 0;
+    void selectRoom(int room);   // 트리에서 방을 고르면 영상월을 그 방으로 전환
+    void applyRoomView();        // selectedRoom_에 맞춰 타일·바이탈·트리를 다시 맞춘다
+    QString tileDisplayName(int ch) const;   // 빈 방에서는 입소자 이름을 붙이지 않는다
 
     // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
     QWidget*     buildLayoutTabs();
@@ -389,7 +396,11 @@ private:
     // 한 장도 못 받음. checkChannelHealth()가 이 값으로 "신호 끊김"을 판정한다.
     qint64 lastFrameMs_[4] = {};
     bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
-    bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
+    bool videoSuppressed_[4] = {};   // 지금 이 화면에 그리면 안 되는 채널(파생값, applyRoomView가 계산)
+    // 사용자가 "해제"한 채널. videoSuppressed_와 나눠 둔 이유: 표시 여부는
+    // (보고 있는 방) × (해제 여부) 두 조건의 곱인데, 방을 오갈 때마다 한 변수에
+    // 겹쳐 쓰면 해제해 둔 채널이 방 전환만으로 되살아난다.
+    bool videoCleared_[4] = {};
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태

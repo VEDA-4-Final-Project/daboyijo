@@ -2164,6 +2164,10 @@ void MainWindow::setVideoFocus(int channel)
         setGridLayout(GridLayout::Quad);
         return;
     }
+    // 경보는 전부 이 함수를 지나간다. 빈 방을 보고 있던 중이라면 실카메라 방으로
+    // 되돌려야 한다 — 낙상이 났는데 화면엔 "카메라 미연결" 타일만 떠 있으면
+    // 경보를 켜 놓고도 아무것도 못 보는 상태가 된다.
+    selectRoom(0);
     selectChannel(channel);
     setGridLayout(GridLayout::Spotlight);
 }
@@ -2276,14 +2280,20 @@ QWidget* MainWindow::buildResourcePanel()
             [this](QTreeWidgetItem* item, int) {
                 if (!item) return;
                 const QString kind = item->data(0, Qt::UserRole).toString();
-                if (kind == QLatin1String("camEmpty") ||
-                    kind == QLatin1String("groupEmpty")) {
-                    // 빈 자리는 고를 대상이 아니다 — 선택 하이라이트만 남으면
-                    // 그 채널이 선택된 것처럼 보여 오해를 부른다.
-                    resourceTree_->clearSelection();
+                // 방 그룹을 누르면 영상월이 그 방으로 바뀐다. 빈 방의 채널 자리를
+                // 눌러도 같은 뜻으로 받는다 — 사람은 그룹이 아니라 눈에 보이는
+                // 채널 줄을 누른다.
+                if (kind == QLatin1String("group") || kind == QLatin1String("groupEmpty")) {
+                    selectRoom(item->data(0, Qt::UserRole + 1).toInt());
+                    return;
+                }
+                if (kind == QLatin1String("camEmpty")) {
+                    QTreeWidgetItem* g = item->parent();
+                    if (g) selectRoom(g->data(0, Qt::UserRole + 1).toInt());
                     return;
                 }
                 if (kind == QLatin1String("cam")) {
+                    selectRoom(0);   // 실카메라 방으로 돌아온 뒤 그 채널을 고른다
                     selectChannel(item->data(0, Qt::UserRole + 1).toInt());
                 } else if (kind == QLatin1String("layout")) {
                     const int i = item->data(0, Qt::UserRole + 1).toInt();
@@ -2297,6 +2307,7 @@ QWidget* MainWindow::buildResourcePanel()
             [this](QTreeWidgetItem* item, int) {
                 if (!item || item->data(0, Qt::UserRole).toString() != QLatin1String("cam"))
                     return;
+                selectRoom(0);
                 selectChannel(item->data(0, Qt::UserRole + 1).toInt());
                 setGridLayout(GridLayout::Single);
             });
@@ -2338,6 +2349,69 @@ QWidget* MainWindow::buildResourcePanel()
 
 // 트리의 표시만 다시 만든다(항목 자체는 재생성하지 않는다).
 // 다시 만들면 펼침 상태와 스크롤 위치가 매번 초기화돼 손으로 다시 열어야 한다.
+// 트리에서 방을 고르면 영상월을 그 방으로 전환한다.
+//
+// 방을 바꿔도 서버에는 아무 것도 보내지 않는다 — 101호 카메라는 계속 스트리밍하고
+// 낙상 감지도 계속 돈다. 바뀌는 건 "이 화면이 무엇을 보여 주는가"뿐이다. 그래서
+// 102호를 보다가 101호로 돌아오면 끊긴 자리에서 이어지는 게 아니라 지금 실시간이
+// 바로 뜬다(카메라 해제와 결정적으로 다른 점).
+void MainWindow::selectRoom(int room)
+{
+    const int count = roomNames().size();
+    room = qBound(0, room, count - 1);
+    if (room == selectedRoom_) return;
+    selectedRoom_ = room;
+    applyRoomView();
+}
+
+// selectedRoom_에 맞춰 타일·바이탈·트리를 한 번에 맞춘다.
+// videoSuppressed_는 이제 "해제했다"가 아니라 "지금 이 화면에 그리면 안 된다"는
+// 파생값이다 — (보고 있는 방이 실카메라 방인가) × (그 채널을 해제하지 않았는가).
+//
+// 여기서 cameraActive_를 쓰지 않는 게 중요하다. 그 플래그는 "해제 버튼을 눌러도
+// 되는가"를 나타낼 뿐이고, 서버는 Qt 재시작과 무관하게 계속 스트리밍한다 —
+// active_mask가 비어 있어도 프레임은 들어오고 예전엔 그대로 화면에 떴다.
+// 조건에 끼워 넣으면 그 경우에 영상이 통째로 사라진다.
+void MainWindow::applyRoomView()
+{
+    const bool liveRoom = (selectedRoom_ == 0);
+    for (int ch = 0; ch < 4; ++ch) {
+        // draw  = 들어온 프레임을 그릴 것인가 (실제 차단은 이 값 하나로 한다)
+        // known = 타일에 "연결됨"으로 적을 것인가. 둘을 나눈 이유: 서버가 이미
+        //         스트리밍 중인데 active_mask만 비어 있는 경우가 있고, 그때도
+        //         영상은 떠야 한다. 프레임이 도착하면 VideoView가 스스로
+        //         cameraConnected_를 켜므로 라벨은 자연히 따라온다.
+        const bool draw  = liveRoom && !videoCleared_[ch];
+        const bool known = draw && cameraActive_[ch];
+        videoSuppressed_[ch] = !draw;
+        if (auto* v = channelViews[ch]) {
+            // setCameraConnected(false)가 직전 프레임까지 지운다 — 방을 옮겼는데
+            // 이전 방 화면이 정지영상으로 남아 있으면 그게 제일 위험한 오해다.
+            v->setCameraConnected(known);
+            if (!draw) v->setLive(false);
+            v->setDisplayName(tileDisplayName(ch));
+            // 배지는 "빈 방으로 나갈 때"만 지운다. 돌아올 때도 지우면 경보 경로가
+            // setAlert(true) → setVideoFocus → selectRoom(0) 순서라서 방금 켠
+            // 배지를 스스로 꺼 버린다.
+            if (!liveRoom) v->setAlert(false);
+        }
+        if (!draw) {
+            lastFramePix_[ch] = QPixmap();
+            if (camThumbs[ch]) camThumbs[ch]->clearFrame();
+        }
+    }
+    rebuildVitalCards();     // 빈 방에서는 카드가 전부 "대기"로 내려간다
+    refreshResourceTree();
+}
+
+// 타일 좌상단 이름. 빈 방에서는 입소자 이름을 붙이지 않는다 — 102호 타일에
+// 101호 입소자 이름이 뜨면 그 사람이 거기 있는 것으로 읽힌다.
+QString MainWindow::tileDisplayName(int ch) const
+{
+    if (selectedRoom_ != 0) return QStringLiteral("CH%1").arg(ch + 1);
+    return channelDisplayName(ch);
+}
+
 void MainWindow::refreshResourceTree()
 {
     if (!resourceTree_) return;
@@ -2355,7 +2429,10 @@ void MainWindow::refreshResourceTree()
         live->setText(0, rooms.value(0, currentRoomName()));
         // 색을 명시해 둔다 — 기본색에 맡기면 아래 빈 방(회색)과 톤이 비슷해져
         // "카메라가 붙은 방"과 "빈 자리"가 구분되지 않는다.
-        live->setForeground(0, textColor);
+        live->setForeground(0, selectedRoom_ == 0 ? selColor : textColor);
+        QFont lf = live->font(0);
+        lf.setBold(selectedRoom_ == 0);
+        live->setFont(0, lf);
     }
 
     if (auto* root = resourceTree_->topLevelItem(0)) {
@@ -2363,7 +2440,12 @@ void MainWindow::refreshResourceTree()
             QTreeWidgetItem* group = root->child(i);
             if (group->data(0, Qt::UserRole).toString() != QLatin1String("groupEmpty"))
                 continue;
-            group->setForeground(0, offColor);
+            const int r = group->data(0, Qt::UserRole + 1).toInt();
+            const bool viewing = (r == selectedRoom_);
+            group->setForeground(0, viewing ? selColor : offColor);
+            QFont gf = group->font(0);
+            gf.setBold(viewing);
+            group->setFont(0, gf);
             for (int c = 0; c < group->childCount(); ++c) {
                 QTreeWidgetItem* slot = group->child(c);
                 slot->setForeground(0, offColor);
@@ -2786,10 +2868,15 @@ void MainWindow::rebuildVitalCards()
     struct TargetEntry { int key; QString name; QString bedText; };
     QVector<TargetEntry> target;
     target.reserve(8);
-    const QString room = currentRoomName();
+    const QStringList rooms = roomNames();
+    const QString room = rooms.value(selectedRoom_, currentRoomName());
+    // 빈 방에는 배정된 사람이 없다 — 여기서 residentsByChannel_를 그대로 쓰면
+    // 102호 화면에 101호 입소자의 심박이 뜬다.
+    static const QVector<int> kNoResidents;
     for (int ch = 0; ch < 4; ++ch) {
         const QString bedText = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
-        const QVector<int>& ids = residentsByChannel_[ch];
+        const QVector<int>& ids =
+            (selectedRoom_ == 0) ? residentsByChannel_[ch] : kNoResidents;
 
         // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
         // 관제사가 그 채널을 잊는다. 음수 키라 값이 안 들어와 "대기"로 뜬다.
@@ -8073,11 +8160,12 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
         const QString url = buildRtspUrl(ip, user, password, port, prof, ch);
         lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
         cameraActive_[ch] = true;   // 연결됨(재시작 후에도 해제 가능하도록 지속 저장)
-        videoSuppressed_[ch] = false;  // 프레임 표시 재개
-        if (channelViews[ch])
-            channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
+        videoCleared_[ch] = false;  // 다시 표시 대상
         if (sendCamera(ch, url)) ++sent;
     }
+    // 표시 여부는 applyRoomView가 결정한다 — 빈 방을 보는 중에 연결했다면
+    // 그 방 화면에 101호 영상이 튀어나오면 안 된다.
+    applyRoomView();
     persistCameraActive();
     refreshCamChannelStatus();   // 채널 레일 배지에 연결 상태 반영
 
@@ -8232,7 +8320,7 @@ void MainWindow::onCameraClearClicked()
         sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
         lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
         cameraActive_[ch] = false;      // 미연결로 표시(지속 저장 반영)
-        videoSuppressed_[ch] = true;    // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
+        videoCleared_[ch] = true;       // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
         if (channelViews[ch]) {
             channelViews[ch]->setLive(false);
             channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
@@ -8245,6 +8333,7 @@ void MainWindow::onCameraClearClicked()
         roiEditorView->setCameraConnected(false);
     }
     if (imgWipe_) imgWipe_->clearFrames();
+    applyRoomView();             // videoSuppressed_는 여기서만 계산된다
     persistCameraActive();
     refreshCamChannelStatus();   // 채널 타일 배지 + 인스펙터 헤더에 해제 상태 반영
 }
@@ -8267,11 +8356,8 @@ void MainWindow::restoreCameraActive()
     const int mask = s.value(QStringLiteral("camera/active_mask"), 0).toInt();
     for (int ch = 0; ch < 4; ++ch) {
         cameraActive_[ch] = (mask & (1 << ch)) != 0;
-        if (cameraActive_[ch]) {
-            videoSuppressed_[ch] = false;
-            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
-        }
     }
+    applyRoomView();
 }
 
 // Pi가 (재)연결되면, 그 Pi 담당 채널의 마지막 카메라 URL을 자동으로 다시 보낸다.
@@ -8283,11 +8369,11 @@ void MainWindow::resendCamerasForServer(int serverIdx)
         if (serverForChannel(ch) != serverIdx) continue;
         if (lastCameraUrl_[ch].isEmpty()) continue;
         if (sendCamera(ch, lastCameraUrl_[ch])) {
-            videoSuppressed_[ch] = false;  // 프레임 표시 재개
-            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
+            videoCleared_[ch] = false;   // 표시 재개(연결 플래그는 이미 서 있다)
             qDebug() << "Pi" << serverIdx << "재접속 → ch" << ch << "카메라 자동 재전송";
         }
     }
+    applyRoomView();   // 표시 여부는 지금 보고 있는 방이 결정한다
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -8637,7 +8723,7 @@ void MainWindow::refreshPatientLabels()
 {
     for (int ch = 0; ch < 4; ++ch) {
         // 타일 좌상단 이름(LIVE 옆)도 같은 소스에서 만든다.
-        if (channelViews[ch]) channelViews[ch]->setDisplayName(channelDisplayName(ch));
+        if (channelViews[ch]) channelViews[ch]->setDisplayName(tileDisplayName(ch));
         // 침대 이름표·매핑 콤보도 새 입소자 구성으로 다시 그린다 — 이름을 고치거나
         // 퇴원시켰는데 침대 라벨만 옛 이름으로 남으면 관제사가 오판한다.
         refreshRoiZones(ch);
