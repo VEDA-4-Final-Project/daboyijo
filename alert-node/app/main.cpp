@@ -7,6 +7,7 @@
 #include <atomic>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <pthread.h>
 #include <unistd.h>
 #include <linux/limits.h>
 
@@ -24,7 +26,57 @@
 namespace {
 
 std::atomic<bool> running{true};
-void onSignal(int) { running = false; }
+
+// 정리 단계가 어디서 막히든 이 시간 안에는 프로세스가 사라진다
+constexpr unsigned SHUTDOWN_LIMIT_SEC = 5;
+
+void onSignal(int)
+{
+    if (!running) std::_Exit(1);        // 두 번째 신호 — 정리 포기 (중계 노드와 같은 규칙)
+    running = false;
+
+    // 우리가 깨울 수 없는 곳에 걸려도 반드시 끝나게 하는 마지막 안전장치.
+    // 패널 vsync 대기, 오디오 스레드 join, mosquitto 소켓 정리처럼 남의 코드
+    // 안에서 멈추면 running 을 아무리 내려도 소용이 없다. SIGALRM 은 기본 동작이
+    // 프로세스 종료라 핸들러도 필요 없고, alarm() 은 시그널 핸들러에서 불러도
+    // 되는 몇 안 되는 함수다. systemd 가 곧바로 재시작한다.
+    alarm(SHUTDOWN_LIMIT_SEC);
+}
+
+// std::signal 은 glibc 에서 SA_RESTART 가 켜진 BSD 의미다 — 잠들어 있던 syscall 이
+// 시그널을 먹고도 커널이 자동으로 재시작해 버린다. hub75 의 FBIO_WAITFORVSYNC 가
+// -ERESTARTSYS 를 돌려주므로, 패널 커널 스레드가 멎으면 Ctrl+C 가 통째로 삼켜진다.
+// 그래서 sigaction 으로 SA_RESTART 없이 직접 건다.
+void installSignalHandlers()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = onSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;                    // SA_RESTART 없음 — 블로킹 syscall 이 EINTR 로 깨야 한다
+    sigaction(SIGINT,  &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+}
+
+// MQTT 네트워크 스레드를 만드는 동안만 종료 시그널을 막는다 — 새 스레드가 이 마스크를
+// 물려받아, 시그널을 그쪽이 가로채는 일이 없어진다(메인이 usleep/ioctl 에서 EINTR 로
+// 깨야 running 확인이 빠르다).
+//
+// 오디오 재생 스레드에는 일부러 안 씌운다. 모든 스레드가 막아버리면 메인이
+// playWav 안쪽 join 처럼 긴 곳에 들어갔을 때 시그널이 펜딩으로 갇혀, 핸들러가
+// 아예 안 돌고 워치독도 안 걸린다. 한 스레드는 받을 수 있게 열어 둔다.
+struct SignalGuard {
+    sigset_t prev;
+    SignalGuard()
+    {
+        sigset_t block;
+        sigemptyset(&block);
+        sigaddset(&block, SIGINT);
+        sigaddset(&block, SIGTERM);
+        pthread_sigmask(SIG_BLOCK, &block, &prev);
+    }
+    ~SignalGuard() { pthread_sigmask(SIG_SETMASK, &prev, nullptr); }
+};
 
 // ---------------- 설정 ----------------
 
@@ -170,8 +222,7 @@ std::string resolveAudioPath(const Config& cfg, const AlarmCommand& cmd)
 
 int main(int argc, char* argv[])
 {
-    signal(SIGINT, onSignal);
-    signal(SIGTERM, onSignal);
+    installSignalHandlers();
 
     Config cfg;
     std::string confPath = exeDir() + "/alert-node.conf";
@@ -243,7 +294,7 @@ int main(int argc, char* argv[])
                 cfg.ca_path.empty() ? "" : " [TLS]");
         return 1;
     }
-    client.startLoop();
+    { SignalGuard g; client.startLoop(); }   // 네트워크 스레드는 시그널을 안 받게 만든다
     // QoS 1 로 구독 — 실제 등급은 발행·구독 중 낮은 쪽이라 여기가 0 이면
     // 보내는 쪽이 1 로 보내도 마지막 구간에서 0 으로 깎임
     client.publish(statusTopic, "online", 1, true);   // retain — 아직 연결 전이면 큐에 담겼다 뒤에 나간다
@@ -313,7 +364,7 @@ int main(int argc, char* argv[])
             // 서버가 지정하면 그대로, 안 주면 노드 기본값
             int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
             severity sev = toSeverity(cmd.type);
-            display.blinkCue(sev);              // 새 경보라는 신호
+            display.blinkCue(sev, 2, aborted);  // 새 경보라는 신호 (종료 신호면 중단)
             display.show(toText(cmd), sev, passes, aborted);
         }
         else if (cmd.matrix_action == "CLEAR")
@@ -338,7 +389,7 @@ int main(int argc, char* argv[])
         std::lock_guard<std::mutex> lk(player_mutex);
         player.stop();
     }
-    display.clear();
+    display.clearNoWait();   // vsync 를 기다리다 여기서 매달리지 않게
     printf("\n종료\n");
     return 0;
 }
