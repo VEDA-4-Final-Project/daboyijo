@@ -830,6 +830,12 @@ private:
     // ── 카메라 설정 통합 UI ──
     // 3단 구성: [채널 스트립(썸네일)] │ [스테이지(큰 영상)] │ [인스펙터(모드별 설정)]
     QWidget* buildCamModeSegment();   // 상단 페이지 모드 세그먼트(연결/ROI/이미지)
+    QWidget* buildCamRoomSegment();   // 상단 방 세그먼트(101호/102호…) — selectedRoom_ 공유
+    QWidget* buildCamEmptyRoomPage(); // 카메라 없는 방을 골랐을 때의 인스펙터 안내
+    void rebuildCamRoomSegment();     // 방 목록이 바뀌면 세그먼트 버튼을 다시 만든다
+    void rebuildResourceRooms();      // 방 목록이 바뀌면 리소스 트리 Root 아래를 다시 만든다
+    void onAddRoomClicked();          // [+] 호실 추가
+    void removeRoom(int room);        // 방 자리 삭제(0번 실카메라 방은 지울 수 없다)
     QWidget* buildCamChannelStrip();  // 좌측 채널 썸네일 타일 4개
     QWidget* buildCamInspector();     // 우측 인스펙터(헤더 + 모드별 페이지 스택)
     QWidget* buildCamConnectPage();   // 인스펙터 '연결' 페이지(접속 폼 + 검색표)
@@ -846,7 +852,13 @@ private:
     QLabel* camInspPill = nullptr;          // 인스펙터 헤더 연결 상태 알약
     QLabel* camInspIp = nullptr;            // 인스펙터 헤더 카메라 주소
     QPushButton* camModeBtns[3] = {};       // [0]연결 [1]ROI [2]이미지 세그먼트
+    QWidget* camRoomSeg_ = nullptr;         // 방 세그먼트 컨테이너(방 추가 시 다시 채운다)
+    QVector<QPushButton*> camRoomBtns_;     // 방 세그먼트 버튼(방 수만큼)
     QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
+    // 카메라가 없는 방을 골랐을 때 인스펙터에 대신 띄우는 안내 페이지(스택 index 3).
+    // 설정 위젯을 비활성만 해두면 101호 값(IP·침대 목록)이 회색으로 남아 읽혀서,
+    // 그 방에도 뭔가 있는 것처럼 보인다 — 아예 다른 페이지로 갈아 끼운다.
+    QWidget* camEmptyRoomPage_ = nullptr;
     QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
 

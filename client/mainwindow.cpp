@@ -37,6 +37,7 @@
 #include <cmath>
 #include <QPushButton>
 #include <QInputDialog>
+#include <QMenu>
 #include <QMessageBox>
 #include <QFileDialog>
 
@@ -2235,37 +2236,10 @@ QWidget* MainWindow::buildResourcePanel()
     resourceTree_->setSelectionMode(QAbstractItemView::SingleSelection);
     body->addWidget(resourceTree_, 1);
 
-    // ── Root > 방 그룹 > 채널 4개 ──
-    // 0번 방만 실제 카메라를 갖는다. 나머지 방은 채널 4칸을 회색으로 비워 두는데,
-    // 눌러도 아무 일도 일어나지 않는다(연결된 영상이 없으니 고를 것도 없다).
     auto* root = new QTreeWidgetItem(resourceTree_,
                                      QStringList(QStringLiteral("Root")));
     root->setData(0, Qt::UserRole, QStringLiteral("root"));
-    const QStringList rooms = roomNames();
-    for (int r = 0; r < rooms.size(); ++r) {
-        auto* group = new QTreeWidgetItem(root);
-        group->setData(0, Qt::UserRole,
-                       r == 0 ? QStringLiteral("group") : QStringLiteral("groupEmpty"));
-        group->setData(0, Qt::UserRole + 1, r);
-        group->setText(0, rooms.at(r));
-        if (r == 0) {
-            for (int ch = 0; ch < 4; ++ch) {
-                camItems_[ch] = new QTreeWidgetItem(group);
-                camItems_[ch]->setData(0, Qt::UserRole, QStringLiteral("cam"));
-                camItems_[ch]->setData(0, Qt::UserRole + 1, ch);
-            }
-        } else {
-            group->setToolTip(0, QStringLiteral("카메라가 아직 연결되지 않은 방입니다"));
-            for (int ch = 0; ch < 4; ++ch) {
-                auto* slot = new QTreeWidgetItem(group);
-                slot->setData(0, Qt::UserRole, QStringLiteral("camEmpty"));
-                slot->setText(0, QStringLiteral("채널 %1").arg(ch + 1));
-                slot->setToolTip(0, QStringLiteral("카메라 미연결 — 빈 자리입니다"));
-            }
-        }
-        group->setExpanded(true);
-    }
-    root->setExpanded(true);
+    rebuildResourceRooms();
 
     // ── 레이아웃 프리셋 ──
     auto* layoutRoot = new QTreeWidgetItem(resourceTree_,
@@ -2355,6 +2329,47 @@ QWidget* MainWindow::buildResourcePanel()
 
 // 트리의 표시만 다시 만든다(항목 자체는 재생성하지 않는다).
 // 다시 만들면 펼침 상태와 스크롤 위치가 매번 초기화돼 손으로 다시 열어야 한다.
+// Root 아래 방 그룹을 처음부터 다시 만든다. 방을 추가·삭제하면 항목 자체가
+// 달라지므로 refreshResourceTree(표시 갱신)로는 부족하고 이 함수가 필요하다.
+void MainWindow::rebuildResourceRooms()
+{
+    if (!resourceTree_) return;
+    QTreeWidgetItem* root = resourceTree_->topLevelItem(0);
+    if (!root) return;
+    qDeleteAll(root->takeChildren());
+    for (int ch = 0; ch < 4; ++ch) camItems_[ch] = nullptr;
+
+    // ── Root > 방 그룹 > 채널 4개 ──
+    // 0번 방만 실제 카메라를 갖는다. 나머지 방은 채널 4칸을 회색으로 비워 두는데,
+    // 눌러도 아무 일도 일어나지 않는다(연결된 영상이 없으니 고를 것도 없다).
+    const QStringList rooms = roomNames();
+    for (int r = 0; r < rooms.size(); ++r) {
+        auto* group = new QTreeWidgetItem(root);
+        group->setData(0, Qt::UserRole,
+                       r == 0 ? QStringLiteral("group") : QStringLiteral("groupEmpty"));
+        group->setData(0, Qt::UserRole + 1, r);
+        group->setText(0, rooms.at(r));
+        if (r == 0) {
+            for (int ch = 0; ch < 4; ++ch) {
+                camItems_[ch] = new QTreeWidgetItem(group);
+                camItems_[ch]->setData(0, Qt::UserRole, QStringLiteral("cam"));
+                camItems_[ch]->setData(0, Qt::UserRole + 1, ch);
+            }
+        } else {
+            group->setToolTip(0, QStringLiteral("카메라가 아직 연결되지 않은 방입니다"));
+            for (int ch = 0; ch < 4; ++ch) {
+                auto* slot = new QTreeWidgetItem(group);
+                slot->setData(0, Qt::UserRole, QStringLiteral("camEmpty"));
+                slot->setText(0, QStringLiteral("채널 %1").arg(ch + 1));
+                slot->setToolTip(0, QStringLiteral("카메라 미연결 — 빈 자리입니다"));
+            }
+        }
+        group->setExpanded(true);
+    }
+    root->setExpanded(true);
+    root->setExpanded(true);
+}
+
 // 트리에서 방을 고르면 영상월을 그 방으로 전환한다.
 //
 // 방을 바꿔도 서버에는 아무 것도 보내지 않는다 — 101호 카메라는 계속 스트리밍하고
@@ -2411,6 +2426,18 @@ void MainWindow::applyRoomView()
             if (camThumbs[ch]) camThumbs[ch]->clearFrame();
         }
     }
+    // 설정 화면(스테이지 영상)도 같은 방을 따른다.
+    if (roiEditorView) {
+        const bool stage = liveRoom && cameraActive_[roiEditChannel];
+        roiEditorView->setCameraConnected(stage);
+        if (!liveRoom) { roiEditorView->setLive(false); roiEditorView->setZones({}); }
+    }
+    if (imgWipe_ && !liveRoom) imgWipe_->clearFrames();
+    for (int r = 0; r < camRoomBtns_.size(); ++r)
+        camRoomBtns_[r]->setChecked(r == selectedRoom_);
+    setCamMode(camMode_);          // 빈 방이면 안내 페이지로, 아니면 원래 모드로
+    refreshCamChannelStatus();
+
     rebuildVitalCards();     // 빈 방에서는 카드가 전부 "대기"로 내려간다
     refreshResourceTree();
 }
@@ -6582,6 +6609,13 @@ QString MainWindow::zoneResidentName(int channel, int roiId) const
 void MainWindow::refreshRoiZones(int channel)
 {
     if (channel < 0 || channel >= 4) return;
+    // 빈 방에는 침대가 없다. 막지 않으면 102호를 보는 중에 채널을 바꿀 때마다
+    // 101호 침대 폴리곤이 설정 스테이지에 다시 그려진다.
+    if (selectedRoom_ != 0) {
+        if (channelViews[channel]) channelViews[channel]->setZones({});
+        if (roiEditorView && roiEditChannel == channel) roiEditorView->setZones({});
+        return;
+    }
 
     // 이름표는 여기서 만든다 — 침대 번호만으로는 관제사가 누구 자리인지 모른다.
     QVector<RoiZone> withLabels = roiZones_[channel];
@@ -7190,6 +7224,9 @@ QWidget* MainWindow::buildCameraSettingsTab()
     title->setObjectName("panelTitle");
     titleRow->addWidget(title);
     titleRow->addStretch();
+    // 방을 먼저 고르고 그 안에서 모드를 고르는 순서라 왼쪽에 둔다.
+    titleRow->addWidget(buildCamRoomSegment());
+    titleRow->addSpacing(10);
     titleRow->addWidget(buildCamModeSegment());   // 모드는 페이지 전체를 바꾸므로 상단에
     outer->addLayout(titleRow);
 
@@ -7432,6 +7469,156 @@ QWidget* MainWindow::buildAlertSettingsTab()
 }
 
 // 상단 페이지 모드 세그먼트 — 트랙 위에 얹힌 알약 버튼 3개.
+// 상단 방 세그먼트(101호 / 102호 …). 실시간 관제 트리와 selectedRoom_을 공유하므로
+// 여기서 방을 바꾸면 관제 화면도 같은 방을 보게 된다 — 두 화면이 서로 다른 방을
+// 가리키면 "지금 어느 방을 설정 중인가"가 흐려진다.
+QWidget* MainWindow::buildCamRoomSegment()
+{
+    camRoomSeg_ = new QFrame();
+    camRoomSeg_->setObjectName("camSeg");
+    auto* seg = new QHBoxLayout(camRoomSeg_);
+    seg->setContentsMargins(4, 4, 4, 4);
+    seg->setSpacing(4);
+    rebuildCamRoomSegment();
+    return camRoomSeg_;
+}
+
+// 방 목록이 바뀔 때마다 버튼을 통째로 다시 만든다. 방 수가 가변이라 버튼을
+// 미리 만들어 둘 수 없다.
+void MainWindow::rebuildCamRoomSegment()
+{
+    if (!camRoomSeg_) return;
+    auto* seg = qobject_cast<QHBoxLayout*>(camRoomSeg_->layout());
+    if (!seg) return;
+    while (QLayoutItem* it = seg->takeAt(0)) {
+        delete it->widget();
+        delete it;
+    }
+    camRoomBtns_.clear();
+
+    const QStringList rooms = roomNames();
+    for (int r = 0; r < rooms.size(); ++r) {
+        auto* b = new QPushButton(rooms.at(r));
+        b->setObjectName("camSegBtn");
+        b->setCheckable(true);
+        b->setChecked(r == selectedRoom_);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setMinimumWidth(76);
+        if (r != 0) {
+            b->setToolTip(QStringLiteral("카메라가 배정되지 않은 방입니다\n"
+                                         "우클릭하면 이 방 자리를 지울 수 있습니다"));
+            // 삭제는 우클릭에 둔다 — 버튼마다 ×를 붙이면 세그먼트가 지저분해지고,
+            // 자주 쓰는 동작도 아니다.
+            b->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(b, &QPushButton::customContextMenuRequested, this,
+                    [this, b, r](const QPoint& pos) {
+                        QMenu menu(this);
+                        QAction* del = menu.addAction(QStringLiteral("이 방 자리 삭제"));
+                        if (menu.exec(b->mapToGlobal(pos)) == del) removeRoom(r);
+                    });
+        } else {
+            b->setToolTip(QStringLiteral("카메라가 배정된 방입니다"));
+        }
+        connect(b, &QPushButton::clicked, this, [this, r] { selectRoom(r); });
+        camRoomBtns_.append(b);
+        seg->addWidget(b);
+    }
+
+    // [+] 호실 추가 — 방 "자리"만 늘린다(카메라는 따라오지 않는다).
+    auto* add = new QPushButton(QStringLiteral("＋"));
+    add->setObjectName("camSegBtn");
+    add->setCursor(Qt::PointingHandCursor);
+    add->setFixedWidth(34);
+    add->setToolTip(QStringLiteral("호실 추가 — 방 자리를 만들어 둡니다"));
+    connect(add, &QPushButton::clicked, this, &MainWindow::onAddRoomClicked);
+    seg->addWidget(add);
+}
+
+// [+] — 다음 호실 번호를 추정해 기본값으로 제안한다.
+void MainWindow::onAddRoomClicked()
+{
+    QStringList rooms = roomNames();
+
+    // 마지막 방 이름에서 숫자를 뽑아 +1 (예: "102호" → "103호"). 숫자가 없으면 빈 제안.
+    QString suggestion;
+    static const QRegularExpression num(QStringLiteral("(\\d+)"));
+    const auto m = num.match(rooms.isEmpty() ? QString() : rooms.last());
+    if (m.hasMatch()) {
+        const QString tail = rooms.last().mid(m.capturedEnd(1));
+        suggestion = QString::number(m.captured(1).toInt() + 1) + tail;
+    }
+
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, QStringLiteral("호실 추가"),
+                              QStringLiteral("추가할 호실 이름"),
+                              QLineEdit::Normal, suggestion, &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (rooms.contains(name)) {
+        QMessageBox::information(this, QStringLiteral("호실 추가"),
+                                 QStringLiteral("이미 있는 호실입니다."));
+        return;
+    }
+
+    rooms << name;
+    QSettings st;
+    st.setValue(QLatin1String(kSettingsRoomNames), rooms);
+    rebuildCamRoomSegment();
+    rebuildResourceRooms();
+    refreshResourceTree();
+}
+
+// 방 자리 삭제. 0번(실제 카메라가 붙은 방)은 지울 수 없다 — 지우면 영상월이
+// 가리킬 대상이 사라진다.
+void MainWindow::removeRoom(int room)
+{
+    QStringList rooms = roomNames();
+    if (room <= 0 || room >= rooms.size()) return;
+
+    const QString name = rooms.at(room);
+    if (QMessageBox::question(
+            this, QStringLiteral("호실 삭제"),
+            QStringLiteral("%1 자리를 지울까요?").arg(name)) != QMessageBox::Yes)
+        return;
+
+    rooms.removeAt(room);
+    QSettings st;
+    st.setValue(QLatin1String(kSettingsRoomNames), rooms);
+
+    // 보고 있던 방을 지웠거나 뒤 번호가 당겨졌으면 실카메라 방으로 되돌린다.
+    if (selectedRoom_ >= rooms.size() || selectedRoom_ == room) {
+        selectedRoom_ = 0;
+        applyRoomView();
+        for (int ch = 0; ch < 4; ++ch) refreshRoiZones(ch);
+    }
+    rebuildCamRoomSegment();
+    rebuildResourceRooms();
+    refreshResourceTree();
+}
+
+// 카메라가 없는 방을 골랐을 때 인스펙터 자리에 들어가는 안내.
+QWidget* MainWindow::buildCamEmptyRoomPage()
+{
+    auto* page = new QWidget();
+    auto* v = new QVBoxLayout(page);
+    v->setContentsMargins(0, 8, 0, 0);
+    v->setSpacing(8);
+
+    auto* cap = new QLabel(QStringLiteral("카메라 없음"));
+    cap->setObjectName("camSectionCap");
+    v->addWidget(cap);
+
+    auto* msg = new QLabel(QStringLiteral(
+        "이 방에는 아직 카메라가 배정되지 않았습니다.\n\n"
+        "방 자리를 먼저 만들어 두는 단계입니다. 카메라가 배정되면 접속 정보·"
+        "침대(ROI)·화질 설정이 여기에 들어옵니다."));
+    msg->setObjectName("camHint");
+    msg->setWordWrap(true);
+    v->addWidget(msg);
+    v->addStretch();
+    return page;
+}
+
 QWidget* MainWindow::buildCamModeSegment()
 {
     auto* segTrack = new QFrame();
@@ -7552,6 +7739,8 @@ QWidget* MainWindow::buildCamInspector()
     camControlStack->addWidget(buildCamConnectPage());
     camControlStack->addWidget(buildCamRoiPage());
     camControlStack->addWidget(buildCamImagePage());
+    camEmptyRoomPage_ = buildCamEmptyRoomPage();
+    camControlStack->addWidget(camEmptyRoomPage_);   // index 3 — 카메라 없는 방
     // 스택이 '현재 페이지' 높이에 맞게 줄어들도록 — 숨은 페이지는 세로 크기 계산에서 제외.
     auto sizeToCurrent = [](QStackedWidget* st) {
         for (int i = 0; i < st->count(); ++i) {
@@ -8032,7 +8221,9 @@ void MainWindow::setCamMode(const QString& mode)
         if (camModeBtns[i]) camModeBtns[i]->setChecked(modes[i] == mode);
         if (modes[i] == mode) idx = i;
     }
-    if (camControlStack) camControlStack->setCurrentIndex(idx);
+    // 빈 방에서는 연결/ROI/이미지 어느 쪽도 만질 게 없다 — 안내 페이지를 유지한다.
+    if (camControlStack)
+        camControlStack->setCurrentIndex(selectedRoom_ == 0 ? idx : 3);
     // 이미지 모드만 Before/After 프리뷰, 나머지는 라이브/ROI 영상.
     const bool imageMode = (mode == QStringLiteral("이미지"));
     if (camStageStack)
@@ -8045,9 +8236,12 @@ void MainWindow::setCamMode(const QString& mode)
 // 채널별 연결·ROI 지정 여부를 레일 배지에 반영.
 void MainWindow::refreshCamChannelStatus()
 {
+    // 빈 방을 보는 중이면 채널 배지도 전부 미연결이어야 한다 — 여기서 cameraActive_만
+    // 보면 102호를 골라 놓고 "● 연결"이 뜬다.
+    const bool liveRoom = (selectedRoom_ == 0);
     for (int ch = 0; ch < 4; ++ch) {
         if (!camChannelStatus[ch]) continue;
-        const bool connected = cameraActive_[ch];
+        const bool connected = liveRoom && cameraActive_[ch];
         const int beds = roiZones_[ch].size();
         QString txt = connected ? QStringLiteral("● 연결") : QStringLiteral("○ 미연결");
         // 침대가 여러 개일 수 있으니 "ROI 있음"이 아니라 몇 개인지를 보여준다
@@ -8065,7 +8259,7 @@ void MainWindow::refreshCamChannelStatus()
     const int cur = roiEditChannel;
     if (camInspCh) camInspCh->setText(QStringLiteral("CH %1").arg(cur + 1));
     if (camInspPill) {
-        const bool on = cameraActive_[cur];
+        const bool on = liveRoom && cameraActive_[cur];
         // 채널 상태 텍스트와 같은 어휘(●/○)를 붙여 두 배지의 표기를 통일한다.
         camInspPill->setText(on ? QStringLiteral("● 연결됨") : QStringLiteral("○ 미연결"));
         camInspPill->setProperty("connected", on);
@@ -8075,7 +8269,7 @@ void MainWindow::refreshCamChannelStatus()
     }
     if (camInspIp) {
         // URL에는 계정·비밀번호가 들어 있으므로 호스트만 보여준다.
-        const QString host = QUrl(lastCameraUrl_[cur]).host();
+        const QString host = liveRoom ? QUrl(lastCameraUrl_[cur]).host() : QString();
         camInspIp->setText(host.isEmpty()
                                ? QStringLiteral("카메라가 연결되지 않았습니다")
                                : QStringLiteral("%1 · RTSP profile2").arg(host));
@@ -8086,7 +8280,7 @@ void MainWindow::refreshCamChannelStatus()
     // 안 열리면 프레임이 영영 안 온다. 그 차이를 여기서 드러낸다.
     for (int ch = 0; ch < 4; ++ch) {
         if (!camConnBadges[ch]) continue;
-        const bool active = cameraActive_[ch];
+        const bool active = liveRoom && cameraActive_[ch];
         const bool live = channelViews[ch] && channelViews[ch]->live();
         const QString state = !active ? QStringLiteral("미연결")
                             : live    ? QStringLiteral("수신 중")
