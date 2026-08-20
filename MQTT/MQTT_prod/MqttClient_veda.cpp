@@ -97,9 +97,19 @@ void MqttClient_veda::startLoop() {
 }
 
 void MqttClient_veda::stopLoop() {
-    if(m_mosq){
-        mosquitto_loop_stop(m_mosq, true);
+    if(!m_mosq) {
+        return;
     }
+    // 먼저 DISCONNECT 를 보내 루프 스레드가 스스로 루프를 빠져나오게 한 뒤 join 한다.
+    //
+    // 예전엔 force=true 로 세웠는데 그건 내부적으로 pthread_cancel 이다. 루프
+    // 스레드가 mosquitto 내부 락을 쥔 지점에서 잘리면 그 락이 영영 안 풀려,
+    // 뒤따르는 disconnect/destroy 가 그대로 걸린다(= Ctrl+C 로 안 죽는다).
+    // 큐에 남은 발행분도 나가기 전에 잘려 사라졌다 — 종료 시 "offline" 상태가
+    // 그 경우다.
+    // 스레드가 끝내 안 끝나는 최악의 경우는 호출부의 종료 워치독이 받아낸다.
+    mosquitto_disconnect(m_mosq);
+    mosquitto_loop_stop(m_mosq, false);
 }
 
 PublishResult MqttClient_veda::publish(const std::string& topic, const std::string& payload, int qos,
@@ -208,11 +218,20 @@ void MqttClient_veda::on_connect(struct mosquitto *mosq, void *obj, int rc) {
             }
 
             // 오프라인 동안 쌓인 것들을 흘려보낸다.
-            int flushed = 0;
+            //
+            // 큐를 통째로 옮겨 담은 뒤에 보낸다. 큐를 직접 순회하면, 보내는 도중
+            // 다시 끊겼을 때 publish 가 같은 큐에 도로 넣어 pop→push 가 무한히
+            // 돌고 네트워크 스레드가 눌러앉는다. 그 상태에선 종료도 못 한다.
+            // 지금 못 보낸 건 다음 on_connect 몫으로 큐에 남는다.
+            std::vector<MqttMessage> pending;
             MqttMessage bufferedMessage;
             while (client->m_offlineQueue.tryPop(bufferedMessage)) {
-                if(client->publish(bufferedMessage.topic, bufferedMessage.payload, 0,
-                                   bufferedMessage.retain)
+                pending.push_back(std::move(bufferedMessage));
+            }
+
+            int flushed = 0;
+            for(const auto& queued : pending) {
+                if(client->publish(queued.topic, queued.payload, 0, queued.retain)
                        == PublishResult::Sent) {
                     ++flushed;
                 }

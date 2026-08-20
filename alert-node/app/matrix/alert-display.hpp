@@ -26,10 +26,16 @@ public:
 
     bool open();                                        // fix.id 가 "hub75" 인 fb 탐색
     void clear();
+    // 종료 경로 전용 — vsync 를 기다리지 않고 바로 지운다.
+    // 패널 커널 스레드가 멎어 있으면 FBIO_WAITFORVSYNC 가 영영 안 돌아와
+    // 정리가 통째로 매달린다. 프레임 경계를 안 맞춰 한 프레임이 찢어질 수
+    // 있지만 어차피 검은 화면이라 티가 나지 않는다.
+    void clearNoWait();
     bool setBrightness(int v);                          // 0~255, 드라이버 전역 설정
     // 위아래 테두리를 등급색으로 깜빡임 (스크롤 중 깜빡임의 2배 속도)
     // 같은 문구가 연달아 뜰 때 새 경보라는 신호
-    void blinkCue(severity sev, int times = 2);
+    // abort 는 프레임마다 호출 — true 면 즉시 중단(종료 신호에 바로 응답하려고 받는다)
+    void blinkCue(severity sev, int times = 2, const AbortFn& abort = nullptr);
     // 스크롤 — passes 번 흘리고 리턴 (1~10 으로 클램프)
     void show(const std::string& msg, severity sev, int passes,
               const AbortFn& abort = nullptr);
