@@ -31,9 +31,6 @@ constexpr double kMainProcessInterval = 1.0 / 40.0;  // 40fps 초과만 방어(�
 // "클라가 붙어 있을 때만" 인코딩하므로, 아무도 안 보는 프레임은 인코딩하지 않는다.
 constexpr double kSnapshotInterval = 1.0 / 2.0;  // 스냅샷 버퍼 2fps 갱신
 
-// (테스트 후 싱크가 미세하게 안 맞으면 이 값을 늘리거나 줄여서 칼싱크 튜닝 가능!)
-constexpr auto kDelayOffset = std::chrono::milliseconds(200);
-
 }  // namespace
 
 void VideoPipeline::run(const volatile std::sig_atomic_t& stop) {
@@ -89,10 +86,12 @@ void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
                                        std::chrono::steady_clock::now() - t0)
                                        .count();
 
-            // 이 프레임의 생성 시각과 가장 궁합이 맞는 감지 좌표 선택 + 속도 외삽
-            // (메타데이터 5fps vs 영상 최대 40fps 간극에서 빠른 움직임에 블러가
-            // 밀리는 현상 보정 — DetectionStore::predictedAt 참조)
-            auto dets = store_.predictedAt(frame->channel, frame->received_at - kDelayOffset);
+            // 이 프레임의 실제 촬영 시각(PTS 기준)까지 감지 좌표를 속도 외삽으로
+            // 예측한다. 과거에는 여기서 인위적인 kDelayOffset(200ms)만큼 과거를
+            // 타겟으로 삼는 임시방편을 썼는데, 그러면 아래 외삽이 "받은 시각의
+            // 위치"가 아니라 "200ms 전 위치"를 예측해 그리는 꼴이라 외삽 효과가
+            // 그대로 상쇄됐다. 지금은 실제 프레임 시각을 그대로 타겟으로 쓴다.
+            auto dets = store_.predictedAt(frame->channel, frame->received_at);
 
             // 송출 영상 가공 단계 실행 (블러 마스킹 등) → small = 전원 블러본
             for (auto& stage : stages_) {
