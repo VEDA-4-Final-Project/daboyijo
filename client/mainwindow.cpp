@@ -292,6 +292,20 @@ QString currentRoomName() {
     return s.value(kSettingsRoomName, QStringLiteral("101호")).toString();
 }
 
+// 리소스 트리에 세울 방 목록. 0번은 지금 카메라(4채널)가 실제로 담당하는 방이고,
+// 1번부터는 아직 카메라가 붙지 않은 "자리"다 — 트리에 빈 채널 4개로만 보인다.
+//
+// 카메라를 진짜로 늘리려면 고정크기-4 배열 19곳과 setVideoFocus()의 그리드 배치를
+// 먼저 정리해야 한다(mainwindow.h의 확장 지점 메모). 그 작업 전에도 방이 늘어나면
+// 화면이 어떻게 갈라지는지 구조로 드러내려고 자리만 먼저 만들어 둔다.
+const char* kSettingsRoomNames = "room/names";
+QStringList roomNames() {
+    QSettings s;
+    const QStringList saved = s.value(kSettingsRoomNames).toStringList();
+    if (!saved.isEmpty()) return saved;
+    return { currentRoomName(), QStringLiteral("102호") };
+}
+
 // MQTT 브로커 주소. 영상 서버와 같은 라즈베리에 띄우는 경우가 많아 기본값을
 // Pi A 와 같게 뒀지만, 브로커만 따로 두는 구성도 있어 설정으로 분리했다.
 const char* kSettingsBrokerHost = "mqtt/brokerHost";
@@ -2211,19 +2225,37 @@ QWidget* MainWindow::buildResourcePanel()
     resourceTree_->setSelectionMode(QAbstractItemView::SingleSelection);
     body->addWidget(resourceTree_, 1);
 
-    // ── Root > 그룹 > 카메라 4대 ──
+    // ── Root > 방 그룹 > 채널 4개 ──
+    // 0번 방만 실제 카메라를 갖는다. 나머지 방은 채널 4칸을 회색으로 비워 두는데,
+    // 눌러도 아무 일도 일어나지 않는다(연결된 영상이 없으니 고를 것도 없다).
     auto* root = new QTreeWidgetItem(resourceTree_,
                                      QStringList(QStringLiteral("Root")));
     root->setData(0, Qt::UserRole, QStringLiteral("root"));
-    auto* group = new QTreeWidgetItem(root);
-    group->setData(0, Qt::UserRole, QStringLiteral("group"));
-    for (int ch = 0; ch < 4; ++ch) {
-        camItems_[ch] = new QTreeWidgetItem(group);
-        camItems_[ch]->setData(0, Qt::UserRole, QStringLiteral("cam"));
-        camItems_[ch]->setData(0, Qt::UserRole + 1, ch);
+    const QStringList rooms = roomNames();
+    for (int r = 0; r < rooms.size(); ++r) {
+        auto* group = new QTreeWidgetItem(root);
+        group->setData(0, Qt::UserRole,
+                       r == 0 ? QStringLiteral("group") : QStringLiteral("groupEmpty"));
+        group->setData(0, Qt::UserRole + 1, r);
+        group->setText(0, rooms.at(r));
+        if (r == 0) {
+            for (int ch = 0; ch < 4; ++ch) {
+                camItems_[ch] = new QTreeWidgetItem(group);
+                camItems_[ch]->setData(0, Qt::UserRole, QStringLiteral("cam"));
+                camItems_[ch]->setData(0, Qt::UserRole + 1, ch);
+            }
+        } else {
+            group->setToolTip(0, QStringLiteral("카메라가 아직 연결되지 않은 방입니다"));
+            for (int ch = 0; ch < 4; ++ch) {
+                auto* slot = new QTreeWidgetItem(group);
+                slot->setData(0, Qt::UserRole, QStringLiteral("camEmpty"));
+                slot->setText(0, QStringLiteral("채널 %1").arg(ch + 1));
+                slot->setToolTip(0, QStringLiteral("카메라 미연결 — 빈 자리입니다"));
+            }
+        }
+        group->setExpanded(true);
     }
     root->setExpanded(true);
-    group->setExpanded(true);
 
     // ── 레이아웃 프리셋 ──
     auto* layoutRoot = new QTreeWidgetItem(resourceTree_,
@@ -2244,6 +2276,13 @@ QWidget* MainWindow::buildResourcePanel()
             [this](QTreeWidgetItem* item, int) {
                 if (!item) return;
                 const QString kind = item->data(0, Qt::UserRole).toString();
+                if (kind == QLatin1String("camEmpty") ||
+                    kind == QLatin1String("groupEmpty")) {
+                    // 빈 자리는 고를 대상이 아니다 — 선택 하이라이트만 남으면
+                    // 그 채널이 선택된 것처럼 보여 오해를 부른다.
+                    resourceTree_->clearSelection();
+                    return;
+                }
                 if (kind == QLatin1String("cam")) {
                     selectChannel(item->data(0, Qt::UserRole + 1).toInt());
                 } else if (kind == QLatin1String("layout")) {
@@ -2309,10 +2348,31 @@ void MainWindow::refreshResourceTree()
     const QColor textColor(QString::fromLatin1(kTextMain));
     const QColor selColor(QString::fromLatin1(kSelect));
 
-    // 그룹 이름은 방 이름을 따른다 — 카메라 1대(4채널) = 방 1개 전제.
+    // 방 그룹 갱신. 0번 방만 실제 카메라를 갖고, 나머지는 빈 자리라 회색으로 낮춘다.
+    const QStringList rooms = roomNames();
     if (camItems_[0] && camItems_[0]->parent()) {
-        camItems_[0]->parent()->setText(
-            0, QStringLiteral("그룹 · %1").arg(currentRoomName()));
+        QTreeWidgetItem* live = camItems_[0]->parent();
+        live->setText(0, rooms.value(0, currentRoomName()));
+        // 색을 명시해 둔다 — 기본색에 맡기면 아래 빈 방(회색)과 톤이 비슷해져
+        // "카메라가 붙은 방"과 "빈 자리"가 구분되지 않는다.
+        live->setForeground(0, textColor);
+    }
+
+    if (auto* root = resourceTree_->topLevelItem(0)) {
+        for (int i = 0; i < root->childCount(); ++i) {
+            QTreeWidgetItem* group = root->child(i);
+            if (group->data(0, Qt::UserRole).toString() != QLatin1String("groupEmpty"))
+                continue;
+            group->setForeground(0, offColor);
+            for (int c = 0; c < group->childCount(); ++c) {
+                QTreeWidgetItem* slot = group->child(c);
+                slot->setForeground(0, offColor);
+                slot->setIcon(0, QIcon(navIconPixmap(5, offColor, 16)));
+            }
+            // 검색 중이면 이름이 걸리는 빈 방만 남긴다(트리와 같은 규칙).
+            group->setHidden(!filter.isEmpty() &&
+                             !group->text(0).contains(filter, Qt::CaseInsensitive));
+        }
     }
 
     for (int ch = 0; ch < 4; ++ch) {
