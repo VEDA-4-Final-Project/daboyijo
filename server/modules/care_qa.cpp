@@ -87,6 +87,11 @@ nlohmann::json button(const std::string& text, const std::string& data) {
 
 }  // namespace
 
+std::string CareQaModule::roomPrefix(int channel, Role role) {
+    if (role != Role::Staff) return std::string();
+    return TelegramModule::chLabel(channel) + " ";
+}
+
 std::vector<int> CareQaModule::channelsFor(const std::string& chat_id,
                                            Role role) const {
     // 요양사는 전 채널 담당이므로 카메라 목록이 곧 담당 목록이다.
@@ -226,7 +231,7 @@ void CareQaModule::sendActionMenu(int channel, const std::string& chat_id,
     kb["inline_keyboard"] = rows;
     telegram_.sendMessage(
         chat_id,
-        TelegramModule::chLabel(channel) + " 무엇을 도와드릴까요?", kb.dump());
+        roomPrefix(channel, role) + "무엇을 도와드릴까요?", kb.dump());
 }
 
 void CareQaModule::sendBedStatus(const std::string& chat_id, Role role) {
@@ -419,8 +424,7 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
                 sendMenu(ch, chat_id, role);
                 return;
             }
-            telegram_.sendMessage(chat_id,
-                                  TelegramModule::chLabel(ch) + " " + answer);
+            telegram_.sendMessage(chat_id, roomPrefix(ch, role) + answer);
             telegram_.sendPhoto(chat_id, frames.back(), "지금 상황 📷");
             sendMenu(ch, chat_id, role);  // 상황 설명·사진 전송 후 메뉴 다시 표시
         }).detach();
@@ -434,8 +438,8 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             awaiting_search_[chat_id] = ch;  // 다음 메시지를 이 방 검색어로 소비
         }
         telegram_.sendMessage(chat_id,
-            "🔎 " + TelegramModule::chLabel(ch) +
-            " 찾으시는 상황을 말씀해 주세요.\n"
+            "🔎 " + roomPrefix(ch, role) +
+            "찾으시는 상황을 말씀해 주세요.\n"
             "예: \"어제 저녁에 낙상 있었어?\", \"오늘 오전에 침대에서 나간 적 있어?\"");
         // 메뉴는 다시 안 띄운다 — 지금은 다음 메시지를 검색어로 기다리는 중.
         return;

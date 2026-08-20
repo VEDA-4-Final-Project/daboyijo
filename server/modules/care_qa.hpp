@@ -98,6 +98,10 @@ private:
     //   먼저 "확인 중" 안내를 보내고 결과를 나중에 한 통으로 보낸다.
     void sendOverview(const std::string& chat_id, Role role);
 
+    // 회신 앞에 붙일 방 라벨("[ch1] "). 요양사는 방을 오가므로 어느 방 얘긴지
+    // 붙여주고, 보호자는 보는 방이 하나뿐이라 매번 붙으면 잡음이라 빈 문자열.
+    static std::string roomPrefix(int channel, Role role);
+
     // 이 사용자가 고를 수 있는 방들. 요양사는 전 채널, 보호자는 등록된 방만.
     std::vector<int> channelsFor(const std::string& chat_id, Role role) const;
 
