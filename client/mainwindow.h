@@ -403,6 +403,7 @@ private:
     QDialog* helpDialog = nullptr;             // 기능 설명 창(1회 생성 후 재사용)
     QListWidget* helpList = nullptr;           // 좌측 주제 목록
     QTextBrowser* helpBrowser = nullptr;       // 우측 내용
+    int helpTopicShown_ = 0;                   // 현재 보고 있는 주제(목록 행 번호가 아니다)
     void renderHelpTopic(int idx);             // 선택 주제를 현재 테마 색으로 렌더
 
     // ── 로그인 세션 ──

@@ -72,17 +72,23 @@
                    padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
         #helpBtn:hover { background: %(card); color: %(text); }
 
-        /* 도움말 창 — 좌측 주제 목록 */
-        #helpList { background: %(card); color: %(sub); border: none; outline: none;
-                    border-right: 1px solid %(border); font-size: 13px; }
-        #helpList::item { padding: 11px 16px; border: none; }
-        #helpList::item:selected { background: %(panel); color: %(text); font-weight: 700;
-                                    border-left: 3px solid %(select); }
+        /* 도움말 창 — 좌측(제목 + 검색 + 주제 목록) */
+        #helpSide { background: %(card); border-right: 1px solid %(border); }
+        #helpSideTitle { color: %(text); font-size: 16px; font-weight: 800;
+                         letter-spacing: 0.3px; }
+        #helpSearch { background: %(panel); color: %(text); border: 1px solid %(border);
+                      border-radius: 4px; padding: 6px 10px; font-size: 12px; }
+        #helpSearch:focus { border: 1px solid %(accent); }
+        /* 목록은 helpSide 위에 얹혀 있으므로 배경을 따로 칠하지 않는다. */
+        #helpList { background: transparent; color: %(sub); border: none; outline: none;
+                    font-size: 13px; }
+        #helpList::item { padding: 9px 10px; border: none; border-radius: 4px; }
+        #helpList::item:selected { background: %(panel); color: %(text); font-weight: 700; }
         #helpList::item:hover:!selected { color: %(text); }
 
         /* 도움말 창 — 본문 브라우저. renderHelpTopic()이 매번 다시 그리던
            setStyleSheet 호출을 여기로 옮겼다(정적 규칙, 실시간 값 없음). */
-        QTextBrowser#helpBrowser { background: %(panel); border: none; padding: 20px 22px; }
+        QTextBrowser#helpBrowser { background: %(panel); border: none; padding: 22px 26px; }
 
         /* 연결 상태 pill 배지 */
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 4px; }
