@@ -7790,18 +7790,6 @@ QWidget* MainWindow::buildCamConnectPage()
     bundleHint->setWordWrap(true);
     camV->addWidget(bundleHint);
 
-    // 4채널 상태 요약 — 지금 몇 개가 살아 있는지 이 탭에서 바로 보이게.
-    auto* badgeRow = new QHBoxLayout();
-    badgeRow->setContentsMargins(0, 0, 0, 0);
-    badgeRow->setSpacing(4);
-    for (int ch = 0; ch < 4; ++ch) {
-        camConnBadges[ch] = new QLabel();
-        camConnBadges[ch]->setObjectName("camConnBadge");
-        camConnBadges[ch]->setAlignment(Qt::AlignCenter);
-        badgeRow->addWidget(camConnBadges[ch], 1);
-    }
-    camV->addLayout(badgeRow);
-
     // 접속 정보 폼 (마지막 값 복원)
     QSettings s;
     auto* form = new QFormLayout();
@@ -8279,25 +8267,6 @@ void MainWindow::refreshCamChannelStatus()
         camInspIp->setText(host.isEmpty()
                                ? QStringLiteral("카메라가 연결되지 않았습니다")
                                : QStringLiteral("%1 · RTSP profile2").arg(host));
-    }
-
-    // 연결 탭의 4채널 요약 배지 — 연결/신호대기/미연결 세 상태를 구분한다.
-    // "연결됨"과 "실제로 영상이 오는 중"은 다르다: CAMERA_SET을 보냈어도 카메라가
-    // 안 열리면 프레임이 영영 안 온다. 그 차이를 여기서 드러낸다.
-    for (int ch = 0; ch < 4; ++ch) {
-        if (!camConnBadges[ch]) continue;
-        const bool active = liveRoom && cameraActive_[ch];
-        const bool live = channelViews[ch] && channelViews[ch]->live();
-        const QString state = !active ? QStringLiteral("미연결")
-                            : live    ? QStringLiteral("수신 중")
-                                      : QStringLiteral("신호 대기");
-        camConnBadges[ch]->setText(QStringLiteral("CH%1 · %2").arg(ch + 1).arg(state));
-        camConnBadges[ch]->setProperty("state",
-                                       !active ? QStringLiteral("off")
-                                       : live  ? QStringLiteral("live")
-                                               : QStringLiteral("wait"));
-        camConnBadges[ch]->style()->unpolish(camConnBadges[ch]);
-        camConnBadges[ch]->style()->polish(camConnBadges[ch]);
     }
 
     refreshCamControlsEnabled();

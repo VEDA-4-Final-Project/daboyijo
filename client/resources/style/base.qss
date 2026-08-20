@@ -651,13 +651,6 @@ QLabel {
                  border: 1px solid transparent; border-left: 3px solid %(accent);
                  padding-left: 8px; }
 #camHint { color: %(sub); font-size: 12px; }
-/* 연결 탭 4채널 요약 배지 — 미연결/신호대기/수신중 세 상태.
-   "연결 요청을 보냈다"와 "실제로 영상이 온다"는 다르므로 색을 나눈다. */
-#camConnBadge { border: 1px solid %(border); border-radius: 3px;
-                padding: 4px 2px; font-size: 11px; font-weight: 700; color: %(sub); }
-#camConnBadge[state="live"] { color: %(normal); border-color: %(normal); }
-#camConnBadge[state="wait"] { color: %(warn); border-color: %(warn); }
-#camConnBadge[state="off"]  { color: %(sub); border-color: %(border); }
 /* 미연결이라 컨트롤이 꺼져 있을 때의 이유 문구 */
 #camDisabledHint { color: %(warn); font-size: 12px;
                    border: 1px solid %(border); border-left: 3px solid %(warn);
