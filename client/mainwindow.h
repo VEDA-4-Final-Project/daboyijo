@@ -340,6 +340,13 @@ private:
     QPushButton*     resChipBtns_[4] = {};
     bool             resourceCollapsed_ = false;
     QTreeWidgetItem* camItems_[4] = {};
+    // 지금 영상월이 보여 주는 방. 0 = 실제 카메라가 붙은 방, 1 이상 = 아직 빈 자리로
+    // 화면엔 "카메라 미연결" 타일 4장만 뜬다. 서버 스트림은 그대로 살아 있고
+    // (101호는 계속 녹화·감지된다) 표시만 끊는 개념이다.
+    int selectedRoom_ = 0;
+    void selectRoom(int room);   // 트리에서 방을 고르면 영상월을 그 방으로 전환
+    void applyRoomView();        // selectedRoom_에 맞춰 타일·바이탈·트리를 다시 맞춘다
+    QString tileDisplayName(int ch) const;   // 빈 방에서는 입소자 이름을 붙이지 않는다
 
     // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
     QWidget*     buildLayoutTabs();
@@ -389,7 +396,11 @@ private:
     // 한 장도 못 받음. checkChannelHealth()가 이 값으로 "신호 끊김"을 판정한다.
     qint64 lastFrameMs_[4] = {};
     bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
-    bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
+    bool videoSuppressed_[4] = {};   // 지금 이 화면에 그리면 안 되는 채널(파생값, applyRoomView가 계산)
+    // 사용자가 "해제"한 채널. videoSuppressed_와 나눠 둔 이유: 표시 여부는
+    // (보고 있는 방) × (해제 여부) 두 조건의 곱인데, 방을 오갈 때마다 한 변수에
+    // 겹쳐 쓰면 해제해 둔 채널이 방 전환만으로 되살아난다.
+    bool videoCleared_[4] = {};
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
@@ -403,13 +414,13 @@ private:
     QDialog* helpDialog = nullptr;             // 기능 설명 창(1회 생성 후 재사용)
     QListWidget* helpList = nullptr;           // 좌측 주제 목록
     QTextBrowser* helpBrowser = nullptr;       // 우측 내용
+    int helpTopicShown_ = 0;                   // 현재 보고 있는 주제(목록 행 번호가 아니다)
     void renderHelpTopic(int idx);             // 선택 주제를 현재 테마 색으로 렌더
 
     // ── 로그인 세션 ──
     Auth::SessionUser currentUser;         // 현재 로그인한 사용자
     bool logoutRequested_ = false;         // 종료 vs 로그아웃 구분
     QLabel* userNameLabel = nullptr;       // 헤더의 사용자 이름
-    QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
     QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
 
     bool darkMode = true;              // 현재 다크모드 여부 (기본 다크 관제 톤)
@@ -627,7 +638,6 @@ private:
 
     // ── 디테일(우측 인라인 편집) — 예전엔 팝업이었으나 페이지에 내장 ──
     QStackedWidget* residentDetailStack = nullptr;  // 0=플레이스홀더 / 1=편집기
-    QLabel*  dlgAvatar        = nullptr;  // 이름 이니셜 원형 배지
     QLabel*  dlgNameBig       = nullptr;  // 큰 이름
     QLabel*  dlgSubMeta       = nullptr;  // "201호-2 · 채널 2" 등
     QLabel*  dlgStatusBadge   = nullptr;  // 재원/퇴원
@@ -820,6 +830,11 @@ private:
     // ── 카메라 설정 통합 UI ──
     // 3단 구성: [채널 스트립(썸네일)] │ [스테이지(큰 영상)] │ [인스펙터(모드별 설정)]
     QWidget* buildCamModeSegment();   // 상단 페이지 모드 세그먼트(연결/ROI/이미지)
+    QWidget* buildCamRoomSegment();   // 상단 방 세그먼트(101호/102호…) — selectedRoom_ 공유
+    void rebuildCamRoomSegment();     // 방 목록이 바뀌면 세그먼트 버튼을 다시 만든다
+    void rebuildResourceRooms();      // 방 목록이 바뀌면 리소스 트리 Root 아래를 다시 만든다
+    void onAddRoomClicked();          // [+] 호실 추가
+    void removeRoom(int room);        // 방 자리 삭제(0번 실카메라 방은 지울 수 없다)
     QWidget* buildCamChannelStrip();  // 좌측 채널 썸네일 타일 4개
     QWidget* buildCamInspector();     // 우측 인스펙터(헤더 + 모드별 페이지 스택)
     QWidget* buildCamConnectPage();   // 인스펙터 '연결' 페이지(접속 폼 + 검색표)
@@ -836,7 +851,12 @@ private:
     QLabel* camInspPill = nullptr;          // 인스펙터 헤더 연결 상태 알약
     QLabel* camInspIp = nullptr;            // 인스펙터 헤더 카메라 주소
     QPushButton* camModeBtns[3] = {};       // [0]연결 [1]ROI [2]이미지 세그먼트
+    QWidget* camRoomSeg_ = nullptr;         // 방 세그먼트 컨테이너(방 추가 시 다시 채운다)
+    QVector<QPushButton*> camRoomBtns_;     // 방 세그먼트 버튼(방 수만큼)
     QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
+    // 카메라 없는 방으로 옮길 때 접속 폼을 비우는데, 돌아올 때 되돌리려고 잠시 보관한다.
+    // (IP·계정·비밀번호 순) 비우지 않으면 102호 화면에 101호 주소가 그대로 남는다.
+    QString camFormBackup_[3];
     QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
 
@@ -887,7 +907,6 @@ private:
     // 현재 선택 채널의 연결 여부에 맞춰 ROI/이미지 컨트롤을 켜고 끈다.
     void refreshCamControlsEnabled();
     // 연결 탭의 4채널 상태 요약 배지(CH1~4)
-    QLabel* camConnBadges[4] = {};
     // 적용 전/후 와이프 비교 화면(영상 1장 + 드래그 구분선).
     // 두 장을 따로 놓으면 각 장이 절반으로 줄고 카드에 여백이 남아, 다른 탭과
     // 틀도 어긋났다. 한 장으로 겹치면 연결·ROI 탭의 큰 영상과 크기가 같아진다.
@@ -904,6 +923,8 @@ private:
     QLabel* discoveryStatus = nullptr;
     QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
     QSet<QString> discoverySeen;               // 중복 응답 제거
+    QTimer* discoverySweepTimer = nullptr;     // 유니캐스트 스윕 송신기(조금씩 나눠 보냄)
+    QList<quint32> discoverySweepQueue;        // 스윕 남은 대상 IPv4
 
     // ── ROI 탭(인라인 편집기) 위젯 ──
     VideoView* roiEditorView = nullptr;        // 선택 채널 영상을 팝업에 표시 + ROI 그림

@@ -56,7 +56,7 @@
                      stop:0 %(panel), stop:1 %(card));
                   border-bottom: 1px solid %(border); }
         #brandDot { background: %(accent); border-radius: 5px; }
-        #logo { color: %(text); font-size: 23px; font-weight: 800; letter-spacing: 0.5px; }
+        #logo { color: %(text); font-size: 23px; font-weight: 800; letter-spacing: 1.2px; }
         #subtitle { color: %(sub); font-size: 13px; }
         #clock { color: %(text); font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
                  padding: 0 6px; }
@@ -72,17 +72,23 @@
                    padding: 4px 12px 4px 8px; font-size: 13px; font-weight: 600; }
         #helpBtn:hover { background: %(card); color: %(text); }
 
-        /* 도움말 창 — 좌측 주제 목록 */
-        #helpList { background: %(card); color: %(sub); border: none; outline: none;
-                    border-right: 1px solid %(border); font-size: 13px; }
-        #helpList::item { padding: 11px 16px; border: none; }
-        #helpList::item:selected { background: %(panel); color: %(text); font-weight: 700;
-                                    border-left: 3px solid %(select); }
+        /* 도움말 창 — 좌측(제목 + 검색 + 주제 목록) */
+        #helpSide { background: %(card); border-right: 1px solid %(border); }
+        #helpSideTitle { color: %(text); font-size: 16px; font-weight: 800;
+                         letter-spacing: 0.3px; }
+        #helpSearch { background: %(panel); color: %(text); border: 1px solid %(border);
+                      border-radius: 4px; padding: 6px 10px; font-size: 12px; }
+        #helpSearch:focus { border: 1px solid %(accent); }
+        /* 목록은 helpSide 위에 얹혀 있으므로 배경을 따로 칠하지 않는다. */
+        #helpList { background: transparent; color: %(sub); border: none; outline: none;
+                    font-size: 13px; }
+        #helpList::item { padding: 9px 10px; border: none; border-radius: 4px; }
+        #helpList::item:selected { background: %(panel); color: %(text); font-weight: 700; }
         #helpList::item:hover:!selected { color: %(text); }
 
         /* 도움말 창 — 본문 브라우저. renderHelpTopic()이 매번 다시 그리던
            setStyleSheet 호출을 여기로 옮겼다(정적 규칙, 실시간 값 없음). */
-        QTextBrowser#helpBrowser { background: %(panel); border: none; padding: 20px 22px; }
+        QTextBrowser#helpBrowser { background: %(panel); border: none; padding: 22px 26px; }
 
         /* 연결 상태 pill 배지 */
         #statusPill { background: %(card); border: 1px solid %(border); border-radius: 4px; }
@@ -232,11 +238,9 @@
         #statValue[vital="stale"] { color: %(sub); }
         #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
 
-        /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
-        #userChip { background: %(card); border: 1px solid %(border); border-radius: 4px; }
-        #userChip:hover { border-color: %(accent); }
-        #userAvatar { background: %(accent); color: %(onAccent); border-radius: 15px;
-                      font-size: 13px; font-weight: 800; }
+        /* 로그인 사용자 표시 — 감싸는 박스도, 이름 앞 원형 배지도 없이 이름과
+           로그아웃만 둔다. 헤더 우측은 시계·상태와 간격으로 이미 구분된다. */
+        #userChip { background: transparent; border: none; }
         #userName { color: %(text); font-size: 13px; font-weight: 700; }
         #logoutButton { background: transparent; color: %(sub); border: none;
                         border-radius: 4px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
@@ -605,12 +609,6 @@ QLabel {
    AA를 어긴다. 테두리색 배경 + 본문색 전경은 두 팔레트 모두 같은 방향(라이트:
    밝은 배경+어두운 글씨 / 다크: 어두운 배경+밝은 글씨)으로 움직여 10:1대를 유지한다.
    이 두 규칙을 한 줄로 묶지 말 것 — active/inactive는 서로 다른 전경색이 필요하다. */
-#resAvatar { border-radius: 19px; font-size: 16px; font-weight: 800; }
-#resAvatar[active="true"] { background: %(accent); color: %(onAccent); }
-#resAvatar[active="false"] { background: %(border); color: %(text); }
-#dlgAvatar { border-radius: 26px; font-size: 22px; font-weight: 800; }
-#dlgAvatar[active="true"] { background: %(accent); color: %(onAccent); }
-#dlgAvatar[active="false"] { background: %(border); color: %(text); }
 
 /* ── 입소자 관리: 우측 디테일(인라인 편집) ── */
 #detailPanel { background: %(card); border: 1px solid %(border); border-radius: 4px; }
@@ -653,13 +651,6 @@ QLabel {
                  border: 1px solid transparent; border-left: 3px solid %(accent);
                  padding-left: 8px; }
 #camHint { color: %(sub); font-size: 12px; }
-/* 연결 탭 4채널 요약 배지 — 미연결/신호대기/수신중 세 상태.
-   "연결 요청을 보냈다"와 "실제로 영상이 온다"는 다르므로 색을 나눈다. */
-#camConnBadge { border: 1px solid %(border); border-radius: 3px;
-                padding: 4px 2px; font-size: 11px; font-weight: 700; color: %(sub); }
-#camConnBadge[state="live"] { color: %(normal); border-color: %(normal); }
-#camConnBadge[state="wait"] { color: %(warn); border-color: %(warn); }
-#camConnBadge[state="off"]  { color: %(sub); border-color: %(border); }
 /* 미연결이라 컨트롤이 꺼져 있을 때의 이유 문구 */
 #camDisabledHint { color: %(warn); font-size: 12px;
                    border: 1px solid %(border); border-left: 3px solid %(warn);

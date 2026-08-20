@@ -26,7 +26,7 @@ constexpr char kKeySavedId[] = "login/savedId";
 LoginDialog::LoginDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(QStringLiteral("다보이조 · 로그인"));
+    setWindowTitle(QStringLiteral("Carenet · 로그인"));
     setFixedSize(420, 540);
     // 로그인 창에는 최대화/도움말 버튼이 의미 없다 — 닫기만 남긴다.
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
@@ -61,7 +61,7 @@ void LoginDialog::buildUi()
     lay->setSpacing(0);
 
     // ── 로고 / 타이틀 ──
-    auto* logo = new QLabel(QStringLiteral("다보이조"));
+    auto* logo = new QLabel(QStringLiteral("Carenet"));
     logo->setObjectName("authLogo");
     logo->setAlignment(Qt::AlignCenter);
     lay->addWidget(logo);
