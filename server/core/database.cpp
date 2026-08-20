@@ -235,6 +235,31 @@ std::string Database::getResidentName(int residentId) {
     return name;
 }
 
+std::vector<int> Database::getResidentsInBed(int cameraId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<int> out;
+    if (!conn_) return out;
+
+    char sql[192];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT DISTINCT resident_id FROM bed_sessions "
+        "WHERE camera_id = %d AND out_at IS NULL AND resident_id IS NOT NULL",
+        cameraId);
+
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 재실 세션 조회 실패: " << mysql_error(conn_) << "\n";
+        return out;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return out;
+
+    while (MYSQL_ROW row = mysql_fetch_row(res)) {
+        if (row[0]) out.push_back(std::atoi(row[0]));
+    }
+    mysql_free_result(res);
+    return out;
+}
+
 int Database::getRoomByResident(int residentId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_ || residentId <= 0) return -1;
