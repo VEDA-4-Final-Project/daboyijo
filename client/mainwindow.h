@@ -410,7 +410,6 @@ private:
     Auth::SessionUser currentUser;         // 현재 로그인한 사용자
     bool logoutRequested_ = false;         // 종료 vs 로그아웃 구분
     QLabel* userNameLabel = nullptr;       // 헤더의 사용자 이름
-    QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
     QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
 
     bool darkMode = true;              // 현재 다크모드 여부 (기본 다크 관제 톤)
@@ -628,7 +627,6 @@ private:
 
     // ── 디테일(우측 인라인 편집) — 예전엔 팝업이었으나 페이지에 내장 ──
     QStackedWidget* residentDetailStack = nullptr;  // 0=플레이스홀더 / 1=편집기
-    QLabel*  dlgAvatar        = nullptr;  // 이름 이니셜 원형 배지
     QLabel*  dlgNameBig       = nullptr;  // 큰 이름
     QLabel*  dlgSubMeta       = nullptr;  // "201호-2 · 채널 2" 등
     QLabel*  dlgStatusBadge   = nullptr;  // 재원/퇴원

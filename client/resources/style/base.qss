@@ -238,11 +238,9 @@
         #statValue[vital="stale"] { color: %(sub); }
         #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
 
-        /* 로그인 사용자 표시 — 감싸는 박스 없이 아바타+이름+로그아웃만 보이게 한다.
-           헤더 우측은 이미 시계·상태와 간격으로 구분되어 캡슐이 없어도 덩어리로 읽힌다. */
+        /* 로그인 사용자 표시 — 감싸는 박스도, 이름 앞 원형 배지도 없이 이름과
+           로그아웃만 둔다. 헤더 우측은 시계·상태와 간격으로 이미 구분된다. */
         #userChip { background: transparent; border: none; }
-        #userAvatar { background: %(accent); color: %(onAccent); border-radius: 15px;
-                      font-size: 13px; font-weight: 800; }
         #userName { color: %(text); font-size: 13px; font-weight: 700; }
         #logoutButton { background: transparent; color: %(sub); border: none;
                         border-radius: 4px; padding: 5px 12px; font-size: 12px; font-weight: 600; }
@@ -611,12 +609,6 @@ QLabel {
    AA를 어긴다. 테두리색 배경 + 본문색 전경은 두 팔레트 모두 같은 방향(라이트:
    밝은 배경+어두운 글씨 / 다크: 어두운 배경+밝은 글씨)으로 움직여 10:1대를 유지한다.
    이 두 규칙을 한 줄로 묶지 말 것 — active/inactive는 서로 다른 전경색이 필요하다. */
-#resAvatar { border-radius: 19px; font-size: 16px; font-weight: 800; }
-#resAvatar[active="true"] { background: %(accent); color: %(onAccent); }
-#resAvatar[active="false"] { background: %(border); color: %(text); }
-#dlgAvatar { border-radius: 26px; font-size: 22px; font-weight: 800; }
-#dlgAvatar[active="true"] { background: %(accent); color: %(onAccent); }
-#dlgAvatar[active="false"] { background: %(border); color: %(text); }
 
 /* ── 입소자 관리: 우측 디테일(인라인 편집) ── */
 #detailPanel { background: %(card); border: 1px solid %(border); border-radius: 4px; }

@@ -1026,13 +1026,6 @@ QWidget* MainWindow::buildHeader()
     ucl->setContentsMargins(4, 4, 6, 4);
     ucl->setSpacing(8);
 
-    // 이름 첫 글자를 딴 원형 배지 — 누가 로그인해 있는지 한눈에 보이게
-    userAvatarLabel = new QLabel();
-    userAvatarLabel->setObjectName("userAvatar");
-    userAvatarLabel->setFixedSize(30, 30);
-    userAvatarLabel->setAlignment(Qt::AlignCenter);
-    userAvatarLabel->setText(currentUser.name.left(1));
-
     userNameLabel = new QLabel();
     userNameLabel->setObjectName("userName");
     userNameLabel->setText(currentUser.name);
@@ -1044,7 +1037,6 @@ QWidget* MainWindow::buildHeader()
     logoutButton->setCursor(Qt::PointingHandCursor);
     connect(logoutButton, &QPushButton::clicked, this, &MainWindow::onLogoutClicked);
 
-    ucl->addWidget(userAvatarLabel);
     ucl->addWidget(userNameLabel);
     ucl->addWidget(logoutButton);
     lay->addWidget(userChip);
@@ -4479,10 +4471,6 @@ QWidget* MainWindow::buildResidentDetail()
     auto* hl = new QHBoxLayout(header);
     hl->setContentsMargins(16, 12, 16, 12);
     hl->setSpacing(14);
-    dlgAvatar = new QLabel();
-    dlgAvatar->setObjectName("dlgAvatar");
-    dlgAvatar->setFixedSize(52, 52);
-    dlgAvatar->setAlignment(Qt::AlignCenter);
     auto* nameCol = new QVBoxLayout();
     nameCol->setSpacing(2);
     dlgNameBig = new QLabel(QStringLiteral("신규 입소자"));
@@ -4495,7 +4483,6 @@ QWidget* MainWindow::buildResidentDetail()
     dlgRiskBadge->setObjectName("dlgRiskBadge");
     dlgStatusBadge = new QLabel();
     dlgStatusBadge->setObjectName("dlgStatusBadge");
-    hl->addWidget(dlgAvatar);
     hl->addLayout(nameCol);
     hl->addStretch();
     hl->addWidget(dlgRiskBadge);
@@ -4625,17 +4612,6 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         riskBar->setFixedWidth(4);
         riskBar->setProperty("severity", riskSeverity);
         rl->addWidget(riskBar);
-
-        // 아바타 — active 속성으로 색을 받는다(재원 여부, 심각도 아님).
-        // 이 위젯은 목록 재렌더마다 새로 만들어지고 아직 화면에 붙기 전이므로
-        // 같은 행의 resRow와 동일하게 생성 직후 속성 설정만으로 충분하다.
-        auto* avatar = new QLabel(name.left(1));
-        avatar->setObjectName("resAvatar");
-        avatar->setAttribute(Qt::WA_TransparentForMouseEvents);
-        avatar->setAlignment(Qt::AlignCenter);
-        avatar->setFixedSize(38, 38);
-        avatar->setProperty("active", active);
-        rl->addWidget(avatar);
 
         // 이름 + 채널
         auto* nameCol = new QVBoxLayout();
@@ -4788,13 +4764,6 @@ void MainWindow::refreshResidentDialogHeader()
     const bool isNew  = (selectedResidentId < 0);
     const QString name = editName->text().trimmed();
     const bool active  = (editStatus->currentText() == QStringLiteral("재원"));
-
-    dlgAvatar->setText(name.isEmpty() ? QStringLiteral("＋") : name.left(1));
-    // 목록 행 아바타와 달리 이 위젯은 편집 중 반복 갱신되므로 repolish가 필요하다.
-    dlgAvatar->setProperty("active", active && !isNew);
-    dlgAvatar->style()->unpolish(dlgAvatar);
-    dlgAvatar->style()->polish(dlgAvatar);
-    dlgAvatar->update();
 
     dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
                               : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));
