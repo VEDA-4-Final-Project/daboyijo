@@ -5352,7 +5352,7 @@ void MainWindow::checkChannelHealth()
 // ═══════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════
 //  바이탈 데모 모드 — 웨어러블·DB 없이 카드 5장에 정상값을 띄운다.
-//  DABO_DEMO_VITALS=1 일 때만 동작한다(mainwindow.h demoVitals_).
+//  기본값이 켜짐 — 끄려면 DABO_DEMO_VITALS=0 (mainwindow.h demoVitals_).
 // ═══════════════════════════════════════════════════════════
 namespace {
 // 가짜 입소자의 resident_id. 실제 DB 행과 섞이지 않게 큰 수로 띄워 둔다 —
@@ -5410,7 +5410,7 @@ void MainWindow::seedDemoResidents()
         }
     }
     qInfo() << "[데모] 바이탈 데모 모드 — 가짜 입소자" << kDemoCount << "명으로 카드를 만듭니다"
-            << "(DABO_DEMO_VITALS 를 지우면 꺼집니다)";
+            << "(실제 값으로 돌리려면 DABO_DEMO_VITALS=0)";
 }
 
 // 값을 한 칸씩 흔든다. 매번 새로 뽑지 않고 임의보행으로 움직이는 이유는,
