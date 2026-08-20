@@ -62,6 +62,14 @@ static uint8_t          s_rx_len = 0;                   /* 지금까지 모인 �
 static volatile uint8_t s_time_pending = 0;             /* 검증까지 끝난 시각이 대기 중 */
 static volatile uint8_t s_time_h = 0, s_time_m = 0, s_time_s = 0;
 
+/* 수신 계측 (hm10.h 의 hm10_get_rx_stats 주석 참조).
+ * ISR 이 쓰고 메인 루프가 읽는다. 32비트 정렬 변수라 Cortex-M 에서 판독은
+ * 원자적이고, 통계 용도라 한 틱 늦게 보여도 상관없다 — 잠금을 두지 않는다. */
+static volatile uint32_t s_rx_total = 0;                /* UART 로 들어온 총 바이트 */
+static volatile uint32_t s_rx_errors = 0;               /* ORE/FE/NE 등 오류 횟수 */
+static volatile uint32_t s_rx_bad = 0;                  /* 검증에서 버려진 패킷 수 */
+static volatile uint8_t  s_rx_last = 0;                 /* 마지막으로 받은 바이트 */
+
 HAL_StatusTypeDef hm10_start_receive(void)
 {
     if (s_huart == NULL) return HAL_ERROR;
@@ -95,6 +103,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (s_huart == NULL || huart->Instance != s_huart->Instance) return;
 
+    /* 검증 이전에 먼저 센다. 헤더가 아니어서 버릴 바이트도 '선이 살아있다' 는
+     * 증거이므로, 걸러내기 전에 세어야 진단에 쓸모가 있다. */
+    s_rx_total++;
+    s_rx_last = s_rx_byte;
+
     if (s_rx_len == 0)
     {
         /* 헤더를 기다리는 중 — 아닌 바이트는 그냥 버린다 */
@@ -125,6 +138,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 s_time_s = s_rx_buf[3];
                 s_time_pending = 1;
             }
+            else
+            {
+                s_rx_bad++;   /* 5바이트는 왔는데 규격이 안 맞는다 — 양쪽 스펙을 의심할 것 */
+            }
             s_rx_len = 0;
         }
     }
@@ -143,8 +160,17 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     if (s_huart == NULL || huart->Instance != s_huart->Instance) return;
 
+    s_rx_errors++;
     s_rx_len = 0;
     HAL_UART_Receive_IT(s_huart, &s_rx_byte, 1);
+}
+
+void hm10_get_rx_stats(uint32_t *total, uint32_t *errors, uint32_t *bad, uint8_t *last)
+{
+    if (total)  *total  = s_rx_total;
+    if (errors) *errors = s_rx_errors;
+    if (bad)    *bad    = s_rx_bad;
+    if (last)   *last   = s_rx_last;
 }
 
 uint8_t hm10_take_time(uint8_t *hour, uint8_t *minute, uint8_t *second)

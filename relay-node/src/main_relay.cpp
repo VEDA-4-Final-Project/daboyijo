@@ -244,6 +244,12 @@ void consumeBuffer(std::string& buf, MqttClient_veda& client) {
                 buf.erase(0, 1);
                 continue;
             }
+            // 웨어러블이 물어본 사실 자체를 남긴다.
+            // 이 줄이 없으면 '웨어러블이 요청을 안 보낸 것' 과 '보냈는데 우리가
+            // 답을 못 준 것' 이 로그상 구분되지 않는다 — 업링크는 vital 로그로
+            // 살아있음이 보이지만 요청만 유실되는 경우가 실제로 있다.
+            std::cout << "[Relay Node] 시각 요청 수신 (웨어러블)" << std::endl;
+
             // 실제 전송은 runOnce 루프가 한다 (위 g_time_requested 주석 참조)
             g_time_requested = true;
             buf.erase(0, REQ_LEN);
@@ -312,7 +318,11 @@ bool sendTimeSync(SimpleBLE::Peripheral& peripheral) {
     char hhmmss[16];
     std::snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d",
                   lt.tm_hour, lt.tm_min, lt.tm_sec);
-    std::cout << "[Relay Node] 시각 동기 전송 " << hhmmss << std::endl;
+    // 실제로 나간 바이트를 그대로 남긴다. 웨어러블 쪽 RX 누적과 나란히 놓으면
+    // '보냈는데 안 들어온 것' 인지 '애초에 안 보낸 것' 인지 바로 갈린다.
+    // write_command 는 응답이 없는 write 라 예외가 없다고 도착이 보장되지는 않는다.
+    std::cout << "[Relay Node] 시각 동기 전송 " << hhmmss << " ["
+              << toHex(SimpleBLE::ByteArray(pkt, pkt + TIME_PKT_LEN)) << "]" << std::endl;
     return true;
 }
 

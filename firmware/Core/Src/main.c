@@ -421,6 +421,20 @@ int main(void)
       {
           g_last_time_req_ms = now;
           hm10_request_time();
+
+          /* 요청과 함께 수신 계측을 같이 찍는다.
+           *
+           * 시각이 안 맞는 현상은 원인이 셋인데 밖에서는 똑같아 보인다.
+           *   RX=0            HM-10 TX → PA3 구간이 죽음. 릴레이가 뭘 보냈든 무관하다
+           *   RX 증가 + bad 증가   바이트는 오는데 규격이 안 맞음 (양쪽 스펙 확인)
+           *   RX 증가 + bad 0      0x55 가 아닌 다른 것이 옴 (HM-10 AT 응답 등)
+           * err 가 함께 늘면 보드레이트나 노이즈를 의심한다. */
+          uint32_t rx_total = 0, rx_err = 0, rx_bad = 0;
+          uint8_t  rx_last = 0;
+          hm10_get_rx_stats(&rx_total, &rx_err, &rx_bad, &rx_last);
+          printf("[ HM10 ] 시각 요청 송신 — RX 누적 %lu B / 오류 %lu / 불량패킷 %lu / 마지막 0x%02X\r\n",
+                 (unsigned long)rx_total, (unsigned long)rx_err,
+                 (unsigned long)rx_bad, (unsigned)rx_last);
       }
 
       /* 낙상 플래그 유지 시간 경과 시 자동 해제 */
