@@ -931,7 +931,7 @@ QWidget* MainWindow::buildHeader()
     lay->setSpacing(10);
 
     // 로고 / 타이틀 — 워드마크만 (브랜드 점·부제목 제거)
-    auto* logo = new QLabel(QStringLiteral("다보이조"));
+    auto* logo = new QLabel(QStringLiteral("Carenet"));
     logo->setObjectName("logo");
 
     lay->addWidget(logo);
@@ -976,7 +976,7 @@ QWidget* MainWindow::buildHeader()
     helpButton = new QPushButton(QStringLiteral("도움말"));
     helpButton->setObjectName("helpBtn");
     helpButton->setCursor(Qt::PointingHandCursor);
-    helpButton->setToolTip(QStringLiteral("도움말 — 기능 설명"));
+    helpButton->setToolTip(QStringLiteral("Carenet 도움말 — 기능 설명"));
     {
         const int d = 20;
         const qreal dpr = 2.0;               // 고해상도로 그려 또렷하게
@@ -1183,9 +1183,9 @@ const QVector<HelpTopic>& helpTopics()
     // ── 시작 ────────────────────────────────────────────────
     {
         QStringLiteral("시작"), QStringLiteral("🏠"),
-        QStringLiteral("다보이조란"),
-        QStringLiteral("요양원의 낙상과 침상이탈을 실시간으로 감지하고, 그 순간의 영상과 기록을 "
-                       "남기는 통합 관제 프로그램입니다."),
+        QStringLiteral("Carenet이란"),
+        QStringLiteral("Carenet은 요양원의 낙상과 침상이탈을 실시간으로 감지하고, 그 순간의 "
+                       "영상과 기록을 남기는 통합 관제 프로그램입니다."),
         {
           { QStringLiteral("무엇을 하나요"), {
               { QStringLiteral("실시간 감지"),
@@ -1460,7 +1460,7 @@ const QVector<HelpTopic>& helpTopics()
               { QStringLiteral("다른 대역도 찾고 싶다면"),
                 QStringLiteral("IP칸에 그 대역의 주소를 하나 적고 검색하면 그 대역까지 함께 훑습니다."), true },
               { QStringLiteral("연결하는 주체는 서버입니다"),
-                QStringLiteral("이 프로그램이 카메라에 직접 붙는 게 아니라, IP를 서버(라즈베리파이)로 "
+                QStringLiteral("Carenet이 카메라에 직접 붙는 게 아니라, IP를 서버(라즈베리파이)로 "
                                "보내면 서버가 RTSP를 엽니다. 그래서 <b>서버가 닿을 수 있는 대역</b>의 "
                                "카메라여야 영상이 나옵니다.") },
               { QStringLiteral("전체 해제"),
@@ -1549,7 +1549,7 @@ const QVector<HelpTopic>& helpTopics()
           { QStringLiteral("카메라 검색"), {
               { QStringLiteral("검색해도 아무것도 안 뜹니다"),
                 QStringLiteral("① 관제 PC와 카메라가 같은 공유기·스위치에 물려 있는지 ② 카메라의 "
-                               "ONVIF 검색이 켜져 있는지 ③ PC 방화벽이 이 앱의 UDP 수신을 막고 있지 "
+                               "ONVIF 검색이 켜져 있는지 ③ PC 방화벽이 Carenet의 UDP 수신을 막고 있지 "
                                "않은지 확인하세요.") },
               { QStringLiteral("다른 대역에 있습니다"),
                 QStringLiteral("IP칸에 그 대역의 주소를 하나 적고 다시 검색하면 그 대역까지 훑습니다. "
@@ -1581,7 +1581,7 @@ void MainWindow::onHelpClicked()
     if (!helpDialog) {
         helpDialog = new QDialog(this);
         helpDialog->setObjectName("panel");
-        helpDialog->setWindowTitle(QStringLiteral("도움말 — 기능 설명"));
+        helpDialog->setWindowTitle(QStringLiteral("Carenet 도움말"));
         helpDialog->resize(940, 700);
         helpDialog->setMinimumSize(700, 480);
         enableDarkTitleBar(helpDialog);
@@ -1597,7 +1597,7 @@ void MainWindow::onHelpClicked()
         sv->setContentsMargins(14, 16, 14, 12);
         sv->setSpacing(9);
 
-        auto* sideTitle = new QLabel(QStringLiteral("도움말"));
+        auto* sideTitle = new QLabel(QStringLiteral("Carenet 도움말"));
         sideTitle->setObjectName(QStringLiteral("helpSideTitle"));
         sv->addWidget(sideTitle);
 
@@ -5681,7 +5681,7 @@ void MainWindow::exportReportPdf()
 
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
   <tr>
-    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">다보이조 요양원 통합 모니터링</span>
+    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">Carenet 요양원 통합 모니터링</span>
         <h1 style="font-size:26pt; margin:2px 0 0 0">일일 리포트</h1></td>
     <td align="right" valign="bottom">
         <span style="font-size:9pt; color:#8B98A5">문서번호 %17<br>생성 %15</span></td>
@@ -5744,7 +5744,7 @@ void MainWindow::exportReportPdf()
   </td></tr>
 </table>
 <p style="margin-top:14px; color:#8B98A5; font-size:8pt">
-  다보이조 요양원 통합 모니터링 &middot; 이 문서는 시스템이 자동 생성했습니다.
+  Carenet 요양원 통합 모니터링 &middot; 이 문서는 시스템이 자동 생성했습니다.
 </p>
 </body></html>)HTML")
 
@@ -8175,7 +8175,7 @@ void MainWindow::onSearchCameraClicked()
             n > 0 ? QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)").arg(n)
                   : QStringLiteral("검색 완료 — 카메라를 못 찾았습니다. 같은 공유기/스위치에 "
                                    "물려 있는지, 카메라 ONVIF 검색이 켜져 있는지, PC 방화벽이 "
-                                   "이 앱의 UDP 수신을 막고 있지 않은지 확인하세요. 다른 대역이면 "
+                                   "Carenet의 UDP 수신을 막고 있지 않은지 확인하세요. 다른 대역이면 "
                                    "위 IP칸에 그 대역의 주소를 하나 적고 다시 검색하세요."));
     });
 }
