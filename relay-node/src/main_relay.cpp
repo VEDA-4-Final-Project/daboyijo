@@ -305,11 +305,21 @@ bool sendTimeSync(SimpleBLE::Peripheral& peripheral) {
     for(size_t i = 0; i + 1 < TIME_PKT_LEN; i++) sum ^= pkt[i];
     pkt[TIME_PKT_LEN - 1] = sum;
 
+    // write 에 들어가기 '전' 에 한 줄 남긴다.
+    // 성공 로그만 있으면 예외로 빠졌을 때와 write 안에서 블로킹된 때가
+    // 똑같이 '아무것도 안 찍힘' 으로 보인다. 이 줄이 그 둘을 갈라준다.
+    std::cout << "[Relay Node] 시각 write 시도 → FFE1" << std::endl;
+
     try {
         peripheral.write_command(SVC_FFE0, CHAR_FFE1,
                                  SimpleBLE::ByteArray(pkt, pkt + TIME_PKT_LEN));
     } catch (const std::exception& e) {
         std::cerr << "[Relay Node] 시각 전송 실패: " << e.what() << std::endl;
+        return false;
+    } catch (...) {
+        // SimpleBLE 는 백엔드에 따라 std::exception 이 아닌 것을 던지기도 한다.
+        // 여기서 잡지 않으면 runOnce 밖으로 튀어나가 세션이 조용히 끝난다.
+        std::cerr << "[Relay Node] 시각 전송 실패 (알 수 없는 예외)" << std::endl;
         return false;
     }
 
@@ -336,6 +346,22 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     SimpleBLE::Peripheral peripheral = *dev;
     peripheral.connect();
     std::cout << "[Relay Node] Connected: " << peripheral.identifier() << ". subscribing FFE1" << std::endl;
+
+    // 연결된 기기가 실제로 무엇을 허용하는지 그대로 찍는다.
+    //
+    // 다운링크가 죽었을 때 '우리가 안 보냈나' 와 '보낼 수 없는 특성인가' 는
+    // 밖에서 구분되지 않는다. HM-10 클론 중에는 FFE1 이 NOTIFY 만 갖고 있어
+    // write 자체가 불가능한 물건이 있다 — 그 경우 여기서 바로 드러난다.
+    for(auto& service : peripheral.services()) {
+        for(auto& ch : service.characteristics()) {
+            std::cout << "[Relay Node]   " << service.uuid() << " / " << ch.uuid()
+                      << "  read="        << ch.can_read()
+                      << " write_req="    << ch.can_write_request()
+                      << " write_cmd="    << ch.can_write_command()
+                      << " notify="       << ch.can_notify()
+                      << " indicate="     << ch.can_indicate() << std::endl;
+        }
+    }
 
     g_prev_fall = 0;   // 끊긴 사이 상태를 모르므로 엣지 판정 초기화
     g_rx_buffer.clear();   // 이전 세션의 반쪽 패킷 폐기
