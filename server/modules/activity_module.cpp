@@ -49,12 +49,12 @@ void ActivityModule::onWearableData(const WearableData& data) {
         if (d < 0) {
             // 웨어러블 재부팅(0으로 리셋) 또는 2바이트 롤오버(65535→0).
             // 여기서 0으로 눌러주지 않으면 그날 활동량이 -65000 이나 65000 으로 찍힌다.
-            std::fprintf(stderr, "[Activity] %s 걸음수 역행 (%d → %d) — 리셋으로 보고 0 처리\n",
-                         data.device_id.c_str(), a.prev_steps, data.steps);
+            // LOGOFF std::fprintf(stderr, "[Activity] %s 걸음수 역행 (%d → %d) — 리셋으로 보고 0 처리\n",
+            //              data.device_id.c_str(), a.prev_steps, data.steps);
             d = 0;
         } else if (d > kMaxStepsPerPacket) {
-            std::fprintf(stderr, "[Activity] %s 걸음수 급증 (+%d) — 값 튐으로 보고 %d 로 제한\n",
-                         data.device_id.c_str(), d, kMaxStepsPerPacket);
+            // LOGOFF std::fprintf(stderr, "[Activity] %s 걸음수 급증 (+%d) — 값 튐으로 보고 %d 로 제한\n",
+            //              data.device_id.c_str(), d, kMaxStepsPerPacket);
             d = kMaxStepsPerPacket;
         }
         a.steps_delta += d;
@@ -69,13 +69,14 @@ void ActivityModule::onWearableData(const WearableData& data) {
 }
 
 void ActivityModule::flushLocked(const std::string& device_id, Acc& a) {
+    (void)device_id;  // LOGOFF 로그만 쓰던 인자
     if (a.minute < 0) return;
 
     if (a.resident_id < 0) {
         // residents.wearable_id 에 이 기기가 등록되지 않았다. 누구 것인지 모르는
         // 활동량은 리포트에 쓸 수 없으므로 버리되, 조용히 버리지는 않는다.
-        std::fprintf(stderr, "[Activity] ⚠ %s 에 매핑된 입소자 없음 — 1분치 버림"
-                             " (residents.wearable_id 확인 필요)\n", device_id.c_str());
+        // LOGOFF std::fprintf(stderr, "[Activity] ⚠ %s 에 매핑된 입소자 없음 — 1분치 버림"
+        //                      " (residents.wearable_id 확인 필요)\n", device_id.c_str());
     } else {
         const int hr   = a.hr_n   > 0 ? static_cast<int>(a.hr_sum   / a.hr_n)   : 0;
         const int spo2 = a.spo2_n > 0 ? static_cast<int>(a.spo2_sum / a.spo2_n) : 0;

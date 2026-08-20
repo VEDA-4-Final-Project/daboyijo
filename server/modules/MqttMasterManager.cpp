@@ -71,14 +71,14 @@ bool MqttMasterManager::init(const std::string& broker_ip, int port) {
     mqtt_client_->startLoop();
 
     if(!connected) {
-        std::cerr << "[MqttMasterManager] 브로커 최초 연결 실패 (" << broker_ip << ":" << port
-                  << ") — 백그라운드에서 재접속을 계속 시도합니다." << std::endl;
-        std::cerr << "[MqttMasterManager] TLS CA 경로: " << ca_path
-                  << " (실행 위치 기준 상대경로 — 파일이 없으면 연결이 안 됩니다)" << std::endl;
+        // LOGOFF std::cerr << "[MqttMasterManager] 브로커 최초 연결 실패 (" << broker_ip << ":" << port
+        //           << ") — 백그라운드에서 재접속을 계속 시도합니다." << std::endl;
+        // LOGOFF std::cerr << "[MqttMasterManager] TLS CA 경로: " << ca_path
+        //           << " (실행 위치 기준 상대경로 — 파일이 없으면 연결이 안 됩니다)" << std::endl;
         return false;
     }
 
-    std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
+    // LOGOFF std::cout << "[MqttMasterManager] Subscribed to 'veda/wearable/data'" << std::endl;
     return true;
 }
 
@@ -151,12 +151,12 @@ void MqttMasterManager::sendAlarmCommand(AlarmEventType event_type, int room, co
     // 브로커가 끊긴 상태면 큐에 담길 뿐 알림 노드는 아무 소리도 내지 않는다.
     const PublishResult pr = mqtt_client_->publish("veda/alarm/control", payload);
     if(pr == PublishResult::Sent) {
-        std::cout << "[MqttMasterManager] SentAlarm Command to Node: " << payload << std::endl;
+        // LOGOFF std::cout << "[MqttMasterManager] SentAlarm Command to Node: " << payload << std::endl;
     } else if(pr == PublishResult::Queued) {
-        std::cerr << "[MqttMasterManager] ⚠️ 알람 미전송 — 브로커 오프라인. 알림 노드는 울리지 않습니다."
-                     " (재접속 시 전송 예정) payload: " << payload << std::endl;
+        // LOGOFF std::cerr << "[MqttMasterManager] ⚠️ 알람 미전송 — 브로커 오프라인. 알림 노드는 울리지 않습니다."
+        //              " (재접속 시 전송 예정) payload: " << payload << std::endl;
     } else {
-        std::cerr << "[MqttMasterManager] ⚠️ 알람 전송 실패. payload: " << payload << std::endl;
+        // LOGOFF std::cerr << "[MqttMasterManager] ⚠️ 알람 전송 실패. payload: " << payload << std::endl;
     }
 }
 
@@ -215,14 +215,14 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
             if(++latch.normal_streak >= kNormalStreakToClear){
                 latch.vital_alarming = false;
                 latch.normal_streak = 0;
-                std::cout << "[MqttMasterManager] " << data.device_id
-                          << " 생체신호 정상 복귀 — 경보 래치 해제(다음 이상 시 다시 알림)"
-                          << std::endl;
+                // LOGOFF std::cout << "[MqttMasterManager] " << data.device_id
+                //           << " 생체신호 정상 복귀 — 경보 래치 해제(다음 이상 시 다시 알림)"
+                //           << std::endl;
             }
         }
         
     } catch (const std::exception& e) {
-        std::cerr << "[MqttMasterManager] Parsing Error: " << e.what() << std::endl;
+        // LOGOFF std::cerr << "[MqttMasterManager] Parsing Error: " << e.what() << std::endl;
     }
 }
 

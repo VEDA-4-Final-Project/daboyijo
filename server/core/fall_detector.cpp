@@ -37,8 +37,8 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
 
         if (bed != kNoZone) {
             if (!tr.in_bed) {
-                std::fprintf(stderr, "[fall] ch%d obj%d 침상%d 재실 — 관찰 중단\n",
-                             channel + 1, d.object_id, bed + 1);
+                // LOGOFF std::fprintf(stderr, "[fall] ch%d obj%d 침상%d 재실 — 관찰 중단\n",
+                //              channel + 1, d.object_id, bed + 1);
             }
             tr.in_bed = true;
             tr.bed_id = bed;
@@ -47,8 +47,8 @@ void FallDetector::update(int channel, const std::vector<Detection>& detections,
             continue;
         }
         if (tr.in_bed) {
-            std::fprintf(stderr, "[fall] ch%d obj%d 침상%d 이탈 → 관찰 시작\n",
-                         channel + 1, d.object_id, tr.bed_id + 1);
+            // LOGOFF std::fprintf(stderr, "[fall] ch%d obj%d 침상%d 이탈 → 관찰 시작\n",
+            //              channel + 1, d.object_id, tr.bed_id + 1);
         }
         tr.in_bed = false;
         tr.bed_id = kNoZone;

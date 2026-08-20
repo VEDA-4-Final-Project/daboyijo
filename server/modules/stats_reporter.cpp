@@ -78,6 +78,6 @@ void StatsReporter::maybeReport() {
     prep_ms_total_ = 0;
     encode_ms_total_ = 0;
     encode_count_ = 0;
-    std::printf("%s\n", status.str().c_str());
+    // LOGOFF std::printf("%s\n", status.str().c_str());
     last_report_ = now;
 }

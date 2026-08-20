@@ -130,7 +130,7 @@ void TelegramModule::sendAsync(int channel, std::string text, bool respect_mute)
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
-            std::fprintf(stderr, "[텔레그램] 전송 실패: %s\n", curl_easy_strerror(res));
+            // LOGOFF std::fprintf(stderr, "[텔레그램] 전송 실패: %s\n", curl_easy_strerror(res));
         }
         curl_easy_cleanup(curl);
     }).detach();
@@ -214,7 +214,7 @@ void TelegramModule::sendPhoto(const std::string& chat_id,
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        std::fprintf(stderr, "[텔레그램] 사진 전송 실패: %s\n", curl_easy_strerror(res));
+        // LOGOFF std::fprintf(stderr, "[텔레그램] 사진 전송 실패: %s\n", curl_easy_strerror(res));
     }
     curl_mime_free(mime);
     curl_easy_cleanup(curl);
@@ -223,7 +223,7 @@ void TelegramModule::sendPhoto(const std::string& chat_id,
 // ── getUpdates 롱폴링 ──
 void TelegramModule::startPolling() {
     if (bot_token_.empty()) {
-        std::fprintf(stderr, "[케어봇] bot_token 미설정 — 봇 폴링 비활성\n");
+        // LOGOFF std::fprintf(stderr, "[케어봇] bot_token 미설정 — 봇 폴링 비활성\n");
         return;
     }
     if (polling_.exchange(true)) return;  // 이미 켜짐
@@ -236,7 +236,7 @@ void TelegramModule::stopPolling() {
 }
 
 void TelegramModule::pollLoop() {
-    std::fprintf(stderr, "[케어봇] getUpdates 폴링 시작\n");
+    // LOGOFF std::fprintf(stderr, "[케어봇] getUpdates 폴링 시작\n");
     while (polling_) {
         CURL* curl = curl_easy_init();
         if (!curl) {
@@ -313,8 +313,8 @@ void TelegramModule::pollLoop() {
                 }
             }
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "[케어봇] getUpdates 파싱 실패: %s\n", e.what());
+            // LOGOFF std::fprintf(stderr, "[케어봇] getUpdates 파싱 실패: %s\n", e.what());
         }
     }
-    std::fprintf(stderr, "[케어봇] 폴링 종료\n");
+    // LOGOFF std::fprintf(stderr, "[케어봇] 폴링 종료\n");
 }

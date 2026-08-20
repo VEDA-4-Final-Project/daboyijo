@@ -28,12 +28,12 @@ void BedEgressModule::updatePatientStatus(int channel, int roi_id, int status) {
         channel_default_[channel] = value;
         auto& ch = patient_statuses_[channel];
         for (auto& entry : ch) entry.second = value;
-        std::printf("[BedEgress] 채널 %d 전체 위험도 갱신: %d\n", channel + 1, status);
+        // LOGOFF std::printf("[BedEgress] 채널 %d 전체 위험도 갱신: %d\n", channel + 1, status);
         return;
     }
     patient_statuses_[channel][roi_id] = value;
-    std::printf("[BedEgress] 채널 %d 침대 %d 위험도 갱신: %d\n",
-                channel + 1, roi_id + 1, status);
+    // LOGOFF std::printf("[BedEgress] 채널 %d 침대 %d 위험도 갱신: %d\n",
+    //             channel + 1, roi_id + 1, status);
 }
 
 PatientStatus BedEgressModule::statusOf(int channel, int roi_id) const {
@@ -57,7 +57,7 @@ void BedEgressModule::initializeFromDb(Database& db) {
     for (int ch = 0; ch < 4; ++ch) {
         const auto zones = zones_ ? zones_->zones(ch) : std::map<int, BedZone>{};
         if (zones.empty()) {
-            std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대 없음\n", ch + 1);
+            // LOGOFF std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대 없음\n", ch + 1);
             continue;
         }
 
@@ -76,9 +76,9 @@ void BedEgressModule::initializeFromDb(Database& db) {
             }
 
             // 버퍼링에 묻히지 않도록 stderr로 — 부팅 시 각 침대가 무슨 등급으로 떴는지 바로 보이게
-            const char* label = (level == 3) ? "상" : (level == 2) ? "중" : "하";
-            std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대%d (입소자 %d) = %s\n",
-                         ch + 1, zone.roi_id + 1, zone.resident_id, label);
+            // LOGOFF const char* label = (level == 3) ? "상" : (level == 2) ? "중" : "하";
+            // LOGOFF std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대%d (입소자 %d) = %s\n",
+            //              ch + 1, zone.roi_id + 1, zone.resident_id, label);
         }
     }
 }
@@ -265,8 +265,8 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
             // 경보를 울리지 않는다 — 그래도 사람이 바뀐 셈이라 기록은 남긴다.
             if (zone_before == kNoZone || zone_before == zone_now) continue;
             if (zone_now != kNoZone) {
-                std::fprintf(stderr, "[BedEgress] ch%d obj%d 침대%d → 침대%d 이동\n",
-                             channel + 1, det.object_id, zone_before + 1, zone_now + 1);
+                // LOGOFF std::fprintf(stderr, "[BedEgress] ch%d obj%d 침대%d → 침대%d 이동\n",
+                //              channel + 1, det.object_id, zone_before + 1, zone_now + 1);
                 continue;
             }
 
@@ -314,12 +314,13 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
             std::lock_guard<std::mutex> lock(mutex_);
             return statusOf(evt.channel, evt.roi_id);
         }();
-        const char* status_str = (status == PatientStatus::HIGH) ? "🔴 상(즉시 경보)"
-                                                                 : "🟠 중(야간 관찰)";
-        std::fprintf(stderr,
-                     "⚠️ [ch%d] [%s] 침대%d 환자 침상 탈출 발생! (obj: %d, 입소자: %d)\n",
-                     evt.channel + 1, status_str, evt.roi_id + 1, evt.object_id,
-                     evt.resident_id);
+        (void)status;  // LOGOFF 로그만 쓰던 값
+        // LOGOFF const char* status_str = (status == PatientStatus::HIGH) ? "🔴 상(즉시 경보)"
+        //                                                          : "🟠 중(야간 관찰)";
+        // LOGOFF std::fprintf(stderr,
+        //              "⚠️ [ch%d] [%s] 침대%d 환자 침상 탈출 발생! (obj: %d, 입소자: %d)\n",
+        //              evt.channel + 1, status_str, evt.roi_id + 1, evt.object_id,
+        //              evt.resident_id);
 
         if (alarm_cb_) alarm_cb_(evt);
     }

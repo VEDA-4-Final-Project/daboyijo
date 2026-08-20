@@ -48,10 +48,10 @@ void BlackboxModule::watchdogLoop() {
 
 void BlackboxModule::startHttp() {
     if (!http_.start()) {
-        std::fprintf(stderr,
-                     "경고: 블랙박스 클립 HTTP 서버 시작 실패 (포트 %d) — "
-                     "블랙박스 저장은 계속되지만 Qt에서 재생은 안 됨\n",
-                     kClipHttpPort);
+        // LOGOFF std::fprintf(stderr,
+        //              "경고: 블랙박스 클립 HTTP 서버 시작 실패 (포트 %d) — "
+        //              "블랙박스 저장은 계속되지만 Qt에서 재생은 안 됨\n",
+        //              kClipHttpPort);
     }
 }
 

@@ -340,7 +340,7 @@ bool applyOnvifImaging(const std::string& rtsp_url, int channel,
     if (token.empty())  // 단일 센서(또는 인덱스 초과) → 첫 토큰으로 폴백
         token = tagAttr(resp, "VideoSources", "token");
     if (token.empty()) return fail("VideoSourceToken 을 못 찾음");
-    std::fprintf(stderr, "[image] ch%d → VideoSourceToken=%s\n", ch + 1, token.c_str());
+    // LOGOFF std::fprintf(stderr, "[image] ch%d → VideoSourceToken=%s\n", ch + 1, token.c_str());
 
     // ③ 범위(GetOptions)
     code = httpPost(imagingUrl,

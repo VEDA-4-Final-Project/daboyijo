@@ -114,8 +114,8 @@ void RtspAvClient::run() {
         // URL 교체(reload_)로 끊긴 경우엔 백오프 없이 즉시 새 URL로 재시도.
         // 그 외(네트워크 끊김 등)에는 기존처럼 재연결 대기.
         if (!ok && running_.load() && !reload_.load()) {
-            std::fprintf(stderr, "[ch%d] 재연결 %d초 대기\n", channel_ + 1,
-                         kReconnectDelaySec);
+            // LOGOFF std::fprintf(stderr, "[ch%d] 재연결 %d초 대기\n", channel_ + 1,
+            //              kReconnectDelaySec);
             for (int i = 0; i < kReconnectDelaySec * 10 &&
                             running_.load() && !reload_.load();
                  ++i) {
@@ -143,8 +143,8 @@ bool RtspAvClient::openAndStream(const std::string& url) {
     if (rc < 0) {
         char err[128] = {0};
         av_strerror(rc, err, sizeof(err));
-        std::fprintf(stderr, "[ch%d] tcp 옵션 연결 실패 (%d: %s) — 옵션 없이 재시도\n",
-                     channel_ + 1, rc, err);
+        // LOGOFF std::fprintf(stderr, "[ch%d] tcp 옵션 연결 실패 (%d: %s) — 옵션 없이 재시도\n",
+        //              channel_ + 1, rc, err);
 
         // 위 실패로 fmt는 이미 해제·null → 폴백용으로 다시 할당(인터럽트 콜백 재설정).
         fmt = avformat_alloc_context();
@@ -160,11 +160,11 @@ bool RtspAvClient::openAndStream(const std::string& url) {
             if (fmt) avformat_close_input(&fmt);
             return false;
         }
-        std::fprintf(stderr, "[ch%d] 옵션 없이 연결 성공 (기본 transport)\n", channel_ + 1);
+        // LOGOFF std::fprintf(stderr, "[ch%d] 옵션 없이 연결 성공 (기본 transport)\n", channel_ + 1);
     }
 
     if (avformat_find_stream_info(fmt, nullptr) < 0) {
-        std::fprintf(stderr, "[ch%d] 스트림 정보 조회 실패\n", channel_ + 1);
+        // LOGOFF std::fprintf(stderr, "[ch%d] 스트림 정보 조회 실패\n", channel_ + 1);
         avformat_close_input(&fmt);
         return false;
     }
@@ -181,7 +181,7 @@ bool RtspAvClient::openAndStream(const std::string& url) {
         }
     }
     if (video_idx < 0) {
-        std::fprintf(stderr, "[ch%d] 영상 트랙 없음\n", channel_ + 1);
+        // LOGOFF std::fprintf(stderr, "[ch%d] 영상 트랙 없음\n", channel_ + 1);
         avformat_close_input(&fmt);
         return false;
     }
@@ -198,7 +198,7 @@ bool RtspAvClient::openAndStream(const std::string& url) {
     // RPi 멀티코어 활용: 디코딩 스레드
     dctx->thread_count = 2;
     if (avcodec_open2(dctx, dec, nullptr) < 0) {
-        std::fprintf(stderr, "[ch%d] 디코더 열기 실패\n", channel_ + 1);
+        // LOGOFF std::fprintf(stderr, "[ch%d] 디코더 열기 실패\n", channel_ + 1);
         avcodec_free_context(&dctx);
         avformat_close_input(&fmt);
         return false;

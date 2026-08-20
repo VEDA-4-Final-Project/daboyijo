@@ -44,7 +44,7 @@ StreamServer::~StreamServer() {
 bool StreamServer::initTls() {
     ssl_ctx_ = SSL_CTX_new(TLS_server_method());
     if (!ssl_ctx_) {
-        std::fprintf(stderr, "[stream] SSL_CTX_new 실패\n");
+        // LOGOFF std::fprintf(stderr, "[stream] SSL_CTX_new 실패\n");
         return false;
     }
     // senderLoop()는 부분 전송 시 sent만큼 전진한 포인터로 재시도한다(기존 평문
@@ -53,18 +53,18 @@ bool StreamServer::initTls() {
     SSL_CTX_set_mode(ssl_ctx_,
                       SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
     if (SSL_CTX_use_certificate_chain_file(ssl_ctx_, cert_path_.c_str()) <= 0) {
-        std::fprintf(stderr, "[stream] 인증서 로드 실패: %s\n", cert_path_.c_str());
+        // LOGOFF std::fprintf(stderr, "[stream] 인증서 로드 실패: %s\n", cert_path_.c_str());
         ERR_print_errors_fp(stderr);
         return false;
     }
     if (SSL_CTX_use_PrivateKey_file(ssl_ctx_, key_path_.c_str(), SSL_FILETYPE_PEM) <= 0) {
-        std::fprintf(stderr, "[stream] 개인키 로드 실패: %s\n", key_path_.c_str());
+        // LOGOFF std::fprintf(stderr, "[stream] 개인키 로드 실패: %s\n", key_path_.c_str());
         ERR_print_errors_fp(stderr);
         return false;
     }
     if (!SSL_CTX_check_private_key(ssl_ctx_)) {
-        std::fprintf(stderr, "[stream] 인증서와 개인키가 서로 맞지 않음: %s / %s\n",
-                     cert_path_.c_str(), key_path_.c_str());
+        // LOGOFF std::fprintf(stderr, "[stream] 인증서와 개인키가 서로 맞지 않음: %s / %s\n",
+        //              cert_path_.c_str(), key_path_.c_str());
         return false;
     }
     return true;
@@ -92,15 +92,15 @@ bool StreamServer::start() {
     // 둘 다 있어야 TLS, 둘 다 없으면 평문 — 하나만 있으면 설정 실수이므로
     // 조용히 평문으로 내려가지 않고 바로 실패시킨다.
     if (cert_path_.empty() != key_path_.empty()) {
-        std::fprintf(stderr,
-                     "[stream] stream_cert_path/stream_key_path는 둘 다 지정하거나 "
-                     "둘 다 비워야 함\n");
+        // LOGOFF std::fprintf(stderr,
+        //              "[stream] stream_cert_path/stream_key_path는 둘 다 지정하거나 "
+        //              "둘 다 비워야 함\n");
         return false;
     }
     if (!cert_path_.empty()) {
         if (!initTls()) return false;
         tls_enabled_ = true;
-        std::fprintf(stderr, "[stream] TLS 활성화: %s\n", cert_path_.c_str());
+        // LOGOFF std::fprintf(stderr, "[stream] TLS 활성화: %s\n", cert_path_.c_str());
     }
 
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -130,7 +130,7 @@ bool StreamServer::start() {
 
     running_.store(true);
     accept_thread_ = std::thread(&StreamServer::acceptLoop, this);
-    std::fprintf(stderr, "[stream] %d 포트에서 클라이언트 대기\n", port_);
+    // LOGOFF std::fprintf(stderr, "[stream] %d 포트에서 클라이언트 대기\n", port_);
     return true;
 }
 
@@ -201,7 +201,7 @@ void StreamServer::acceptLoop() {
 
         char ip[INET_ADDRSTRLEN] = {};
         ::inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
-        std::fprintf(stderr, "[stream] 클라이언트 접속: %s\n", ip);
+        // LOGOFF std::fprintf(stderr, "[stream] 클라이언트 접속: %s\n", ip);
 
         SSL* ssl = nullptr;
         if (tls_enabled_) {
@@ -212,7 +212,7 @@ void StreamServer::acceptLoop() {
             // 수준으로 판단(느린/악의적 핸드셰이크로 accept가 막히는 것은 알려진
             // 트레이드오프, 이 프로젝트 스코프에서는 인증 없는 제어채널과 동급 리스크).
             if (SSL_accept(ssl) <= 0) {
-                std::fprintf(stderr, "[stream] TLS 핸드셰이크 실패: %s\n", ip);
+                // LOGOFF std::fprintf(stderr, "[stream] TLS 핸드셰이크 실패: %s\n", ip);
                 ERR_print_errors_fp(stderr);
                 SSL_free(ssl);
                 ::close(fd);
@@ -328,8 +328,8 @@ void StreamServer::receiverLoop(Client& client) {
                             // 삭제가 아닌데 침대 번호가 범위를 벗어나면 버린다 —
                             // 잘못된 번호로 만든 침대는 Qt 화면에 안 보여서 지울 수도 없다.
                             if (!up.clear && up.roi_id >= DBJ_ROI_MAX_ZONES) {
-                                std::cerr << "[stream] ROI 침대 번호 범위 초과: "
-                                          << up.roi_id << std::endl;
+                                // LOGOFF std::cerr << "[stream] ROI 침대 번호 범위 초과: "
+                                //           << up.roi_id << std::endl;
                                 break;
                             }
 
@@ -375,8 +375,8 @@ void StreamServer::receiverLoop(Client& client) {
                             std::memcpy(&b, buf.data() + off + sizeof(dbj_ctrl_header_t),
                                         sizeof(b));
                             if (b.roi_id >= DBJ_ROI_MAX_ZONES) {
-                                std::cerr << "[stream] 매핑 침대 번호 범위 초과: "
-                                          << (int)b.roi_id << std::endl;
+                                // LOGOFF std::cerr << "[stream] 매핑 침대 번호 범위 초과: "
+                                //           << (int)b.roi_id << std::endl;
                                 break;
                             }
                             on_roi_bind_(h.channel, b.roi_id,
@@ -426,7 +426,7 @@ void StreamServer::receiverLoop(Client& client) {
                     }
 
                     default:
-                        std::cerr << "[stream] 알 수 없는 제어 명령 타입: " << (int)h.type << std::endl;
+                        // LOGOFF std::cerr << "[stream] 알 수 없는 제어 명령 타입: " << (int)h.type << std::endl;
                         break;
                 }
             }
@@ -518,7 +518,7 @@ void StreamServer::enqueueAll(Packet packet) {
         Client& client = **it;
         if (!client.alive.load()) {
             closeClient(client);
-            std::fprintf(stderr, "[stream] 클라이언트 연결 종료\n");
+            // LOGOFF std::fprintf(stderr, "[stream] 클라이언트 연결 종료\n");
             it = clients_.erase(it);
             continue;
         }

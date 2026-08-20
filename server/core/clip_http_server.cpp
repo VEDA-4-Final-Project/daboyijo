@@ -63,8 +63,8 @@ bool ClipHttpServer::start() {
     listen_fd_.store(fd);
     running_.store(true);
     accept_thread_ = std::thread(&ClipHttpServer::acceptLoop, this);
-    std::fprintf(stderr, "[clip-http] %d 포트에서 블랙박스 클립 서빙 (%s)\n", port_,
-                 rootDir_.c_str());
+    // LOGOFF std::fprintf(stderr, "[clip-http] %d 포트에서 블랙박스 클립 서빙 (%s)\n", port_,
+    //              rootDir_.c_str());
     return true;
 }
 
@@ -89,9 +89,9 @@ void ClipHttpServer::stop() {
     std::unique_lock<std::mutex> lock(inflight_mutex_);
     if (!inflight_cv_.wait_for(lock, std::chrono::seconds(5),
                                [this] { return inflight_ == 0; })) {
-        std::fprintf(stderr,
-                     "[clip-http] 경고: 요청 스레드 %d개가 아직 처리 중 (기다리지 않고 진행)\n",
-                     inflight_);
+        // LOGOFF std::fprintf(stderr,
+        //              "[clip-http] 경고: 요청 스레드 %d개가 아직 처리 중 (기다리지 않고 진행)\n",
+        //              inflight_);
     }
 }
 
@@ -178,7 +178,7 @@ void ClipHttpServer::handleClient(int fd) {
                 }
             }
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "[clip-http] 디렉토리 스캔 실패: %s\n", e.what());
+            // LOGOFF std::fprintf(stderr, "[clip-http] 디렉토리 스캔 실패: %s\n", e.what());
         }
         json += "]";
 

@@ -136,9 +136,9 @@ int main(int argc, char* argv[]) {
     // 알람은 알림 노드에 닿지 않으므로, 조용히 넘기지 말고 크게 남긴다.
     // 연결은 백그라운드에서 계속 재시도된다(MqttMasterManager::init 참고).
     if (!mqtt.init("dabo.local", 8883)) {
-        std::fprintf(stderr,
-                     "[main] MQTT 브로커 미연결 상태로 시작합니다 — 웨어러블 수신과 "
-                     "알림 노드 알람은 재접속될 때까지 동작하지 않습니다.\n");
+        // LOGOFF std::fprintf(stderr,
+        //              "[main] MQTT 브로커 미연결 상태로 시작합니다 — 웨어러블 수신과 "
+        //              "알림 노드 알람은 재접속될 때까지 동작하지 않습니다.\n");
     }
 
     // [케어봇] 버튼 메뉴 기반 상호작용: 보호자가 아무 메시지나 보내면 버튼 메뉴를
@@ -170,12 +170,12 @@ int main(int argc, char* argv[]) {
         if (up.clear) {
             bed_egress.resetZoneState(up.channel, up.roi_id);
             db.deleteRoiZone(up.channel, all ? -1 : up.roi_id);
-            std::printf("ch%d 침대 %s 삭제\n", up.channel + 1,
-                        all ? "전체" : ("#" + std::to_string(up.roi_id + 1)).c_str());
+            // LOGOFF std::printf("ch%d 침대 %s 삭제\n", up.channel + 1,
+            //             all ? "전체" : ("#" + std::to_string(up.roi_id + 1)).c_str());
         } else {
             db.saveRoiZone(up.channel, up.roi_id, up.points);
-            std::printf("ch%d 침대%d ROI 갱신 (%zu점)\n", up.channel + 1,
-                        up.roi_id + 1, up.points.size());
+            // LOGOFF std::printf("ch%d 침대%d ROI 갱신 (%zu점)\n", up.channel + 1,
+            //             up.roi_id + 1, up.points.size());
         }
     });
     // Qt의 "이 침대는 이 사람 자리" 지정 → 귀속 앵커 갱신 + DB 영속화.
@@ -185,12 +185,12 @@ int main(int argc, char* argv[]) {
         // 사람이 바뀌면 위험도도 그 사람 것으로 따라가야 한다.
         int level = db.getRiskLevelByResident(resident_id);
         if (level >= 1 && level <= 3) bed_egress.updatePatientStatus(ch, roi_id, level);
-        std::printf("ch%d 침대%d ← 입소자 %d 매핑\n", ch + 1, roi_id + 1, resident_id);
+        // LOGOFF std::printf("ch%d 침대%d ← 입소자 %d 매핑\n", ch + 1, roi_id + 1, resident_id);
     });
     // Qt의 낙상 확인 신호 → 블러 원상복구
     stream_server.setConfirmCallback([&](int ch) {
         privacy_masker.clearFall(ch);
-        std::printf("ch%d 낙상 경보 확인.\n", ch + 1);
+        // LOGOFF std::printf("ch%d 낙상 경보 확인.\n", ch + 1);
     });
     //  Qt의 환자 정보 변경 신호 → 침상 탈출 모듈의 환자 관리 상태 갱신(인메모리).
     //  DB 영속화는 Qt가 residents.risk_level에 직접 기록하므로 서버는 하지 않는다
@@ -203,7 +203,7 @@ int main(int argc, char* argv[]) {
     //  접속해 메시지를 보낼 때 비로소 호출된다.)
     stream_server.setCameraSetCallback([&](int ch, const std::string& url) {
         if (ch < 0 || ch >= 4 || !client_by_channel[ch]) return;
-        std::printf("ch%d 카메라 연결 요청 수신 → RTSP 연결\n", ch + 1);
+        // LOGOFF std::printf("ch%d 카메라 연결 요청 수신 → RTSP 연결\n", ch + 1);
         {
             std::lock_guard<std::mutex> lk(cam_url_mutex);
             cam_url_by_channel[ch] = url;  // ONVIF 이미지 조절 시 재사용
@@ -213,7 +213,7 @@ int main(int argc, char* argv[]) {
     // Qt의 "카메라 해제" 신호 → 해당 채널 연결 종료 후 대기 상태로.
     stream_server.setCameraClearCallback([&](int ch) {
         if (ch < 0 || ch >= 4 || !client_by_channel[ch]) return;
-        std::printf("ch%d 카메라 연결 해제\n", ch + 1);
+        // LOGOFF std::printf("ch%d 카메라 연결 해제\n", ch + 1);
         {
             std::lock_guard<std::mutex> lk(cam_url_mutex);
             cam_url_by_channel[ch].clear();
@@ -231,7 +231,7 @@ int main(int argc, char* argv[]) {
                 url = cam_url_by_channel[ch];
             }
             if (url.empty()) {
-                std::fprintf(stderr, "[image] ch%d 카메라 미연결 — 이미지 조절 무시\n", ch + 1);
+                // LOGOFF std::fprintf(stderr, "[image] ch%d 카메라 미연결 — 이미지 조절 무시\n", ch + 1);
                 return;
             }
             OnvifImageParams p;
@@ -239,10 +239,12 @@ int main(int argc, char* argv[]) {
             std::thread([ch, url, p]() {
                 std::string err;
                 if (applyOnvifImaging(url, ch, p, &err))
-                    std::fprintf(stderr, "[image] ch%d 이미지 적용 성공\n", ch + 1);
+                    // LOGOFF std::fprintf(stderr, "[image] ch%d 이미지 적용 성공\n", ch + 1);
+                    {}  // LOGOFF 자리 채움
                 else
-                    std::fprintf(stderr, "[image] ch%d 이미지 적용 실패: %s\n",
-                                 ch + 1, err.c_str());
+                    // LOGOFF std::fprintf(stderr, "[image] ch%d 이미지 적용 실패: %s\n",
+                    //              ch + 1, err.c_str());
+                    {}  // LOGOFF 자리 채움
             }).detach();
         });
     // Qt의 "포커스" 신호 → 해당 채널 카메라에 SUNAPI SimpleFocus 적용.
@@ -256,17 +258,19 @@ int main(int argc, char* argv[]) {
                 url = cam_url_by_channel[ch];
             }
             if (url.empty()) {
-                std::fprintf(stderr, "[focus] ch%d 카메라 미연결 — 초점 무시\n", ch + 1);
+                // LOGOFF std::fprintf(stderr, "[focus] ch%d 카메라 미연결 — 초점 무시\n", ch + 1);
                 return;
             }
             std::thread([ch, url, area, nx, ny]() {
                 std::string err;
                 if (sunapiFocus(url, ch, area, nx, ny, &err))
-                    std::fprintf(stderr, "[focus] ch%d 초점 적용 성공%s\n", ch + 1,
-                                 area ? " (영역)" : " (전체)");
+                    // LOGOFF std::fprintf(stderr, "[focus] ch%d 초점 적용 성공%s\n", ch + 1,
+                    //              area ? " (영역)" : " (전체)");
+                    {}  // LOGOFF 자리 채움
                 else
-                    std::fprintf(stderr, "[focus] ch%d 초점 적용 실패: %s\n",
-                                 ch + 1, err.c_str());
+                    // LOGOFF std::fprintf(stderr, "[focus] ch%d 초점 적용 실패: %s\n",
+                    //              ch + 1, err.c_str());
+                    {}  // LOGOFF 자리 채움
             }).detach();
         });
     // [영상검색] Qt 관제 화면 "🔍 영상 검색"에서 온 자연어 질의 → video_search로
@@ -288,13 +292,13 @@ int main(int argc, char* argv[]) {
         const std::string name =
             who.named() ? db.getResidentName(who.resident_id) : std::string();
 
-        std::fprintf(stderr,
-                     "🚨 [ch%d] 낙상 의심! (CCTV 판정) obj=%d cx=%.2f cy=%.2f — %s\n",
-                     ch + 1, at.object_id, at.cx, at.cy,
-                     name.empty()
-                         ? "신원 미상"
-                         : (name + " (침대" + std::to_string(roi_id + 1) + ", 신뢰도 " +
-                            std::to_string(int(who.confidence * 100)) + "%)").c_str());
+        // LOGOFF std::fprintf(stderr,
+        //              "🚨 [ch%d] 낙상 의심! (CCTV 판정) obj=%d cx=%.2f cy=%.2f — %s\n",
+        //              ch + 1, at.object_id, at.cx, at.cy,
+        //              name.empty()
+        //                  ? "신원 미상"
+        //                  : (name + " (침대" + std::to_string(roi_id + 1) + ", 신뢰도 " +
+        //                     std::to_string(int(who.confidence * 100)) + "%)").c_str());
 
         privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
@@ -325,9 +329,9 @@ int main(int argc, char* argv[]) {
         // 매핑된 입소자가 곧 누구인지다 — 낙상과 달리 추정이 필요 없다.
         const std::string name =
             e.resident_id > 0 ? db.getResidentName(e.resident_id) : std::string();
-        std::fprintf(stderr, "⚠️ [ch%d] 침대%d %s 침상 탈출 감지! (obj: %d)\n",
-                     e.channel + 1, e.roi_id + 1,
-                     name.empty() ? "미지정 입소자" : name.c_str(), e.object_id);
+        // LOGOFF std::fprintf(stderr, "⚠️ [ch%d] 침대%d %s 침상 탈출 감지! (obj: %d)\n",
+        //              e.channel + 1, e.roi_id + 1,
+        //              name.empty() ? "미지정 입소자" : name.c_str(), e.object_id);
 
         int64_t evt_ms = blackbox.trigger(e.channel, "EGRESS");
         stream_server.broadcastEvent(e.channel, DBJ_EVT_EGRESS, e.x, e.y, e.roi_id,
@@ -375,12 +379,13 @@ int main(int argc, char* argv[]) {
         // 남의 Pi 담당 채널이면 조용히 넘기는 게 맞지만, 미등록 웨어러블(ch=-1)은
         // 설정 실수라 알려야 한다 — 조용히 버리면 "왜 알람이 안 오지"로 며칠 샌다.
         if(ch < 0)
-            std::fprintf(stderr, "[main] ⚠ 등록되지 않은 웨어러블 '%s' — 이벤트 무시."
-                                 " residents.wearable_id 를 확인하세요.\n", device_id.c_str());
+            // LOGOFF std::fprintf(stderr, "[main] ⚠ 등록되지 않은 웨어러블 '%s' — 이벤트 무시."
+            //                      " residents.wearable_id 를 확인하세요.\n", device_id.c_str());
+            {}  // LOGOFF 자리 채움
         if(handlesChannel(ch)){
             // 웨어러블 기반 낙상 판정 -> 블러 전체 해제 + 블랙박스 클립 저장 + Qt 경보
             if(event == AlarmEventType::FALL){
-                std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (웨어러블 판정)\n", ch + 1);
+                // LOGOFF std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (웨어러블 판정)\n", ch + 1);
                 // privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy); 블러 해제(원본) 추가 예정
                 int64_t evt_ms = blackbox.trigger(ch, "FALL");
                 // 웨어러블은 화면 좌표도 침대 번호도 모른다 — 미상으로 내려보낸다
@@ -399,7 +404,7 @@ int main(int argc, char* argv[]) {
             }
             // 웨어러블 기반 생체데이터 이상 -> 블랙박스 클립 저장 + Qt 경보
             else if(event == AlarmEventType::VITAL_ABNORMAL){
-                std::fprintf(stderr, "🚨 [ch%d] 생체데이터 이상!\n", ch + 1);
+                // LOGOFF std::fprintf(stderr, "🚨 [ch%d] 생체데이터 이상!\n", ch + 1);
                 int64_t evt_ms = blackbox.trigger(ch, "VITAL_ABNORMAL");
                 stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
@@ -434,8 +439,8 @@ int main(int argc, char* argv[]) {
         if (z.resident_id > 0) bed_zones.bind(z.camera_id, z.roi_id, z.resident_id);
         if (z.points.size() >= 3)
             bed_zones.update(z.camera_id, z.roi_id, false, z.points);
-        std::fprintf(stderr, "[main] 침대 복원: ch%d 침대%d (%zu점, 입소자 %d)\n",
-                     z.camera_id + 1, z.roi_id + 1, z.points.size(), z.resident_id);
+        // LOGOFF std::fprintf(stderr, "[main] 침대 복원: ch%d 침대%d (%zu점, 입소자 %d)\n",
+        //              z.camera_id + 1, z.roi_id + 1, z.points.size(), z.resident_id);
     }
     bed_egress.initializeFromDb(db);
     // [일일 리포트] 지난 실행에서 열린 채 남은 재실 세션 정리. 서버가 죽으면
@@ -472,7 +477,7 @@ int main(int argc, char* argv[]) {
         client->start();
         clients.push_back(std::move(client));
     }
-    std::printf("%zu개 채널 슬롯 구성 (Ctrl+C로 종료)\n", clients.size());
+    // LOGOFF std::printf("%zu개 채널 슬롯 구성 (Ctrl+C로 종료)\n", clients.size());
 
     ai_worker.start();
 
@@ -506,7 +511,7 @@ int main(int argc, char* argv[]) {
     pipeline.run(g_stop);  // 모든 채널 스레드 기동 후 stop까지 블로킹(전체 join)
 
     // ── 종료 ─────────────────────────────────────────────────────
-    std::printf("종료 중...\n");
+    // LOGOFF std::printf("종료 중...\n");
     telegram.stopPolling();  // [케어봇] 폴링 스레드 join (curl_global_cleanup 전에)
     ai_worker.stop();     // AI 스레드 join
     caregiver.flush();    // 열린 케어 세션 마감 → DB 기록
