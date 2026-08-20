@@ -1971,6 +1971,7 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
         b->setFixedSize(26, 22);
         b->setToolTip(QString::fromUtf16(tips[i]));
         connect(b, &QPushButton::clicked, this, [this, channel, i] {
+            if (selectedRoom_ != 0) return;   // 빈 타일은 확대할 것도 저장할 것도 없다
             selectChannel(channel);
             if (i == 0) {
                 setGridLayout(gridLayout_ == GridLayout::Single ? GridLayout::Quad
@@ -2065,6 +2066,11 @@ void MainWindow::setGridLayout(GridLayout mode)
 void MainWindow::selectChannel(int ch)
 {
     if (ch < 0 || ch >= 4) return;
+    // 빈 방을 보는 중에는 고를 채널이 없다. 타일 4장은 채널 0~3에 묶인 같은
+    // 위젯이라, 막지 않으면 102호 타일을 눌렀는데 101호 채널이 선택되고
+    // ROI 편집기까지 그 채널로 따라간다.
+    // 경보 경로는 setVideoFocus()가 selectRoom(0)을 먼저 부르므로 막히지 않는다.
+    if (selectedRoom_ != 0) return;
     if (tileHidden_[ch]) setTileHidden(ch, false);
     if (selectedChannel_ == ch && gridKey_ >= 0) return;
     selectedChannel_ = ch;
@@ -2362,6 +2368,8 @@ void MainWindow::selectRoom(int room)
     if (room == selectedRoom_) return;
     selectedRoom_ = room;
     applyRoomView();
+    if (room == 0)
+        for (int ch = 0; ch < 4; ++ch) refreshRoiZones(ch);   // 침대 오버레이 복구
 }
 
 // selectedRoom_에 맞춰 타일·바이탈·트리를 한 번에 맞춘다.
@@ -2389,6 +2397,9 @@ void MainWindow::applyRoomView()
             // 이전 방 화면이 정지영상으로 남아 있으면 그게 제일 위험한 오해다.
             v->setCameraConnected(known);
             if (!draw) v->setLive(false);
+            // 침대 오버레이는 101호의 것이다 — 빈 방 타일에 남으면 그 방에
+            // 침대가 있는 것처럼 보인다. 돌아올 때는 selectRoom()이 되살린다.
+            if (!liveRoom) v->setZones({});
             v->setDisplayName(tileDisplayName(ch));
             // 배지는 "빈 방으로 나갈 때"만 지운다. 돌아올 때도 지우면 경보 경로가
             // setAlert(true) → setVideoFocus → selectRoom(0) 순서라서 방금 켠
