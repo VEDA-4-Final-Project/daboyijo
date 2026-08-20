@@ -89,8 +89,10 @@ void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
                                        std::chrono::steady_clock::now() - t0)
                                        .count();
 
-            // 이 프레임의 생성 시각과 가장 궁합이 맞는 감지 좌표 선택
-            auto dets = store_.closestTo(frame->channel, frame->received_at - kDelayOffset);
+            // 이 프레임의 생성 시각과 가장 궁합이 맞는 감지 좌표 선택 + 속도 외삽
+            // (메타데이터 5fps vs 영상 최대 40fps 간극에서 빠른 움직임에 블러가
+            // 밀리는 현상 보정 — DetectionStore::predictedAt 참조)
+            auto dets = store_.predictedAt(frame->channel, frame->received_at - kDelayOffset);
 
             // 송출 영상 가공 단계 실행 (블러 마스킹 등) → small = 전원 블러본
             for (auto& stage : stages_) {
