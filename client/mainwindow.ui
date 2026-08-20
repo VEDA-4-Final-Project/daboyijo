@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>다보이조 · 요양원 통합 모니터링</string>
+   <string>Carenet · 요양원 통합 모니터링</string>
   </property>
   <widget class="QWidget" name="centralwidget"/>
  </widget>

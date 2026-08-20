@@ -12,6 +12,7 @@
 #include <QSslConfiguration>
 #include <QSslCertificate>
 #include <QSslError>
+#include <QApplication>       // 로그아웃 시 최상위 창 정리 + 이벤트 루프 종료
 #include <QCoreApplication>   // MQTT/영상 스트림 CA 인증서를 실행 파일 기준 경로에서 찾는다
 #include <QFile>
 #include <QPixmap>
@@ -36,6 +37,7 @@
 #include <cmath>
 #include <QPushButton>
 #include <QInputDialog>
+#include <QMenu>
 #include <QMessageBox>
 #include <QFileDialog>
 
@@ -268,8 +270,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.50";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -289,6 +291,20 @@ const char* kSettingsRoomName = "room/name";
 QString currentRoomName() {
     QSettings s;
     return s.value(kSettingsRoomName, QStringLiteral("101호")).toString();
+}
+
+// 리소스 트리에 세울 방 목록. 0번은 지금 카메라(4채널)가 실제로 담당하는 방이고,
+// 1번부터는 아직 카메라가 붙지 않은 "자리"다 — 트리에 빈 채널 4개로만 보인다.
+//
+// 카메라를 진짜로 늘리려면 고정크기-4 배열 19곳과 setVideoFocus()의 그리드 배치를
+// 먼저 정리해야 한다(mainwindow.h의 확장 지점 메모). 그 작업 전에도 방이 늘어나면
+// 화면이 어떻게 갈라지는지 구조로 드러내려고 자리만 먼저 만들어 둔다.
+const char* kSettingsRoomNames = "room/names";
+QStringList roomNames() {
+    QSettings s;
+    const QStringList saved = s.value(kSettingsRoomNames).toStringList();
+    if (!saved.isEmpty()) return saved;
+    return { currentRoomName(), QStringLiteral("102호") };
 }
 
 // MQTT 브로커 주소. 영상 서버와 같은 라즈베리에 띄우는 경우가 많아 기본값을
@@ -566,6 +582,21 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    // 자식 QObject(소켓·QProcess·타이머 …)는 이 소멸자 본문이 끝난 뒤 ~QObject 단계에서
+    // 파괴되면서 마지막 신호를 한 번 더 낸다 — QSslSocket이 내는
+    // stateChanged(UnconnectedState)가 대표적이다. 그 시점엔 MainWindow 부분이 이미
+    // 파괴돼 있어 Qt6의 assertObjectType이 "destructor may have already run"으로
+    // qFatal(0xc0000602)을 걸고 프로세스를 죽인다. 로그아웃해도 로그인 창으로 못
+    // 돌아가고 앱이 통째로 종료되던 원인이 이것이다(크래시 덤프로 확인).
+    // 파괴가 시작되기 전에 이 창으로 들어오는 신호선을 모두 끊는다.
+    for (int i = 0; i < kNumServers; ++i) {
+        if (!sockets[i]) continue;
+        sockets[i]->disconnect(this);   // 이 창으로 오는 신호 차단이 먼저다
+        sockets[i]->abort();            // 그 뒤에 끊어야 종료 신호가 슬롯을 타지 않는다
+    }
+    for (QObject* child : findChildren<QObject*>())
+        child->disconnect(this);
+
     delete ui;
 }
 
@@ -915,7 +946,7 @@ QWidget* MainWindow::buildHeader()
     lay->setSpacing(10);
 
     // 로고 / 타이틀 — 워드마크만 (브랜드 점·부제목 제거)
-    auto* logo = new QLabel(QStringLiteral("다보이조"));
+    auto* logo = new QLabel(QStringLiteral("Carenet"));
     logo->setObjectName("logo");
 
     lay->addWidget(logo);
@@ -960,7 +991,7 @@ QWidget* MainWindow::buildHeader()
     helpButton = new QPushButton(QStringLiteral("도움말"));
     helpButton->setObjectName("helpBtn");
     helpButton->setCursor(Qt::PointingHandCursor);
-    helpButton->setToolTip(QStringLiteral("도움말 — 기능 설명"));
+    helpButton->setToolTip(QStringLiteral("Carenet 도움말 — 기능 설명"));
     {
         const int d = 20;
         const qreal dpr = 2.0;               // 고해상도로 그려 또렷하게
@@ -1010,13 +1041,6 @@ QWidget* MainWindow::buildHeader()
     ucl->setContentsMargins(4, 4, 6, 4);
     ucl->setSpacing(8);
 
-    // 이름 첫 글자를 딴 원형 배지 — 누가 로그인해 있는지 한눈에 보이게
-    userAvatarLabel = new QLabel();
-    userAvatarLabel->setObjectName("userAvatar");
-    userAvatarLabel->setFixedSize(30, 30);
-    userAvatarLabel->setAlignment(Qt::AlignCenter);
-    userAvatarLabel->setText(currentUser.name.left(1));
-
     userNameLabel = new QLabel();
     userNameLabel->setObjectName("userName");
     userNameLabel->setText(currentUser.name);
@@ -1028,7 +1052,6 @@ QWidget* MainWindow::buildHeader()
     logoutButton->setCursor(Qt::PointingHandCursor);
     connect(logoutButton, &QPushButton::clicked, this, &MainWindow::onLogoutClicked);
 
-    ucl->addWidget(userAvatarLabel);
     ucl->addWidget(userNameLabel);
     ucl->addWidget(logoutButton);
     lay->addWidget(userChip);
@@ -1132,37 +1155,503 @@ void MainWindow::animateAlarmToast(bool show)
 }
 
 // ═══════════════════════════════════════════════════════════
-//  도움말 — 앱의 모든 기능을 설명하는 창(한화 웹UI의 '도움말'과 유사)
+//  도움말 — 앱의 모든 기능을 설명하는 창
+//
+//  내용은 아래 helpTopics()에 데이터로만 모아 둔다. 기능이 바뀌면 이 목록만
+//  고치면 되고, 좌측 목록 구성과 본문 렌더링(renderHelpTopic)은 그대로 둬도
+//  된다 — 예전엔 switch 안에 HTML이 통째로 박혀 있어 항목 하나 추가하는 데도
+//  렌더링 코드를 건드려야 했다.
 // ═══════════════════════════════════════════════════════════
+namespace {
+
+// 설명 한 줄 — "용어 + 설명" 카드 하나가 된다.
+struct HelpEntry {
+    QString term;
+    QString desc;
+    bool isNew = false;      // 최근에 붙은 기능 — 카드에 NEW 배지를 단다
+};
+// 한 주제 안의 소제목 묶음.
+struct HelpGroup {
+    QString heading;         // 비우면 소제목 없이 카드만 이어 붙인다
+    QVector<HelpEntry> entries;
+};
+struct HelpTopic {
+    QString section;         // 좌측 목록의 구분 머리글(같은 값이 이어지면 한 묶음)
+    QString icon;
+    QString title;
+    QString summary;         // 제목 아래 한 줄 요약
+    QVector<HelpGroup> groups;
+    QString tip;             // 하단 팁(비우면 생략)
+};
+
+const QVector<HelpTopic>& helpTopics()
+{
+    static const QVector<HelpTopic> topics = {
+    // ── 시작 ────────────────────────────────────────────────
+    {
+        QStringLiteral("시작"), QStringLiteral("🏠"),
+        QStringLiteral("Carenet이란"),
+        QStringLiteral("Carenet은 요양원의 낙상과 침상이탈을 실시간으로 감지하고, 그 순간의 "
+                       "영상과 기록을 남기는 통합 관제 프로그램입니다."),
+        {
+          { QStringLiteral("무엇을 하나요"), {
+              { QStringLiteral("실시간 감지"),
+                QStringLiteral("4채널 CCTV 영상을 서버가 계속 분석해 낙상·침상이탈을 판정하고, "
+                               "발생 즉시 관제 화면과 현장 알림 노드(LED·스피커)에 알립니다.") },
+              { QStringLiteral("자동 기록"),
+                QStringLiteral("모든 채널을 연속 녹화하고, 이벤트가 나면 그 구간을 클립으로 따로 "
+                               "남깁니다. 나중에 시각으로도, 말로 물어서도 찾을 수 있습니다.") },
+              { QStringLiteral("생체신호"),
+                QStringLiteral("웨어러블에서 올라오는 산소포화도·심박을 채널별로 함께 봅니다.") },
+              { QStringLiteral("사람 단위 정리"),
+                QStringLiteral("침대마다 입소자를 지정해 두면 알림과 기록에 이름이 붙고, "
+                               "입소자별 일일 리포트로 쌓입니다.") },
+          } },
+          { QStringLiteral("화면 이동"), {
+              { QStringLiteral("왼쪽 메뉴 6개"),
+                QStringLiteral("실시간 관제 · 이벤트 기록 · 영상 검색 · 일일 리포트 · 입소자 관리 · "
+                               "장치 설정. 메뉴 위 ☰ 버튼으로 접었다 펼 수 있습니다.") },
+              { QStringLiteral("경보가 오면"),
+                QStringLiteral("화면 가장자리에 빨간 글로우가 은은하게 켜지고, 위에서 경보 카드가 "
+                               "내려오며, 해당 영상 타일이 빨간 테두리로 강조됩니다. 경보 카드의 "
+                               "‘경보 해제’를 누르면 현장 사이렌·LED까지 함께 꺼집니다.") },
+          } },
+        },
+        QStringLiteral("처음 설치했다면 <b>장치 설정 → 카메라</b>에서 CCTV를 연결하고, "
+                       "<b>ROI(침대)</b>에서 침대 영역을 그리는 것부터 하세요. "
+                       "침대가 없으면 낙상·침상이탈 판정이 시작되지 않습니다."),
+    },
+    {
+        QStringLiteral("시작"), QStringLiteral("🧭"),
+        QStringLiteral("화면 둘러보기"),
+        QStringLiteral("어느 페이지에서나 늘 보이는 상단 헤더와 왼쪽 메뉴입니다."),
+        {
+          { QStringLiteral("상단 헤더"), {
+              { QStringLiteral("🎤 방송"),
+                QStringLiteral("한 번 누르면 방송이 시작되고, 다시 누르면 끝납니다. "
+                               "현장 스피커로 목소리가 나갑니다."), true },
+              { QStringLiteral("실시간 시계"),
+                QStringLiteral("관제 기록의 기준이 되는 현재 시각입니다.") },
+              { QStringLiteral("도움말"),
+                QStringLiteral("지금 보고 있는 이 창을 엽니다.") },
+              { QStringLiteral("🌙 / ☀ 테마"),
+                QStringLiteral("다크(야간 관제)와 라이트(주간)를 전환합니다. 이 창도 함께 바뀝니다.") },
+              { QStringLiteral("계정 · 로그아웃"),
+                QStringLiteral("로그인한 사람을 보여 줍니다. 로그아웃하면 관제 화면이 닫히고 "
+                               "로그인 화면으로 돌아갑니다.") },
+          } },
+          { QStringLiteral("경보 카드"), {
+              { QStringLiteral("평상시엔 안 보입니다"),
+                QStringLiteral("경보가 났을 때만 화면 위에서 내려옵니다. ‘경보 해제’ 버튼도 헤더가 "
+                               "아니라 이 카드 안에 있습니다."), true },
+          } },
+          { QStringLiteral("왼쪽 메뉴"), {
+              { QStringLiteral("☰ 접기"),
+                QStringLiteral("메뉴를 아이콘만 남기고 접습니다. 영상을 넓게 볼 때 씁니다. "
+                               "접힌 상태에서도 아이콘에 마우스를 올리면 이름이 뜹니다.") },
+          } },
+        },
+        QString(),
+    },
+
+    // ── 관제 ────────────────────────────────────────────────
+    {
+        QStringLiteral("관제"), QStringLiteral("📺"),
+        QStringLiteral("실시간 관제"),
+        QStringLiteral("4채널 영상을 보면서 경보를 받고, 필요하면 그 자리에서 과거 녹화로 되돌려 "
+                       "보는 기본 화면입니다."),
+        {
+          { QStringLiteral("왼쪽 · 리소스 패널"), {
+              { QStringLiteral("카메라 · 입소자 검색"),
+                QStringLiteral("채널 이름이나 입소자 이름으로 걸러 찾습니다.") },
+              { QStringLiteral("수신 상태"),
+                QStringLiteral("채널마다 ‘수신 중 / 신호 없음’이 표시됩니다.") },
+              { QStringLiteral("접기"),
+                QStringLiteral("패널을 접으면 영상 영역이 그만큼 넓어집니다.") },
+          } },
+          { QStringLiteral("가운데 · 영상"), {
+              { QStringLiteral("레이아웃 프리셋"),
+                QStringLiteral("2×2 전체 / 스포트라이트(하나를 크게 + 나머지는 작게) / 단일 채널 중에 "
+                               "고릅니다."), true },
+              { QStringLiteral("경보 강조"),
+                QStringLiteral("낙상·침상이탈이 난 채널의 타일이 빨간 테두리로 바뀝니다.") },
+              { QStringLiteral("타일 제거"),
+                QStringLiteral("타일을 레이아웃에서 빼도 카메라는 그대로 녹화합니다. "
+                               "‘타일 모두 표시’로 되돌립니다.") },
+              { QStringLiteral("스냅샷 저장"),
+                QStringLiteral("지금 화면을 PNG 이미지로 저장합니다."), true },
+          } },
+          { QStringLiteral("아래 · 타임라인"), {
+              { QStringLiteral("라이브 ↔ 녹화 재생"),
+                QStringLiteral("‘녹화 재생’으로 바꾸고 타임라인에서 시각을 고르면, 그 시각의 녹화가 "
+                               "같은 자리에서 재생됩니다. ‘라이브’로 언제든 돌아옵니다."), true },
+              { QStringLiteral("타임라인 읽는 법"),
+                QStringLiteral("선택한 채널의 녹화가 있는 구간과 그 채널에서 난 이벤트가 함께 그려집니다. "
+                               "4채널을 겹쳐 그리지 않으므로 채널을 바꾸면 타임라인도 바뀝니다.") },
+              { QStringLiteral("탐색"),
+                QStringLiteral("막대를 끄는 동안에는 화면이 따라오지 않고, 놓는 순간 그 시각으로 "
+                               "이동합니다. 끄는 내내 새 구간을 여는 건 서버에 무리라서 그렇습니다.") },
+          } },
+          { QStringLiteral("오른쪽 · 웨어러블"), {
+              { QStringLiteral("생체신호"),
+                QStringLiteral("채널별 산소포화도·심박과 심박 추세 그래프. 정상·주의·위험에 따라 색이 "
+                               "바뀌고, 신호가 끊기거나 미착용이면 회색으로 표시됩니다.") },
+              { QStringLiteral("미배정"),
+                QStringLiteral("그 채널에 입소자가 지정되지 않았다는 뜻입니다. "
+                               "장치 설정 → 카메라 → 침대·입소자 매핑에서 지정하세요.") },
+          } },
+        },
+        QString(),
+    },
+    {
+        QStringLiteral("관제"), QStringLiteral("📋"),
+        QStringLiteral("이벤트 기록"),
+        QStringLiteral("지금까지 난 낙상·침상이탈·생체신호 이상을 조건으로 좁혀 보고, "
+                       "그 순간의 영상을 바로 재생합니다."),
+        {
+          { QStringLiteral("검색 조건"), {
+              { QStringLiteral("즉시 반영"),
+                QStringLiteral("조건을 바꾸면 바로 목록이 갱신됩니다. 따로 검색 버튼을 누르지 않습니다.") },
+              { QStringLiteral("좁히는 기준"),
+                QStringLiteral("병실 · 채널 · 이벤트 종류(낙상 / 침상이탈 / 생체신호 이상) · "
+                               "확인 여부(전체 / 미확인만 / 확인만)."), true },
+              { QStringLiteral("기간"),
+                QStringLiteral("오늘 · 7일 · 30일 버튼으로 빠르게 잡거나, 시작일·종료일을 직접 고릅니다.") },
+              { QStringLiteral("조건 초기화 · 새로고침"),
+                QStringLiteral("초기화는 조건을 기본값으로, 새로고침은 서버 원장에서 다시 읽어 옵니다.") },
+          } },
+          { QStringLiteral("목록"), {
+              { QStringLiteral("표에 나오는 것"),
+                QStringLiteral("발생시각 · 종류 · 위치 · 입소자 · 출처 · 상태. 출처는 그 이벤트를 무엇이 "
+                               "잡았는지(카메라 / 웨어러블)를 뜻합니다."), true },
+              { QStringLiteral("색"),
+                QStringLiteral("낙상은 빨강, 침상이탈은 주황. 상태는 미확인이 빨강, 확인이 초록입니다.") },
+              { QStringLiteral("입소자가 ‘신원 미상’이면"),
+                QStringLiteral("그 침대에 입소자가 지정되지 않았거나, 서버가 사람을 특정하지 못한 "
+                               "경우입니다. 추적 번호는 신원이 아니라서 이름을 확정할 수 없습니다.") },
+              { QStringLiteral("행이 잘려 보이면"),
+                QStringLiteral("한 번에 표시하는 행 수에 상한이 있습니다. 안내가 뜨면 기간을 좀 더 "
+                               "좁혀 주세요.") },
+          } },
+          { QStringLiteral("영상 확인"), {
+              { QStringLiteral("더블클릭 → 재생"),
+                QStringLiteral("행을 더블클릭하면 오른쪽 플레이어에서 그 시점 영상이 재생되고, "
+                               "동시에 ‘확인’ 처리됩니다.") },
+              { QStringLiteral("클립 저장"),
+                QStringLiteral("재생 중인 구간을 mp4 파일로 내려받아 보관할 수 있습니다."), true },
+              { QStringLiteral("‘NVR 없음’이 뜨면"),
+                QStringLiteral("그 시각의 녹화가 서버에 남아 있지 않다는 뜻입니다. 저장 공간이 차서 "
+                               "오래된 구간이 지워졌을 수 있습니다.") },
+          } },
+        },
+        QString(),
+    },
+    {
+        QStringLiteral("관제"), QStringLiteral("🔎"),
+        QStringLiteral("영상 검색"),
+        QStringLiteral("시각을 몰라도 됩니다. ‘어제 저녁에 낙상 있었어?’처럼 말로 물으면 해당 기록과 "
+                       "영상을 찾아 줍니다."),
+        {
+          { QStringLiteral("질문하기"), {
+              { QStringLiteral("말로 묻습니다"),
+                QStringLiteral("‘어제 저녁에 낙상 있었어?’, ‘이번 주에 침대에서 나간 적 있어?’, "
+                               "‘오늘 새벽에 무슨 일 있었어?’ 같은 문장을 그대로 적고 검색을 누릅니다."), true },
+              { QStringLiteral("예시 질문"),
+                QStringLiteral("아래 예시를 누르면 질문칸에 바로 채워집니다. 어떤 식으로 물으면 되는지 "
+                               "감을 잡을 때 쓰세요.") },
+              { QStringLiteral("채널 한정"),
+                QStringLiteral("기본값은 전체 채널입니다. 특정 병상만 보고 싶을 때만 채널을 고르세요.") },
+              { QStringLiteral("초기화"),
+                QStringLiteral("질문과 조건, 결과를 한 번에 지웁니다.") },
+          } },
+          { QStringLiteral("결과 보기"), {
+              { QStringLiteral("결과 목록"),
+                QStringLiteral("찾은 기록이 ‘시각 · 채널 · 종류 · 입소자’ 형태로 나열됩니다.") },
+              { QStringLiteral("눌러서 바로 재생"),
+                QStringLiteral("결과를 누르면 이 페이지 안 오른쪽 재생기에서 바로 틀어 줍니다. "
+                               "▶/⏸와 탐색 막대로 구간을 넘겨 볼 수 있습니다. 검색을 이어가려고 "
+                               "다른 페이지로 튕겨 나가지 않습니다."), true },
+              { QStringLiteral("‘저장된 클립이 없는 기록입니다’"),
+                QStringLiteral("기록은 남아 있지만 영상 파일이 없다는 뜻입니다(보관 기간 경과 등).") },
+          } },
+        },
+        QStringLiteral("이 기능은 <b>영상 서버에 연결되어 있어야</b> 동작합니다. "
+                       "‘영상 서버에 연결되어 있지 않습니다’가 뜨면 서버 연결부터 확인하세요."),
+    },
+
+    // ── 기록·관리 ────────────────────────────────────────────
+    {
+        QStringLiteral("기록 · 관리"), QStringLiteral("📈"),
+        QStringLiteral("일일 리포트"),
+        QStringLiteral("하루 동안 한 입소자가 어떻게 지냈는지를 숫자와 그래프로 정리해 봅니다."),
+        {
+          { QStringLiteral("무엇을 고르나"), {
+              { QStringLiteral("날짜"),
+                QStringLiteral("왼쪽 달력에서 날짜를 고릅니다. 자료가 없는 미래 날짜는 선택되지 않고, "
+                               "‘오늘’ 버튼으로 언제든 돌아옵니다.") },
+              { QStringLiteral("입소자"),
+                QStringLiteral("위쪽 이름 탭으로 사람을 바꿉니다. 리포트는 ‘날짜 한 개 + 입소자 한 명’ "
+                               "단위입니다.") },
+          } },
+          { QStringLiteral("지표"), {
+              { QStringLiteral("누워있는 시간"),
+                QStringLiteral("침대 ROI 안에 누워 있던 시간의 합입니다.") },
+              { QStringLiteral("활동량"),
+                QStringLiteral("웨어러블 만보기 기준 걸음 수입니다.") },
+              { QStringLiteral("케어시간"),
+                QStringLiteral("요양보호사가 곁에 머문 시간으로 기록된 값입니다.") },
+              { QStringLiteral("이벤트"),
+                QStringLiteral("그날 그 사람에게 난 낙상·침상이탈 횟수입니다.") },
+              { QStringLiteral("시간별 활동량"),
+                QStringLiteral("하루를 시간대로 쪼개 활동량을 막대로 보여 줍니다. 밤에 유난히 "
+                               "움직임이 많았던 시간대를 찾을 때 유용합니다.") },
+          } },
+          { QStringLiteral("내보내기"), {
+              { QStringLiteral("PDF 내보내기"),
+                QStringLiteral("보고 있는 리포트를 그대로 PDF로 저장합니다. 보호자 설명이나 "
+                               "인수인계 자료로 씁니다."), true },
+          } },
+        },
+        QString(),
+    },
+    {
+        QStringLiteral("기록 · 관리"), QStringLiteral("👥"),
+        QStringLiteral("입소자 관리"),
+        QStringLiteral("입소자를 등록·수정·퇴원 처리하고, 위험도와 채널 배정을 관리합니다."),
+        {
+          { QStringLiteral("한눈에"), {
+              { QStringLiteral("상단 요약"),
+                QStringLiteral("재원 인원, 위험도 상/중/하 분포, 채널 배정 수를 보여 줍니다.") },
+          } },
+          { QStringLiteral("찾기"), {
+              { QStringLiteral("재원 / 전체 / 퇴원"),
+                QStringLiteral("왼쪽 목록을 상태별로 전환합니다.") },
+              { QStringLiteral("🔍 이름 검색"),
+                QStringLiteral("이름 일부만 입력해도 걸러집니다.") },
+              { QStringLiteral("행 왼쪽 색 띠"),
+                QStringLiteral("위험도입니다 — 상은 빨강, 중은 주황, 하는 초록.") },
+          } },
+          { QStringLiteral("편집"), {
+              { QStringLiteral("목록 → 상세"),
+                QStringLiteral("행을 클릭하면 오른쪽에서 바로 편집합니다. 팝업이 뜨지 않습니다.") },
+              { QStringLiteral("＋ 신규 등록 · 저장"),
+                QStringLiteral("새 입소자를 추가하거나 고친 내용을 저장합니다.") },
+              { QStringLiteral("퇴원 처리"),
+                QStringLiteral("퇴원시키거나 다시 재입원시킵니다. 바뀐 내역은 입원 이력에 남습니다.") },
+          } },
+        },
+        QStringLiteral("여기서 등록한 입소자를 <b>장치 설정 → 카메라 → 침대·입소자 매핑</b>에서 "
+                       "침대에 지정해야, 경보와 기록에 이름이 붙습니다."),
+    },
+
+    // ── 설정 ────────────────────────────────────────────────
+    {
+        QStringLiteral("설정"), QStringLiteral("🎥"),
+        QStringLiteral("장치 설정 · 카메라"),
+        QStringLiteral("CCTV를 연결하고, 침대 영역을 그리고, 화질과 초점을 원격으로 맞춥니다."),
+        {
+          { QStringLiteral("공통"), {
+              { QStringLiteral("[카메라] / [알림] 전환"),
+                QStringLiteral("위쪽에서 카메라 설정과 알림 노드 설정을 오갑니다.") },
+              { QStringLiteral("CH1~4 채널 레일"),
+                QStringLiteral("위에서 채널을 고르면 아래 설정과 오른쪽 영상이 그 채널로 함께 묶입니다. "
+                               "각 채널에 연결 상태와 지정된 침대 수가 배지로 표시됩니다.") },
+          } },
+          { QStringLiteral("연결"), {
+              { QStringLiteral("직접 입력"),
+                QStringLiteral("CCTV IP · 계정 · 비밀번호를 넣고 연결합니다. 포트(554)와 프로파일은 "
+                               "고정이라 입력하지 않습니다.") },
+              { QStringLiteral("🔍 같은 망 카메라 검색"),
+                QStringLiteral("같은 망의 ONVIF 카메라를 자동으로 찾아 모델·IP·MAC을 보여 줍니다. "
+                               "행을 클릭하면 IP가 자동으로 채워집니다."), true },
+              { QStringLiteral("다른 대역도 찾고 싶다면"),
+                QStringLiteral("IP칸에 그 대역의 주소를 하나 적고 검색하면 그 대역까지 함께 훑습니다."), true },
+              { QStringLiteral("연결하는 주체는 서버입니다"),
+                QStringLiteral("Carenet이 카메라에 직접 붙는 게 아니라, IP를 서버(라즈베리파이)로 "
+                               "보내면 서버가 RTSP를 엽니다. 그래서 <b>서버가 닿을 수 있는 대역</b>의 "
+                               "카메라여야 영상이 나옵니다.") },
+              { QStringLiteral("전체 해제"),
+                QStringLiteral("4채널 연결을 한꺼번에 끊고 서버를 대기 상태로 되돌립니다.") },
+          } },
+          { QStringLiteral("ROI(침대)"), {
+              { QStringLiteral("그리는 순서"),
+                QStringLiteral("‘침대 추가’를 누르고 → 오른쪽 영상 위를 클릭해 모서리를 찍고 → "
+                               "더블클릭(또는 우클릭)으로 완료합니다.") },
+              { QStringLiteral("여러 개 그릴 수 있습니다"),
+                QStringLiteral("한 채널에 침대를 최대 8개까지 지정할 수 있고, 각 침대가 낙상·침상이탈 "
+                               "판정의 기준이 됩니다."), true },
+              { QStringLiteral("영상에 표시 · 침대 제거"),
+                QStringLiteral("그려 둔 영역을 화면에 겹쳐 볼지 끄고 켭니다. 잘못 그렸으면 제거 후 "
+                               "다시 그리세요.") },
+          } },
+          { QStringLiteral("침대 · 입소자 매핑"), {
+              { QStringLiteral("이름 붙이기"),
+                QStringLiteral("침대 목록에서 그 침대의 입소자를 지정하면, 그 침대에서 감지된 사람에게 "
+                               "이름이 붙어 ‘침대 2 김복순’처럼 알립니다.") },
+              { QStringLiteral("현장 LED에도 나옵니다"),
+                QStringLiteral("알림 노드 LED에 입소자 이름이 가운데 글자를 가린 형태로 표시됩니다."), true },
+              { QStringLiteral("‘신원 미상’"),
+                QStringLiteral("서버가 사람을 특정하지 못하면 이렇게 알립니다. 추적 번호는 신원이 "
+                               "아니어서 이름을 확정할 수 없습니다.") },
+          } },
+          { QStringLiteral("이미지"), {
+              { QStringLiteral("밝기 · 대비 · 채도"),
+                QStringLiteral("슬라이더로 맞춘 뒤 ‘적용’을 누르면 카메라에 바로 반영됩니다. "
+                               "‘초기화’로 되돌립니다."), true },
+              { QStringLiteral("적용 전 / 적용 후 비교"),
+                QStringLiteral("오른쪽에서 원본과 적용 결과를 나란히 비교할 수 있습니다.") },
+              { QStringLiteral("초점"),
+                QStringLiteral("실시간 영상에서 원하는 지점을 클릭하면 그 지점에 초점을 맞춥니다. "
+                               "‘전체 자동초점’으로 카메라에 다시 맡길 수도 있습니다."), true },
+          } },
+        },
+        QString(),
+    },
+    {
+        QStringLiteral("설정"), QStringLiteral("🔔"),
+        QStringLiteral("장치 설정 · 알림 노드"),
+        QStringLiteral("병실에 달린 LED·스피커 노드의 밝기와 음량을 원격으로 맞춥니다."),
+        {
+          { QStringLiteral("대상 고르기"), {
+              { QStringLiteral("대상 노드"),
+                QStringLiteral("설정할 알림 노드를 고릅니다. 아직 응답이 없으면 ‘상태 미확인’으로 "
+                               "표시됩니다.") },
+              { QStringLiteral("LED 미리보기 (64×32)"),
+                QStringLiteral("실제 LED와 같은 해상도로, 지금 밝기가 어떻게 보일지 화면에서 "
+                               "미리 확인합니다."), true },
+          } },
+          { QStringLiteral("값 맞추기"), {
+              { QStringLiteral("LED 밝기 · 스피커 음량"),
+                QStringLiteral("낮에는 밝게, 밤에는 눈부시지 않게 — 병실 상황에 맞춰 조절합니다.") },
+              { QStringLiteral("테스트"),
+                QStringLiteral("저장하지 않고 지금 값으로 현장 LED에 문구를 한 번 띄우고 짧은 소리를 "
+                               "냅니다. 실제 낙상 안내 음성이 나가지는 않습니다."), true },
+              { QStringLiteral("적용"),
+                QStringLiteral("지금 값을 노드에 바로 반영하고 저장합니다. 마지막으로 적용한 시각이 "
+                               "아래에 남습니다.") },
+          } },
+          { QStringLiteral("현장에서는"), {
+              { QStringLiteral("낙상이 나면"),
+                QStringLiteral("LED에 입소자 이름과 호실이 뜨고 스피커로 안내가 나갑니다. 호실을 "
+                               "모르면 호실 없이 안내합니다."), true },
+          } },
+        },
+        QString(),
+    },
+
+    // ── 도움 ────────────────────────────────────────────────
+    {
+        QStringLiteral("도움"), QStringLiteral("🛠"),
+        QStringLiteral("문제 해결"),
+        QStringLiteral("자주 막히는 지점과 확인 순서입니다."),
+        {
+          { QStringLiteral("영상"), {
+              { QStringLiteral("영상이 안 나옵니다"),
+                QStringLiteral("① 상단에 서버 연결이 살아 있는지 ② 장치 설정 → 카메라에서 그 채널이 "
+                               "연결되어 있는지 ③ CCTV 계정·비밀번호가 맞는지 순서로 확인하세요.") },
+              { QStringLiteral("일부 채널만 안 나옵니다"),
+                QStringLiteral("채널은 두 대의 서버가 나눠 맡습니다(CH1·2 / CH3·4). 한쪽 서버만 "
+                               "끊기면 두 채널만 검게 남습니다.") },
+          } },
+          { QStringLiteral("카메라 검색"), {
+              { QStringLiteral("검색해도 아무것도 안 뜹니다"),
+                QStringLiteral("① 관제 PC와 카메라가 같은 공유기·스위치에 물려 있는지 ② 카메라의 "
+                               "ONVIF 검색이 켜져 있는지 ③ PC 방화벽이 Carenet의 UDP 수신을 막고 있지 "
+                               "않은지 확인하세요.") },
+              { QStringLiteral("다른 대역에 있습니다"),
+                QStringLiteral("IP칸에 그 대역의 주소를 하나 적고 다시 검색하면 그 대역까지 훑습니다. "
+                               "다만 찾더라도 서버가 그 대역에 닿아야 영상이 열립니다."), true },
+          } },
+          { QStringLiteral("경보"), {
+              { QStringLiteral("낙상 알림이 오지 않습니다"),
+                QStringLiteral("그 채널에 침대 ROI가 그려져 있는지 먼저 보세요. 침대가 없으면 판정 "
+                               "자체가 시작되지 않습니다.") },
+              { QStringLiteral("알림에 이름이 안 뜹니다"),
+                QStringLiteral("장치 설정 → 카메라 → 침대·입소자 매핑에서 그 침대에 입소자를 "
+                               "지정하세요.") },
+              { QStringLiteral("경보음이 계속 납니다"),
+                QStringLiteral("화면 위 경보 카드의 ‘경보 해제’를 누르면 현장 사이렌·LED까지 함께 "
+                               "꺼집니다.") },
+          } },
+        },
+        QStringLiteral("그래도 해결되지 않으면 발생 시각과 채널을 적어 두세요 — "
+                       "<b>영상 검색</b>에서 그 시각의 영상을 찾아 원인을 짚을 수 있습니다."),
+    },
+    };
+    return topics;
+}
+
+}  // namespace
+
 void MainWindow::onHelpClicked()
 {
     if (!helpDialog) {
         helpDialog = new QDialog(this);
         helpDialog->setObjectName("panel");
-        helpDialog->setWindowTitle(QStringLiteral("도움말 — 기능 설명"));
-        helpDialog->resize(880, 660);
-        helpDialog->setMinimumSize(640, 440);
+        helpDialog->setWindowTitle(QStringLiteral("Carenet 도움말"));
+        helpDialog->resize(940, 700);
+        helpDialog->setMinimumSize(700, 480);
         enableDarkTitleBar(helpDialog);
         auto* h = new QHBoxLayout(helpDialog);
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(0);
 
-        // 좌측 주제 목록
+        // ── 좌: 제목 + 검색 + 주제 목록 ──
+        auto* side = new QFrame();
+        side->setObjectName(QStringLiteral("helpSide"));
+        side->setFixedWidth(236);
+        auto* sv = new QVBoxLayout(side);
+        sv->setContentsMargins(14, 16, 14, 12);
+        sv->setSpacing(9);
+
+        auto* sideTitle = new QLabel(QStringLiteral("Carenet 도움말"));
+        sideTitle->setObjectName(QStringLiteral("helpSideTitle"));
+        sv->addWidget(sideTitle);
+
+        auto* search = new QLineEdit();
+        search->setObjectName(QStringLiteral("helpSearch"));
+        search->setPlaceholderText(QStringLiteral("🔍  기능 검색"));
+        search->setClearButtonEnabled(true);
+        sv->addWidget(search);
+
         helpList = new QListWidget();
         helpList->setObjectName(QStringLiteral("helpList"));
-        helpList->setFixedWidth(200);
-        helpList->addItems({
-            QStringLiteral("개요"),
-            QStringLiteral("상단 헤더"),
-            QStringLiteral("실시간 관제 및 제어"),
-            QStringLiteral("이벤트 기록"),
-            QStringLiteral("일일 리포트"),
-            QStringLiteral("입소자 관리"),
-            QStringLiteral("장치 설정"),
-        });
-        h->addWidget(helpList);
+        helpList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        sv->addWidget(helpList, 1);
+        h->addWidget(side);
 
-        // 우측 내용
+        // 주제를 section별로 묶어 채운다 — 머리글 행은 선택되지 않게 두고,
+        // 실제 주제 행에만 UserRole로 주제 번호를 심는다(행 번호 ≠ 주제 번호).
+        const QVector<HelpTopic>& topics = helpTopics();
+        QString lastSection;
+        for (int i = 0; i < topics.size(); ++i) {
+            const HelpTopic& tp = topics.at(i);
+            if (tp.section != lastSection) {
+                lastSection = tp.section;
+                auto* head = new QListWidgetItem(tp.section, helpList);
+                head->setData(Qt::UserRole, -1);
+                head->setFlags(Qt::NoItemFlags);          // 선택·호버 대상에서 제외
+                head->setForeground(QColor(QString::fromLatin1(kAccent)));
+                QFont hf = head->font();
+                hf.setPointSizeF(hf.pointSizeF() - 1.0);
+                hf.setBold(true);
+                head->setFont(hf);
+            }
+            auto* it = new QListWidgetItem(
+                QStringLiteral("%1   %2").arg(tp.icon, tp.title), helpList);
+            it->setData(Qt::UserRole, i);
+            // 검색이 훑을 건초더미 — 제목뿐 아니라 본문 용어·설명까지 넣어야
+            // "스냅샷", "PDF"처럼 본문에만 있는 말로도 주제를 찾을 수 있다.
+            QString hay = tp.title + QLatin1Char(' ') + tp.summary;
+            for (const HelpGroup& g : tp.groups) {
+                hay += QLatin1Char(' ') + g.heading;
+                for (const HelpEntry& e : g.entries)
+                    hay += QLatin1Char(' ') + e.term + QLatin1Char(' ') + e.desc;
+            }
+            it->setData(Qt::UserRole + 1, hay);
+        }
+
+        // ── 우: 본문 ──
         helpBrowser = new QTextBrowser();
         helpBrowser->setObjectName(QStringLiteral("helpBrowser"));
         helpBrowser->setOpenExternalLinks(false);
@@ -1170,98 +1659,117 @@ void MainWindow::onHelpClicked()
 
         connect(helpList, &QListWidget::currentRowChanged, this,
                 &MainWindow::renderHelpTopic);
-        helpList->setCurrentRow(0);
+
+        connect(search, &QLineEdit::textChanged, this, [this](const QString& q) {
+            const QString needle = q.trimmed();
+            for (int i = 0; i < helpList->count(); ++i) {
+                QListWidgetItem* it = helpList->item(i);
+                if (it->data(Qt::UserRole).toInt() < 0) continue;   // 머리글은 뒤에서
+                it->setHidden(!needle.isEmpty() &&
+                              !it->data(Qt::UserRole + 1).toString()
+                                   .contains(needle, Qt::CaseInsensitive));
+            }
+            // 머리글은 자기 묶음에 남은 주제가 하나도 없을 때만 숨긴다.
+            for (int i = 0; i < helpList->count(); ++i) {
+                QListWidgetItem* head = helpList->item(i);
+                if (head->data(Qt::UserRole).toInt() >= 0) continue;
+                bool any = false;
+                for (int j = i + 1; j < helpList->count(); ++j) {
+                    QListWidgetItem* n = helpList->item(j);
+                    if (n->data(Qt::UserRole).toInt() < 0) break;   // 다음 묶음 시작
+                    if (!n->isHidden()) { any = true; break; }
+                }
+                head->setHidden(!any);
+            }
+        });
+
+        helpList->setCurrentRow(1);   // 0은 머리글 — 첫 실제 주제는 1행
     }
-    renderHelpTopic(helpList ? helpList->currentRow() : 0);  // 현재 테마 색으로 갱신
+    renderHelpTopic(helpList ? helpList->currentRow() : 1);  // 현재 테마 색으로 갱신
     helpDialog->show();
     helpDialog->raise();
     helpDialog->activateWindow();
 }
 
 // 선택된 도움말 주제를 현재 테마 색으로 렌더한다.
-void MainWindow::renderHelpTopic(int idx)
+//
+// QTextBrowser가 이해하는 건 Qt 리치텍스트(HTML 부분집합)라 flex도 border-radius도
+// 없다. 대신 표 셀의 배경색·패딩은 확실히 먹으므로, 카드는 전부 "색 띠 칸 + 내용 칸"
+// 2칸짜리 표로 만든다. 색은 매번 현재 팔레트에서 새로 읽어 테마 토글에 따라온다.
+void MainWindow::renderHelpTopic(int row)
 {
     if (!helpBrowser) return;
-    if (idx < 0) idx = 0;
+
+    // 좌측 목록엔 머리글 행이 섞여 있어 행 번호가 곧 주제 번호가 아니다.
+    // 머리글이 넘어오면(또는 검색으로 선택이 풀리면) 보고 있던 주제를 유지한다.
+    int idx = helpTopicShown_;
+    if (helpList) {
+        if (const QListWidgetItem* it = helpList->item(row)) {
+            const int t = it->data(Qt::UserRole).toInt();
+            if (t >= 0) idx = t;
+        }
+    }
+    const QVector<HelpTopic>& topics = helpTopics();
+    if (topics.isEmpty()) return;
+    idx = qBound(0, idx, topics.size() - 1);
+    helpTopicShown_ = idx;
+    const HelpTopic& tp = topics.at(idx);
 
     const QString A  = QString::fromLatin1(kAccent);
     const QString T  = QString::fromLatin1(kTextMain);
     const QString S  = QString::fromLatin1(kTextSub);
     const QString BD = QString::fromLatin1(kBorder);
+    const QString C  = QString::fromLatin1(kCard);
+    const QString OA = QString::fromLatin1(kOnAccent);
+    const QString W  = QString::fromLatin1(kWarn);
 
-    auto li = [](const QString& k, const QString& d) {
-        return QStringLiteral("<p style='margin:9px 0;'><b>%1</b><br>%2</p>").arg(k, d);
+    // 색 띠(왼쪽 3px) + 내용 카드.
+    auto card = [&](const QString& bar, const QString& head, const QString& body) {
+        return QStringLiteral(
+            "<table width='100%' cellspacing='0' cellpadding='0' style='margin:0 0 7px;'>"
+            "<tr><td width='3' bgcolor='%1'></td>"
+            "<td bgcolor='%2' style='padding:9px 14px;'>"
+            "<div style='font-size:13px; font-weight:700; color:%3;'>%4</div>"
+            "<div style='font-size:13px; color:%5; line-height:152%;'>%6</div>"
+            "</td></tr></table>").arg(bar, C, T, head, S, body);
     };
-    QString title, body;
-    switch (idx) {
-    case 0:
-        title = QStringLiteral("개요");
-        body = QStringLiteral(
-            "<p>다보이조는 요양원 통합 모니터링 관제 프로그램입니다. "
-            "실시간 영상 관제, 낙상·침상이탈 경보, 웨어러블 생체신호, 블랙박스 기록, "
-            "입소자 관리, 장치 설정(카메라·알림)을 한 화면에서 다룹니다.</p>")
-          + li(QStringLiteral("화면 구성"),
-               QStringLiteral("왼쪽 메뉴에서 실시간 관제 · 이벤트 기록 · 일일 리포트 · 입소자 관리 · 장치 설정으로 이동합니다. "
-                              "메뉴 위 ☰ 버튼으로 접었다 펼 수 있습니다."))
-          + li(QStringLiteral("사용 팁"),
-               QStringLiteral("왼쪽 목록에서 주제를 고르면 해당 기능 설명이 여기에 표시됩니다."));
-        break;
-    case 1:
-        title = QStringLiteral("상단 헤더");
-        body = li(QStringLiteral("영상 서버 상태등"), QStringLiteral("초록=정상 연결, 빨강=연결 끊김. 끊기면 자동 재접속을 시도합니다."))
-             + li(QStringLiteral("실시간 시계"), QStringLiteral("현재 시각(관제 기록 기준)."))
-             + li(QStringLiteral("도움말"), QStringLiteral("이 창을 엽니다."))
-             + li(QStringLiteral("테마 전환(🌙/☀)"), QStringLiteral("다크(야간 관제)·라이트(주간) 전환."))
-             + li(QStringLiteral("계정 · 로그아웃"), QStringLiteral("로그인 사용자 표시. 로그아웃 시 로그인 화면으로 복귀."));
-        break;
-    case 2:
-        title = QStringLiteral("실시간 관제 및 제어");
-        body = li(QStringLiteral("4채널 영상"), QStringLiteral("병상별 실시간 영상. 낙상·침상이탈 발생 시 해당 칸이 빨간 테두리로 강조됩니다."))
-             + li(QStringLiteral("🎤 방송"), QStringLiteral("누르고 있는 동안 현장으로 음성 송출(인터콤). 떼면 종료."))
-             + li(QStringLiteral("경보 해제"), QStringLiteral("평상시엔 차분한 아웃라인, 경보 시 빨강 강조. 누르면 낙상/침상이탈 경보를 일괄 해제하고 현장 사이렌·LED를 끕니다."))
-             + li(QStringLiteral("웨어러블 생체신호"), QStringLiteral("우측 패널에 채널별 산소포화도·심박과 심박 추세 그래프. 정상/주의/위험에 따라 색이 바뀝니다."));
-        break;
-    case 3:
-        title = QStringLiteral("이벤트 기록");
-        body = li(QStringLiteral("필터"), QStringLiteral("날짜 범위·이벤트 종류를 바꾸면 즉시 목록에 반영(별도 검색 버튼 없음)."))
-             + li(QStringLiteral("로그 표"), QStringLiteral("낙상=빨강, 침상이탈=주황. 상태는 미확인=빨강/확인=초록으로 구분."))
-             + li(QStringLiteral("블랙박스 재생"), QStringLiteral("표의 이벤트를 더블클릭하면 우측 플레이어에서 그 시점 영상을 바로 재생하고 ‘확인’ 처리됩니다."));
-        break;
-    case 4:
-        title = QStringLiteral("일일 리포트");
-        body = li(QStringLiteral("날짜 선택"), QStringLiteral("좌측 달력에서 날짜를 고르면 그 날의 기록을 조회합니다. 자료가 없는 미래 날짜는 선택되지 않으며, ‘오늘’ 버튼으로 돌아옵니다."))
-             + li(QStringLiteral("입소자 탭"), QStringLiteral("상단 이름 탭으로 사람을 전환합니다. 리포트는 ‘날짜 + 입소자’ 한 명 단위입니다."))
-             + li(QStringLiteral("지표"), QStringLiteral("누워있는 시간·활동량(만보기)·케어시간·이벤트 횟수. 서버가 쌓는 bed_sessions·activity_minute·care_logs·events 기준입니다."));
-        break;
-    case 5:
-        title = QStringLiteral("입소자 관리");
-        body = li(QStringLiteral("상단 요약"), QStringLiteral("재원 인원·위험도(상/중/하) 분포·채널 배정 수를 한눈에."))
-             + li(QStringLiteral("재원/전체/퇴원 필터"), QStringLiteral("좌측 목록을 상태별로 전환. 이름 검색도 가능."))
-             + li(QStringLiteral("목록 → 상세"), QStringLiteral("행을 클릭하면 우측에서 바로 편집(팝업 없음). 행 왼쪽 색 띠는 위험도(상=빨강/중=주황/하=초록)."))
-             + li(QStringLiteral("＋ 신규 등록 / 저장 / 퇴원 처리"), QStringLiteral("입소자 추가·수정·퇴원(재입원). 변경 내역은 입원 이력에 기록됩니다."));
-        break;
-    case 6:
-    default:
-        title = QStringLiteral("장치 설정");
-        body = li(QStringLiteral("상단 [카메라] / [알림] 전환"), QStringLiteral("카메라(연결·ROI·이미지)와 알림 노드 설정을 한 화면에서 서브탭으로 오갑니다."))
-             + li(QStringLiteral("카메라 · 채널 레일(CH1~4)"), QStringLiteral("상단에서 채널 선택. 연결 상태와 지정된 침대 수가 배지로 표시되고, 아래 컨트롤과 우측 영상이 그 채널로 묶입니다."))
-             + li(QStringLiteral("카메라 · 연결"), QStringLiteral("CCTV IP·계정·비밀번호 입력 후 연결. ‘같은 망 카메라 검색’으로 자동 탐색."))
-             + li(QStringLiteral("카메라 · ROI(침대)"), QStringLiteral("‘침대 추가’ → 우측 영상 클릭으로 침대 영역을 그리고 더블클릭으로 완료. 한 채널에 침대를 여러 개(최대 8개) 지정할 수 있고, 각 침대가 낙상·침상이탈 판정 기준이 됩니다."))
-             + li(QStringLiteral("카메라 · 침대·입소자 매핑"), QStringLiteral("침대 목록에서 그 침대의 입소자를 지정하면, 그 침대에서 감지된 사람에게 이름이 붙어 낙상·이탈 알림에 ‘침대 2 김복순’처럼 표시됩니다. 서버가 사람을 특정하지 못하면 ‘신원 미상’으로 알립니다(추적 ID는 신원이 아니라서 확정할 수 없습니다)."))
-             + li(QStringLiteral("카메라 · 이미지"), QStringLiteral("밝기·대비·채도 슬라이더 후 ‘적용’. 우측에 적용 전/적용 후(실시간) 비교. 실시간 영상을 클릭하면 그 지점에 초점을 맞춥니다."))
-             + li(QStringLiteral("알림 · 밝기/음량"), QStringLiteral("대상 알림 노드를 고르고 LED 밝기·스피커 음량을 조절합니다. 미리보기가 밝기를 바로 보여줍니다."))
-             + li(QStringLiteral("알림 · 테스트/적용"), QStringLiteral("‘테스트’는 현재 값으로 현장 LED에 문구 1회 + 짧은 소리를 냅니다. ‘적용’은 그 값을 평상시 설정으로 저장합니다."));
-        break;
-    }
 
-    const QString html = QStringLiteral(
-        "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",\"Malgun Gothic\",\"Apple SD Gothic Neo\",\"Noto Sans CJK KR\",\"Noto Sans KR\",sans-serif; font-size:14px; color:%1;'>"
-        "<h1 style='color:%2; margin:0 0 10px;'>%3</h1>"
-        "<hr style='border:none; border-top:1px solid %4;'>"
-        "<div style='line-height:155%;'>%5</div></div>")
-        .arg(T, A, title, BD, body);
-    helpBrowser->setHtml(html);
-    // 배경/여백은 base.qss의 QTextBrowser#helpBrowser 규칙이 담당한다(테마 토글 시 자동 갱신).
+    QString html = QStringLiteral(
+        "<table width='100%' cellspacing='0' cellpadding='0'><tr>"
+        "<td width='46' valign='top'><span style='font-size:28px;'>%1</span></td>"
+        "<td valign='top'>"
+        "<div style='font-size:21px; font-weight:800; color:%2;'>%3</div>"
+        "<div style='font-size:13px; color:%4; line-height:152%;'>%5</div>"
+        "</td></tr></table>"
+        // 구분선은 <hr>로만 둔다 — 높이 1px짜리 표 행은 Qt가 글자 높이만큼
+        // 부풀려 두꺼운 띄로 그려버리고, div의 border-top은 아예 무시된다.
+        "<hr style='border:none; border-top:1px solid %6;'>")
+        .arg(tp.icon, T, tp.title, S, tp.summary, BD);
+
+    for (const HelpGroup& g : tp.groups) {
+        if (!g.heading.isEmpty())
+            html += QStringLiteral(
+                "<div style='color:%1; font-size:12px; font-weight:800; "
+                "margin:15px 0 7px; letter-spacing:1px;'>%2</div>").arg(A, g.heading);
+        for (const HelpEntry& e : g.entries) {
+            QString head = e.term;
+            if (e.isNew)
+                head += QStringLiteral(
+                    "&nbsp;&nbsp;<span style='background-color:%1; color:%2; "
+                    "font-size:10px; font-weight:800;'>&nbsp;NEW&nbsp;</span>").arg(A, OA);
+            html += card(A, head, e.desc);
+        }
+    }
+    if (!tp.tip.isEmpty())
+        html += QStringLiteral("<div style='margin-top:9px;'></div>")
+              + card(W, QStringLiteral("💡 팁"), tp.tip);
+
+    helpBrowser->setHtml(
+        QStringLiteral(
+            "<div style='font-family:\"Segoe UI\",\"맑은 고딕\",\"Malgun Gothic\","
+            "\"Apple SD Gothic Neo\",\"Noto Sans CJK KR\",\"Noto Sans KR\",sans-serif; "
+            "font-size:13px; color:%1;'>%2</div>").arg(T, html));
+    // 배경/여백은 base.qss의 QTextBrowser#helpBrowser 규칙이 담당한다.
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1278,7 +1786,15 @@ void MainWindow::onLogoutClicked()
         return;
 
     logoutRequested_ = true;
+    // 도움말 등 다른 최상위 창이 떠 있으면 이 창만 닫아서는 "마지막 창"이 되지 않아
+    // quitOnLastWindowClosed가 걸리지 않는다 → main()의 a.exec()가 돌아오지 못하고
+    // 관제 화면만 사라진 채 로그인 창이 안 뜬다. 열린 창을 모두 정리하고 명시적으로
+    // 이벤트 루프를 끝낸다.
+    const auto tops = QApplication::topLevelWidgets();
+    for (QWidget* w : tops)
+        if (w != this) w->close();
     close();
+    qApp->quit();
 }
 
 QWidget* MainWindow::buildVideoWall()
@@ -1456,6 +1972,7 @@ QWidget* MainWindow::buildTileChrome(int channel, QWidget* card)
         b->setFixedSize(26, 22);
         b->setToolTip(QString::fromUtf16(tips[i]));
         connect(b, &QPushButton::clicked, this, [this, channel, i] {
+            if (selectedRoom_ != 0) return;   // 빈 타일은 확대할 것도 저장할 것도 없다
             selectChannel(channel);
             if (i == 0) {
                 setGridLayout(gridLayout_ == GridLayout::Single ? GridLayout::Quad
@@ -1550,6 +2067,11 @@ void MainWindow::setGridLayout(GridLayout mode)
 void MainWindow::selectChannel(int ch)
 {
     if (ch < 0 || ch >= 4) return;
+    // 빈 방을 보는 중에는 고를 채널이 없다. 타일 4장은 채널 0~3에 묶인 같은
+    // 위젯이라, 막지 않으면 102호 타일을 눌렀는데 101호 채널이 선택되고
+    // ROI 편집기까지 그 채널로 따라간다.
+    // 경보 경로는 setVideoFocus()가 selectRoom(0)을 먼저 부르므로 막히지 않는다.
+    if (selectedRoom_ != 0) return;
     if (tileHidden_[ch]) setTileHidden(ch, false);
     if (selectedChannel_ == ch && gridKey_ >= 0) return;
     selectedChannel_ = ch;
@@ -1649,6 +2171,10 @@ void MainWindow::setVideoFocus(int channel)
         setGridLayout(GridLayout::Quad);
         return;
     }
+    // 경보는 전부 이 함수를 지나간다. 빈 방을 보고 있던 중이라면 실카메라 방으로
+    // 되돌려야 한다 — 낙상이 났는데 화면엔 "카메라 미연결" 타일만 떠 있으면
+    // 경보를 켜 놓고도 아무것도 못 보는 상태가 된다.
+    selectRoom(0);
     selectChannel(channel);
     setGridLayout(GridLayout::Spotlight);
 }
@@ -1710,19 +2236,10 @@ QWidget* MainWindow::buildResourcePanel()
     resourceTree_->setSelectionMode(QAbstractItemView::SingleSelection);
     body->addWidget(resourceTree_, 1);
 
-    // ── Root > 그룹 > 카메라 4대 ──
     auto* root = new QTreeWidgetItem(resourceTree_,
                                      QStringList(QStringLiteral("Root")));
     root->setData(0, Qt::UserRole, QStringLiteral("root"));
-    auto* group = new QTreeWidgetItem(root);
-    group->setData(0, Qt::UserRole, QStringLiteral("group"));
-    for (int ch = 0; ch < 4; ++ch) {
-        camItems_[ch] = new QTreeWidgetItem(group);
-        camItems_[ch]->setData(0, Qt::UserRole, QStringLiteral("cam"));
-        camItems_[ch]->setData(0, Qt::UserRole + 1, ch);
-    }
-    root->setExpanded(true);
-    group->setExpanded(true);
+    rebuildResourceRooms();
 
     // ── 레이아웃 프리셋 ──
     auto* layoutRoot = new QTreeWidgetItem(resourceTree_,
@@ -1743,7 +2260,20 @@ QWidget* MainWindow::buildResourcePanel()
             [this](QTreeWidgetItem* item, int) {
                 if (!item) return;
                 const QString kind = item->data(0, Qt::UserRole).toString();
+                // 방 그룹을 누르면 영상월이 그 방으로 바뀐다. 빈 방의 채널 자리를
+                // 눌러도 같은 뜻으로 받는다 — 사람은 그룹이 아니라 눈에 보이는
+                // 채널 줄을 누른다.
+                if (kind == QLatin1String("group") || kind == QLatin1String("groupEmpty")) {
+                    selectRoom(item->data(0, Qt::UserRole + 1).toInt());
+                    return;
+                }
+                if (kind == QLatin1String("camEmpty")) {
+                    QTreeWidgetItem* g = item->parent();
+                    if (g) selectRoom(g->data(0, Qt::UserRole + 1).toInt());
+                    return;
+                }
                 if (kind == QLatin1String("cam")) {
+                    selectRoom(0);   // 실카메라 방으로 돌아온 뒤 그 채널을 고른다
                     selectChannel(item->data(0, Qt::UserRole + 1).toInt());
                 } else if (kind == QLatin1String("layout")) {
                     const int i = item->data(0, Qt::UserRole + 1).toInt();
@@ -1757,6 +2287,7 @@ QWidget* MainWindow::buildResourcePanel()
             [this](QTreeWidgetItem* item, int) {
                 if (!item || item->data(0, Qt::UserRole).toString() != QLatin1String("cam"))
                     return;
+                selectRoom(0);
                 selectChannel(item->data(0, Qt::UserRole + 1).toInt());
                 setGridLayout(GridLayout::Single);
             });
@@ -1798,6 +2329,158 @@ QWidget* MainWindow::buildResourcePanel()
 
 // 트리의 표시만 다시 만든다(항목 자체는 재생성하지 않는다).
 // 다시 만들면 펼침 상태와 스크롤 위치가 매번 초기화돼 손으로 다시 열어야 한다.
+// Root 아래 방 그룹을 처음부터 다시 만든다. 방을 추가·삭제하면 항목 자체가
+// 달라지므로 refreshResourceTree(표시 갱신)로는 부족하고 이 함수가 필요하다.
+void MainWindow::rebuildResourceRooms()
+{
+    if (!resourceTree_) return;
+    QTreeWidgetItem* root = resourceTree_->topLevelItem(0);
+    if (!root) return;
+    qDeleteAll(root->takeChildren());
+    for (int ch = 0; ch < 4; ++ch) camItems_[ch] = nullptr;
+
+    // ── Root > 방 그룹 > 채널 4개 ──
+    // 0번 방만 실제 카메라를 갖는다. 나머지 방은 채널 4칸을 회색으로 비워 두는데,
+    // 눌러도 아무 일도 일어나지 않는다(연결된 영상이 없으니 고를 것도 없다).
+    const QStringList rooms = roomNames();
+    for (int r = 0; r < rooms.size(); ++r) {
+        auto* group = new QTreeWidgetItem(root);
+        group->setData(0, Qt::UserRole,
+                       r == 0 ? QStringLiteral("group") : QStringLiteral("groupEmpty"));
+        group->setData(0, Qt::UserRole + 1, r);
+        group->setText(0, rooms.at(r));
+        if (r == 0) {
+            for (int ch = 0; ch < 4; ++ch) {
+                camItems_[ch] = new QTreeWidgetItem(group);
+                camItems_[ch]->setData(0, Qt::UserRole, QStringLiteral("cam"));
+                camItems_[ch]->setData(0, Qt::UserRole + 1, ch);
+            }
+        } else {
+            group->setToolTip(0, QStringLiteral("카메라가 아직 연결되지 않은 방입니다"));
+            for (int ch = 0; ch < 4; ++ch) {
+                auto* slot = new QTreeWidgetItem(group);
+                slot->setData(0, Qt::UserRole, QStringLiteral("camEmpty"));
+                slot->setText(0, QStringLiteral("채널 %1").arg(ch + 1));
+                slot->setToolTip(0, QStringLiteral("카메라 미연결 — 빈 자리입니다"));
+            }
+        }
+        group->setExpanded(true);
+    }
+    root->setExpanded(true);
+    root->setExpanded(true);
+}
+
+// 트리에서 방을 고르면 영상월을 그 방으로 전환한다.
+//
+// 방을 바꿔도 서버에는 아무 것도 보내지 않는다 — 101호 카메라는 계속 스트리밍하고
+// 낙상 감지도 계속 돈다. 바뀌는 건 "이 화면이 무엇을 보여 주는가"뿐이다. 그래서
+// 102호를 보다가 101호로 돌아오면 끊긴 자리에서 이어지는 게 아니라 지금 실시간이
+// 바로 뜬다(카메라 해제와 결정적으로 다른 점).
+void MainWindow::selectRoom(int room)
+{
+    const int count = roomNames().size();
+    room = qBound(0, room, count - 1);
+    if (room == selectedRoom_) return;
+
+    // 실카메라 방을 떠나기 직전에 접속 폼을 보관한다 — applyRoomView가 비우기 때문에
+    // 여기서 안 챙기면 102호에 한 번 들렀다 오는 것만으로 입력값이 날아간다.
+    if (selectedRoom_ == 0 && room != 0) {
+        camFormBackup_[0] = camIpEdit   ? camIpEdit->text()   : QString();
+        camFormBackup_[1] = camUserEdit ? camUserEdit->text() : QString();
+        camFormBackup_[2] = camPwEdit   ? camPwEdit->text()   : QString();
+    }
+
+    selectedRoom_ = room;
+    applyRoomView();
+
+    if (room == 0) {
+        if (camIpEdit)   camIpEdit->setText(camFormBackup_[0]);
+        if (camUserEdit) camUserEdit->setText(camFormBackup_[1]);
+        if (camPwEdit)   camPwEdit->setText(camFormBackup_[2]);
+        if (discoveryStatus)
+            discoveryStatus->setText(QStringLiteral(
+                "‘검색’을 누르면 같은 망의 카메라가 아래에 나타납니다. 행을 클릭하면 IP가 채워져요."));
+        for (int ch = 0; ch < 4; ++ch) refreshRoiZones(ch);   // 침대 오버레이 복구
+    }
+}
+
+// selectedRoom_에 맞춰 타일·바이탈·트리를 한 번에 맞춘다.
+// videoSuppressed_는 이제 "해제했다"가 아니라 "지금 이 화면에 그리면 안 된다"는
+// 파생값이다 — (보고 있는 방이 실카메라 방인가) × (그 채널을 해제하지 않았는가).
+//
+// 여기서 cameraActive_를 쓰지 않는 게 중요하다. 그 플래그는 "해제 버튼을 눌러도
+// 되는가"를 나타낼 뿐이고, 서버는 Qt 재시작과 무관하게 계속 스트리밍한다 —
+// active_mask가 비어 있어도 프레임은 들어오고 예전엔 그대로 화면에 떴다.
+// 조건에 끼워 넣으면 그 경우에 영상이 통째로 사라진다.
+void MainWindow::applyRoomView()
+{
+    const bool liveRoom = (selectedRoom_ == 0);
+    for (int ch = 0; ch < 4; ++ch) {
+        // draw  = 들어온 프레임을 그릴 것인가 (실제 차단은 이 값 하나로 한다)
+        // known = 타일에 "연결됨"으로 적을 것인가. 둘을 나눈 이유: 서버가 이미
+        //         스트리밍 중인데 active_mask만 비어 있는 경우가 있고, 그때도
+        //         영상은 떠야 한다. 프레임이 도착하면 VideoView가 스스로
+        //         cameraConnected_를 켜므로 라벨은 자연히 따라온다.
+        const bool draw  = liveRoom && !videoCleared_[ch];
+        const bool known = draw && cameraActive_[ch];
+        videoSuppressed_[ch] = !draw;
+        if (auto* v = channelViews[ch]) {
+            // setCameraConnected(false)가 직전 프레임까지 지운다 — 방을 옮겼는데
+            // 이전 방 화면이 정지영상으로 남아 있으면 그게 제일 위험한 오해다.
+            v->setCameraConnected(known);
+            if (!draw) v->setLive(false);
+            // 침대 오버레이는 101호의 것이다 — 빈 방 타일에 남으면 그 방에
+            // 침대가 있는 것처럼 보인다. 돌아올 때는 selectRoom()이 되살린다.
+            if (!liveRoom) v->setZones({});
+            v->setDisplayName(tileDisplayName(ch));
+            // 배지는 "빈 방으로 나갈 때"만 지운다. 돌아올 때도 지우면 경보 경로가
+            // setAlert(true) → setVideoFocus → selectRoom(0) 순서라서 방금 켠
+            // 배지를 스스로 꺼 버린다.
+            if (!liveRoom) v->setAlert(false);
+        }
+        if (!draw) {
+            lastFramePix_[ch] = QPixmap();
+            if (camThumbs[ch]) camThumbs[ch]->clearFrame();
+        }
+    }
+    // 설정 화면(스테이지 영상)도 같은 방을 따른다.
+    if (roiEditorView) {
+        const bool stage = liveRoom && cameraActive_[roiEditChannel];
+        roiEditorView->setCameraConnected(stage);
+        if (!liveRoom) { roiEditorView->setLive(false); roiEditorView->setZones({}); }
+    }
+    if (imgWipe_ && !liveRoom) imgWipe_->clearFrames();
+
+    // 인스펙터는 101호와 같은 화면을 그대로 보여주되 만질 수 없게 한다.
+    // 값까지 남겨두면 102호 화면에 101호 IP가 회색으로 읽혀 더 헷갈리므로 비운다
+    // (돌아올 때 camFormBackup_에서 되돌린다).
+    if (camControlStack) camControlStack->setEnabled(liveRoom);
+    if (!liveRoom) {
+        if (camIpEdit)   camIpEdit->clear();
+        if (camUserEdit) camUserEdit->clear();
+        if (camPwEdit)   camPwEdit->clear();
+        if (discoveryTable) { discoveryTable->setRowCount(0); syncDiscoveryTableHeight(); }
+        if (discoveryStatus)
+            discoveryStatus->setText(QStringLiteral("이 방에는 아직 카메라가 배정되지 않았습니다."));
+    }
+    rebuildBedList();
+    for (int r = 0; r < camRoomBtns_.size(); ++r)
+        camRoomBtns_[r]->setChecked(r == selectedRoom_);
+    setCamMode(camMode_);          // 빈 방이면 안내 페이지로, 아니면 원래 모드로
+    refreshCamChannelStatus();
+
+    rebuildVitalCards();     // 빈 방에서는 카드가 전부 "대기"로 내려간다
+    refreshResourceTree();
+}
+
+// 타일 좌상단 이름. 빈 방에서는 입소자 이름을 붙이지 않는다 — 102호 타일에
+// 101호 입소자 이름이 뜨면 그 사람이 거기 있는 것으로 읽힌다.
+QString MainWindow::tileDisplayName(int ch) const
+{
+    if (selectedRoom_ != 0) return QStringLiteral("CH%1").arg(ch + 1);
+    return channelDisplayName(ch);
+}
+
 void MainWindow::refreshResourceTree()
 {
     if (!resourceTree_) return;
@@ -1808,10 +2491,39 @@ void MainWindow::refreshResourceTree()
     const QColor textColor(QString::fromLatin1(kTextMain));
     const QColor selColor(QString::fromLatin1(kSelect));
 
-    // 그룹 이름은 방 이름을 따른다 — 카메라 1대(4채널) = 방 1개 전제.
+    // 방 그룹 갱신. 0번 방만 실제 카메라를 갖고, 나머지는 빈 자리라 회색으로 낮춘다.
+    const QStringList rooms = roomNames();
     if (camItems_[0] && camItems_[0]->parent()) {
-        camItems_[0]->parent()->setText(
-            0, QStringLiteral("그룹 · %1").arg(currentRoomName()));
+        QTreeWidgetItem* live = camItems_[0]->parent();
+        live->setText(0, rooms.value(0, currentRoomName()));
+        // 색을 명시해 둔다 — 기본색에 맡기면 아래 빈 방(회색)과 톤이 비슷해져
+        // "카메라가 붙은 방"과 "빈 자리"가 구분되지 않는다.
+        live->setForeground(0, selectedRoom_ == 0 ? selColor : textColor);
+        QFont lf = live->font(0);
+        lf.setBold(selectedRoom_ == 0);
+        live->setFont(0, lf);
+    }
+
+    if (auto* root = resourceTree_->topLevelItem(0)) {
+        for (int i = 0; i < root->childCount(); ++i) {
+            QTreeWidgetItem* group = root->child(i);
+            if (group->data(0, Qt::UserRole).toString() != QLatin1String("groupEmpty"))
+                continue;
+            const int r = group->data(0, Qt::UserRole + 1).toInt();
+            const bool viewing = (r == selectedRoom_);
+            group->setForeground(0, viewing ? selColor : offColor);
+            QFont gf = group->font(0);
+            gf.setBold(viewing);
+            group->setFont(0, gf);
+            for (int c = 0; c < group->childCount(); ++c) {
+                QTreeWidgetItem* slot = group->child(c);
+                slot->setForeground(0, offColor);
+                slot->setIcon(0, QIcon(navIconPixmap(5, offColor, 16)));
+            }
+            // 검색 중이면 이름이 걸리는 빈 방만 남긴다(트리와 같은 규칙).
+            group->setHidden(!filter.isEmpty() &&
+                             !group->text(0).contains(filter, Qt::CaseInsensitive));
+        }
     }
 
     for (int ch = 0; ch < 4; ++ch) {
@@ -2225,10 +2937,15 @@ void MainWindow::rebuildVitalCards()
     struct TargetEntry { int key; QString name; QString bedText; };
     QVector<TargetEntry> target;
     target.reserve(8);
-    const QString room = currentRoomName();
+    const QStringList rooms = roomNames();
+    const QString room = rooms.value(selectedRoom_, currentRoomName());
+    // 빈 방에는 배정된 사람이 없다 — 여기서 residentsByChannel_를 그대로 쓰면
+    // 102호 화면에 101호 입소자의 심박이 뜬다.
+    static const QVector<int> kNoResidents;
     for (int ch = 0; ch < 4; ++ch) {
         const QString bedText = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
-        const QVector<int>& ids = residentsByChannel_[ch];
+        const QVector<int>& ids =
+            (selectedRoom_ == 0) ? residentsByChannel_[ch] : kNoResidents;
 
         // 아무도 배정되지 않은 채널도 자리를 남긴다 — 카드가 통째로 사라지면
         // 관제사가 그 채널을 잊는다. 음수 키라 값이 안 들어와 "대기"로 뜬다.
@@ -3970,10 +4687,6 @@ QWidget* MainWindow::buildResidentDetail()
     auto* hl = new QHBoxLayout(header);
     hl->setContentsMargins(16, 12, 16, 12);
     hl->setSpacing(14);
-    dlgAvatar = new QLabel();
-    dlgAvatar->setObjectName("dlgAvatar");
-    dlgAvatar->setFixedSize(52, 52);
-    dlgAvatar->setAlignment(Qt::AlignCenter);
     auto* nameCol = new QVBoxLayout();
     nameCol->setSpacing(2);
     dlgNameBig = new QLabel(QStringLiteral("신규 입소자"));
@@ -3986,7 +4699,6 @@ QWidget* MainWindow::buildResidentDetail()
     dlgRiskBadge->setObjectName("dlgRiskBadge");
     dlgStatusBadge = new QLabel();
     dlgStatusBadge->setObjectName("dlgStatusBadge");
-    hl->addWidget(dlgAvatar);
     hl->addLayout(nameCol);
     hl->addStretch();
     hl->addWidget(dlgRiskBadge);
@@ -4116,17 +4828,6 @@ void MainWindow::refreshResidentCards(const QString& nameFilter)
         riskBar->setFixedWidth(4);
         riskBar->setProperty("severity", riskSeverity);
         rl->addWidget(riskBar);
-
-        // 아바타 — active 속성으로 색을 받는다(재원 여부, 심각도 아님).
-        // 이 위젯은 목록 재렌더마다 새로 만들어지고 아직 화면에 붙기 전이므로
-        // 같은 행의 resRow와 동일하게 생성 직후 속성 설정만으로 충분하다.
-        auto* avatar = new QLabel(name.left(1));
-        avatar->setObjectName("resAvatar");
-        avatar->setAttribute(Qt::WA_TransparentForMouseEvents);
-        avatar->setAlignment(Qt::AlignCenter);
-        avatar->setFixedSize(38, 38);
-        avatar->setProperty("active", active);
-        rl->addWidget(avatar);
 
         // 이름 + 채널
         auto* nameCol = new QVBoxLayout();
@@ -4279,13 +4980,6 @@ void MainWindow::refreshResidentDialogHeader()
     const bool isNew  = (selectedResidentId < 0);
     const QString name = editName->text().trimmed();
     const bool active  = (editStatus->currentText() == QStringLiteral("재원"));
-
-    dlgAvatar->setText(name.isEmpty() ? QStringLiteral("＋") : name.left(1));
-    // 목록 행 아바타와 달리 이 위젯은 편집 중 반복 갱신되므로 repolish가 필요하다.
-    dlgAvatar->setProperty("active", active && !isNew);
-    dlgAvatar->style()->unpolish(dlgAvatar);
-    dlgAvatar->style()->polish(dlgAvatar);
-    dlgAvatar->update();
 
     dlgNameBig->setText(isNew ? QStringLiteral("신규 입소자")
                               : (name.isEmpty() ? QStringLiteral("(이름 없음)") : name));
@@ -4528,6 +5222,9 @@ void MainWindow::toggleTheme()
     updateVitals();
     // 카드의 아바타/칩은 인라인 색이라 QSS 재적용만으론 안 바뀐다 → 다시 그린다.
     refreshResidentCards(residentSearchEdit ? residentSearchEdit->text() : QString());
+    // 도움말 본문은 인라인 색이라 QSS 재적용만으로는 안 바뀐다 — 열려 있으면 다시 그린다.
+    if (helpBrowser && helpList)
+        renderHelpTopic(helpList->currentRow());
 }
 
 void MainWindow::setConnectionState(bool connected, const QString& text)
@@ -5169,7 +5866,7 @@ void MainWindow::exportReportPdf()
 
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
   <tr>
-    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">다보이조 요양원 통합 모니터링</span>
+    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">Carenet 요양원 통합 모니터링</span>
         <h1 style="font-size:26pt; margin:2px 0 0 0">일일 리포트</h1></td>
     <td align="right" valign="bottom">
         <span style="font-size:9pt; color:#8B98A5">문서번호 %17<br>생성 %15</span></td>
@@ -5232,7 +5929,7 @@ void MainWindow::exportReportPdf()
   </td></tr>
 </table>
 <p style="margin-top:14px; color:#8B98A5; font-size:8pt">
-  다보이조 요양원 통합 모니터링 &middot; 이 문서는 시스템이 자동 생성했습니다.
+  Carenet 요양원 통합 모니터링 &middot; 이 문서는 시스템이 자동 생성했습니다.
 </p>
 </body></html>)HTML")
 
@@ -5943,6 +6640,13 @@ QString MainWindow::zoneResidentName(int channel, int roiId) const
 void MainWindow::refreshRoiZones(int channel)
 {
     if (channel < 0 || channel >= 4) return;
+    // 빈 방에는 침대가 없다. 막지 않으면 102호를 보는 중에 채널을 바꿀 때마다
+    // 101호 침대 폴리곤이 설정 스테이지에 다시 그려진다.
+    if (selectedRoom_ != 0) {
+        if (channelViews[channel]) channelViews[channel]->setZones({});
+        if (roiEditorView && roiEditChannel == channel) roiEditorView->setZones({});
+        return;
+    }
 
     // 이름표는 여기서 만든다 — 침대 번호만으로는 관제사가 누구 자리인지 모른다.
     QVector<RoiZone> withLabels = roiZones_[channel];
@@ -6093,6 +6797,7 @@ struct DiscoveredCam {
     QString model;
     QString mac;   // UUID에서 유도(대부분 카메라가 UUID에 MAC을 심음). 못 구하면 uuid.
     QString uuid;  // EndpointReference — 중복 제거 키
+    bool onvif = false;  // ONVIF 장비인가(Windows WSD PC·프린터 응답 걸러내기)
 };
 
 // WS-Discovery Probe SOAP 메시지 (Types=NetworkVideoTransmitter → 카메라 대상).
@@ -6113,6 +6818,43 @@ QByteArray buildWsDiscoveryProbe() {
         "</e:Header>"
         // Types를 비워 모든 ONVIF 장비가 응답하게 한다(카메라만 걸러 못 뜨는 경우 방지).
         "<e:Body><d:Probe/></e:Body></e:Envelope>").arg(msgId).toUtf8();
+}
+
+// 이 PC가 붙어 있는 IPv4 네트워크 1개(인터페이스 + 주소 + 브로드캐스트 + prefix).
+// 멀티캐스트·브로드캐스트·유니캐스트 스윕이 모두 이 목록을 공유한다.
+struct LocalNet {
+    QNetworkInterface iface;
+    QHostAddress addr;
+    QHostAddress bcast;
+    int prefix = 0;
+};
+
+// 검색에 쓸 만한 인터페이스만 추린다(올라와 있고, 루프백이 아니고, IPv4 주소가 있는 것).
+QList<LocalNet> usableIpv4Nets() {
+    QList<LocalNet> out;
+    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+        const auto f = iface.flags();
+        if (!f.testFlag(QNetworkInterface::IsUp) ||
+            !f.testFlag(QNetworkInterface::IsRunning) ||
+            f.testFlag(QNetworkInterface::IsLoopBack))
+            continue;
+        for (const QNetworkAddressEntry& e : iface.addressEntries()) {
+            if (e.ip().protocol() != QAbstractSocket::IPv4Protocol) continue;
+            const int prefix = e.prefixLength();
+            if (prefix <= 0 || prefix > 32) continue;   // prefix를 못 얻으면 계산 불가
+            LocalNet n;
+            n.iface  = iface;
+            n.addr   = e.ip();
+            n.prefix = prefix;
+            n.bcast  = e.broadcast();
+            if (n.bcast.isNull() && prefix < 32) {      // Qt가 안 채워주면 직접 계산
+                const quint32 mask = 0xFFFFFFFFu << (32 - prefix);
+                n.bcast = QHostAddress((n.addr.toIPv4Address() & mask) | ~mask);
+            }
+            out.append(n);
+        }
+    }
+    return out;
 }
 
 // Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조, 그래도 없으면 모델형 토큰).
@@ -6152,17 +6894,23 @@ QString modelFromScopes(const QString& scopes) {
 // ProbeMatch 응답 1개 파싱 → DiscoveredCam.
 DiscoveredCam parseProbeMatch(const QByteArray& datagram) {
     DiscoveredCam cam;
-    QString xaddrs, scopes;
+    QString xaddrs, scopes, types;
     QXmlStreamReader xml(datagram);
     while (!xml.atEnd()) {
         if (xml.readNext() == QXmlStreamReader::StartElement) {
             const QString name = xml.name().toString();  // 네임스페이스 접두어 제외 로컬명
             if (name == QStringLiteral("XAddrs"))       xaddrs = xml.readElementText();
             else if (name == QStringLiteral("Scopes"))  scopes = xml.readElementText();
+            else if (name == QStringLiteral("Types"))   types  = xml.readElementText();
             else if (name == QStringLiteral("Address") && cam.uuid.isEmpty())
                 cam.uuid = xml.readElementText().trimmed();
         }
     }
+    // 브로드캐스트·유니캐스트 스윕을 쓰면 Windows WSD(PC·프린터)도 ProbeMatch를 보낸다.
+    // ONVIF 장비만 표에 올린다 — 스코프/주소/타입 어디든 onvif 흔적이 있어야 한다.
+    cam.onvif = scopes.contains(QStringLiteral("onvif"), Qt::CaseInsensitive) ||
+                xaddrs.contains(QStringLiteral("/onvif/"), Qt::CaseInsensitive) ||
+                types.contains(QStringLiteral("NetworkVideoTransmitter"), Qt::CaseInsensitive);
     if (!xaddrs.isEmpty()) {
         const QString first =
             xaddrs.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).value(0);
@@ -6507,6 +7255,9 @@ QWidget* MainWindow::buildCameraSettingsTab()
     title->setObjectName("panelTitle");
     titleRow->addWidget(title);
     titleRow->addStretch();
+    // 방을 먼저 고르고 그 안에서 모드를 고르는 순서라 왼쪽에 둔다.
+    titleRow->addWidget(buildCamRoomSegment());
+    titleRow->addSpacing(10);
     titleRow->addWidget(buildCamModeSegment());   // 모드는 페이지 전체를 바꾸므로 상단에
     outer->addLayout(titleRow);
 
@@ -6749,6 +7500,133 @@ QWidget* MainWindow::buildAlertSettingsTab()
 }
 
 // 상단 페이지 모드 세그먼트 — 트랙 위에 얹힌 알약 버튼 3개.
+// 상단 방 세그먼트(101호 / 102호 …). 실시간 관제 트리와 selectedRoom_을 공유하므로
+// 여기서 방을 바꾸면 관제 화면도 같은 방을 보게 된다 — 두 화면이 서로 다른 방을
+// 가리키면 "지금 어느 방을 설정 중인가"가 흐려진다.
+QWidget* MainWindow::buildCamRoomSegment()
+{
+    camRoomSeg_ = new QFrame();
+    camRoomSeg_->setObjectName("camSeg");
+    auto* seg = new QHBoxLayout(camRoomSeg_);
+    seg->setContentsMargins(4, 4, 4, 4);
+    seg->setSpacing(4);
+    rebuildCamRoomSegment();
+    return camRoomSeg_;
+}
+
+// 방 목록이 바뀔 때마다 버튼을 통째로 다시 만든다. 방 수가 가변이라 버튼을
+// 미리 만들어 둘 수 없다.
+void MainWindow::rebuildCamRoomSegment()
+{
+    if (!camRoomSeg_) return;
+    auto* seg = qobject_cast<QHBoxLayout*>(camRoomSeg_->layout());
+    if (!seg) return;
+    while (QLayoutItem* it = seg->takeAt(0)) {
+        delete it->widget();
+        delete it;
+    }
+    camRoomBtns_.clear();
+
+    const QStringList rooms = roomNames();
+    for (int r = 0; r < rooms.size(); ++r) {
+        auto* b = new QPushButton(rooms.at(r));
+        b->setObjectName("camSegBtn");
+        b->setCheckable(true);
+        b->setChecked(r == selectedRoom_);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setMinimumWidth(76);
+        if (r != 0) {
+            b->setToolTip(QStringLiteral("카메라가 배정되지 않은 방입니다\n"
+                                         "우클릭하면 이 방 자리를 지울 수 있습니다"));
+            // 삭제는 우클릭에 둔다 — 버튼마다 ×를 붙이면 세그먼트가 지저분해지고,
+            // 자주 쓰는 동작도 아니다.
+            b->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(b, &QPushButton::customContextMenuRequested, this,
+                    [this, b, r](const QPoint& pos) {
+                        QMenu menu(this);
+                        QAction* del = menu.addAction(QStringLiteral("이 방 자리 삭제"));
+                        if (menu.exec(b->mapToGlobal(pos)) == del) removeRoom(r);
+                    });
+        } else {
+            b->setToolTip(QStringLiteral("카메라가 배정된 방입니다"));
+        }
+        connect(b, &QPushButton::clicked, this, [this, r] { selectRoom(r); });
+        camRoomBtns_.append(b);
+        seg->addWidget(b);
+    }
+
+    // [+] 호실 추가 — 방 "자리"만 늘린다(카메라는 따라오지 않는다).
+    auto* add = new QPushButton(QStringLiteral("＋"));
+    add->setObjectName("camSegBtn");
+    add->setCursor(Qt::PointingHandCursor);
+    add->setFixedWidth(34);
+    add->setToolTip(QStringLiteral("호실 추가 — 방 자리를 만들어 둡니다"));
+    connect(add, &QPushButton::clicked, this, &MainWindow::onAddRoomClicked);
+    seg->addWidget(add);
+}
+
+// [+] — 다음 호실 번호를 추정해 기본값으로 제안한다.
+void MainWindow::onAddRoomClicked()
+{
+    QStringList rooms = roomNames();
+
+    // 마지막 방 이름에서 숫자를 뽑아 +1 (예: "102호" → "103호"). 숫자가 없으면 빈 제안.
+    QString suggestion;
+    static const QRegularExpression num(QStringLiteral("(\\d+)"));
+    const auto m = num.match(rooms.isEmpty() ? QString() : rooms.last());
+    if (m.hasMatch()) {
+        const QString tail = rooms.last().mid(m.capturedEnd(1));
+        suggestion = QString::number(m.captured(1).toInt() + 1) + tail;
+    }
+
+    bool ok = false;
+    const QString name =
+        QInputDialog::getText(this, QStringLiteral("호실 추가"),
+                              QStringLiteral("추가할 호실 이름"),
+                              QLineEdit::Normal, suggestion, &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (rooms.contains(name)) {
+        QMessageBox::information(this, QStringLiteral("호실 추가"),
+                                 QStringLiteral("이미 있는 호실입니다."));
+        return;
+    }
+
+    rooms << name;
+    QSettings st;
+    st.setValue(QLatin1String(kSettingsRoomNames), rooms);
+    rebuildCamRoomSegment();
+    rebuildResourceRooms();
+    refreshResourceTree();
+}
+
+// 방 자리 삭제. 0번(실제 카메라가 붙은 방)은 지울 수 없다 — 지우면 영상월이
+// 가리킬 대상이 사라진다.
+void MainWindow::removeRoom(int room)
+{
+    QStringList rooms = roomNames();
+    if (room <= 0 || room >= rooms.size()) return;
+
+    const QString name = rooms.at(room);
+    if (QMessageBox::question(
+            this, QStringLiteral("호실 삭제"),
+            QStringLiteral("%1 자리를 지울까요?").arg(name)) != QMessageBox::Yes)
+        return;
+
+    rooms.removeAt(room);
+    QSettings st;
+    st.setValue(QLatin1String(kSettingsRoomNames), rooms);
+
+    // 보고 있던 방을 지웠거나 뒤 번호가 당겨졌으면 실카메라 방으로 되돌린다.
+    if (selectedRoom_ >= rooms.size() || selectedRoom_ == room) {
+        selectedRoom_ = 0;
+        applyRoomView();
+        for (int ch = 0; ch < 4; ++ch) refreshRoiZones(ch);
+    }
+    rebuildCamRoomSegment();
+    rebuildResourceRooms();
+    refreshResourceTree();
+}
+
 QWidget* MainWindow::buildCamModeSegment()
 {
     auto* segTrack = new QFrame();
@@ -6912,18 +7790,6 @@ QWidget* MainWindow::buildCamConnectPage()
     bundleHint->setWordWrap(true);
     camV->addWidget(bundleHint);
 
-    // 4채널 상태 요약 — 지금 몇 개가 살아 있는지 이 탭에서 바로 보이게.
-    auto* badgeRow = new QHBoxLayout();
-    badgeRow->setContentsMargins(0, 0, 0, 0);
-    badgeRow->setSpacing(4);
-    for (int ch = 0; ch < 4; ++ch) {
-        camConnBadges[ch] = new QLabel();
-        camConnBadges[ch]->setObjectName("camConnBadge");
-        camConnBadges[ch]->setAlignment(Qt::AlignCenter);
-        badgeRow->addWidget(camConnBadges[ch], 1);
-    }
-    camV->addLayout(badgeRow);
-
     // 접속 정보 폼 (마지막 값 복원)
     QSettings s;
     auto* form = new QFormLayout();
@@ -7020,7 +7886,7 @@ QWidget* MainWindow::buildCamConnectPage()
             QHostAddress from;
             discoverySocket->readDatagram(dg.data(), dg.size(), &from);
             const DiscoveredCam cam = parseProbeMatch(dg);
-            if (cam.ip.isEmpty()) continue;
+            if (cam.ip.isEmpty() || !cam.onvif) continue;   // ONVIF 아닌 WSD 장비는 무시
 
             // 같은 카메라가 응답을 여러 번(모델 있는 것 + scopes 빈 것) 보낸다 →
             // IP 기준 한 행만 유지. 이미 있으면 "더 나은 모델명"이 왔을 때만 갱신.
@@ -7186,7 +8052,9 @@ void MainWindow::rebuildBedList()
     }
 
     const int ch = roiEditChannel;
-    auto zones = roiZones_[ch];
+    // 빈 방에는 침대가 없다 — 목록까지 101호 것을 보여주면 그 방에 침대가 있는
+    // 것으로 읽힌다. 데이터(roiZones_)는 그대로 두고 표시만 비운다.
+    auto zones = (selectedRoom_ == 0) ? roiZones_[ch] : QVector<RoiZone>{};
     std::sort(zones.begin(), zones.end(),
               [](const RoiZone& a, const RoiZone& b) { return a.id < b.id; });
 
@@ -7362,9 +8230,12 @@ void MainWindow::setCamMode(const QString& mode)
 // 채널별 연결·ROI 지정 여부를 레일 배지에 반영.
 void MainWindow::refreshCamChannelStatus()
 {
+    // 빈 방을 보는 중이면 채널 배지도 전부 미연결이어야 한다 — 여기서 cameraActive_만
+    // 보면 102호를 골라 놓고 "● 연결"이 뜬다.
+    const bool liveRoom = (selectedRoom_ == 0);
     for (int ch = 0; ch < 4; ++ch) {
         if (!camChannelStatus[ch]) continue;
-        const bool connected = cameraActive_[ch];
+        const bool connected = liveRoom && cameraActive_[ch];
         const int beds = roiZones_[ch].size();
         QString txt = connected ? QStringLiteral("● 연결") : QStringLiteral("○ 미연결");
         // 침대가 여러 개일 수 있으니 "ROI 있음"이 아니라 몇 개인지를 보여준다
@@ -7382,7 +8253,7 @@ void MainWindow::refreshCamChannelStatus()
     const int cur = roiEditChannel;
     if (camInspCh) camInspCh->setText(QStringLiteral("CH %1").arg(cur + 1));
     if (camInspPill) {
-        const bool on = cameraActive_[cur];
+        const bool on = liveRoom && cameraActive_[cur];
         // 채널 상태 텍스트와 같은 어휘(●/○)를 붙여 두 배지의 표기를 통일한다.
         camInspPill->setText(on ? QStringLiteral("● 연결됨") : QStringLiteral("○ 미연결"));
         camInspPill->setProperty("connected", on);
@@ -7392,29 +8263,10 @@ void MainWindow::refreshCamChannelStatus()
     }
     if (camInspIp) {
         // URL에는 계정·비밀번호가 들어 있으므로 호스트만 보여준다.
-        const QString host = QUrl(lastCameraUrl_[cur]).host();
+        const QString host = liveRoom ? QUrl(lastCameraUrl_[cur]).host() : QString();
         camInspIp->setText(host.isEmpty()
                                ? QStringLiteral("카메라가 연결되지 않았습니다")
                                : QStringLiteral("%1 · RTSP profile2").arg(host));
-    }
-
-    // 연결 탭의 4채널 요약 배지 — 연결/신호대기/미연결 세 상태를 구분한다.
-    // "연결됨"과 "실제로 영상이 오는 중"은 다르다: CAMERA_SET을 보냈어도 카메라가
-    // 안 열리면 프레임이 영영 안 온다. 그 차이를 여기서 드러낸다.
-    for (int ch = 0; ch < 4; ++ch) {
-        if (!camConnBadges[ch]) continue;
-        const bool active = cameraActive_[ch];
-        const bool live = channelViews[ch] && channelViews[ch]->live();
-        const QString state = !active ? QStringLiteral("미연결")
-                            : live    ? QStringLiteral("수신 중")
-                                      : QStringLiteral("신호 대기");
-        camConnBadges[ch]->setText(QStringLiteral("CH%1 · %2").arg(ch + 1).arg(state));
-        camConnBadges[ch]->setProperty("state",
-                                       !active ? QStringLiteral("off")
-                                       : live  ? QStringLiteral("live")
-                                               : QStringLiteral("wait"));
-        camConnBadges[ch]->style()->unpolish(camConnBadges[ch]);
-        camConnBadges[ch]->style()->polish(camConnBadges[ch]);
     }
 
     refreshCamControlsEnabled();
@@ -7488,11 +8340,12 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
         const QString url = buildRtspUrl(ip, user, password, port, prof, ch);
         lastCameraUrl_[ch] = url;   // 재접속 시 자동 재전송용(세션 한정)
         cameraActive_[ch] = true;   // 연결됨(재시작 후에도 해제 가능하도록 지속 저장)
-        videoSuppressed_[ch] = false;  // 프레임 표시 재개
-        if (channelViews[ch])
-            channelViews[ch]->setCameraConnected(true);  // "신호 대기 중…" 표시
+        videoCleared_[ch] = false;  // 다시 표시 대상
         if (sendCamera(ch, url)) ++sent;
     }
+    // 표시 여부는 applyRoomView가 결정한다 — 빈 방을 보는 중에 연결했다면
+    // 그 방 화면에 101호 영상이 튀어나오면 안 된다.
+    applyRoomView();
     persistCameraActive();
     refreshCamChannelStatus();   // 채널 레일 배지에 연결 상태 반영
 
@@ -7519,33 +8372,44 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
 void MainWindow::onSearchCameraClicked()
 {
     if (!discoverySocket || !discoveryTable) return;
+
+    // 망이 없는 상태로 앱을 켰다면 bind가 실패한 채 남는다 — 검색할 때 다시 시도.
+    if (discoverySocket->state() != QAbstractSocket::BoundState &&
+        !discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress)) {
+        if (discoveryStatus)
+            discoveryStatus->setText(QStringLiteral(
+                "검색용 소켓을 열지 못했습니다 — 네트워크 연결과 방화벽을 확인하세요."));
+        return;
+    }
+
     discoveryTable->setRowCount(0);
     syncDiscoveryTableHeight();   // 결과 지웠으니 다시 숨김
     discoverySeen.clear();
+    discoverySweepQueue.clear();
     if (discoveryStatus)
         discoveryStatus->setText(QStringLiteral("같은 망의 ONVIF 카메라를 검색 중…"));
 
-    const QByteArray probe = buildWsDiscoveryProbe();
     const QHostAddress mcast(QStringLiteral("239.255.255.250"));
     QUdpSocket* sock = discoverySocket;
+    const QList<LocalNet> nets = usableIpv4Nets();
 
-    // 기본 멀티캐스트 인터페이스가 가상 어댑터로 잡히면 카메라가 Probe를 못 받는다
-    // → IPv4·멀티캐스트 가능한 모든 인터페이스로 각각 쏜다.
-    auto sendProbes = [sock, probe, mcast]() {
+    // ── 1) 멀티캐스트 + 서브넷 브로드캐스트 ────────────────────────────
+    // 기본 멀티캐스트 인터페이스가 가상 어댑터(Hyper-V·VirtualBox·Tailscale)로 잡히면
+    // 카메라가 Probe를 못 받는다 → IPv4 인터페이스마다 각각 쏜다. 스위치가 멀티캐스트를
+    // 걸러버리는 망(IGMP 스누핑, AP 클라이언트 격리)에서는 브로드캐스트가 유일한 경로다.
+    //
+    // Probe는 호출할 때마다 새로 만든다 — 같은 MessageID를 재전송하면 SOAP-over-UDP
+    // 중복 제거를 하는 카메라가 2·3번째 시도를 통째로 무시해 재전송이 무의미해진다.
+    auto sendProbes = [sock, mcast, nets]() {
+        const QByteArray probe = buildWsDiscoveryProbe();
         int sentOn = 0;
-        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
-            const auto f = iface.flags();
-            if (!f.testFlag(QNetworkInterface::IsUp) ||
-                !f.testFlag(QNetworkInterface::IsRunning) ||
-                f.testFlag(QNetworkInterface::IsLoopBack) ||
-                !f.testFlag(QNetworkInterface::CanMulticast))
-                continue;
-            bool hasV4 = false;
-            for (const auto& e : iface.addressEntries())
-                if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) { hasV4 = true; break; }
-            if (!hasV4) continue;
-            sock->setMulticastInterface(iface);
-            if (sock->writeDatagram(probe, mcast, 3702) > 0) ++sentOn;
+        for (const LocalNet& n : nets) {
+            if (n.iface.flags().testFlag(QNetworkInterface::CanMulticast)) {
+                sock->setMulticastInterface(n.iface);
+                if (sock->writeDatagram(probe, mcast, 3702) > 0) ++sentOn;
+            }
+            if (!n.bcast.isNull() && n.prefix < 32)
+                sock->writeDatagram(probe, n.bcast, 3702);   // 멀티캐스트가 막힌 망 대비
         }
         if (sentOn == 0) sock->writeDatagram(probe, mcast, 3702);  // 폴백
     };
@@ -7554,11 +8418,62 @@ void MainWindow::onSearchCameraClicked()
     QTimer::singleShot(700, this, sendProbes);
     QTimer::singleShot(1600, this, sendProbes);
     QTimer::singleShot(3000, this, sendProbes);
-    QTimer::singleShot(6500, this, [this]() {
-        if (discoveryStatus && discoveryTable)
-            discoveryStatus->setText(
-                QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)")
-                    .arg(discoveryTable->rowCount()));
+
+    // ── 2) 유니캐스트 스윕 ─────────────────────────────────────────────
+    // 멀티캐스트 디스커버리가 꺼진 카메라, 멀티캐스트를 막은 스위치에서도 3702 유니캐스트
+    // Probe에는 대부분 답한다. 로컬 /24(~/23)를 한 대씩 두드린다.
+    auto queueNet = [this](quint32 network, quint32 hosts) {
+        for (quint32 i = 1; i < hosts - 1; ++i) discoverySweepQueue.append(network + i);
+    };
+    QSet<quint32> queuedNets;
+    for (const LocalNet& n : nets) {
+        // /23보다 넓은 대역(예: Hyper-V의 /20)은 대상이 수천 개라 훑지 않는다.
+        // /31·/32(Tailscale 같은 터널)는 "같은 망"에 다른 호스트가 없다.
+        if (n.prefix < 23 || n.prefix > 30) continue;
+        const quint32 mask = 0xFFFFFFFFu << (32 - n.prefix);
+        const quint32 network = n.addr.toIPv4Address() & mask;
+        if (queuedNets.contains(network)) continue;
+        queuedNets.insert(network);
+        queueNet(network, 1u << (32 - n.prefix));
+    }
+    // IP칸에 로컬 대역 밖 주소가 적혀 있으면 그 /24도 함께 훑는다 — 라우팅만 되면
+    // 다른 서브넷 카메라도 찾을 수 있다(멀티캐스트는 라우터를 못 넘는다).
+    if (camIpEdit) {
+        const QHostAddress typed(camIpEdit->text().trimmed());
+        if (!typed.isNull() && typed.protocol() == QAbstractSocket::IPv4Protocol) {
+            const quint32 network = typed.toIPv4Address() & 0xFFFFFF00u;
+            if (!queuedNets.contains(network)) {
+                queuedNets.insert(network);
+                queueNet(network, 256);
+            }
+        }
+    }
+
+    // 한 번에 다 쏘면 미응답 주소의 ARP 대기 때문에 송신 버퍼가 막힌다(WSAEWOULDBLOCK)
+    // → 15ms마다 24개씩 나눠 보낸다. /24 하나가 약 0.16초.
+    if (!discoverySweepTimer) {
+        discoverySweepTimer = new QTimer(this);
+        discoverySweepTimer->setInterval(15);
+        connect(discoverySweepTimer, &QTimer::timeout, this, [this]() {
+            if (!discoverySocket) { discoverySweepTimer->stop(); return; }
+            const QByteArray probe = buildWsDiscoveryProbe();
+            for (int i = 0; i < 24 && !discoverySweepQueue.isEmpty(); ++i)
+                discoverySocket->writeDatagram(
+                    probe, QHostAddress(discoverySweepQueue.takeFirst()), 3702);
+            if (discoverySweepQueue.isEmpty()) discoverySweepTimer->stop();
+        });
+    }
+    if (!discoverySweepQueue.isEmpty()) discoverySweepTimer->start();
+
+    QTimer::singleShot(7000, this, [this]() {
+        if (!discoveryStatus || !discoveryTable) return;
+        const int n = discoveryTable->rowCount();
+        discoveryStatus->setText(
+            n > 0 ? QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)").arg(n)
+                  : QStringLiteral("검색 완료 — 카메라를 못 찾았습니다. 같은 공유기/스위치에 "
+                                   "물려 있는지, 카메라 ONVIF 검색이 켜져 있는지, PC 방화벽이 "
+                                   "Carenet의 UDP 수신을 막고 있지 않은지 확인하세요. 다른 대역이면 "
+                                   "위 IP칸에 그 대역의 주소를 하나 적고 다시 검색하세요."));
     });
 }
 
@@ -7585,7 +8500,7 @@ void MainWindow::onCameraClearClicked()
         sendCameraClear(ch);            // 서버에 해제 요청(연결 안 돼 있으면 무시됨)
         lastCameraUrl_[ch].clear();     // 자동 재전송 대상에서 제외
         cameraActive_[ch] = false;      // 미연결로 표시(지속 저장 반영)
-        videoSuppressed_[ch] = true;    // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
+        videoCleared_[ch] = true;       // 이후 들어오는 잔여 프레임 무시(검은 화면 유지)
         if (channelViews[ch]) {
             channelViews[ch]->setLive(false);
             channelViews[ch]->setCameraConnected(false);  // "카메라 미연결" 표시로 복귀
@@ -7598,6 +8513,7 @@ void MainWindow::onCameraClearClicked()
         roiEditorView->setCameraConnected(false);
     }
     if (imgWipe_) imgWipe_->clearFrames();
+    applyRoomView();             // videoSuppressed_는 여기서만 계산된다
     persistCameraActive();
     refreshCamChannelStatus();   // 채널 타일 배지 + 인스펙터 헤더에 해제 상태 반영
 }
@@ -7620,11 +8536,8 @@ void MainWindow::restoreCameraActive()
     const int mask = s.value(QStringLiteral("camera/active_mask"), 0).toInt();
     for (int ch = 0; ch < 4; ++ch) {
         cameraActive_[ch] = (mask & (1 << ch)) != 0;
-        if (cameraActive_[ch]) {
-            videoSuppressed_[ch] = false;
-            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
-        }
     }
+    applyRoomView();
 }
 
 // Pi가 (재)연결되면, 그 Pi 담당 채널의 마지막 카메라 URL을 자동으로 다시 보낸다.
@@ -7636,11 +8549,11 @@ void MainWindow::resendCamerasForServer(int serverIdx)
         if (serverForChannel(ch) != serverIdx) continue;
         if (lastCameraUrl_[ch].isEmpty()) continue;
         if (sendCamera(ch, lastCameraUrl_[ch])) {
-            videoSuppressed_[ch] = false;  // 프레임 표시 재개
-            if (channelViews[ch]) channelViews[ch]->setCameraConnected(true);
+            videoCleared_[ch] = false;   // 표시 재개(연결 플래그는 이미 서 있다)
             qDebug() << "Pi" << serverIdx << "재접속 → ch" << ch << "카메라 자동 재전송";
         }
     }
+    applyRoomView();   // 표시 여부는 지금 보고 있는 방이 결정한다
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -7990,7 +8903,7 @@ void MainWindow::refreshPatientLabels()
 {
     for (int ch = 0; ch < 4; ++ch) {
         // 타일 좌상단 이름(LIVE 옆)도 같은 소스에서 만든다.
-        if (channelViews[ch]) channelViews[ch]->setDisplayName(channelDisplayName(ch));
+        if (channelViews[ch]) channelViews[ch]->setDisplayName(tileDisplayName(ch));
         // 침대 이름표·매핑 콤보도 새 입소자 구성으로 다시 그린다 — 이름을 고치거나
         // 퇴원시켰는데 침대 라벨만 옛 이름으로 남으면 관제사가 오판한다.
         refreshRoiZones(ch);
