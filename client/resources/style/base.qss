@@ -232,9 +232,9 @@
         #statValue[vital="stale"] { color: %(sub); }
         #vitalBadge[vital="stale"] { color: %(sub); border-color: %(sub); background: %(card); }
 
-        /* 로그인 사용자 표시 — 아바타+이름+로그아웃을 감싼 캡슐 */
-        #userChip { background: %(card); border: 1px solid %(border); border-radius: 4px; }
-        #userChip:hover { border-color: %(accent); }
+        /* 로그인 사용자 표시 — 감싸는 박스 없이 아바타+이름+로그아웃만 보이게 한다.
+           헤더 우측은 이미 시계·상태와 간격으로 구분되어 캡슐이 없어도 덩어리로 읽힌다. */
+        #userChip { background: transparent; border: none; }
         #userAvatar { background: %(accent); color: %(onAccent); border-radius: 15px;
                       font-size: 13px; font-weight: 800; }
         #userName { color: %(text); font-size: 13px; font-weight: 700; }

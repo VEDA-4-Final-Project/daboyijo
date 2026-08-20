@@ -12,6 +12,7 @@
 #include <QSslConfiguration>
 #include <QSslCertificate>
 #include <QSslError>
+#include <QApplication>       // 로그아웃 시 최상위 창 정리 + 이벤트 루프 종료
 #include <QCoreApplication>   // MQTT/영상 스트림 CA 인증서를 실행 파일 기준 경로에서 찾는다
 #include <QFile>
 #include <QPixmap>
@@ -268,8 +269,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.23.131.8";
-const char* kDefaultHostB  = "172.23.131.8";
+const char* kDefaultHostA  = "172.20.32.51";
+const char* kDefaultHostB  = "172.20.32.50";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -566,6 +567,21 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    // 자식 QObject(소켓·QProcess·타이머 …)는 이 소멸자 본문이 끝난 뒤 ~QObject 단계에서
+    // 파괴되면서 마지막 신호를 한 번 더 낸다 — QSslSocket이 내는
+    // stateChanged(UnconnectedState)가 대표적이다. 그 시점엔 MainWindow 부분이 이미
+    // 파괴돼 있어 Qt6의 assertObjectType이 "destructor may have already run"으로
+    // qFatal(0xc0000602)을 걸고 프로세스를 죽인다. 로그아웃해도 로그인 창으로 못
+    // 돌아가고 앱이 통째로 종료되던 원인이 이것이다(크래시 덤프로 확인).
+    // 파괴가 시작되기 전에 이 창으로 들어오는 신호선을 모두 끊는다.
+    for (int i = 0; i < kNumServers; ++i) {
+        if (!sockets[i]) continue;
+        sockets[i]->disconnect(this);   // 이 창으로 오는 신호 차단이 먼저다
+        sockets[i]->abort();            // 그 뒤에 끊어야 종료 신호가 슬롯을 타지 않는다
+    }
+    for (QObject* child : findChildren<QObject*>())
+        child->disconnect(this);
+
     delete ui;
 }
 
@@ -1278,7 +1294,15 @@ void MainWindow::onLogoutClicked()
         return;
 
     logoutRequested_ = true;
+    // 도움말 등 다른 최상위 창이 떠 있으면 이 창만 닫아서는 "마지막 창"이 되지 않아
+    // quitOnLastWindowClosed가 걸리지 않는다 → main()의 a.exec()가 돌아오지 못하고
+    // 관제 화면만 사라진 채 로그인 창이 안 뜬다. 열린 창을 모두 정리하고 명시적으로
+    // 이벤트 루프를 끝낸다.
+    const auto tops = QApplication::topLevelWidgets();
+    for (QWidget* w : tops)
+        if (w != this) w->close();
     close();
+    qApp->quit();
 }
 
 QWidget* MainWindow::buildVideoWall()
@@ -6093,6 +6117,7 @@ struct DiscoveredCam {
     QString model;
     QString mac;   // UUID에서 유도(대부분 카메라가 UUID에 MAC을 심음). 못 구하면 uuid.
     QString uuid;  // EndpointReference — 중복 제거 키
+    bool onvif = false;  // ONVIF 장비인가(Windows WSD PC·프린터 응답 걸러내기)
 };
 
 // WS-Discovery Probe SOAP 메시지 (Types=NetworkVideoTransmitter → 카메라 대상).
@@ -6113,6 +6138,43 @@ QByteArray buildWsDiscoveryProbe() {
         "</e:Header>"
         // Types를 비워 모든 ONVIF 장비가 응답하게 한다(카메라만 걸러 못 뜨는 경우 방지).
         "<e:Body><d:Probe/></e:Body></e:Envelope>").arg(msgId).toUtf8();
+}
+
+// 이 PC가 붙어 있는 IPv4 네트워크 1개(인터페이스 + 주소 + 브로드캐스트 + prefix).
+// 멀티캐스트·브로드캐스트·유니캐스트 스윕이 모두 이 목록을 공유한다.
+struct LocalNet {
+    QNetworkInterface iface;
+    QHostAddress addr;
+    QHostAddress bcast;
+    int prefix = 0;
+};
+
+// 검색에 쓸 만한 인터페이스만 추린다(올라와 있고, 루프백이 아니고, IPv4 주소가 있는 것).
+QList<LocalNet> usableIpv4Nets() {
+    QList<LocalNet> out;
+    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+        const auto f = iface.flags();
+        if (!f.testFlag(QNetworkInterface::IsUp) ||
+            !f.testFlag(QNetworkInterface::IsRunning) ||
+            f.testFlag(QNetworkInterface::IsLoopBack))
+            continue;
+        for (const QNetworkAddressEntry& e : iface.addressEntries()) {
+            if (e.ip().protocol() != QAbstractSocket::IPv4Protocol) continue;
+            const int prefix = e.prefixLength();
+            if (prefix <= 0 || prefix > 32) continue;   // prefix를 못 얻으면 계산 불가
+            LocalNet n;
+            n.iface  = iface;
+            n.addr   = e.ip();
+            n.prefix = prefix;
+            n.bcast  = e.broadcast();
+            if (n.bcast.isNull() && prefix < 32) {      // Qt가 안 채워주면 직접 계산
+                const quint32 mask = 0xFFFFFFFFu << (32 - prefix);
+                n.bcast = QHostAddress((n.addr.toIPv4Address() & mask) | ~mask);
+            }
+            out.append(n);
+        }
+    }
+    return out;
 }
 
 // Scopes 문자열에서 모델명 추출 (name 우선, hardware 보조, 그래도 없으면 모델형 토큰).
@@ -6152,17 +6214,23 @@ QString modelFromScopes(const QString& scopes) {
 // ProbeMatch 응답 1개 파싱 → DiscoveredCam.
 DiscoveredCam parseProbeMatch(const QByteArray& datagram) {
     DiscoveredCam cam;
-    QString xaddrs, scopes;
+    QString xaddrs, scopes, types;
     QXmlStreamReader xml(datagram);
     while (!xml.atEnd()) {
         if (xml.readNext() == QXmlStreamReader::StartElement) {
             const QString name = xml.name().toString();  // 네임스페이스 접두어 제외 로컬명
             if (name == QStringLiteral("XAddrs"))       xaddrs = xml.readElementText();
             else if (name == QStringLiteral("Scopes"))  scopes = xml.readElementText();
+            else if (name == QStringLiteral("Types"))   types  = xml.readElementText();
             else if (name == QStringLiteral("Address") && cam.uuid.isEmpty())
                 cam.uuid = xml.readElementText().trimmed();
         }
     }
+    // 브로드캐스트·유니캐스트 스윕을 쓰면 Windows WSD(PC·프린터)도 ProbeMatch를 보낸다.
+    // ONVIF 장비만 표에 올린다 — 스코프/주소/타입 어디든 onvif 흔적이 있어야 한다.
+    cam.onvif = scopes.contains(QStringLiteral("onvif"), Qt::CaseInsensitive) ||
+                xaddrs.contains(QStringLiteral("/onvif/"), Qt::CaseInsensitive) ||
+                types.contains(QStringLiteral("NetworkVideoTransmitter"), Qt::CaseInsensitive);
     if (!xaddrs.isEmpty()) {
         const QString first =
             xaddrs.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).value(0);
@@ -7020,7 +7088,7 @@ QWidget* MainWindow::buildCamConnectPage()
             QHostAddress from;
             discoverySocket->readDatagram(dg.data(), dg.size(), &from);
             const DiscoveredCam cam = parseProbeMatch(dg);
-            if (cam.ip.isEmpty()) continue;
+            if (cam.ip.isEmpty() || !cam.onvif) continue;   // ONVIF 아닌 WSD 장비는 무시
 
             // 같은 카메라가 응답을 여러 번(모델 있는 것 + scopes 빈 것) 보낸다 →
             // IP 기준 한 행만 유지. 이미 있으면 "더 나은 모델명"이 왔을 때만 갱신.
@@ -7519,33 +7587,44 @@ void MainWindow::connectCameraWith(const QString& ip, const QString& user,
 void MainWindow::onSearchCameraClicked()
 {
     if (!discoverySocket || !discoveryTable) return;
+
+    // 망이 없는 상태로 앱을 켰다면 bind가 실패한 채 남는다 — 검색할 때 다시 시도.
+    if (discoverySocket->state() != QAbstractSocket::BoundState &&
+        !discoverySocket->bind(QHostAddress::AnyIPv4, 0, QUdpSocket::ShareAddress)) {
+        if (discoveryStatus)
+            discoveryStatus->setText(QStringLiteral(
+                "검색용 소켓을 열지 못했습니다 — 네트워크 연결과 방화벽을 확인하세요."));
+        return;
+    }
+
     discoveryTable->setRowCount(0);
     syncDiscoveryTableHeight();   // 결과 지웠으니 다시 숨김
     discoverySeen.clear();
+    discoverySweepQueue.clear();
     if (discoveryStatus)
         discoveryStatus->setText(QStringLiteral("같은 망의 ONVIF 카메라를 검색 중…"));
 
-    const QByteArray probe = buildWsDiscoveryProbe();
     const QHostAddress mcast(QStringLiteral("239.255.255.250"));
     QUdpSocket* sock = discoverySocket;
+    const QList<LocalNet> nets = usableIpv4Nets();
 
-    // 기본 멀티캐스트 인터페이스가 가상 어댑터로 잡히면 카메라가 Probe를 못 받는다
-    // → IPv4·멀티캐스트 가능한 모든 인터페이스로 각각 쏜다.
-    auto sendProbes = [sock, probe, mcast]() {
+    // ── 1) 멀티캐스트 + 서브넷 브로드캐스트 ────────────────────────────
+    // 기본 멀티캐스트 인터페이스가 가상 어댑터(Hyper-V·VirtualBox·Tailscale)로 잡히면
+    // 카메라가 Probe를 못 받는다 → IPv4 인터페이스마다 각각 쏜다. 스위치가 멀티캐스트를
+    // 걸러버리는 망(IGMP 스누핑, AP 클라이언트 격리)에서는 브로드캐스트가 유일한 경로다.
+    //
+    // Probe는 호출할 때마다 새로 만든다 — 같은 MessageID를 재전송하면 SOAP-over-UDP
+    // 중복 제거를 하는 카메라가 2·3번째 시도를 통째로 무시해 재전송이 무의미해진다.
+    auto sendProbes = [sock, mcast, nets]() {
+        const QByteArray probe = buildWsDiscoveryProbe();
         int sentOn = 0;
-        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
-            const auto f = iface.flags();
-            if (!f.testFlag(QNetworkInterface::IsUp) ||
-                !f.testFlag(QNetworkInterface::IsRunning) ||
-                f.testFlag(QNetworkInterface::IsLoopBack) ||
-                !f.testFlag(QNetworkInterface::CanMulticast))
-                continue;
-            bool hasV4 = false;
-            for (const auto& e : iface.addressEntries())
-                if (e.ip().protocol() == QAbstractSocket::IPv4Protocol) { hasV4 = true; break; }
-            if (!hasV4) continue;
-            sock->setMulticastInterface(iface);
-            if (sock->writeDatagram(probe, mcast, 3702) > 0) ++sentOn;
+        for (const LocalNet& n : nets) {
+            if (n.iface.flags().testFlag(QNetworkInterface::CanMulticast)) {
+                sock->setMulticastInterface(n.iface);
+                if (sock->writeDatagram(probe, mcast, 3702) > 0) ++sentOn;
+            }
+            if (!n.bcast.isNull() && n.prefix < 32)
+                sock->writeDatagram(probe, n.bcast, 3702);   // 멀티캐스트가 막힌 망 대비
         }
         if (sentOn == 0) sock->writeDatagram(probe, mcast, 3702);  // 폴백
     };
@@ -7554,11 +7633,62 @@ void MainWindow::onSearchCameraClicked()
     QTimer::singleShot(700, this, sendProbes);
     QTimer::singleShot(1600, this, sendProbes);
     QTimer::singleShot(3000, this, sendProbes);
-    QTimer::singleShot(6500, this, [this]() {
-        if (discoveryStatus && discoveryTable)
-            discoveryStatus->setText(
-                QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)")
-                    .arg(discoveryTable->rowCount()));
+
+    // ── 2) 유니캐스트 스윕 ─────────────────────────────────────────────
+    // 멀티캐스트 디스커버리가 꺼진 카메라, 멀티캐스트를 막은 스위치에서도 3702 유니캐스트
+    // Probe에는 대부분 답한다. 로컬 /24(~/23)를 한 대씩 두드린다.
+    auto queueNet = [this](quint32 network, quint32 hosts) {
+        for (quint32 i = 1; i < hosts - 1; ++i) discoverySweepQueue.append(network + i);
+    };
+    QSet<quint32> queuedNets;
+    for (const LocalNet& n : nets) {
+        // /23보다 넓은 대역(예: Hyper-V의 /20)은 대상이 수천 개라 훑지 않는다.
+        // /31·/32(Tailscale 같은 터널)는 "같은 망"에 다른 호스트가 없다.
+        if (n.prefix < 23 || n.prefix > 30) continue;
+        const quint32 mask = 0xFFFFFFFFu << (32 - n.prefix);
+        const quint32 network = n.addr.toIPv4Address() & mask;
+        if (queuedNets.contains(network)) continue;
+        queuedNets.insert(network);
+        queueNet(network, 1u << (32 - n.prefix));
+    }
+    // IP칸에 로컬 대역 밖 주소가 적혀 있으면 그 /24도 함께 훑는다 — 라우팅만 되면
+    // 다른 서브넷 카메라도 찾을 수 있다(멀티캐스트는 라우터를 못 넘는다).
+    if (camIpEdit) {
+        const QHostAddress typed(camIpEdit->text().trimmed());
+        if (!typed.isNull() && typed.protocol() == QAbstractSocket::IPv4Protocol) {
+            const quint32 network = typed.toIPv4Address() & 0xFFFFFF00u;
+            if (!queuedNets.contains(network)) {
+                queuedNets.insert(network);
+                queueNet(network, 256);
+            }
+        }
+    }
+
+    // 한 번에 다 쏘면 미응답 주소의 ARP 대기 때문에 송신 버퍼가 막힌다(WSAEWOULDBLOCK)
+    // → 15ms마다 24개씩 나눠 보낸다. /24 하나가 약 0.16초.
+    if (!discoverySweepTimer) {
+        discoverySweepTimer = new QTimer(this);
+        discoverySweepTimer->setInterval(15);
+        connect(discoverySweepTimer, &QTimer::timeout, this, [this]() {
+            if (!discoverySocket) { discoverySweepTimer->stop(); return; }
+            const QByteArray probe = buildWsDiscoveryProbe();
+            for (int i = 0; i < 24 && !discoverySweepQueue.isEmpty(); ++i)
+                discoverySocket->writeDatagram(
+                    probe, QHostAddress(discoverySweepQueue.takeFirst()), 3702);
+            if (discoverySweepQueue.isEmpty()) discoverySweepTimer->stop();
+        });
+    }
+    if (!discoverySweepQueue.isEmpty()) discoverySweepTimer->start();
+
+    QTimer::singleShot(7000, this, [this]() {
+        if (!discoveryStatus || !discoveryTable) return;
+        const int n = discoveryTable->rowCount();
+        discoveryStatus->setText(
+            n > 0 ? QStringLiteral("검색 완료 — %1대 발견 (행을 클릭하면 IP가 채워집니다)").arg(n)
+                  : QStringLiteral("검색 완료 — 카메라를 못 찾았습니다. 같은 공유기/스위치에 "
+                                   "물려 있는지, 카메라 ONVIF 검색이 켜져 있는지, PC 방화벽이 "
+                                   "이 앱의 UDP 수신을 막고 있지 않은지 확인하세요. 다른 대역이면 "
+                                   "위 IP칸에 그 대역의 주소를 하나 적고 다시 검색하세요."));
     });
 }
 

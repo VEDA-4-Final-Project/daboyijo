@@ -904,6 +904,8 @@ private:
     QLabel* discoveryStatus = nullptr;
     QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
     QSet<QString> discoverySeen;               // 중복 응답 제거
+    QTimer* discoverySweepTimer = nullptr;     // 유니캐스트 스윕 송신기(조금씩 나눠 보냄)
+    QList<quint32> discoverySweepQueue;        // 스윕 남은 대상 IPv4
 
     // ── ROI 탭(인라인 편집기) 위젯 ──
     VideoView* roiEditorView = nullptr;        // 선택 채널 영상을 팝업에 표시 + ROI 그림
