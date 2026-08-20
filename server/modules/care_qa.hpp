@@ -4,9 +4,11 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <set>
 
 #include "snapshot_buffer.hpp"
 #include "telegram_module.hpp"
+#include "video_search_module.hpp"
 #include "vlm_client.hpp"
 
 // [케어 봇] 보호자 상호작용 오케스트레이터.
@@ -25,10 +27,12 @@ class CareQaModule {
 public:
     // snapshots     : 버퍼 A(전원 블러본) — Gemini/평상시 사진용
     // snapshots_fall: 버퍼 B(낙상 선택본) — 낙상 시 보호자에게 보내는 사진용
+    // video_search  : 🔍 영상 검색 버튼이 위임하는 자연어 질의 처리기
     CareQaModule(SnapshotBuffer& snapshots, SnapshotBuffer& snapshots_fall,
-                 VlmClient& vlm, TelegramModule& telegram)
+                 VlmClient& vlm, TelegramModule& telegram,
+                 VideoSearchModule& video_search)
         : snapshots_(snapshots), snapshots_fall_(snapshots_fall), vlm_(vlm),
-          telegram_(telegram) {}
+          telegram_(telegram), video_search_(video_search) {}
 
     // 📞 연락처 버튼이 회신할 연락처. main.cpp에서 config 값으로 주입.
     void setContacts(std::string caregiver, std::string manager) {
@@ -56,10 +60,16 @@ private:
     SnapshotBuffer& snapshots_fall_;  // 버퍼 B: 낙상 선택본
     VlmClient& vlm_;
     TelegramModule& telegram_;
+    VideoSearchModule& video_search_;
     std::string contact_caregiver_;
     std::string contact_manager_;
 
     // 낙상 자동 리포트 쿨다운 (채널별 마지막 리포트 시각)
     std::mutex report_mutex_;
     std::map<int, std::chrono::steady_clock::time_point> last_report_;
+
+    // 🔍 영상 검색 버튼을 누른 chat_id 집합 — 다음 메시지(handleMessage)를
+    // 메뉴가 아니라 검색 질의로 처리하기 위한 1회성 플래그(소비하면 제거).
+    std::mutex search_mutex_;
+    std::set<std::string> awaiting_search_;
 };

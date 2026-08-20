@@ -10,7 +10,24 @@
 // events.event_type / source 가 ENUM 컬럼이라 오타가 나면 INSERT 가 통째로
 // 실패한다. 여기서 막으면 호출부가 오타를 낼 수 없다.
 enum class EventType   { Fall, BedEgress, VitalAbnormal };
-enum class EventSource { Camera, Wearable };   // 같은 낙상이라도 근거가 다르다
+enum class EventSource {
+    Camera,    // 영상 판정
+    Wearable,  // 기기 판정
+    // 양쪽이 같은 사건을 각각 잡아 한 줄로 합쳐진 상태. 호출부가 이 값을 넘길 일은
+    // 없고, insertEvent 가 중복을 발견했을 때 기존 행을 이 값으로 바꾼다.
+    Both
+};
+
+// events 조회 결과 1건 (영상검색 등 조회 전용 — insertEvent의 반대 방향).
+struct EventRow {
+    long long event_id = 0;
+    long long occurred_ms = 0;  // epoch 밀리초
+    int camera_id = -1;         // NULL이면 -1
+    int resident_id = -1;       // NULL이면 -1
+    EventType type = EventType::Fall;
+    EventSource source = EventSource::Camera;
+    std::string clip_url;       // 없으면 빈 문자열 (호스트 없는 파일명만)
+};
 
 // roi_zones 한 줄 — 침대 ROI 1개. 서버 부팅 시 복원용.
 struct RoiZoneRow {
@@ -30,16 +47,24 @@ public:
     bool connect(const std::string& host, const std::string& user,
                  const std::string& password, const std::string& dbname,
                  unsigned int port = 3306);
-    // 케어 세션 한 건 기록: 카메라 채널 + 케어시간(초). 아무 스레드나 호출 가능.
+    // 케어 세션 한 건 기록: 카메라 채널 + 요양사가 방에 있던 시간(초).
     //
-    // ★ 그 채널의 재원자 "전원"에게 각각 한 행씩 만든다(2인실이면 2행).
-    //   영상만으로는 요양사가 둘 중 누구를 돌봤는지 알 수 없다 — 억지로 한 명을
-    //   고르면 절반이 조용히 틀린다. "요양사가 이 방에 N초 있었다"는 검증 가능한
-    //   사실이므로 방 안 전원에게 같은 시간을 남기고, 해석은 리포트가 한다.
-    //   (재원자가 하나도 없으면 resident_id = NULL 로 한 행만 남긴다 — 케어가
-    //    일어난 사실 자체는 지워지면 안 된다)
+    // ★ 기록 대상은 "요양사가 방에 있는 동안 침대에 있던 입소자"다.
+    //   각자에게 남기는 값은 [요양사 재실 구간] ∩ [그 사람의 bed_sessions 구간]이고,
+    //   겹치는 시간이 0 이면 행을 만들지 않는다 — 0초짜리 행은 "케어 N회"만 부풀린다.
+    //   영상만으로는 요양사가 둘 중 누구를 돌봤는지 알 수 없으므로 방 안에서
+    //   침대에 있던 사람 전원에게 남기고, 해석은 리포트가 한다.
     //
-    // 반환: 새로 만들어진 log_id 목록(사람 수만큼). 실패 시 빈 벡터.
+    // ※ 한계: "침대에 있었나"를 보는 것이지 "방에 있었나"가 아니다. 의자에 앉아
+    //   케어받으면 ROI 밖이라 안 세어진다. 침대 ROI 를 협탁·보조의자까지 넉넉히
+    //   그리면 이 오차가 줄어든다(코드 변경 없이 ROI 만 크게).
+    //
+    // ※ 침대 재실 기록이 아예 없는 채널(ROI 미설정 등)에서는 이 계산을 건너뛰고
+    //   전원에게 전체 시간을 남긴다. 그때는 "없었다"가 아니라 "모른다"라서,
+    //   기록이 부풀려지는 것보다 통째로 사라지는 쪽이 더 나쁘기 때문이다.
+    //   (재원자가 하나도 없으면 resident_id = NULL 로 한 행 — 케어가 일어난 사실은 남긴다)
+    //
+    // 반환: 새로 만들어진 log_id 목록. 전원이 침대 밖이었으면 빈 벡터.
     //       이 id 들을 들고 있어야 요양사가 잠깐 자리를 비웠다 돌아왔을 때
     //       아래 addCareLogDuration 으로 같은 행들에 이어붙인다.
     std::vector<long long> insertCareLogs(int cameraId, int durationSec);
@@ -113,12 +138,26 @@ public:
     // resident_id 는 이 함수가 채널로 찾아 함께 박아둔다 — 조회할 때마다
     // camera_id 로 조인하면, 입소자가 방을 옮긴 뒤 과거 이벤트가 새 입주자
     // 것으로 바뀐다. 발생 시점의 사람을 그대로 남긴다(스냅샷).
-    //  residentId : -1 이면 cameraId 로 찾는다. 웨어러블이 근거인 이벤트는
-    //               getResidentByWearable 로 미리 정확히 구해서 여기에 넘길 것.
+    //  residentId : 세 값의 뜻이 다르다 —
+    //     > 0 : 호출부가 확정한 사람. 그대로 기록한다.
+    //           (웨어러블 → getResidentByWearable, 카메라 → IdentityTracker)
+    //       0 : "누구인지 모른다" 를 호출부가 확정한 경우. NULL 로 남긴다.
+    //           추적 신뢰도가 낮을 때 쓴다 — 잘못된 이름은 이름 없는 것보다 나쁘다.
+    //      -1 : 모르니 cameraId 로 찾아 달라(기본값). 그 방에 여럿이면 첫 사람으로
+    //           붙으므로, 사람을 알 수 있는 호출부는 0 이나 실제 id 를 넘길 것.
     long long insertEvent(EventType type, EventSource source, int cameraId,
                           long long occurredMs = 0,
                           const std::string& clipUrl = std::string(),
                           int residentId = -1);
+
+    // [영상검색] occurred_at이 [startMs,endMs] 안인 이벤트를 최신순으로 조회.
+    //  anyType   : true면 type 무시(전체 유형).
+    //  channel   : -1이면 전 채널, 아니면 그 카메라만(보호자 검색은 항상 자기
+    //              방으로 제한해야 하므로 호출부가 -1을 넘기지 않을 것).
+    //  limit     : 최대 반환 개수(1~50로 클램프).
+    // 실패 시 빈 벡터.
+    std::vector<EventRow> findEvents(bool anyType, EventType type, int channel,
+                                     long long startMs, long long endMs, int limit);
 
     // 침대 재실 세션 열기(입소자가 침대 ROI 안으로 들어온 순간).
     // 반환: session_id, 실패 시 0. 이 id 를 들고 있다가 나갈 때 닫는다.

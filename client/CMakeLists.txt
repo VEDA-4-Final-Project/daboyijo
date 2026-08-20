@@ -20,10 +20,16 @@ qt_add_executable(daboyijo
     videoview.cpp
     videoview.h
     theme.h
+    thememanager.cpp
+    thememanager.h
     wintheme.cpp
     wintheme.h
     sparkline.cpp
     sparkline.h
+    vitaltile.cpp
+    vitaltile.h
+    alertbanner.cpp
+    alertbanner.h
     activitychart.cpp
     activitychart.h
     clickslider.cpp
@@ -38,11 +44,44 @@ qt_add_executable(daboyijo
     mqttqtmanager.h
     alertmatrixpreview.cpp
     alertmatrixpreview.h
+    timelinebar.cpp
+    timelinebar.h
     hub75-font16.h
+)
+
+# 앱 전역 스타일시트 리소스.
+# qt_add_executable 의 소스 목록에 .qrc 를 넣는 것만으로는 컴파일되지 않는다
+# (이 프로젝트는 qt_standard_project_setup() 방식이라 rcc 가 자동으로 걸리지 않는다).
+# Qt 6 권장대로 qt_add_resources 로 명시해야 :/style/base.qss 가 실제로 exe 에 들어간다.
+qt_add_resources(daboyijo "appstyle"
+    PREFIX "/style"
+    BASE "resources/style"
+    FILES resources/style/base.qss resources/style/dialogs.qss
 )
 
 # veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치
 target_include_directories(daboyijo PRIVATE ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY})
+
+# ── [AI 요약] Gemini API 키 — 빌드 시점 주입 ────────────────────────────────
+# 키를 소스에 박지 않는 이유: 이 저장소는 공개(GitHub)라 커밋되는 순간 크롤러가
+# 주워간다. GitHub 이 노출을 감지해 무효화해 주기도 하지만 그 전에 과금될 수 있고,
+# 한 번 커밋되면 나중에 지워도 git 히스토리에서 계속 꺼낼 수 있다.
+#
+# 그렇다고 사용자(요양원 관리자)에게 키를 발급받아 입력하게 할 수도 없다 — 그건
+# 서비스 제공자가 질 몫이다. 그래서 빌드하는 사람만 키를 주고, 사용자는 버튼만 누른다.
+#
+#   cmake -DDABOYIJO_GEMINI_KEY=AIza... ..
+#   (Qt Creator: 프로젝트 > 빌드 설정 > CMake 에서 DABOYIJO_GEMINI_KEY 값 입력)
+#
+# 비워두면 앱은 QSettings("ai/geminiKey")를 폴백으로 보고, 그것도 없으면
+# AI 요약 버튼이 안내 문구를 띄운다(나머지 기능은 정상 동작).
+# ★ 이 값을 여기 직접 적어 커밋하지 말 것.
+set(DABOYIJO_GEMINI_KEY "" CACHE STRING "Gemini API key (do NOT commit)")
+target_compile_definitions(daboyijo PRIVATE
+    DABOYIJO_GEMINI_KEY="${DABOYIJO_GEMINI_KEY}")
+if(DABOYIJO_GEMINI_KEY STREQUAL "")
+    message(STATUS "DABOYIJO_GEMINI_KEY not set - AI summary falls back to QSettings")
+endif()
 qt_add_translations(
     TARGETS daboyijo
     TS_FILES daboyijo_ko_KR.ts

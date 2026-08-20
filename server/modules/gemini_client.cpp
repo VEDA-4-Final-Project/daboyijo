@@ -46,41 +46,7 @@ size_t collectWrite(char* ptr, size_t size, size_t nmemb, void* userdata) {
 GeminiClient::GeminiClient(std::string api_key, std::string model)
     : api_key_(std::move(api_key)), model_(std::move(model)) {}
 
-std::string GeminiClient::describe(const std::vector<Jpeg>& frames,
-                                   const std::string& question) {
-    if (api_key_.empty() || frames.empty()) return "";
-
-    // ── 프롬프트 + 이미지 파트로 요청 본문 구성 ──
-    const std::string prompt =
-        "다음은 요양원 병실 CCTV에서 몇 초 간격으로 촬영 순서대로 캡처한 "
-        "사진들입니다. 사생활 보호를 위해 얼굴은 블러 처리되어 있을 수 있습니다. "
-        "사진 속 어르신이 지금 무엇을 하고 있는지 파악해, 보호자의 질문에 "
-        "한국어로 두세 문장 이내로 간결하고 다정하게 답해 주세요. 확실하지 "
-        "않으면 단정하지 말고 보이는 대로만 설명하세요.\n질문: " +
-        question;
-
-    // 중괄호 초기화 모호성을 피하려 파트를 명시적으로 구성한다.
-    nlohmann::json parts = nlohmann::json::array();
-    {
-        nlohmann::json text_part;
-        text_part["text"] = prompt;
-        parts.push_back(std::move(text_part));
-    }
-    for (const auto& f : frames) {
-        nlohmann::json inline_data;
-        inline_data["mime_type"] = "image/jpeg";
-        inline_data["data"] = base64Encode(f);
-        nlohmann::json img_part;
-        img_part["inline_data"] = std::move(inline_data);
-        parts.push_back(std::move(img_part));
-    }
-    nlohmann::json content;
-    content["parts"] = std::move(parts);
-    nlohmann::json body;
-    body["contents"] = nlohmann::json::array();
-    body["contents"].push_back(std::move(content));
-    const std::string payload = body.dump();
-
+std::string GeminiClient::postGenerateContent(const std::string& payload) {
     CURL* curl = curl_easy_init();
     if (!curl) return "";
 
@@ -129,4 +95,57 @@ std::string GeminiClient::describe(const std::vector<Jpeg>& frames,
         std::fprintf(stderr, "[Gemini] 응답 파싱 실패: %s\n", e.what());
         return "";
     }
+}
+
+std::string GeminiClient::describe(const std::vector<Jpeg>& frames,
+                                   const std::string& question) {
+    if (api_key_.empty() || frames.empty()) return "";
+
+    // ── 프롬프트 + 이미지 파트로 요청 본문 구성 ──
+    const std::string prompt =
+        "다음은 요양원 병실 CCTV에서 몇 초 간격으로 촬영 순서대로 캡처한 "
+        "사진들입니다. 사생활 보호를 위해 얼굴은 블러 처리되어 있을 수 있습니다. "
+        "사진 속 어르신이 지금 무엇을 하고 있는지 파악해, 보호자의 질문에 "
+        "한국어로 두세 문장 이내로 간결하고 다정하게 답해 주세요. 확실하지 "
+        "않으면 단정하지 말고 보이는 대로만 설명하세요.\n질문: " +
+        question;
+
+    // 중괄호 초기화 모호성을 피하려 파트를 명시적으로 구성한다.
+    nlohmann::json parts = nlohmann::json::array();
+    {
+        nlohmann::json text_part;
+        text_part["text"] = prompt;
+        parts.push_back(std::move(text_part));
+    }
+    for (const auto& f : frames) {
+        nlohmann::json inline_data;
+        inline_data["mime_type"] = "image/jpeg";
+        inline_data["data"] = base64Encode(f);
+        nlohmann::json img_part;
+        img_part["inline_data"] = std::move(inline_data);
+        parts.push_back(std::move(img_part));
+    }
+    nlohmann::json content;
+    content["parts"] = std::move(parts);
+    nlohmann::json body;
+    body["contents"] = nlohmann::json::array();
+    body["contents"].push_back(std::move(content));
+
+    return postGenerateContent(body.dump());
+}
+
+std::string GeminiClient::ask(const std::string& prompt) {
+    if (api_key_.empty() || prompt.empty()) return "";
+
+    nlohmann::json text_part;
+    text_part["text"] = prompt;
+    nlohmann::json parts = nlohmann::json::array();
+    parts.push_back(std::move(text_part));
+    nlohmann::json content;
+    content["parts"] = std::move(parts);
+    nlohmann::json body;
+    body["contents"] = nlohmann::json::array();
+    body["contents"].push_back(std::move(content));
+
+    return postGenerateContent(body.dump());
 }

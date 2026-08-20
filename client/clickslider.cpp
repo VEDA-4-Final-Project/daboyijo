@@ -15,6 +15,10 @@ ClickSlider::ClickSlider(QWidget* parent) : QSlider(Qt::Horizontal, parent) {
 
     // 우측 kValueMargin은 값 숫자용으로 비워 두고(padding-right), groove는 테마색.
     //  · groove(전체 트랙): border 색 / sub-page(채워진 부분): accent / handle: 본문색
+    // Phase 1(SCREEN-04) QSS 수렴에서 이 시트는 의도적으로 제외했다 —
+    // kValueMargin이 mousePressEvent()/paintEvent()의 클릭 좌표·텍스트 위치 계산에도
+    // 쓰이는 C++ 레이아웃 상수라, QSS 파일로 분리하면 두 곳에서 값이 따로 관리되어
+    // 어긋나는 순간 슬라이더 클릭 위치가 조용히 틀어진다.
     setStyleSheet(QString(R"(
         QSlider { padding-right: %1px; }
         QSlider::groove:horizontal {
@@ -27,11 +31,16 @@ ClickSlider::ClickSlider(QWidget* parent) : QSlider(Qt::Horizontal, parent) {
             width: 12px; height: 16px; margin: -7px 0; border-radius: 3px; background: %4;
         }
         QSlider::handle:horizontal:hover { background: %3; }
+        /* 비활성 — 못 만지는 상태가 눈에 보여야 한다. QSS를 이 위젯이 직접 들고
+           있어서 앱 전역 시트의 :disabled 규칙이 여기까지 닿지 않는다. */
+        QSlider::sub-page:horizontal:disabled { background: %2; }
+        QSlider::handle:horizontal:disabled { background: %5; }
     )")
                       .arg(kValueMargin)
                       .arg(kBorder)
                       .arg(kAccent)
-                      .arg(kTextMain));
+                      .arg(kTextMain)
+                      .arg(kTextSub));
 }
 
 void ClickSlider::mousePressEvent(QMouseEvent* e) {
@@ -49,7 +58,9 @@ void ClickSlider::mousePressEvent(QMouseEvent* e) {
 void ClickSlider::paintEvent(QPaintEvent* e) {
     QSlider::paintEvent(e);  // 기본 슬라이더 먼저 그리고
     QPainter p(this);
-    p.setPen(QColor(kTextMain));
+    // 값 숫자도 비활성이면 죽인다 — 트랙만 흐려지고 숫자가 또렷하면 반쯤 살아
+    // 있는 것처럼 보인다.
+    p.setPen(QColor(isEnabled() ? kTextMain : kTextSub));
     QFont f = font();
     f.setPointSize(9);
     f.setBold(true);

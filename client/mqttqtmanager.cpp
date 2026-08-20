@@ -325,7 +325,9 @@ bool MqttQtManager::sendAlarmTest(const QString& target_device,
     cmd.message       = kAlertTestText;
 
     cmd.audio_action  = "PLAY";
-    cmd.audio_file    = "fall_alert.wav";  // 노드 sounds/ 에 있는 파일
+    // 테스트 전용 음성 — fall_alert.wav 는 실제 낙상 안내("낙상이 감지되었습니다")라
+    // 테스트로 틀면 주변에서 진짜 낙상으로 오인한다.
+    cmd.audio_file    = "speaker_test.wav";  // 노드 sounds/ 에 있는 파일
     cmd.volume        = volumePct;
     cmd.loop          = false;
 

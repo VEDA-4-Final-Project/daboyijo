@@ -38,6 +38,14 @@ ServerConfig loadServerConfig(const std::string& path) {
             config.stream_port = std::stoi(value);
             continue;
         }
+        if (key == "stream_cert_path") {
+            config.stream_cert_path = value;
+            continue;
+        }
+        if (key == "stream_key_path") {
+            config.stream_key_path = value;
+            continue;
+        }
         if (key == "telegram_bot_token") {
             config.telegram_bot_token = value;
             continue;
@@ -58,12 +66,32 @@ ServerConfig loadServerConfig(const std::string& path) {
             if (!value.empty()) config.db_host = value;
             continue;
         }
+        if (key == "public_host") {
+            config.public_host = value;
+            continue;
+        }
         if (key == "care_contact_caregiver") {
             config.care_contact_caregiver = value;
             continue;
         }
         if (key == "care_contact_manager") {
             config.care_contact_manager = value;
+            continue;
+        }
+        if (key == "nvr_storage_path") {
+            config.nvr_storage_path = value;
+            continue;
+        }
+        if (key == "nvr_retention_hours") {
+            if (!value.empty()) config.nvr_retention_hours = std::stoi(value);
+            continue;
+        }
+        if (key == "nvr_segment_minutes") {
+            if (!value.empty()) config.nvr_segment_minutes = std::stoi(value);
+            continue;
+        }
+        if (key == "nvr_http_port") {
+            if (!value.empty()) config.nvr_http_port = std::stoi(value);
             continue;
         }
         static const std::string kChatIdPrefix = "telegram_chat_id_";

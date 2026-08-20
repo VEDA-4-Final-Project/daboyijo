@@ -20,4 +20,8 @@ public:
 
     // 사용 가능(키 설정됨) 여부. false면 호출자가 아예 VLM을 안 부르고 안내만.
     virtual bool available() const = 0;
+
+    // 이미지 없이 텍스트만으로 질의(자연어 검색 질의 구조화 등 순수 언어 작업용).
+    // 실패(키 미설정·네트워크·타임아웃 등) 시 빈 문자열 — 호출자가 폴백.
+    virtual std::string ask(const std::string& prompt) = 0;
 };

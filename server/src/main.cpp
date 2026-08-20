@@ -29,6 +29,7 @@
 #include "ai_worker.hpp"
 #include "bed_zones.hpp"
 #include "blackbox_module.hpp"
+#include "nvr_module.hpp"
 #include "caregiver_module.hpp"
 #include "config.hpp"
 #include "database.hpp"
@@ -48,6 +49,7 @@
 #include "telegram_module.hpp"
 #include "snapshot_buffer.hpp"
 #include "gemini_client.hpp"
+#include "video_search_module.hpp"
 #include "care_qa.hpp"
 #include "MqttMasterManager.hpp"
 #include "activity_module.hpp"
@@ -82,7 +84,11 @@ int main(int argc, char* argv[]) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     // ── 공용 인프라 ──────────────────────────────────────────────
-    StreamServer stream_server(config.stream_port);
+    // stream_cert_path/stream_key_path가 비어 있으면 평문(기존 동작) — 개발 환경
+    // 등 인증서를 안 놓은 곳에서도 그대로 뜬다. 값이 있는데 로드 실패하면 start()가
+    // false를 반환해 아래에서 바로 종료한다.
+    StreamServer stream_server(config.stream_port, config.stream_cert_path,
+                                config.stream_key_path);
     // 채널별 전용 프레임 큐 — 한 채널이 몰아쳐도 다른 채널을 굶기지 않도록 격리.
     // 채널당 처리 스레드 1개가 자기 큐만 소비한다(VideoPipeline).
     std::map<int, std::unique_ptr<FrameQueue>> queues;
@@ -112,9 +118,15 @@ int main(int argc, char* argv[]) {
     BedEgressModule bed_egress;     // [침상탈출]
     fall.setBedZones(&bed_zones);
     bed_egress.setBedZones(&bed_zones);
+    // [일일 리포트] 침대 재실 시간(bed_sessions) 기록. identity 는 요양보호사를
+    // 재실에서 빼기 위한 것 — 보호사가 침대에 걸터앉으면 발끝이 ROI 안으로 들어온다.
+    bed_egress.setDatabase(&db);
+    bed_egress.setIdentity(&identity);
     PrivacyMasker privacy_masker;   // [블러처리]
     CaregiverModule caregiver(db);  // [요양사감지]
     BlackboxModule blackbox;        // [블랙박스]
+    NvrModule nvr(config.nvr_storage_path, config.nvr_retention_hours,
+                  config.nvr_segment_minutes, config.nvr_http_port);  // [NVR 연속녹화]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
     telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
 
@@ -134,7 +146,10 @@ int main(int argc, char* argv[]) {
     // ※ 낙상 확인(블러 원복)은 텔레그램에서 빼고 Qt 관제 화면(setConfirmCallback)만 담당.
 
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
-    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram);
+    // [영상검색] 🔍 버튼이 위임하는 자연어 질의 처리기. vlm(GeminiClient)을 그대로
+    // 재사용 — 질의 파싱은 이미지가 필요 없는 텍스트 전용 VlmClient::ask() 사용.
+    VideoSearchModule video_search(vlm, db, config.public_host);
+    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, video_search);
     care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
                                    const std::string& text) {
@@ -254,6 +269,16 @@ int main(int argc, char* argv[]) {
                                  ch + 1, err.c_str());
             }).detach();
         });
+    // [영상검색] Qt 관제 화면 "🔍 영상 검색"에서 온 자연어 질의 → video_search로
+    // 처리(Gemini+DB 왕복, 수 초) → 그 클라이언트에게만 회신. 케어봇(텔레그램)과
+    // 같은 video_search 인스턴스를 재사용 — 로직은 한 곳(video_search_module)뿐.
+    stream_server.setSearchQueryCallback(
+        [&](int ch, uint64_t clientId, const std::string& query) {
+            std::thread([&stream_server, &video_search, ch, clientId, query]() {
+                const std::string answer = video_search.search(ch, query);
+                stream_server.sendSearchResult(clientId, ch, answer);
+            }).detach();
+        });
     // CCTV 기반 낙상 판정  → 블러 부분 해제 + 블랙박스 클립 저장 + Qt 경보
     fall.setFallCallback([&](int ch, const Detection& at) {
         // 낙상한 사람은 정의상 침대 밖이라 "지금 어느 침대 안인가"로는 누구인지
@@ -279,12 +304,20 @@ int main(int argc, char* argv[]) {
         // 호실은 사람이 특정되면 그 사람 것, 아니면 예전처럼 채널 대표값.
         int room = who.named() ? db.getRoomByResident(who.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(ch);
-        mqtt.sendAlarmCommand(AlarmEventType::FALL,room); // mqtt 알림전송
+        mqtt.sendAlarmCommand(AlarmEventType::FALL,room,name); // mqtt 알림전송
         // [일일 리포트] 이벤트 원장에 기록. clip 은 파일명만 남긴다 —
         // 서버는 자기 외부 IP 를 모르고, Qt 는 채널별 호스트를 이미 안다.
+        //
+        // ★ 사람은 IdentityTracker 가 정한 값을 그대로 넘긴다. 넘기지 않으면
+        //   insertEvent 가 "이 채널의 재원자" 로 되짚는데, 한 방에 여러 명이면
+        //   그중 첫 사람으로 붙어 절반이 조용히 틀린다.
+        //   신뢰도가 낮으면(named()==false) 0 을 넘겨 resident_id 를 NULL(미상)로
+        //   남긴다 — 잘못된 이름은 이름 없는 것보다 나쁘다. (-1 은 "카메라로 찾아라"
+        //   라서 여기서 쓰면 방금 미상으로 판정한 걸 도로 추측하게 된다)
         char clip[64];
         std::snprintf(clip, sizeof(clip), "ch%d_%lld_FALL.mp4", ch, (long long)evt_ms);
-        db.insertEvent(EventType::Fall, EventSource::Camera, ch, evt_ms, clip);
+        db.insertEvent(EventType::Fall, EventSource::Camera, ch, evt_ms, clip,
+                       who.named() ? who.resident_id : 0);
     });
     // CCTV 기반 침상 탈출 -> 블랙박스 클립 저장 + Qt 경보
     bed_egress.setAlarmCallback([&](const EgressEvent& e) {
@@ -302,7 +335,16 @@ int main(int argc, char* argv[]) {
         telegram.notifyEgress(e.channel);
         int room = e.resident_id > 0 ? db.getRoomByResident(e.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(e.channel);
-        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room);
+        mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room,name);
+        // [일일 리포트] 이벤트 원장에 기록.
+        // ★ 이탈은 어느 침대에서 나갔는지가 판정 자체라 사람이 이미 확정돼 있다
+        //   (EgressEvent.resident_id). 침대에 입소자를 아직 매핑하지 않았으면 0 이고,
+        //   그때는 NULL(미상)로 남는다 — 채널로 되짚지 않는다.
+        char eclip[64];
+        std::snprintf(eclip, sizeof(eclip), "ch%d_%lld_EGRESS.mp4",
+                      e.channel, (long long)evt_ms);
+        db.insertEvent(EventType::BedEgress, EventSource::Camera, e.channel, evt_ms,
+                       eclip, e.resident_id);
     });
     // 이 서버가 담당하는 채널인가 — cameras.conf 에 적힌 채널만 처리한다.
     //
@@ -329,6 +371,7 @@ int main(int argc, char* argv[]) {
         // [일일 리포트] 웨어러블은 사람마다 다르므로 카메라와 달리 입소자를
         // 정확히 특정할 수 있다. 아래 insertEvent 에 이 값을 넘긴다.
         int rid = db.getResidentByWearable(device_id);
+        const std::string name = rid > 0 ? db.getResidentName(rid) : std::string();
         // 남의 Pi 담당 채널이면 조용히 넘기는 게 맞지만, 미등록 웨어러블(ch=-1)은
         // 설정 실수라 알려야 한다 — 조용히 버리면 "왜 알람이 안 오지"로 며칠 샌다.
         if(ch < 0)
@@ -345,7 +388,7 @@ int main(int argc, char* argv[]) {
                                              DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyFall(ch);
                 care_qa.reportFall(ch);
-                mqtt.sendAlarmCommand(AlarmEventType::FALL,room);
+                mqtt.sendAlarmCommand(AlarmEventType::FALL,room,name);
                 // ★ 같은 낙상이 카메라 경로로도 들어오면 두 줄이 남는다. 일부러
                 //   지우지 않는다 — source 로 구분되고, 어느 쪽이 먼저 잡았는지가
                 //   튜닝에 필요하다. 리포트에서 "낙상 N회" 를 셀 때 짧은 시간창
@@ -361,7 +404,7 @@ int main(int argc, char* argv[]) {
                 stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyVitalAbnormal(ch);
-                mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room);
+                mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room,name);
                 char clip[64];
                 std::snprintf(clip, sizeof(clip), "ch%d_%lld_VITAL_ABNORMAL.mp4",
                               ch, (long long)evt_ms);
@@ -379,6 +422,7 @@ int main(int argc, char* argv[]) {
     // ── 서버 기동 ────────────────────────────────────────────────
     if (!stream_server.start()) return 1;
     blackbox.startHttp();
+    nvr.startHttp();
     telegram.startPolling();  // [케어봇] getUpdates 롱폴링 스레드 기동
     db.connect(config.db_host, "daboijo", "1234", "daboijo");
 
@@ -394,6 +438,10 @@ int main(int argc, char* argv[]) {
                      z.camera_id + 1, z.roi_id + 1, z.points.size(), z.resident_id);
     }
     bed_egress.initializeFromDb(db);
+    // [일일 리포트] 지난 실행에서 열린 채 남은 재실 세션 정리. 서버가 죽으면
+    // 메모리의 session_id 가 사라져 그 행은 영영 안 닫히고, 리포트는 그걸
+    // "지금까지 계속 누워있음"으로 읽어 며칠짜리 재실시간을 만들어낸다.
+    db.closeDanglingBedSessions();
 
     for (const auto& cam : config.cameras) {
         // 이 채널 전용 큐 생성 (용량 8 — 버스티 디코딩 출력을 흡수해 드랍 방지.
@@ -414,6 +462,7 @@ int main(int argc, char* argv[]) {
             detections.push(ch, std::move(dets), cap);  // 공용: 시간 매칭용 이력 저장
         });
         blackbox.attachChannel(*client);    // 블랙박스: 압축 패킷 버퍼링 배선
+        nvr.attachChannel(*client);         // NVR: 연속 녹화 배선
         caregiver.addChannel(cam.channel);  // 요양사: 케어 타이머 준비
         fall.addChannel(cam.channel);       // 낙상: 채널 전용 MoveNet 로드
         ai_worker.addChannel(cam.channel);  // AI: 채널 전담 워커 스레드 예약
@@ -462,12 +511,15 @@ int main(int argc, char* argv[]) {
     ai_worker.stop();     // AI 스레드 join
     caregiver.flush();    // 열린 케어 세션 마감 → DB 기록
     activity.flushAll();  // 아직 안 쓴 마지막 1분치 활동량 저장
+    bed_egress.flushBedSessions();  // 열린 재실 세션 마감 → 누워있던 시간 유실 방지
     blackbox.flushAll();  // 저장 중이던 클립 마무리 (유실 방지)
+    nvr.flushAll();       // 진행 중이던 NVR 세그먼트 마무리 (유실 방지)
     for (auto& client : clients) {
         client->stop();
     }
     stream_server.stop();
     blackbox.stopHttp();
+    nvr.stopHttp();
     curl_global_cleanup();
     return 0;
 }

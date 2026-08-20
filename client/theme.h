@@ -9,21 +9,40 @@
 // 헤더로 분리했다. 값을 바꾸려면 여기 한 곳만 고치면 전 화면에 반영된다.
 // (C++17 inline 변수 — 여러 .cpp에서 include해도 실체는 하나)
 
+// 필드 선언 순서와 kLight/kDark 리터럴의 값 순서는 반드시 일치해야 한다.
+// C++17 위치 기반 집합 초기화라, 순서가 어긋나도 컴파일은 통과하고
+// 색만 조용히 뒤바뀐다. 필드를 추가/재배치할 때는 구조체·kLight·kDark·
+// applyPalette() 네 블록을 같은 편집에서 함께 고칠 것.
 struct Palette {
     const char *bgDeep, *panel, *card, *border,
-               *text, *sub, *accent, *normal, *warn, *critical;
+               *text, *sub, *accent, *onAccent,
+               *normal, *warn, *high, *critical, *info,
+               *select, *onSelect;
 };
 
 // 밝은 의료 톤 (요양원 주간 관제 환경)
+// normal/warn/critical 세 값은 AA 재계산에 따라 기존 값에서 교체됐다
+// (#2E9E5B→#257A4A, #C77A11→#8A6400, #E5484D→#C23934).
 inline const Palette kLight {
     "#F4F7FA", "#FFFFFF", "#F0F4F8", "#DCE4EC",
-    "#1E2A32", "#5C6B78", "#12B5A6", "#2E9E5B", "#C77A11", "#E5484D"
+    "#1E2A32", "#5C6B78", "#12B5A6", "#1E2A32",
+    "#257A4A", "#8A6400", "#A05000", "#C23934", "#1D5FA8",
+    "#C25A10", "#FFFFFF"
 };
 // 다크 관제실 톤 (야간·통합 관제 환경, 강조색은 어두운 배경용으로 살짝 밝게)
+// 기존 10개 값(D-08)은 한 글자도 바뀌지 않았다. 새로 붙은 것은
+// onAccent/high/info 셋뿐이다.
 inline const Palette kDark {
     "#0E141B", "#151D26", "#1C2733", "#2A3742",
-    "#E6EDF3", "#8B98A5", "#17C7B6", "#35B368", "#E0A030", "#FF5A5F"
+    "#E6EDF3", "#8B98A5", "#17C7B6", "#0E141B",
+    "#35B368", "#E0A030", "#FF9F45", "#FF5A5F", "#4DA3FF",
+    "#F37321", "#1A1204"
 };
+
+// onAccent — accent 채우기 위에 얹는 전경색 전용 토큰(UI-SPEC 정정 1).
+// %(text)를 accent 위에 얹으면 다크에서 1.80:1로 AA 미달(D-08 위반)이 되므로
+// 별도 토큰을 둔다. 라이트 #1E2A32 on #12B5A6 = 5.72:1, 다크 #0E141B on
+// #17C7B6 = 8.71:1 — 두 팔레트 모두 AA(4.5:1)를 통과하는 유일한 방식.
 
 // 현재 적용 중인 색 (전환 시 applyPalette로 재대입)
 inline const char* kBgDeep   = kLight.bgDeep;
@@ -33,69 +52,36 @@ inline const char* kBorder   = kLight.border;
 inline const char* kTextMain = kLight.text;
 inline const char* kTextSub  = kLight.sub;
 inline const char* kAccent   = kLight.accent;
+inline const char* kOnAccent = kLight.onAccent;
 inline const char* kNormal   = kLight.normal;
 inline const char* kWarn     = kLight.warn;
+inline const char* kHigh     = kLight.high;
 inline const char* kCritical = kLight.critical;
+inline const char* kInfo     = kLight.info;
+// select — "지금 조작 대상"만 가리키는 선택 강조색(한화비전 Wisenet Viewer 오렌지).
+// accent(청록)와 역할이 다르다: accent는 "앱의 주요 동작"(저장·검색 버튼),
+// select는 "여러 개 중 지금 고른 하나"(선택된 영상 타일 테두리, 활성 레이아웃 탭,
+// 리소스 트리 선택 행, 타임라인 플레이헤드)다. 둘을 같은 색으로 두면 관제 화면에서
+// "누를 것"과 "고른 것"이 구분되지 않는다.
+// 대비: 라이트 #C25A10 on #FFFFFF = 4.72:1(AA) · 다크 #F37321 on #0E141B = 7.51:1.
+// onSelect(채우기 위 전경): 라이트 #FFFFFF on #C25A10 = 4.72:1 · 다크 #1A1204 on
+// #F37321 = 7.16:1 — 두 팔레트 모두 AA 통과(onAccent와 같은 방식).
+inline const char* kSelect   = kLight.select;
+inline const char* kOnSelect = kLight.onSelect;
+
+// 영상 캔버스 전용 고정색 — 테마 토글과 무관하게 항상 어둡게 유지한다(D-07/IA-02).
+// kVideoSurface를 Palette 구조체 "밖"에 독립 상수로 둔 이유: 구조체 안에 넣으면
+// applyPalette()가 팔레트 전환 시 자동으로 값을 갈아치워, 라이트 테마에서
+// 영상 캔버스까지 밝아져 IA-02가 깨진다. applyPalette() 본문에 kVideoSurface를
+// 대입하는 줄을 절대 만들지 말 것.
+inline const char* kVideoSurface = "#000000";
 
 inline void applyPalette(const Palette& p) {
     kBgDeep = p.bgDeep;   kPanel = p.panel;   kCard = p.card;   kBorder = p.border;
-    kTextMain = p.text;   kTextSub = p.sub;   kAccent = p.accent;
-    kNormal = p.normal;   kWarn = p.warn;     kCritical = p.critical;
-}
-
-// 로그인·회원가입 창 공용 스타일시트.
-// 앱 전체를 어두운 톤으로 통일하므로 이 두 창도 다크 팔레트로 고정한다.
-// (관제 화면은 MainWindow::applyTheme가 현재 팔레트로 따로 만든다)
-inline QString authDialogStyleSheet()
-{
-    return QString(R"(
-        QDialog { background: %(bgDeep); }
-        #authCard { background: %(panel); }
-        QLabel { color: %(text); font-family: "Segoe UI", "맑은 고딕", sans-serif; }
-
-        #authLogo { color: %(accent); font-size: 34px; font-weight: 800; letter-spacing: 3px; }
-        #authTitle { color: %(text); font-size: 20px; font-weight: 800; }
-        #authSubtitle { color: %(sub); font-size: 13px; letter-spacing: 0.5px; }
-        #authCaption { color: %(sub); font-size: 12px; font-weight: 700; }
-
-        #authEdit { background: %(bgDeep); color: %(text); border: 1px solid %(border);
-                    border-radius: 8px; padding: 10px 12px; font-size: 14px; }
-        #authEdit:focus { border: 1px solid %(accent); }
-        /* 검증 실패한 칸은 테두리를 빨갛게 — 어디가 틀렸는지 바로 보이게 */
-        #authEdit[invalid="true"] { border: 1px solid %(critical); }
-
-        #authCheck { color: %(sub); font-size: 12px; }
-        #authCheck::indicator { width: 14px; height: 14px; border: 1px solid %(border);
-                                border-radius: 3px; background: %(bgDeep); }
-        #authCheck::indicator:checked { background: %(accent); border-color: %(accent); }
-
-        #authHint { color: %(sub); font-size: 11px; }
-        #authHint[invalid="true"] { color: %(critical); font-weight: 600; }
-        #authHint[ok="true"] { color: %(normal); font-weight: 600; }
-        #authError { color: %(critical); font-size: 12px; font-weight: 600; }
-
-        #authPrimary { background: %(accent); color: #fff; border: none; border-radius: 8px;
-                       font-size: 15px; font-weight: 700; letter-spacing: 1px; }
-        #authPrimary:hover { background: %(accentHover); }
-        #authPrimary:disabled { background: %(border); color: %(sub); }
-
-        /* 링크처럼 보이는 보조 버튼 (회원가입 / 취소) */
-        #authLink { background: transparent; color: %(accent); border: none;
-                    font-size: 13px; font-weight: 700; padding: 6px; }
-        #authLink:hover { color: %(accentHover); text-decoration: underline; }
-
-        #authSep { color: %(border); }
-        #authFooter { color: %(sub); font-size: 11px; }
-    )")
-        .replace("%(bgDeep)", kDark.bgDeep)
-        .replace("%(panel)", kDark.panel)
-        .replace("%(border)", kDark.border)
-        .replace("%(text)", kDark.text)
-        .replace("%(sub)", kDark.sub)
-        .replace("%(normal)", kDark.normal)
-        .replace("%(accentHover)", "#3AD4C4")   // accent(#17C7B6)보다 한 단계 밝은 톤
-        .replace("%(accent)", kDark.accent)
-        .replace("%(critical)", kDark.critical);
+    kTextMain = p.text;   kTextSub = p.sub;   kAccent = p.accent; kOnAccent = p.onAccent;
+    kNormal = p.normal;   kWarn = p.warn;     kHigh = p.high;
+    kCritical = p.critical; kInfo = p.info;
+    kSelect = p.select;   kOnSelect = p.onSelect;
 }
 
 #endif  // THEME_H
