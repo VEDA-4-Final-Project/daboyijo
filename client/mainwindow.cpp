@@ -2381,10 +2381,27 @@ void MainWindow::selectRoom(int room)
     const int count = roomNames().size();
     room = qBound(0, room, count - 1);
     if (room == selectedRoom_) return;
+
+    // 실카메라 방을 떠나기 직전에 접속 폼을 보관한다 — applyRoomView가 비우기 때문에
+    // 여기서 안 챙기면 102호에 한 번 들렀다 오는 것만으로 입력값이 날아간다.
+    if (selectedRoom_ == 0 && room != 0) {
+        camFormBackup_[0] = camIpEdit   ? camIpEdit->text()   : QString();
+        camFormBackup_[1] = camUserEdit ? camUserEdit->text() : QString();
+        camFormBackup_[2] = camPwEdit   ? camPwEdit->text()   : QString();
+    }
+
     selectedRoom_ = room;
     applyRoomView();
-    if (room == 0)
+
+    if (room == 0) {
+        if (camIpEdit)   camIpEdit->setText(camFormBackup_[0]);
+        if (camUserEdit) camUserEdit->setText(camFormBackup_[1]);
+        if (camPwEdit)   camPwEdit->setText(camFormBackup_[2]);
+        if (discoveryStatus)
+            discoveryStatus->setText(QStringLiteral(
+                "‘검색’을 누르면 같은 망의 카메라가 아래에 나타납니다. 행을 클릭하면 IP가 채워져요."));
         for (int ch = 0; ch < 4; ++ch) refreshRoiZones(ch);   // 침대 오버레이 복구
+    }
 }
 
 // selectedRoom_에 맞춰 타일·바이탈·트리를 한 번에 맞춘다.
@@ -2433,6 +2450,20 @@ void MainWindow::applyRoomView()
         if (!liveRoom) { roiEditorView->setLive(false); roiEditorView->setZones({}); }
     }
     if (imgWipe_ && !liveRoom) imgWipe_->clearFrames();
+
+    // 인스펙터는 101호와 같은 화면을 그대로 보여주되 만질 수 없게 한다.
+    // 값까지 남겨두면 102호 화면에 101호 IP가 회색으로 읽혀 더 헷갈리므로 비운다
+    // (돌아올 때 camFormBackup_에서 되돌린다).
+    if (camControlStack) camControlStack->setEnabled(liveRoom);
+    if (!liveRoom) {
+        if (camIpEdit)   camIpEdit->clear();
+        if (camUserEdit) camUserEdit->clear();
+        if (camPwEdit)   camPwEdit->clear();
+        if (discoveryTable) { discoveryTable->setRowCount(0); syncDiscoveryTableHeight(); }
+        if (discoveryStatus)
+            discoveryStatus->setText(QStringLiteral("이 방에는 아직 카메라가 배정되지 않았습니다."));
+    }
+    rebuildBedList();
     for (int r = 0; r < camRoomBtns_.size(); ++r)
         camRoomBtns_[r]->setChecked(r == selectedRoom_);
     setCamMode(camMode_);          // 빈 방이면 안내 페이지로, 아니면 원래 모드로
@@ -7596,29 +7627,6 @@ void MainWindow::removeRoom(int room)
     refreshResourceTree();
 }
 
-// 카메라가 없는 방을 골랐을 때 인스펙터 자리에 들어가는 안내.
-QWidget* MainWindow::buildCamEmptyRoomPage()
-{
-    auto* page = new QWidget();
-    auto* v = new QVBoxLayout(page);
-    v->setContentsMargins(0, 8, 0, 0);
-    v->setSpacing(8);
-
-    auto* cap = new QLabel(QStringLiteral("카메라 없음"));
-    cap->setObjectName("camSectionCap");
-    v->addWidget(cap);
-
-    auto* msg = new QLabel(QStringLiteral(
-        "이 방에는 아직 카메라가 배정되지 않았습니다.\n\n"
-        "방 자리를 먼저 만들어 두는 단계입니다. 카메라가 배정되면 접속 정보·"
-        "침대(ROI)·화질 설정이 여기에 들어옵니다."));
-    msg->setObjectName("camHint");
-    msg->setWordWrap(true);
-    v->addWidget(msg);
-    v->addStretch();
-    return page;
-}
-
 QWidget* MainWindow::buildCamModeSegment()
 {
     auto* segTrack = new QFrame();
@@ -7739,8 +7747,6 @@ QWidget* MainWindow::buildCamInspector()
     camControlStack->addWidget(buildCamConnectPage());
     camControlStack->addWidget(buildCamRoiPage());
     camControlStack->addWidget(buildCamImagePage());
-    camEmptyRoomPage_ = buildCamEmptyRoomPage();
-    camControlStack->addWidget(camEmptyRoomPage_);   // index 3 — 카메라 없는 방
     // 스택이 '현재 페이지' 높이에 맞게 줄어들도록 — 숨은 페이지는 세로 크기 계산에서 제외.
     auto sizeToCurrent = [](QStackedWidget* st) {
         for (int i = 0; i < st->count(); ++i) {
@@ -8058,7 +8064,9 @@ void MainWindow::rebuildBedList()
     }
 
     const int ch = roiEditChannel;
-    auto zones = roiZones_[ch];
+    // 빈 방에는 침대가 없다 — 목록까지 101호 것을 보여주면 그 방에 침대가 있는
+    // 것으로 읽힌다. 데이터(roiZones_)는 그대로 두고 표시만 비운다.
+    auto zones = (selectedRoom_ == 0) ? roiZones_[ch] : QVector<RoiZone>{};
     std::sort(zones.begin(), zones.end(),
               [](const RoiZone& a, const RoiZone& b) { return a.id < b.id; });
 
@@ -8221,9 +8229,7 @@ void MainWindow::setCamMode(const QString& mode)
         if (camModeBtns[i]) camModeBtns[i]->setChecked(modes[i] == mode);
         if (modes[i] == mode) idx = i;
     }
-    // 빈 방에서는 연결/ROI/이미지 어느 쪽도 만질 게 없다 — 안내 페이지를 유지한다.
-    if (camControlStack)
-        camControlStack->setCurrentIndex(selectedRoom_ == 0 ? idx : 3);
+    if (camControlStack) camControlStack->setCurrentIndex(idx);
     // 이미지 모드만 Before/After 프리뷰, 나머지는 라이브/ROI 영상.
     const bool imageMode = (mode == QStringLiteral("이미지"));
     if (camStageStack)

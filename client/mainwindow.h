@@ -831,7 +831,6 @@ private:
     // 3단 구성: [채널 스트립(썸네일)] │ [스테이지(큰 영상)] │ [인스펙터(모드별 설정)]
     QWidget* buildCamModeSegment();   // 상단 페이지 모드 세그먼트(연결/ROI/이미지)
     QWidget* buildCamRoomSegment();   // 상단 방 세그먼트(101호/102호…) — selectedRoom_ 공유
-    QWidget* buildCamEmptyRoomPage(); // 카메라 없는 방을 골랐을 때의 인스펙터 안내
     void rebuildCamRoomSegment();     // 방 목록이 바뀌면 세그먼트 버튼을 다시 만든다
     void rebuildResourceRooms();      // 방 목록이 바뀌면 리소스 트리 Root 아래를 다시 만든다
     void onAddRoomClicked();          // [+] 호실 추가
@@ -855,10 +854,9 @@ private:
     QWidget* camRoomSeg_ = nullptr;         // 방 세그먼트 컨테이너(방 추가 시 다시 채운다)
     QVector<QPushButton*> camRoomBtns_;     // 방 세그먼트 버튼(방 수만큼)
     QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
-    // 카메라가 없는 방을 골랐을 때 인스펙터에 대신 띄우는 안내 페이지(스택 index 3).
-    // 설정 위젯을 비활성만 해두면 101호 값(IP·침대 목록)이 회색으로 남아 읽혀서,
-    // 그 방에도 뭔가 있는 것처럼 보인다 — 아예 다른 페이지로 갈아 끼운다.
-    QWidget* camEmptyRoomPage_ = nullptr;
+    // 카메라 없는 방으로 옮길 때 접속 폼을 비우는데, 돌아올 때 되돌리려고 잠시 보관한다.
+    // (IP·계정·비밀번호 순) 비우지 않으면 102호 화면에 101호 주소가 그대로 남는다.
+    QString camFormBackup_[3];
     QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
 
