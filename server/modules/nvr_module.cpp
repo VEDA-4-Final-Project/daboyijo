@@ -33,16 +33,16 @@ NvrModule::NvrModule(std::string storagePath, int retentionHours,
       segmentMinutes_(segmentMinutes), httpPort_(httpPort),
       http_(httpPort_, storagePath_) {
     if (storagePath_.empty()) {
-        // LOGOFF std::fprintf(stderr, "[NVR] 저장 경로 미설정 — 연속 녹화 비활성화\n");
+        std::fprintf(stderr, "[NVR] 저장 경로 미설정 — 연속 녹화 비활성화\n");
         return;
     }
 
     std::error_code ec;
     std::filesystem::create_directories(storagePath_, ec);
     if (ec) {
-        // LOGOFF std::fprintf(stderr,
-        //              "[NVR] 저장 경로 생성 실패(%s): %s — 연속 녹화 비활성화\n",
-        //              storagePath_.c_str(), ec.message().c_str());
+        std::fprintf(stderr,
+                     "[NVR] 저장 경로 생성 실패(%s): %s — 연속 녹화 비활성화\n",
+                     storagePath_.c_str(), ec.message().c_str());
         return;
     }
 
@@ -50,10 +50,10 @@ NvrModule::NvrModule(std::string storagePath, int retentionHours,
     // 파일시스템) 위의 평범한 폴더일 뿐이라 쓰기는 되지만 여기 계속 쓰면 SD카드가
     // 찬다. 부모와 다른 장치여야("뭔가 마운트됨") 진짜 외장 저장장치로 간주한다.
     if (!isMountPoint(storagePath_)) {
-        // LOGOFF std::fprintf(stderr,
-        //              "[NVR] 저장 경로(%s)가 별도 마운트 장치가 아님(USB 미장착으로 "
-        //              "보임) — SD카드에 계속 쓰지 않도록 연속 녹화 비활성화\n",
-        //              storagePath_.c_str());
+        std::fprintf(stderr,
+                     "[NVR] 저장 경로(%s)가 별도 마운트 장치가 아님(USB 미장착으로 "
+                     "보임) — SD카드에 계속 쓰지 않도록 연속 녹화 비활성화\n",
+                     storagePath_.c_str());
         return;
     }
 
@@ -61,8 +61,8 @@ NvrModule::NvrModule(std::string storagePath, int retentionHours,
     const std::string probePath = storagePath_ + "/.nvr_write_probe";
     FILE* f = std::fopen(probePath.c_str(), "wb");
     if (!f) {
-        // LOGOFF std::fprintf(stderr, "[NVR] 저장 경로 쓰기 불가(%s) — 연속 녹화 비활성화\n",
-        //              storagePath_.c_str());
+        std::fprintf(stderr, "[NVR] 저장 경로 쓰기 불가(%s) — 연속 녹화 비활성화\n",
+                     storagePath_.c_str());
         return;
     }
     std::fclose(f);
@@ -114,7 +114,7 @@ void NvrModule::retentionLoop() {
             }
         } catch (const std::filesystem::filesystem_error& e) {
             // USB 분리 등으로 스캔 중 디렉터리가 사라진 경우 — 다음 주기에 재시도
-            // LOGOFF std::fprintf(stderr, "[NVR] 보존정책 스캔 오류: %s\n", e.what());
+            std::fprintf(stderr, "[NVR] 보존정책 스캔 오류: %s\n", e.what());
         }
     }
 }
@@ -122,10 +122,10 @@ void NvrModule::retentionLoop() {
 void NvrModule::startHttp() {
     if (!enabled_) return;
     if (!http_.start()) {
-        // LOGOFF std::fprintf(stderr,
-        //              "경고: NVR 클립 HTTP 서버 시작 실패 (포트 %d) — "
-        //              "녹화는 계속되지만 Qt에서 목록/재생은 안 됨\n",
-        //              httpPort_);
+        std::fprintf(stderr,
+                     "경고: NVR 클립 HTTP 서버 시작 실패 (포트 %d) — "
+                     "녹화는 계속되지만 Qt에서 목록/재생은 안 됨\n",
+                     httpPort_);
     }
 }
 

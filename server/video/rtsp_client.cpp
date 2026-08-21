@@ -36,8 +36,8 @@ void RtspClient::run() {
         // 환경변수 OPENCV_FFMPEG_CAPTURE_OPTIONS="rtsp_transport;tcp")
         cv::VideoCapture cap(url_, cv::CAP_FFMPEG);
         if (!cap.isOpened()) {
-            // LOGOFF std::fprintf(stderr, "[ch%d] RTSP 연결 실패, %d초 후 재시도\n",
-            //              channel_, kReconnectDelaySec);
+            std::fprintf(stderr, "[ch%d] RTSP 연결 실패, %d초 후 재시도\n",
+                         channel_, kReconnectDelaySec);
             for (int i = 0; i < kReconnectDelaySec * 10 && running_.load(); ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
@@ -45,9 +45,9 @@ void RtspClient::run() {
         }
 
         connected_.store(true);
-        // LOGOFF std::fprintf(stderr, "[ch%d] RTSP 연결됨: %.0fx%.0f\n", channel_,
-        //              cap.get(cv::CAP_PROP_FRAME_WIDTH),
-        //              cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+        std::fprintf(stderr, "[ch%d] RTSP 연결됨: %.0fx%.0f\n", channel_,
+                     cap.get(cv::CAP_PROP_FRAME_WIDTH),
+                     cap.get(cv::CAP_PROP_FRAME_HEIGHT));
 
         cv::Mat image;
         while (running_.load() && cap.read(image)) {
@@ -60,7 +60,7 @@ void RtspClient::run() {
 
         connected_.store(false);
         if (running_.load()) {
-            // LOGOFF std::fprintf(stderr, "[ch%d] 스트림 끊김, 재연결 시도\n", channel_);
+            std::fprintf(stderr, "[ch%d] 스트림 끊김, 재연결 시도\n", channel_);
         }
     }
 }

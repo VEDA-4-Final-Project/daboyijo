@@ -76,7 +76,7 @@ PoseEstimator::PoseEstimator(const std::string& modelPath, int numThreads)
     : impl_(std::make_unique<Impl>()) {
     impl_->model = tflite::FlatBufferModel::BuildFromFile(modelPath.c_str());
     if (!impl_->model) {
-        // LOGOFF std::fprintf(stderr, "[pose] 모델 로드 실패: %s\n", modelPath.c_str());
+        std::fprintf(stderr, "[pose] 모델 로드 실패: %s\n", modelPath.c_str());
         return;
     }
 
@@ -84,7 +84,7 @@ PoseEstimator::PoseEstimator(const std::string& modelPath, int numThreads)
     tflite::InterpreterBuilder builder(*impl_->model, resolver);
     builder(&impl_->interpreter);
     if (!impl_->interpreter) {
-        // LOGOFF std::fprintf(stderr, "[pose] 인터프리터 생성 실패\n");
+        std::fprintf(stderr, "[pose] 인터프리터 생성 실패\n");
         return;
     }
     impl_->interpreter->SetNumThreads(numThreads);
@@ -95,11 +95,11 @@ PoseEstimator::PoseEstimator(const std::string& modelPath, int numThreads)
     xopts.num_threads = numThreads;
     impl_->xnnpack = TfLiteXNNPackDelegateCreate(&xopts);
     if (impl_->interpreter->ModifyGraphWithDelegate(impl_->xnnpack) != kTfLiteOk) {
-        // LOGOFF std::fprintf(stderr, "[pose] XNNPACK 델리게이트 적용 실패 — CPU 기본 경로로 진행\n");
+        std::fprintf(stderr, "[pose] XNNPACK 델리게이트 적용 실패 — CPU 기본 경로로 진행\n");
     }
 
     if (impl_->interpreter->AllocateTensors() != kTfLiteOk) {
-        // LOGOFF std::fprintf(stderr, "[pose] AllocateTensors 실패\n");
+        std::fprintf(stderr, "[pose] AllocateTensors 실패\n");
         impl_->interpreter.reset();
         return;
     }
@@ -121,9 +121,9 @@ PoseEstimator::PoseEstimator(const std::string& modelPath, int numThreads)
         }
     }
 
-    // LOGOFF std::fprintf(stderr, "[pose] MoveNet 로드 완료 (%dx%d, %s, gamma=%.2f)\n",
-    //              impl_->input_w, impl_->input_h,
-    //              impl_->input_is_uint8 ? "uint8" : "float32", kInputGamma);
+    std::fprintf(stderr, "[pose] MoveNet 로드 완료 (%dx%d, %s, gamma=%.2f)\n",
+                 impl_->input_w, impl_->input_h,
+                 impl_->input_is_uint8 ? "uint8" : "float32", kInputGamma);
 }
 
 PoseEstimator::~PoseEstimator() = default;
@@ -176,7 +176,7 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
     }
 
     if (impl_->interpreter->Invoke() != kTfLiteOk) {
-        // LOGOFF std::fprintf(stderr, "[pose] 추론 실패\n");
+        std::fprintf(stderr, "[pose] 추론 실패\n");
         return false;
     }
 
@@ -200,8 +200,8 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
             out[i].score = (d[i * 3 + 2] - zero) * scale;
         }
     } else {
-        // LOGOFF std::fprintf(stderr, "[pose] 알 수 없는 출력 타입: %d\n",
-        //              static_cast<int>(output->type));
+        std::fprintf(stderr, "[pose] 알 수 없는 출력 타입: %d\n",
+                     static_cast<int>(output->type));
         return false;
     }
     return true;

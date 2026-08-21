@@ -73,11 +73,11 @@ std::string GeminiClient::postGenerateContent(const std::string& payload) {
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
-        // LOGOFF std::fprintf(stderr, "[Gemini] 전송 실패: %s\n", curl_easy_strerror(res));
+        std::fprintf(stderr, "[Gemini] 전송 실패: %s\n", curl_easy_strerror(res));
         return "";
     }
     if (http_code != 200) {
-        // LOGOFF std::fprintf(stderr, "[Gemini] HTTP %ld: %s\n", http_code, resp.c_str());
+        std::fprintf(stderr, "[Gemini] HTTP %ld: %s\n", http_code, resp.c_str());
         return "";
     }
 
@@ -92,7 +92,7 @@ std::string GeminiClient::postGenerateContent(const std::string& payload) {
         }
         return text;
     } catch (const std::exception& e) {
-        // LOGOFF std::fprintf(stderr, "[Gemini] 응답 파싱 실패: %s\n", e.what());
+        std::fprintf(stderr, "[Gemini] 응답 파싱 실패: %s\n", e.what());
         return "";
     }
 }

@@ -16,6 +16,11 @@ constexpr double kAlarmCooldownSec = 10.0;
 // 바로 세션을 닫으면 하룻밤에 세션이 수백 개 생기고 재실시간도 그만큼 잘게 쪼개진다.
 // 반대로 너무 길면 화장실 다녀온 짧은 이탈이 재실로 묻힌다. 10초는 그 사이 값이다.
 constexpr double kVacancyConfirmSec = 10.0;
+
+// [재실] 세션 열기가 실패했을 때 다음 시도까지 기다리는 시간.
+// syncBedSessions 는 메타데이터 프레임마다 돈다. 실패를 기억하지 않으면 사람이
+// 누워 있는 내내 매 프레임 INSERT 를 다시 던지고 같은 에러가 로그를 덮는다.
+constexpr double kOpenRetrySec = 30.0;
 }  // namespace
 
 void BedEgressModule::updatePatientStatus(int channel, int roi_id, int status) {
@@ -28,12 +33,12 @@ void BedEgressModule::updatePatientStatus(int channel, int roi_id, int status) {
         channel_default_[channel] = value;
         auto& ch = patient_statuses_[channel];
         for (auto& entry : ch) entry.second = value;
-        // LOGOFF std::printf("[BedEgress] 채널 %d 전체 위험도 갱신: %d\n", channel + 1, status);
+        std::printf("[BedEgress] 채널 %d 전체 위험도 갱신: %d\n", channel + 1, status);
         return;
     }
     patient_statuses_[channel][roi_id] = value;
-    // LOGOFF std::printf("[BedEgress] 채널 %d 침대 %d 위험도 갱신: %d\n",
-    //             channel + 1, roi_id + 1, status);
+    std::printf("[BedEgress] 채널 %d 침대 %d 위험도 갱신: %d\n",
+                channel + 1, roi_id + 1, status);
 }
 
 PatientStatus BedEgressModule::statusOf(int channel, int roi_id) const {
@@ -57,7 +62,7 @@ void BedEgressModule::initializeFromDb(Database& db) {
     for (int ch = 0; ch < 4; ++ch) {
         const auto zones = zones_ ? zones_->zones(ch) : std::map<int, BedZone>{};
         if (zones.empty()) {
-            // LOGOFF std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대 없음\n", ch + 1);
+            std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대 없음\n", ch + 1);
             continue;
         }
 
@@ -76,9 +81,9 @@ void BedEgressModule::initializeFromDb(Database& db) {
             }
 
             // 버퍼링에 묻히지 않도록 stderr로 — 부팅 시 각 침대가 무슨 등급으로 떴는지 바로 보이게
-            // LOGOFF const char* label = (level == 3) ? "상" : (level == 2) ? "중" : "하";
-            // LOGOFF std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대%d (입소자 %d) = %s\n",
-            //              ch + 1, zone.roi_id + 1, zone.resident_id, label);
+            const char* label = (level == 3) ? "상" : (level == 2) ? "중" : "하";
+            std::fprintf(stderr, "[BedEgress] 부팅 위험도 로드: ch%d 침대%d (입소자 %d) = %s\n",
+                         ch + 1, zone.roi_id + 1, zone.resident_id, label);
         }
     }
 }
@@ -105,6 +110,7 @@ void BedEgressModule::resetZoneState(int channel, int roi_id) {
     if (roi_id == BedZoneStore::kRoiIdAll) {
         closeOpen(BedZoneStore::kRoiIdAll);
         empty_since_.erase(channel);
+        retry_open_.erase(channel);
         patient_statuses_.erase(channel);
         channel_default_.erase(channel);
         last_zone_.erase(channel);
@@ -114,6 +120,8 @@ void BedEgressModule::resetZoneState(int channel, int roi_id) {
     closeOpen(roi_id);
     auto es = empty_since_.find(channel);
     if (es != empty_since_.end()) es->second.erase(roi_id);
+    auto ra = retry_open_.find(channel);
+    if (ra != retry_open_.end()) ra->second.erase(roi_id);
     auto ch = patient_statuses_.find(channel);
     if (ch != patient_statuses_.end()) ch->second.erase(roi_id);
     auto lz = last_zone_.find(channel);
@@ -137,6 +145,7 @@ void BedEgressModule::syncBedSessions(int channel, const std::map<int, BedZone>&
                                       std::chrono::steady_clock::time_point now) {
     auto& open = open_sessions_[channel];
     auto& empty = empty_since_[channel];
+    auto& retry_at = retry_open_[channel];
 
     for (const auto& entry : zones) {
         const BedZone& zone = entry.second;
@@ -150,13 +159,23 @@ void BedEgressModule::syncBedSessions(int channel, const std::map<int, BedZone>&
         if (now_occupied) {
             empty.erase(roi);                        // 다시 찼으니 빈 시각 취소
             if (open_id == 0) {
+                // 직전 시도가 실패했으면 쿨다운이 끝날 때까지 건너뛴다 —
+                // 프레임마다 실패를 되풀이하면 로그가 그 에러로만 덮인다.
+                auto ra = retry_at.find(roi);
+                if (ra != retry_at.end() && now < ra->second) continue;
+
                 // 침대에 사람이 들어왔다 — 재실 시작.
                 // 사람은 침대에 매핑된 입소자다(0 이면 미지정 → resident_id NULL).
                 const long long id = db_->openBedSession(channel, zone.resident_id);
                 if (id > 0) {
                     open[roi] = id;
+                    retry_at.erase(roi);
                     std::fprintf(stderr, "[BedEgress] ch%d 침대%d 재실 시작 (입소자 %d)\n",
                                  channel + 1, roi + 1, zone.resident_id);
+                } else {
+                    retry_at[roi] =
+                        now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                  std::chrono::duration<double>(kOpenRetrySec));
                 }
             }
             continue;
@@ -187,6 +206,7 @@ void BedEgressModule::flushBedSessions() {
         ch.second.clear();
     }
     empty_since_.clear();
+    retry_open_.clear();
     if (n > 0) std::fprintf(stderr, "[BedEgress] 종료 — 열린 재실 세션 %d건 마감\n", n);
 }
 
@@ -265,8 +285,8 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
             // 경보를 울리지 않는다 — 그래도 사람이 바뀐 셈이라 기록은 남긴다.
             if (zone_before == kNoZone || zone_before == zone_now) continue;
             if (zone_now != kNoZone) {
-                // LOGOFF std::fprintf(stderr, "[BedEgress] ch%d obj%d 침대%d → 침대%d 이동\n",
-                //              channel + 1, det.object_id, zone_before + 1, zone_now + 1);
+                std::fprintf(stderr, "[BedEgress] ch%d obj%d 침대%d → 침대%d 이동\n",
+                             channel + 1, det.object_id, zone_before + 1, zone_now + 1);
                 continue;
             }
 
@@ -314,13 +334,12 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
             std::lock_guard<std::mutex> lock(mutex_);
             return statusOf(evt.channel, evt.roi_id);
         }();
-        (void)status;  // LOGOFF 로그만 쓰던 값
-        // LOGOFF const char* status_str = (status == PatientStatus::HIGH) ? "🔴 상(즉시 경보)"
-        //                                                          : "🟠 중(야간 관찰)";
-        // LOGOFF std::fprintf(stderr,
-        //              "⚠️ [ch%d] [%s] 침대%d 환자 침상 탈출 발생! (obj: %d, 입소자: %d)\n",
-        //              evt.channel + 1, status_str, evt.roi_id + 1, evt.object_id,
-        //              evt.resident_id);
+        const char* status_str = (status == PatientStatus::HIGH) ? "🔴 상(즉시 경보)"
+                                                                 : "🟠 중(야간 관찰)";
+        std::fprintf(stderr,
+                     "⚠️ [ch%d] [%s] 침대%d 환자 침상 탈출 발생! (obj: %d, 입소자: %d)\n",
+                     evt.channel + 1, status_str, evt.roi_id + 1, evt.object_id,
+                     evt.resident_id);
 
         if (alarm_cb_) alarm_cb_(evt);
     }

@@ -93,10 +93,10 @@ void IdentityTracker::update(int channel, const std::vector<Detection>& dets,
                 t.resident_id = old.resident_id;
                 t.confidence = old.confidence * kConfHandoverFactor;
                 t.caregiver = old.caregiver;
-                // LOGOFF std::fprintf(stderr,
-                //              "[id] ch%d obj%d ← obj%d 인계 (입소자 %d, 신뢰도 %.2f)\n",
-                //              channel + 1, d.object_id, best_id, t.resident_id,
-                //              t.confidence);
+                std::fprintf(stderr,
+                             "[id] ch%d obj%d ← obj%d 인계 (입소자 %d, 신뢰도 %.2f)\n",
+                             channel + 1, d.object_id, best_id, t.resident_id,
+                             t.confidence);
                 traces.erase(best_id);  // 그림자는 역할을 다했다
             }
         }
@@ -141,8 +141,8 @@ void IdentityTracker::update(int channel, const std::vector<Detection>& dets,
             t.roi_id = zone_now;
             t.resident_id = resident;
             t.confidence = is_new ? kConfBorn : kConfEnter;
-            // LOGOFF std::fprintf(stderr, "[id] ch%d obj%d → 침대%d 귀속 (입소자 %d, 신뢰도 %.2f)\n",
-            //              channel + 1, d.object_id, zone_now + 1, resident, t.confidence);
+            std::fprintf(stderr, "[id] ch%d obj%d → 침대%d 귀속 (입소자 %d, 신뢰도 %.2f)\n",
+                         channel + 1, d.object_id, zone_now + 1, resident, t.confidence);
         } else if (t.roi_id == zone_now) {
             // 계속 자기 침대에 있음 — 볼수록 확신이 는다
             t.resident_id = resident;  // 관리자가 매핑을 바꿨을 수 있으니 매번 갱신
@@ -151,9 +151,9 @@ void IdentityTracker::update(int channel, const std::vector<Detection>& dets,
         } else {
             // 다른 침대로 이동 — 진짜 옮겼거나, ID가 옆 사람과 뒤바뀌었거나.
             // 어느 쪽인지 알 방법이 없으므로 라벨은 새 침대로 옮기되 신뢰도를 떨군다.
-            // LOGOFF std::fprintf(stderr,
-            //              "[id] ch%d obj%d 침대%d → 침대%d 이동 — 신뢰도 하향\n",
-            //              channel + 1, d.object_id, t.roi_id + 1, zone_now + 1);
+            std::fprintf(stderr,
+                         "[id] ch%d obj%d 침대%d → 침대%d 이동 — 신뢰도 하향\n",
+                         channel + 1, d.object_id, t.roi_id + 1, zone_now + 1);
             t.roi_id = zone_now;
             t.resident_id = resident;
             t.confidence = kConfBedSwap;
@@ -175,8 +175,8 @@ void IdentityTracker::update(int channel, const std::vector<Detection>& dets,
         Trace& loser = (t.confidence > rival.confidence) ? rival : t;
         if (t.confidence > rival.confidence) owner[t.roi_id] = entry.first;
 
-        // LOGOFF std::fprintf(stderr, "[id] ch%d 침대%d 귀속 충돌 — obj 하나를 미상으로 되돌림\n",
-        //              channel + 1, t.roi_id + 1);
+        std::fprintf(stderr, "[id] ch%d 침대%d 귀속 충돌 — obj 하나를 미상으로 되돌림\n",
+                     channel + 1, t.roi_id + 1);
         loser.roi_id = kNoZone;
         loser.resident_id = 0;
         loser.confidence = 0.f;
