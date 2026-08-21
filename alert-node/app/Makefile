@@ -14,6 +14,10 @@ LDLIBS   := -lmosquitto -lasound -pthread
 
 SRCS := main.cpp matrix/alert-display.cpp AudioPlayer/VedaAudioPlayer.cpp \
         $(MQTT)/MqttClient_veda.cpp
+# 헤더도 의존성에 넣는다 - 없으면 글꼴이나 표시기 헤더만 고쳤을 때 make 가
+# "Nothing to be done" 하고 넘어가, 예전 바이너리를 새 것으로 착각하게 된다
+HDRS := matrix/alert-display.hpp matrix/alert-event.hpp matrix/hub75-font16.h \
+        AudioPlayer/VedaAudioPlayer.hpp
 NODE := alert-node
 SUBS := matrix AudioPlayer
 
@@ -23,7 +27,7 @@ all: node $(SUBS)
 
 node: $(NODE)
 
-$(NODE): $(SRCS)
+$(NODE): $(SRCS) $(HDRS)
 	$(CXX) $(CXXFLAGS) $(INCS) -o $@ $(SRCS) $(LDLIBS)
 
 $(SUBS):
