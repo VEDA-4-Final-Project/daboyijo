@@ -1,0 +1,37 @@
+# 알림 노드 커널 모듈만 부팅 때 올린다 — 앱은 손으로 띄운다
+#
+# 설치 (기기당 한 번):
+#   sudo cp alert-node/scripts/alert-node-drivers.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now alert-node-drivers
+#
+#   확인   systemctl status alert-node-drivers / lsmod | grep -E 'hub75|wm8960'
+#   앱     sudo ./app/alert-node
+#
+# 앱까지 자동으로 띄우고 싶으면 옆의 alert-node.service 를 쓴다. 지금은 브로커
+# 주소가 DHCP 로 계속 바뀌는 상황이라, 주소가 틀리면 앱이 종료하고 systemd 가
+# 5초마다 다시 띄우는 걸 무한히 반복한다. 그래서 앱은 사람이 띄우는 쪽으로 뒀다.
+
+[Unit]
+Description=daboyijo 알림 노드 드라이버 (wm8960 + hub75)
+
+# .ko 가 /lib/modules 가 아니라 저장소 안에 있어서, 그 파일시스템이 먼저 서야 한다.
+After=local-fs.target
+
+# hub75 오버레이는 config.txt 의 dtoverlay=hub75 로 부팅 때 이미 올라와 있다.
+# 여기서 하는 건 wm8960 오버레이(런타임)와 두 모듈의 insmod 뿐이다.
+
+[Service]
+Type=oneshot
+
+# 한 번 돌고 끝나는 일이지만, 끝난 뒤에도 active 로 남겨야 systemctl status 에서
+# "모듈이 올라가 있다" 를 볼 수 있다. 아니면 성공하자마자 inactive 로 보인다.
+RemainAfterExit=yes
+
+ExecStart=/home/yehoon/FinalProject/daboyijo/alert-node/scripts/load.sh
+
+# ExecStop 으로 unload.sh 를 걸지 않는다. 종료할 때 fbcon 언바인드와 rmmod 를
+# 하다가 매달리면 셧다운 전체가 늦어지는데, 얻는 게 없다 — 어차피 전원이 내려간다.
+
+[Install]
+WantedBy=multi-user.target

@@ -31,20 +31,25 @@ sudo ./scripts/unload.sh  # 해제 (fbcon 언바인드 포함)
 sudo ./app/alert-node     # 본체 실행 (Ctrl-C 로 종료)
 ```
 
-부팅할 때 자동으로 띄우려면 systemd 유닛을 씁니다. 모듈 적재까지 유닛이
-`ExecStartPre` 로 처리하므로 `load.sh` 를 따로 부를 필요가 없습니다.
+부팅할 때 모듈은 systemd 유닛이 올려 둡니다. 이걸 켜 두면 `load.sh` 를 손으로
+부를 일이 없고, 재부팅한 뒤 바로 `sudo ./app/alert-node` 로 넘어가면 됩니다.
 
 ```
-sudo cp scripts/alert-node.service /etc/systemd/system/
+sudo cp scripts/alert-node-drivers.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now alert-node
+sudo systemctl enable --now alert-node-drivers
 
-journalctl -u alert-node -f                       # 로그
-make -C app && sudo systemctl restart alert-node  # 새로 빌드해서 반영
+systemctl status alert-node-drivers    # 확인
 ```
 
-유닛 안의 경로는 이 저장소를 체크아웃한 자리를 그대로 가리킵니다. 기기마다
-위치가 다르면 `ExecStartPre`/`ExecStart` 두 줄을 고쳐야 합니다.
+본체까지 부팅에 물리는 `scripts/alert-node.service` 도 함께 두었지만 기본으로
+켜지 않습니다. 브로커 주소가 DHCP 로 계속 바뀌는 동안에는, 주소가 틀리면 앱이
+종료하고 systemd 가 5초마다 다시 띄우는 일을 끝없이 반복하기 때문입니다.
+주소가 안정되면(서버 파이를 테일스케일에 올려 이름으로 부르는 식) 그때
+`sudo systemctl enable --now alert-node` 로 넘기면 됩니다.
+
+두 유닛 모두 경로가 이 저장소를 체크아웃한 자리를 그대로 가리킵니다. 기기마다
+위치가 다르면 `ExecStart` 줄을 고쳐야 합니다.
 
 아래 각 절은 개별로 다룰 때 참고합니다.
 
