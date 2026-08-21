@@ -31,6 +31,21 @@ sudo ./scripts/unload.sh  # 해제 (fbcon 언바인드 포함)
 sudo ./app/alert-node     # 본체 실행 (Ctrl-C 로 종료)
 ```
 
+부팅할 때 자동으로 띄우려면 systemd 유닛을 씁니다. 모듈 적재까지 유닛이
+`ExecStartPre` 로 처리하므로 `load.sh` 를 따로 부를 필요가 없습니다.
+
+```
+sudo cp scripts/alert-node.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now alert-node
+
+journalctl -u alert-node -f                       # 로그
+make -C app && sudo systemctl restart alert-node  # 새로 빌드해서 반영
+```
+
+유닛 안의 경로는 이 저장소를 체크아웃한 자리를 그대로 가리킵니다. 기기마다
+위치가 다르면 `ExecStartPre`/`ExecStart` 두 줄을 고쳐야 합니다.
+
 아래 각 절은 개별로 다룰 때 참고합니다.
 
 
