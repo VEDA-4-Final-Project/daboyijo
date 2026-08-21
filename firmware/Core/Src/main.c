@@ -586,7 +586,18 @@ static void Process_IMU_Block(void)
                                             bmi_accel, BMI270_FIFO_MAX_FRAMES);
     if (frames == 0) return;
 
-    FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_IsWorn());
+    /* 낙상 확정 게이트는 '광학적 접촉'(HasContact)까지만 요구한다.
+     *
+     * 원래는 IsWorn() —— 맥박까지 확인된 착용 —— 이었다. 그런데 이 센서로는
+     * 손목에서 맥박이 잡히는 일이 드물어, 정작 사람이 차고 있는데도 게이트가
+     * 열리지 않아 낙상이 통째로 묻혔다. 검출되지 않는 낙상보다는 가끔의 오보가
+     * 낫다는 판단이다 (사람이 차고 있는 기기다).
+     *
+     * ⚠ 대가: HasContact 는 IR DC 와 반사율만 보므로 책상·바닥에 엎어둔
+     *   상태에서도 참이 될 수 있다 (heart_rate_calc.c 상단 주석 참조).
+     *   그 경우 충격 + 정지가 겹치면 오보가 나갈 수 있다. 다만 맥박이 30초간
+     *   없으면 접촉 판정 자체가 해제되므로 창은 그만큼으로 제한된다. */
+    FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_HasContact());
 
     /* 만보기는 착용 판정을 거치지 않는다 — IMU 만으로 성립하는 기능에
      * PPG 접촉 판정을 물리면 MAX30102 고장이 만보기까지 끌고 들어간다.
