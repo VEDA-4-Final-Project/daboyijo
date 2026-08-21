@@ -9,6 +9,10 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Sql Multimedia Mul
 # nlohmann 은 저장소에 들어있는 단일 헤더를 쓰므로 윈도우에 따로 설치할 게 없다.
 set(VEDA_MSG_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../MQTT/MQTT_prod)
 set(VEDA_THIRDPARTY ${CMAKE_CURRENT_SOURCE_DIR}/../server/third_party)
+# LED 미리보기가 알림 노드와 같은 글꼴로 그려야 해서 폰트 헤더도 노드 쪽을 그대로 본다.
+# 예전에는 client/ 에 복사본을 두고 "원본 바뀌면 같이 갱신할 것" 이라고 적어 뒀는데,
+# 1.8MB 짜리를 사람이 맞춰 두는 건 언젠가 어긋난다 - 구조체와 같은 방식으로 공유한다.
+set(VEDA_FONT_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../alert-node/app/matrix)
 
 qt_standard_project_setup()
 qt_add_executable(daboyijo
@@ -46,7 +50,6 @@ qt_add_executable(daboyijo
     alertmatrixpreview.h
     timelinebar.cpp
     timelinebar.h
-    hub75-font16.h
 )
 
 # 앱 전역 스타일시트 리소스.
@@ -59,8 +62,10 @@ qt_add_resources(daboyijo "appstyle"
     FILES resources/style/base.qss resources/style/dialogs.qss
 )
 
-# veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치
-target_include_directories(daboyijo PRIVATE ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY})
+# veda_messages.hpp (노드들과 공유하는 JSON 규격), nlohmann/json.hpp,
+# hub75-font16.h (알림 노드와 공유하는 LED 글꼴) 를 찾을 위치
+target_include_directories(daboyijo PRIVATE
+    ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY} ${VEDA_FONT_DIR})
 
 # ── [AI 요약] Gemini API 키 — 빌드 시점 주입 ────────────────────────────────
 # 키를 소스에 박지 않는 이유: 이 저장소는 공개(GitHub)라 커밋되는 순간 크롤러가
