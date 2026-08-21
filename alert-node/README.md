@@ -31,6 +31,26 @@ sudo ./scripts/unload.sh  # 해제 (fbcon 언바인드 포함)
 sudo ./app/alert-node     # 본체 실행 (Ctrl-C 로 종료)
 ```
 
+부팅할 때 모듈은 systemd 유닛이 올려 둡니다. 이걸 켜 두면 `load.sh` 를 손으로
+부를 일이 없고, 재부팅한 뒤 바로 `sudo ./app/alert-node` 로 넘어가면 됩니다.
+
+```
+sudo cp scripts/alert-node-drivers.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now alert-node-drivers
+
+systemctl status alert-node-drivers    # 확인
+```
+
+본체까지 부팅에 물리는 `scripts/alert-node.service` 도 함께 두었지만 기본으로
+켜지 않습니다. 브로커 주소가 DHCP 로 계속 바뀌는 동안에는, 주소가 틀리면 앱이
+종료하고 systemd 가 5초마다 다시 띄우는 일을 끝없이 반복하기 때문입니다.
+주소가 안정되면(서버 파이를 테일스케일에 올려 이름으로 부르는 식) 그때
+`sudo systemctl enable --now alert-node` 로 넘기면 됩니다.
+
+두 유닛 모두 경로가 이 저장소를 체크아웃한 자리를 그대로 가리킵니다. 기기마다
+위치가 다르면 `ExecStart` 줄을 고쳐야 합니다.
+
 아래 각 절은 개별로 다룰 때 참고합니다.
 
 
@@ -45,7 +65,8 @@ broker_host = localhost        # 배치할 때 서버 IP 로
 node_id     = alarm_rpi_01     # AlarmCommand.target_device 와 비교
 topic       = veda/alarm/control
 audio_dir   = sounds           # 서버가 파일명만 보낼 때 찾는 곳
-idle_text   = 감시 중          # 평상시 표시 (64px 를 넘으면 잘림)
+idle_text   = 감시 중          # 평상시 문구 (64px 를 넘으면 잘림)
+idle_mode   = clock            # clock = 현재 시각, text = 위 문구
 ```
 
 `AlarmCommand` 의 각 필드가 이렇게 대응됩니다.
@@ -59,15 +80,27 @@ matrix_passes  스크롤 횟수. 안 주면 설정의 기본값 (1~10 으로 잘
 brightness     0~255
 ```
 
+평상시에는 현재 시각을 시:분:초로 띄웁니다. 초가 바뀔 때만 다시 그립니다.
+`idle_mode = text` 로 두면 대신 `idle_text` 문구가 뜹니다.
+
+파이에는 RTC 배터리가 없어 부팅 직후 시각은 `fake-hwclock` 이 복원한 지난번
+종료 시각입니다. 몇 시간 틀린 시계를 벽에 거느니 안 거는 게 낫다고 보고,
+systemd-timesyncd 가 `/run/systemd/timesync/synchronized` 를 만들기 전까지는
+`idle_text` 로 물러납니다.
+
 표시 정책은 노드가 정합니다. 서버는 발행 시점에 그 뒤로 무엇이 올지 모르기
 때문입니다.
 
 - 경보가 시작될 때 위아래 띠를 등급색으로 두 번 깜빡여 새 경보임을 알립니다.
   스크롤 중 긴급 깜빡임의 두 배 속도라 진행 중인 경보와 구분됩니다.
-- 최소 한 바퀴는 끝까지 흘립니다. 안 그러면 경보가 연달아 올 때 앞의 것이
-  한 프레임만 스치고 사라집니다.
-- 그 뒤에 대기 중인 경보가 있으면 넘어갑니다. 등급에 따른 우선순위는 두지
-  않습니다.
+- 실제 경보(FALL/EGRESS/VITAL_ABNORMAL)는 해제할 때까지 계속 흘립니다. 소리와
+  같은 규칙입니다 — 몇 바퀴 돌고 저절로 사라지면 아무도 없는 사이에 난 경보는
+  없었던 것과 같아집니다. 관제 앱 "테스트"(`is_test`)만 `matrix_passes` 만큼
+  돌고 끝납니다.
+- 화면을 되돌리는 건 관제 앱의 "경보 해제" 입니다. 같은 명령이 `audio_action`
+  STOP 으로 소리를, `matrix_action` CLEAR 로 화면을 끕니다.
+- 다음 경보가 오면 진행 중이던 화면을 곧바로 덮어씁니다. 등급에 따른 우선순위는
+  두지 않습니다 — 언제나 최신입니다.
 
 문구는 짧게 조립합니다. 64px 화면을 한 바퀴 흘리는 데 문구 길이만큼 시간이
 들어서, 바뀌는 정보인 호실을 맨 앞에 두고 나머지는 최소한으로 줄였습니다
@@ -204,5 +237,26 @@ sudo ./alert-demo      # Ctrl-C 로 종료
 이벤트는 아직 `alert-demo.cpp` 가 난수로 만듭니다. 렌더링은 `AlertDisplay`
 (`alert-display.hpp`) 로 분리되어 있어, MQTT 연동은 이벤트 소스만 갈아끼우면
 됩니다.
+
+
+글꼴
+
+`hub75-font16.h` 는 `genfont.py` 가 나눔고딕Bold 에서 구워내는 자동 생성
+파일입니다. 직접 고치지 말고 스크립트를 고쳐 다시 뽑으세요. 관제 앱(Qt)의 LED
+미리보기도 include 경로로 이 파일을 그대로 봅니다 — 복사본을 두지 않습니다.
+
+```
+python3 app/matrix/genfont.py      # fonts-nanum 과 python3-pil 필요, 5초쯤
+```
+
+한글 완성형 11172 자와 ASCII 를 전부 담습니다(11267 글리프, 450KB). 예전에는
+화면에 띄울 문구에 나오는 글자만 손으로 골라 51 자만 넣었는데, 입주자 이름은
+DB 에서 오는 임의의 한글이라 목록에 없는 글자를 만나면 `drawText` 가 조용히
+8px 를 건너뜁니다. 낙상 알림에서 이름 한 글자가 소리 없이 사라지는 셈이라
+골라 담는 방식을 그만뒀습니다.
+
+글꼴에 없는 글자는 지금도 빈칸으로 지나갑니다. 한글과 ASCII 밖(예: 라틴
+확장 `í`)이 여기 해당하며, 눈에 띄는 네모로 그리는 편이 낫습니다 — 아직 안
+했습니다.
 
 

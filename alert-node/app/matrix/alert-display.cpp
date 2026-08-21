@@ -230,19 +230,32 @@ void AlertDisplay::showStatic(const std::string& msg, severity sev)
 void AlertDisplay::show(const std::string& msg, severity sev, int passes,
                         const AbortFn& abort)
 {
-    if (!fb_) return;
-
     // MQTT 로 들어오는 값이라 범위를 안 믿음
     // 0 이면 조용히 아무것도 안 뜨고, 큰 값이면 몇 분씩 붙잡혀 둘 다 디버깅이 나쁨
     if (passes < 1)  passes = 1;
     if (passes > 10) passes = 10;
+    scroll(msg, sev, passes, abort);
+}
+
+void AlertDisplay::showUntilAborted(const std::string& msg, severity sev,
+                                    const AbortFn& abort)
+{
+    scroll(msg, sev, -1, abort);
+}
+
+void AlertDisplay::scroll(const std::string& msg, severity sev, int passes,
+                          const AbortFn& abort)
+{
+    if (!fb_) return;
 
     const uint8_t* col = sevColor(sev);
     const int y    = (rows_ - FONT16_H) / 2;        // 세로 중앙
     const int span = measureText(msg) + cols_;      // 오른쪽 등장 ~ 왼쪽 퇴장
     long frame = 0;
 
-    for (int pass = 0; pass < passes; pass++)
+    // frame 은 바퀴를 넘어가도 안 끊긴다 — 긴급 깜빡임 주기를 이걸로 세기 때문에,
+    // 바퀴마다 0 으로 되돌리면 한 바퀴에 한 번씩 리듬이 튄다
+    for (int pass = 0; passes < 0 || pass < passes; pass++)
         for (int off = 0; off <= span; off++, frame++) {
             if (abort && abort(pass)) return;
 

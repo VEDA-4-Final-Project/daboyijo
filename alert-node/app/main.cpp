@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <linux/limits.h>
 
@@ -86,7 +88,10 @@ struct Config {
     std::string node_id     = "alarm_rpi_01";
     std::string topic       = "veda/alarm/control";
     std::string audio_dir   = "sounds";
-    std::string idle_text   = "감시 중";      // 평상시 표시 — 64px 안에 들어갈 것
+    // 평상시 화면 — clock 이면 시각을, text 면 idle_text 를 띄운다.
+    // idle_mode=clock 이어도 시각을 못 믿을 때는 idle_text 로 물러난다(timeSynced 참고).
+    std::string idle_text   = "감시 중";      // 64px 안에 들어갈 것
+    std::string idle_mode   = "clock";
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
     int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
@@ -142,6 +147,11 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "topic")       c.topic       = v;
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
+        else if (k == "idle_mode") {
+            if (v == "clock" || v == "text") c.idle_mode = v;
+            else fprintf(stderr, "[설정] idle_mode 는 clock 또는 text - \"%s\" 무시\n",
+                         v.c_str());
+        }
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
         else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
@@ -187,6 +197,29 @@ std::string toText(const AlarmCommand& c)
     // 호실이나 이름을 모르면 그 부분만 빼고, 이벤트 문구는 어떤 경우에도 남긴다.
     const std::string who = c.name.empty() ? std::string() : (c.name + " ");
     return where + who + phrase;
+}
+
+// 평상시 시계가 믿을 만한지
+//
+// 파이에는 RTC 배터리가 없다. 부팅 직후 시각은 fake-hwclock 이 복원한 지난번 종료
+// 시각이라 몇 시간씩 틀린 값이 그대로 벽에 걸린다. systemd-timesyncd 는 NTP 로
+// 맞추고 나서야 이 파일을 만드니, 생기기 전까지는 시계 대신 문구만 띄운다.
+bool timeSynced()
+{
+    struct stat st;
+    return stat("/run/systemd/timesync/synchronized", &st) == 0;
+}
+
+// "14:23:05" — 진행폭이 정확히 64px 라 좌우 여백이 없어 보이지만, 숫자 글리프가
+// 제 칸 안에서 한 칸씩 들여 그려져 실제 잉크는 1~62열에 떨어진다. 안 잘린다.
+std::string currentTime()
+{
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    char buf[16];
+    strftime(buf, sizeof(buf), "%H:%M:%S", &lt);
+    return buf;
 }
 
 // 절대 경로면 그대로, 파일명만 오면 audio_dir 에서 찾음
@@ -305,17 +338,36 @@ int main(int argc, char* argv[])
            cfg.broker_host.c_str(), cfg.topic.c_str(), cfg.node_id.c_str());
 
     // 표시 정책은 노드가 정함 — 서버는 발행 시점에 뒤에 뭐가 올지 모름
-    //   최소 한 바퀴는 끝까지 — 안 그러면 연달아 올 때 앞의 것이 한 프레임만 스침
-    //   그 뒤에 대기 중인 게 있으면 넘어감, 우선순위는 없음
-    auto aborted = [&](int passesDone) {
-        return !running || (passesDone >= 1 && !queue.empty());
+    //
+    // 경보 화면은 해제할 때까지 안 끝나므로, 다음 명령이 들어오면 바로 그쪽으로
+    // 넘어간다. 예전에는 "최소 한 바퀴는 끝까지" 를 보장했는데, 그건 화면이 몇 바퀴
+    // 돌고 저절로 사라지던 시절의 규칙이다. 지금 그대로 두면 안 끝나는 앞 경보가
+    // 뒤에 온 경보를 한 바퀴씩 막아서게 된다.
+    auto aborted = [&](int) {
+        return !running || !queue.empty();
     };
-    bool idleShown = false;
+    bool        idleShown = false;   // 평상시 화면이 떠 있나 — 경보가 덮으면 내려감
+    std::string idleClock;           // 그때 그린 시각, 초가 넘어가면 다시 그림
+
+    // 한 번 동기화되면 되돌아가지 않으니, 확인되고 나면 더 안 본다
+    bool clockReady = false;
+    auto clockOn = [&] {
+        if (cfg.idle_mode != "clock") return false;
+        if (!clockReady) clockReady = timeSynced();
+        return clockReady;
+    };
 
     while (running) {
         AlarmCommand cmd;
         if (!queue.tryPop(cmd)) {
-            if (!idleShown) { display.showStatic(cfg.idle_text, SEV_INFO); idleShown = true; }
+            // 바뀔 때만 다시 그린다 — 폴링이 100ms 라 그냥 그리면 초당 열 번을
+            // 그리게 되는데, 그중 아홉 번은 화면이 한 픽셀도 안 바뀐다
+            std::string now = clockOn() ? currentTime() : std::string();
+            if (!idleShown || now != idleClock) {
+                display.showStatic(now.empty() ? cfg.idle_text : now, SEV_INFO);
+                idleClock = now;
+                idleShown = true;
+            }
             usleep(100000);
             continue;
         }
@@ -361,11 +413,28 @@ int main(int argc, char* argv[])
         }
 
         if (cmd.matrix_action == "SHOW") {
-            // 서버가 지정하면 그대로, 안 주면 노드 기본값
-            int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
             severity sev = toSeverity(cmd.type);
             display.blinkCue(sev, 2, aborted);  // 새 경보라는 신호 (종료 신호면 중단)
-            display.show(toText(cmd), sev, passes, aborted);
+
+            // 실제 경보는 해제(CLEAR)나 다음 경보가 올 때까지 계속 흘린다 — 소리와
+            // 같은 규칙이다. 아무도 없는 사이에 몇 바퀴 돌고 사라지면 그 경보는
+            // 없었던 것과 같아진다.
+            //
+            // 관제 앱 "테스트" 는 예외로 정해진 바퀴만 돈다. 눌러 본 사람이 해제까지
+            // 눌러야 꺼지는 화면이면 테스트가 아니라 사고다. is_test 와 이벤트 종류를
+            // 같이 보는 건, is_test 를 안 보내는 발신자가 있어도(기본값 false) 진짜
+            // 경보만 붙잡아 두기 위해서다.
+            const bool holdUntilCleared =
+                !cmd.is_test && (cmd.type == "FALL" || cmd.type == "EGRESS" ||
+                                 cmd.type == "VITAL_ABNORMAL");
+
+            if (holdUntilCleared) {
+                display.showUntilAborted(toText(cmd), sev, aborted);
+            } else {
+                // 서버가 지정하면 그대로, 안 주면 노드 기본값
+                int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
+                display.show(toText(cmd), sev, passes, aborted);
+            }
         }
         else if (cmd.matrix_action == "CLEAR")
             display.clear();
