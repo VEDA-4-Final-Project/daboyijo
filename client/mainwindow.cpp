@@ -5350,109 +5350,8 @@ void MainWindow::checkChannelHealth()
 //  도착한 순간(onWearableData)에 하고, 여기 타이머는 신호가 끊긴 걸 시간이
 //  지나 알아채는 역할이다. (팔레트 전환 때도 색을 다시 입히려고 호출된다)
 // ═══════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════
-//  바이탈 데모 모드 — 웨어러블·DB 없이 카드 5장에 정상값을 띄운다.
-//  기본값이 켜짐 — 끄려면 DABO_DEMO_VITALS=0 (mainwindow.h demoVitals_).
-// ═══════════════════════════════════════════════════════════
-namespace {
-// 가짜 입소자의 resident_id. 실제 DB 행과 섞이지 않게 큰 수로 띄워 둔다 —
-// 데모 모드는 DB를 안 읽지만, 값·이력 해시(vitals_/hrHistory_)에 남은 키를
-// 로그에서 보고 "이건 데모다" 하고 바로 알아볼 수 있게 하는 목적도 있다.
-constexpr int kDemoRidBase = 900001;
-
-struct DemoSeed {
-    const char* name;
-    int channel;
-    int hrBase;    // 사람마다 기준 심박이 달라야 카드 5장의 그래프가 구분된다
-    int spo2Base;
-};
-// 채널 0 에 두 명 — 한 채널에 여러 명이 배정된 배치(카드가 채널 수보다 많은
-// 경우)까지 화면에서 확인하려고 일부러 이렇게 나눴다.
-const DemoSeed kDemoSeeds[] = {
-    {"김영자", 0, 62, 98},
-    {"박정호", 0, 70, 97},
-    {"이순덕", 1, 78, 99},
-    {"최말순", 2, 66, 98},
-    {"정삼식", 3, 85, 96},
-};
-constexpr int kDemoCount = int(sizeof(kDemoSeeds) / sizeof(kDemoSeeds[0]));
-
-// 정상 대역. vitalLevel()의 경계(SpO2 95 / 심박 55·100)에 한 칸씩 여유를 뒀다 —
-// 경계값을 오가면 배지가 정상↔주의로 깜빡여서 데모 중에 오해를 산다.
-constexpr int kDemoSpo2Min = 96, kDemoSpo2Max = 99;
-constexpr int kDemoHrMin   = 58, kDemoHrMax   = 95;
-
-int demoClamp(int v, int lo, int hi) { return std::max(lo, std::min(hi, v)); }
-}  // namespace
-
-// 가짜 입소자 5명을 채널 맵에 심는다. loadPatientsFromDb()가 DB 대신 부른다.
-void MainWindow::seedDemoResidents()
-{
-    const QString room = currentRoomName();
-    for (int i = 0; i < kDemoCount; ++i) {
-        const DemoSeed& seed = kDemoSeeds[i];
-        const int rid = kDemoRidBase + i;
-        const int ch  = seed.channel;
-
-        ResidentInfo info;
-        info.name    = QString::fromUtf8(seed.name);
-        info.room    = room;
-        info.bed     = QStringLiteral("%1 · 채널 %2").arg(room).arg(ch + 1);
-        info.channel = ch;
-        residentInfo_.insert(rid, info);
-        residentsByChannel_[ch].append(rid);
-
-        // 영상 오버레이는 채널당 한 줄이라 그 채널의 첫 사람만 올린다(DB 경로와 같은 규칙).
-        if (residentsByChannel_[ch].size() == 1) {
-            patients[ch].name = info.name;
-            patients[ch].bed  = info.bed;
-            patients[ch].room = info.room;
-        }
-    }
-    qInfo() << "[데모] 바이탈 데모 모드 — 가짜 입소자" << kDemoCount << "명으로 카드를 만듭니다"
-            << "(실제 값으로 돌리려면 DABO_DEMO_VITALS=0)";
-}
-
-// 값을 한 칸씩 흔든다. 매번 새로 뽑지 않고 임의보행으로 움직이는 이유는,
-// 재추첨하면 정상 대역 안에서도 스파크라인이 톱니처럼 튀어 실제 심박 추세처럼
-// 보이지 않기 때문이다.
-void MainWindow::tickDemoVitals()
-{
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    auto* rng = QRandomGenerator::global();
-
-    for (int i = 0; i < kDemoCount; ++i) {
-        const int rid = kDemoRidBase + i;
-        if (!residentInfo_.contains(rid)) continue;   // 방을 옮겨 카드가 없는 경우
-
-        VitalSample& v = vitals_[rid];
-        if (!v.received) {              // 첫 틱 — 사람마다 다른 기준값에서 출발
-            v.heartRate = kDemoSeeds[i].hrBase;
-            v.spo2      = kDemoSeeds[i].spo2Base;
-        } else {
-            v.heartRate = demoClamp(v.heartRate + int(rng->bounded(-2, 3)),
-                                    kDemoHrMin, kDemoHrMax);
-            v.spo2      = demoClamp(v.spo2 + int(rng->bounded(-1, 2)),
-                                    kDemoSpo2Min, kDemoSpo2Max);
-        }
-        v.received    = true;
-        v.arrivedAtMs = now;            // 30초 stale 판정에 걸리지 않게 매 틱 갱신
-
-        // 그래프 점은 실제 수신 경로(onWearableData)와 같은 순서로 쌓는다 —
-        // 위젯 밖 이력(hrHistory_)에도 넣어야 카드를 다시 만들 때 추세가 살아난다.
-        QVector<double>& hist = hrHistory_[rid];
-        hist.append(v.heartRate);
-        while (hist.size() > kHrHistoryMax) hist.removeFirst();
-        if (VitalTile* tile = vitalTiles_.value(rid)) tile->pushHeartRateSample(v.heartRate);
-    }
-}
-
 void MainWindow::updateVitals()
 {
-    // 데모 모드에서는 값이 "도착한 척"을 여기서 한다 — 2초 타이머를 그대로 쓰므로
-    // 실제 웨어러블이 붙었을 때와 갱신 주기·경로가 같다.
-    if (demoVitals_) tickDemoVitals();
-
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // 판정(무신호 3종 구분·등급·라벨·도형 접두)은 전부 여기서 한다 — VitalTile은
@@ -8948,13 +8847,6 @@ void MainWindow::loadPatientsFromDb()
     }
     wearableToResident.clear();
     residentInfo_.clear();
-
-    // 데모 모드는 DB를 아예 건너뛴다 — 실제 입소자와 가짜 입소자가 한 화면에
-    // 섞이면 어느 카드가 진짜 기기에서 온 값인지 구분할 수 없다.
-    if (demoVitals_) {
-        seedDemoResidents();
-        return;
-    }
 
     QSqlQuery q;
     if (!q.exec(QStringLiteral(

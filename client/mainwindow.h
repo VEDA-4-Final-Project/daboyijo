@@ -741,17 +741,6 @@ private:
     // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
     void loadPatientsFromDb();
 
-    // ── 바이탈 데모 모드 ────────────────────────────────────
-    // 웨어러블도 DB도 없는 자리(발표·UI 확인)에서 바이탈 카드가 전부 "대기"로만
-    // 남지 않게 가짜 입소자 5명과 그 사람들의 정상 생체값을 앱 안에서 만든다.
-    // ★ 기본값이 "켜짐"이다 — 실제 웨어러블·DB 값으로 돌리려면 환경변수
-    //   DABO_DEMO_VITALS=0 으로 꺼야 한다. 켜져 있는 동안에는 DB의 입소자 조회를
-    //   대신하는 게 아니라 아예 건너뛴다(loadPatientsFromDb) — 진짜 값과 가짜 값이
-    //   같은 화면에 섞이면 어느 카드가 실제 기기에서 온 건지 구분할 수 없어서다.
-    bool demoVitals_ =
-        qEnvironmentVariable("DABO_DEMO_VITALS", QStringLiteral("1")) != QLatin1String("0");
-    void seedDemoResidents();   // 가짜 입소자 5명을 채널 맵에 심는다
-    void tickDemoVitals();      // 정상 대역 안에서 값을 한 칸씩 흔든다
     // patients[]를 영상 오버레이·바이탈 카드 라벨에 다시 반영(등록/수정/퇴원 후 호출).
     void refreshPatientLabels();
     void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
