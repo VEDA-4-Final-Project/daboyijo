@@ -54,9 +54,11 @@ uint8_t MAX30102_AutoGain(uint32_t ir_dc, uint8_t is_worn)
     {
         if (s_led_current != MAX30102_LED_CURRENT)
         {
+            /* 위와 같은 이유로 쓰기 성공을 확인하고서 갱신한다 */
+            if (MAX30102_WriteRegister(MAX30102_REG_LED1_PA, MAX30102_LED_CURRENT) != HAL_OK) return 0;
+            if (MAX30102_WriteRegister(MAX30102_REG_LED2_PA, MAX30102_LED_CURRENT) != HAL_OK) return 0;
+
             s_led_current = MAX30102_LED_CURRENT;
-            MAX30102_WriteRegister(MAX30102_REG_LED1_PA, s_led_current);
-            MAX30102_WriteRegister(MAX30102_REG_LED2_PA, s_led_current);
             s_last_adjust_ms = HAL_GetTick();
             return 1;
         }
@@ -84,9 +86,16 @@ uint8_t MAX30102_AutoGain(uint32_t ir_dc, uint8_t is_worn)
     uint8_t next = (uint8_t)est;
     if (next == s_led_current) return 0;
 
+    /* 쓰기가 성공한 뒤에만 s_led_current 를 갱신한다.
+     *
+     * 이 값은 단순한 기록이 아니라 착용 판정의 분모다 (반사율 = IR DC / 전류).
+     * I2C 오류로 쓰기가 실패했는데 값만 바꿔두면, 센서는 옛 전류로 발광하는데
+     * MCU 는 새 전류로 나눠 반사율을 계산한다. 그 어긋남은 오류가 멎어도
+     * 저절로 복구되지 않고, 로그의 LED 값도 거짓이 되어 진단을 방해한다. */
+    if (MAX30102_WriteRegister(MAX30102_REG_LED1_PA, next) != HAL_OK) return 0;
+    if (MAX30102_WriteRegister(MAX30102_REG_LED2_PA, next) != HAL_OK) return 0;
+
     s_led_current = next;
-    MAX30102_WriteRegister(MAX30102_REG_LED1_PA, s_led_current);
-    MAX30102_WriteRegister(MAX30102_REG_LED2_PA, s_led_current);
 
     /* FIFO 를 비운다. 남아있는 샘플은 이전 전류로 찍힌 것이라, 그대로 두면
      * 다음 블록에 옛 전류와 새 전류가 섞여 경계에 큰 계단이 생긴다. */
@@ -122,6 +131,25 @@ void MAX30102_BusScan(void)
         printf("없음 → SDA/SCL 배선, 센서 전원(VIN/3V3), 풀업 저항을 확인하세요");
     }
     printf("\r\n");
+}
+
+/**
+  * @brief  센서 설정이 살아 있는지 되읽어 확인한다.
+  *
+  * 충격이나 전원 드룹으로 센서만 자체 리셋되면 MODE_CONF 가 0x00 으로
+  * 돌아간다. 그러면 LED 는 꺼지고 FIFO 도 안 차는데, I2C 버스 자체는
+  * 멀쩡하므로 MCU 쪽에서는 아무 오류도 보이지 않는다. 되읽기만이
+  * 그 상태를 드러낸다.
+  *
+  * @note  블로킹 I2C 판독이다. 메인 루프에서만 호출할 것.
+  */
+uint8_t MAX30102_IsAlive(void)
+{
+    uint8_t mode = 0;
+
+    if (MAX30102_ReadRegister(MAX30102_REG_MODE_CONF, &mode) != HAL_OK) return 0;
+
+    return (mode == MAX30102_MODE_CONF_VAL) ? 1 : 0;
 }
 
 /**
@@ -165,7 +193,7 @@ HAL_StatusTypeDef MAX30102_Init(void)
 
     /* FIFO 구성 → SpO2 모드 진입 → 샘플링/해상도 설정 */
     if (MAX30102_WriteRegister(MAX30102_REG_FIFO_CONF, MAX30102_FIFO_CONF_VAL) != HAL_OK) return HAL_ERROR;
-    if (MAX30102_WriteRegister(MAX30102_REG_MODE_CONF, 0x03) != HAL_OK) return HAL_ERROR;
+    if (MAX30102_WriteRegister(MAX30102_REG_MODE_CONF, MAX30102_MODE_CONF_VAL) != HAL_OK) return HAL_ERROR;
     if (MAX30102_WriteRegister(MAX30102_REG_SPO2_CONF, MAX30102_SPO2_CONF_VAL) != HAL_OK) return HAL_ERROR;
 
     s_led_current = MAX30102_LED_CURRENT;
