@@ -5,14 +5,10 @@
 #   - 글자 하나당 16행, 각 행은 uint16 (비트 0x8000 = 맨 왼쪽 칸)
 #   - adv = 다음 글자로 커서를 옮길 칸 수 (한글은 넓고 숫자는 좁다)
 #
-# 예전에는 화면에 띄울 문구에 나오는 글자만 손으로 골라 넣었다. 그런데 입주자
-# 이름은 DB 에서 오는 임의의 한글이라(서버가 가운데 글자만 O 로 가려 보낸다)
-# 목록에 없는 글자를 만나면 렌더러가 조용히 8px 를 건너뛰고 지나간다 - 낙상
-# 알림에서 이름 한 글자가 소리 없이 사라지는 셈이다. 그래서 골라 담는 걸
-# 그만두고 완성형 11172 자를 전부 넣는다. 450KB 쯤 되는데 유저스페이스 앱의
-# 정적 데이터라 파이에서 부담이 없다.
+# 완성형 11172 자를 전부 넣는다(450KB) - 입주자 이름은 DB 에서 오는 임의의 한글이라
+# 골라 담으면 목록 밖 글자에서 렌더러가 조용히 8px 를 건너뛰고 지나간다
 #
-# 실행: python3 genfont.py   (fonts-nanum 설치 필요, 파이에서 1 분쯤 걸린다)
+# 실행: python3 genfont.py   (fonts-nanum 설치 필요, 5초쯤)
 
 import os
 import sys
@@ -23,13 +19,13 @@ FONT_PATH = "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"
 SIZE = 15          # 16행 안에 안정적으로 들어가는 크기 (미리보기로 튜닝함)
 H    = 16          # 글자 높이 (칸)
 THRESH = 110       # 안티에일리어싱 알파 임계값 - 이보다 진하면 켠 픽셀
-# 어디서 실행하든 이 스크립트 옆에 쓴다 - 헤더를 참조하는 소스가 같은 디렉터리에 있다
+# 헤더를 쓰는 소스가 같은 디렉터리에 있어서, 어디서 실행하든 여기에 쓴다
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub75-font16.h")
 
 # 한글 완성형 전체 (U+AC00 ~ U+D7A3)
 CHARS_KO = "".join(chr(c) for c in range(0xAC00, 0xD7A3 + 1))
-# 출력 가능한 ASCII 전부 - 영문도 넣는다. 서버 message 는 로그용 영문이라
-# 알파벳이 없으면 폴백 표시가 숫자만 남는다 (main.cpp toText 참고)
+# 출력 가능한 ASCII 전부 - 서버 message 가 로그용 영문이라 알파벳이 없으면
+# 폴백 표시가 숫자만 남는다 (main.cpp toText 참고)
 CHARS_ASCII = "".join(chr(c) for c in range(0x20, 0x7E + 1))
 
 font = ImageFont.truetype(FONT_PATH, SIZE)
@@ -40,8 +36,7 @@ glyphs = []   # (codepoint, adv, [16개의 uint16 행])
 seen = set()
 clipped = []  # 16칸을 넘어가 잘린 글자 - 있으면 SIZE 를 줄여야 한다
 
-# 잘림을 보려면 셀보다 넓게 그려야 한다. 16칸만 그리면 넘친 픽셀이 조용히 버려져
-# 글자가 이지러진 걸 알 수가 없다.
+# 셀보다 넓게 그린다 - 16칸만 그리면 넘친 픽셀이 조용히 버려져 잘림을 못 본다
 CANVAS = H * 2
 
 for ch in CHARS_KO + CHARS_ASCII:
@@ -59,8 +54,7 @@ for ch in CHARS_KO + CHARS_ASCII:
     d = ImageDraw.Draw(img)
     d.text((-bbox[0], y0), ch, fill=255, font=font)   # 왼쪽 정렬(bbox 좌측 여백 제거)
 
-    # 한 글자에 픽셀이 CANVAS*H 개고 글자가 11000 자가 넘는다. px[c, r] 로 하나씩
-    # 집으면 파이에서 몇 분씩 걸려서, 행 단위로 bytes 를 떠다 쓴다.
+    # 11000 자를 px[c, r] 로 하나씩 집으면 파이에서 몇 분 걸린다 - 행 단위로 뜬다
     raw = img.tobytes()
 
     rows = []
