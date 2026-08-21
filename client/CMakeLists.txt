@@ -47,6 +47,7 @@ qt_add_executable(daboyijo
     timelinebar.cpp
     timelinebar.h
     hub75-font16.h
+    audiotransmitter.h audiotransmitter.cpp
 )
 
 # 앱 전역 스타일시트 리소스.
