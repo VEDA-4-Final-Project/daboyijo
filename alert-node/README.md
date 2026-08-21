@@ -14,9 +14,9 @@ drivers/wm8960    오디오 코덱 드라이버 (커널 모듈 + 오버레이)
 drivers/hub75     64x32 LED 패널 드라이버 (커널 모듈 + 오버레이)
 app/main.cpp      알림 노드 본체 (MQTT → 오디오 + 패널)
 app/AudioPlayer   ALSA 재생 (VedaAudioPlayer)
-app/matrix        패널 렌더러 (AlertDisplay) + 데모
+app/matrix        패널 렌더러 (AlertDisplay) + 글꼴/글꼴 생성기 + 데모
 app/sounds        경보 음원
-scripts/          모듈 적재/해제
+scripts/          모듈 적재/해제 + systemd 유닛
 ```
 
 빌드 의존성은 `raspberrypi-kernel-headers`, `libasound2-dev`,
@@ -62,22 +62,28 @@ systemctl status alert-node-drivers    # 확인
 
 ```
 broker_host = localhost        # 배치할 때 서버 IP 로
+broker_port = 8883             # MQTTS — 평문으로 되돌리려면 1883 + ca_path 비우기
+ca_path     = certs/ca.crt     # 브로커 검증용 CA, 비우면 평문. git 에 안 올라감
 node_id     = alarm_rpi_01     # AlarmCommand.target_device 와 비교
 topic       = veda/alarm/control
 audio_dir   = sounds           # 서버가 파일명만 보낼 때 찾는 곳
 idle_text   = 감시 중          # 평상시 문구 (64px 를 넘으면 잘림)
 idle_mode   = clock            # clock = 현재 시각, text = 위 문구
+matrix_passes = 3              # 테스트 표시에만 쓰임
+matrix_brightness = 128        # 평상시 밝기 0~255
 ```
 
 `AlarmCommand` 의 각 필드가 이렇게 대응됩니다.
 
 ```
 type           FALL / EGRESS → 빨강, VITAL_ABNORMAL → 주황, 그 외 초록
-room           있으면 노드가 문구를 조립, 비면 message 를 그대로 표시
+room, name     있으면 노드가 문구를 조립, 비면 message 를 그대로 표시
+               name 은 서버가 가운데 글자를 O 로 가려 보낸 것
 audio_action   PLAY / STOP        audio_file  파일명 또는 절대 경로
-volume, loop   음량과 반복 재생    matrix_action  SHOW / CLEAR
-matrix_passes  스크롤 횟수. 안 주면 설정의 기본값 (1~10 으로 잘림)
+volume, loop   음량과 반복 재생    matrix_action  SHOW / CLEAR / NONE
+matrix_passes  테스트 스크롤 횟수 (1~10 으로 잘림). 실제 경보는 해제까지 흘려서 무관
 brightness     0~255
+is_test        관제 앱 "테스트" 표시. 보여준 뒤 평상시 밝기·음량으로 되돌린다
 ```
 
 평상시에는 현재 시각을 시:분:초로 띄웁니다. 초가 바뀔 때만 다시 그립니다.
