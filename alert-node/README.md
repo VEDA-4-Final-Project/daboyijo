@@ -45,7 +45,8 @@ broker_host = localhost        # 배치할 때 서버 IP 로
 node_id     = alarm_rpi_01     # AlarmCommand.target_device 와 비교
 topic       = veda/alarm/control
 audio_dir   = sounds           # 서버가 파일명만 보낼 때 찾는 곳
-idle_text   = 감시 중          # 평상시 표시 (64px 를 넘으면 잘림)
+idle_text   = 감시 중          # 평상시 문구 (64px 를 넘으면 잘림)
+idle_mode   = clock            # clock = 현재 시각, text = 위 문구
 ```
 
 `AlarmCommand` 의 각 필드가 이렇게 대응됩니다.
@@ -58,6 +59,14 @@ volume, loop   음량과 반복 재생    matrix_action  SHOW / CLEAR
 matrix_passes  스크롤 횟수. 안 주면 설정의 기본값 (1~10 으로 잘림)
 brightness     0~255
 ```
+
+평상시에는 현재 시각을 시:분:초로 띄웁니다. 초가 바뀔 때만 다시 그립니다.
+`idle_mode = text` 로 두면 대신 `idle_text` 문구가 뜹니다.
+
+파이에는 RTC 배터리가 없어 부팅 직후 시각은 `fake-hwclock` 이 복원한 지난번
+종료 시각입니다. 몇 시간 틀린 시계를 벽에 거느니 안 거는 게 낫다고 보고,
+systemd-timesyncd 가 `/run/systemd/timesync/synchronized` 를 만들기 전까지는
+`idle_text` 로 물러납니다.
 
 표시 정책은 노드가 정합니다. 서버는 발행 시점에 그 뒤로 무엇이 올지 모르기
 때문입니다.

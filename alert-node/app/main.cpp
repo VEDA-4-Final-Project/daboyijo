@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <linux/limits.h>
 
@@ -86,7 +88,10 @@ struct Config {
     std::string node_id     = "alarm_rpi_01";
     std::string topic       = "veda/alarm/control";
     std::string audio_dir   = "sounds";
-    std::string idle_text   = "감시 중";      // 평상시 표시 — 64px 안에 들어갈 것
+    // 평상시 화면 — clock 이면 시각을, text 면 idle_text 를 띄운다.
+    // idle_mode=clock 이어도 시각을 못 믿을 때는 idle_text 로 물러난다(timeSynced 참고).
+    std::string idle_text   = "감시 중";      // 64px 안에 들어갈 것
+    std::string idle_mode   = "clock";
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
     int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
@@ -142,6 +147,11 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "topic")       c.topic       = v;
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
+        else if (k == "idle_mode") {
+            if (v == "clock" || v == "text") c.idle_mode = v;
+            else fprintf(stderr, "[설정] idle_mode 는 clock 또는 text - \"%s\" 무시\n",
+                         v.c_str());
+        }
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
         else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
@@ -187,6 +197,29 @@ std::string toText(const AlarmCommand& c)
     // 호실이나 이름을 모르면 그 부분만 빼고, 이벤트 문구는 어떤 경우에도 남긴다.
     const std::string who = c.name.empty() ? std::string() : (c.name + " ");
     return where + who + phrase;
+}
+
+// 평상시 시계가 믿을 만한지
+//
+// 파이에는 RTC 배터리가 없다. 부팅 직후 시각은 fake-hwclock 이 복원한 지난번 종료
+// 시각이라 몇 시간씩 틀린 값이 그대로 벽에 걸린다. systemd-timesyncd 는 NTP 로
+// 맞추고 나서야 이 파일을 만드니, 생기기 전까지는 시계 대신 문구만 띄운다.
+bool timeSynced()
+{
+    struct stat st;
+    return stat("/run/systemd/timesync/synchronized", &st) == 0;
+}
+
+// "14:23:05" — 진행폭이 정확히 64px 라 좌우 여백이 없어 보이지만, 숫자 글리프가
+// 제 칸 안에서 한 칸씩 들여 그려져 실제 잉크는 1~62열에 떨어진다. 안 잘린다.
+std::string currentTime()
+{
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    char buf[16];
+    strftime(buf, sizeof(buf), "%H:%M:%S", &lt);
+    return buf;
 }
 
 // 절대 경로면 그대로, 파일명만 오면 audio_dir 에서 찾음
@@ -310,12 +343,28 @@ int main(int argc, char* argv[])
     auto aborted = [&](int passesDone) {
         return !running || (passesDone >= 1 && !queue.empty());
     };
-    bool idleShown = false;
+    bool        idleShown = false;   // 평상시 화면이 떠 있나 — 경보가 덮으면 내려감
+    std::string idleClock;           // 그때 그린 시각, 초가 넘어가면 다시 그림
+
+    // 한 번 동기화되면 되돌아가지 않으니, 확인되고 나면 더 안 본다
+    bool clockReady = false;
+    auto clockOn = [&] {
+        if (cfg.idle_mode != "clock") return false;
+        if (!clockReady) clockReady = timeSynced();
+        return clockReady;
+    };
 
     while (running) {
         AlarmCommand cmd;
         if (!queue.tryPop(cmd)) {
-            if (!idleShown) { display.showStatic(cfg.idle_text, SEV_INFO); idleShown = true; }
+            // 바뀔 때만 다시 그린다 — 폴링이 100ms 라 그냥 그리면 초당 열 번을
+            // 그리게 되는데, 그중 아홉 번은 화면이 한 픽셀도 안 바뀐다
+            std::string now = clockOn() ? currentTime() : std::string();
+            if (!idleShown || now != idleClock) {
+                display.showStatic(now.empty() ? cfg.idle_text : now, SEV_INFO);
+                idleClock = now;
+                idleShown = true;
+            }
             usleep(100000);
             continue;
         }
