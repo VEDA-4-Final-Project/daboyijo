@@ -57,6 +57,13 @@
  * 읽히면 전체 렌더를 마치고 바로 끄는 헛수고가 생긴다. */
 #define DISPLAY_MIN_ON_MS    500
 
+/* 화면 심박을 더미(60~65)로 띄운다.
+ *
+ * 센서 한계로 손목에서 맥박이 잡히는 일이 드물어, 실제 값을 띄우면 화면에
+ * '--' 만 남는다. 시연용 임시 조치이며 화면에만 적용된다 — BLE 로 나가는
+ * 값은 여전히 실측이다. 센서 문제가 해결되면 0 으로 되돌릴 것. */
+#define DISPLAY_DUMMY_HR     1
+
 /* 켜져 있는 동안 라벨 갱신 주기 */
 #define DISPLAY_LABEL_MS     1000
 
@@ -79,11 +86,23 @@ static void Update_Labels(void)
     lv_label_set_text_fmt(ui_timeHour,   "%02u", hour);
     lv_label_set_text_fmt(ui_timeMinute, "%02u", minute);
 
+#if DISPLAY_DUMMY_HR
+    /* 시연용 더미 심박. 화면에만 쓰고 BLE 로 나가는 값은 건드리지 않는다 —
+     * 서버·Qt 쪽 판정까지 가짜 값으로 오염시키면 안 된다.
+     *
+     * 시각을 값으로 삼아 1초마다 바뀌게 한다. 화면이 꺼진 동안에도 시간은
+     * 흐르므로, 다시 켰을 때 값이 멈춰 있던 것처럼 보이지 않는다.
+     * 60→65 를 순서대로 도는 대신 섞어둔 이유는 그 규칙성이 눈에 띄기 때문이다. */
+    static const uint8_t DUMMY_BPM[] = { 61, 64, 60, 63, 65, 62 };
+    uint32_t bpm = DUMMY_BPM[(HAL_GetTick() / 1000u) % (sizeof(DUMMY_BPM) / sizeof(DUMMY_BPM[0]))];
+    lv_label_set_text_fmt(ui_textHeart, "%lu", (unsigned long)bpm);
+#else
     /* 심박은 아직 못 구했으면 0 이 온다. 0 을 그대로 띄우면 '심박이 0' 으로
      * 읽히므로 측정 중임을 뜻하는 표시로 바꾼다. */
     uint32_t bpm = HeartRateCalc_GetBPM();
     if (bpm > 0) lv_label_set_text_fmt(ui_textHeart, "%lu", (unsigned long)bpm);
     else         lv_label_set_text(ui_textHeart, "--");
+#endif
 
     lv_label_set_text_fmt(ui_textStep, "%lu", (unsigned long)StepCounter_GetSteps());
 }
