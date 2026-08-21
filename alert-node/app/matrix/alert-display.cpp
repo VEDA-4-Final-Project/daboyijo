@@ -253,8 +253,7 @@ void AlertDisplay::scroll(const std::string& msg, severity sev, int passes,
     const int span = measureText(msg) + cols_;      // 오른쪽 등장 ~ 왼쪽 퇴장
     long frame = 0;
 
-    // frame 은 바퀴를 넘어가도 안 끊긴다 — 긴급 깜빡임 주기를 이걸로 세기 때문에,
-    // 바퀴마다 0 으로 되돌리면 한 바퀴에 한 번씩 리듬이 튄다
+    // frame 은 바퀴를 넘어가도 안 끊는다 — 되돌리면 깜빡임 리듬이 한 바퀴마다 튄다
     for (int pass = 0; passes < 0 || pass < passes; pass++)
         for (int off = 0; off <= span; off++, frame++) {
             if (abort && abort(pass)) return;

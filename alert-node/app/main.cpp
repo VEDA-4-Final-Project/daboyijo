@@ -88,10 +88,8 @@ struct Config {
     std::string node_id     = "alarm_rpi_01";
     std::string topic       = "veda/alarm/control";
     std::string audio_dir   = "sounds";
-    // 평상시 화면 — clock 이면 시각을, text 면 idle_text 를 띄운다.
-    // idle_mode=clock 이어도 시각을 못 믿을 때는 idle_text 로 물러난다(timeSynced 참고).
-    std::string idle_text   = "감시 중";      // 64px 안에 들어갈 것
-    std::string idle_mode   = "clock";
+    std::string idle_text   = "감시 중";      // 평상시 문구 — 64px 안에 들어갈 것
+    std::string idle_mode   = "clock";        // clock = 시각, text = idle_text
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
     int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
@@ -199,19 +197,15 @@ std::string toText(const AlarmCommand& c)
     return where + who + phrase;
 }
 
-// 평상시 시계가 믿을 만한지
-//
-// 파이에는 RTC 배터리가 없다. 부팅 직후 시각은 fake-hwclock 이 복원한 지난번 종료
-// 시각이라 몇 시간씩 틀린 값이 그대로 벽에 걸린다. systemd-timesyncd 는 NTP 로
-// 맞추고 나서야 이 파일을 만드니, 생기기 전까지는 시계 대신 문구만 띄운다.
+// 시계를 믿어도 되는지 — 파이엔 RTC 배터리가 없어 부팅 직후 시각은 fake-hwclock 이
+// 복원한 지난번 종료 시각이다. timesyncd 가 NTP 로 맞추고 나서야 이 파일을 만든다
 bool timeSynced()
 {
     struct stat st;
     return stat("/run/systemd/timesync/synchronized", &st) == 0;
 }
 
-// "14:23:05" — 진행폭이 정확히 64px 라 좌우 여백이 없어 보이지만, 숫자 글리프가
-// 제 칸 안에서 한 칸씩 들여 그려져 실제 잉크는 1~62열에 떨어진다. 안 잘린다.
+// "14:23:05" — 진행폭이 딱 64px 지만 숫자가 제 칸 안에서 들여 그려져 안 잘린다
 std::string currentTime()
 {
     time_t t = time(nullptr);
@@ -337,20 +331,15 @@ int main(int argc, char* argv[])
     printf("[알림노드] %s 로 %s 구독 시작 (node_id=%s)\n",
            cfg.broker_host.c_str(), cfg.topic.c_str(), cfg.node_id.c_str());
 
-    // 표시 정책은 노드가 정함 — 서버는 발행 시점에 뒤에 뭐가 올지 모름
-    //
-    // 경보 화면은 해제할 때까지 안 끝나므로, 다음 명령이 들어오면 바로 그쪽으로
-    // 넘어간다. 예전에는 "최소 한 바퀴는 끝까지" 를 보장했는데, 그건 화면이 몇 바퀴
-    // 돌고 저절로 사라지던 시절의 규칙이다. 지금 그대로 두면 안 끝나는 앞 경보가
-    // 뒤에 온 경보를 한 바퀴씩 막아서게 된다.
+    // 다음 명령이 오면 즉시 넘어감 — 경보 화면이 해제 전까지 안 끝나서,
+    // 한 바퀴를 보장하면 앞 경보가 뒤에 온 경보를 막아서게 된다
     auto aborted = [&](int) {
         return !running || !queue.empty();
     };
     bool        idleShown = false;   // 평상시 화면이 떠 있나 — 경보가 덮으면 내려감
-    std::string idleClock;           // 그때 그린 시각, 초가 넘어가면 다시 그림
+    std::string idleClock;           // 그때 그린 시각 — 초가 넘어가면 다시 그림
 
-    // 한 번 동기화되면 되돌아가지 않으니, 확인되고 나면 더 안 본다
-    bool clockReady = false;
+    bool clockReady = false;         // 한 번 동기화되면 안 되돌아가니 그 뒤론 안 봄
     auto clockOn = [&] {
         if (cfg.idle_mode != "clock") return false;
         if (!clockReady) clockReady = timeSynced();
@@ -360,8 +349,7 @@ int main(int argc, char* argv[])
     while (running) {
         AlarmCommand cmd;
         if (!queue.tryPop(cmd)) {
-            // 바뀔 때만 다시 그린다 — 폴링이 100ms 라 그냥 그리면 초당 열 번을
-            // 그리게 되는데, 그중 아홉 번은 화면이 한 픽셀도 안 바뀐다
+            // 바뀔 때만 그린다 — 폴링이 100ms 라 그냥 그리면 열 번 중 아홉은 헛일
             std::string now = clockOn() ? currentTime() : std::string();
             if (!idleShown || now != idleClock) {
                 display.showStatic(now.empty() ? cfg.idle_text : now, SEV_INFO);
@@ -416,14 +404,10 @@ int main(int argc, char* argv[])
             severity sev = toSeverity(cmd.type);
             display.blinkCue(sev, 2, aborted);  // 새 경보라는 신호 (종료 신호면 중단)
 
-            // 실제 경보는 해제(CLEAR)나 다음 경보가 올 때까지 계속 흘린다 — 소리와
-            // 같은 규칙이다. 아무도 없는 사이에 몇 바퀴 돌고 사라지면 그 경보는
-            // 없었던 것과 같아진다.
-            //
-            // 관제 앱 "테스트" 는 예외로 정해진 바퀴만 돈다. 눌러 본 사람이 해제까지
-            // 눌러야 꺼지는 화면이면 테스트가 아니라 사고다. is_test 와 이벤트 종류를
-            // 같이 보는 건, is_test 를 안 보내는 발신자가 있어도(기본값 false) 진짜
-            // 경보만 붙잡아 두기 위해서다.
+            // 실제 경보는 해제할 때까지 흘린다 — 소리와 같은 규칙. 몇 바퀴 돌고
+            // 사라지면 아무도 없던 사이의 경보는 없었던 것과 같아진다
+            // 테스트는 제외 — 눌러 본 사람이 해제까지 눌러야 꺼지면 사고다
+            // 종류까지 보는 건 is_test 를 안 보내는 발신자(기본값 false) 때문
             const bool holdUntilCleared =
                 !cmd.is_test && (cmd.type == "FALL" || cmd.type == "EGRESS" ||
                                  cmd.type == "VITAL_ABNORMAL");
