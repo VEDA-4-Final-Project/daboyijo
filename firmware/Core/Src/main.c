@@ -57,6 +57,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "dma.h"
 #include "i2c.h"
 #include "spi.h"
@@ -79,6 +80,7 @@
 #include "usbd_cdc_if.h"
 #include "hm10.h"
 #include "display_service.h"
+#include "battery.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -140,6 +142,13 @@ static uint32_t  g_i2c_recover_count  = 0;   // I2C 오류로 버스 복구한 �
  * BUSY 가 비정상적으로 오래 지속되면 시간으로 그 교착을 연다. */
 static uint32_t  g_i2c_busy_since_ms = 0;
 #define I2C_BUSY_STUCK_MS  3000           // 정상 트랜잭션은 수 ms 안에 끝난다
+
+/* PPG 센서 재초기화 (충격으로 센서만 리셋된 경우의 복구).
+ * 쿨다운은 재초기화 폭주를 막는다 —— 센서가 물리적으로 빠졌다면
+ * 매 오류마다 50ms 짜리 초기화를 시도하다 메인 루프가 잠식된다. */
+static uint32_t  g_last_ppg_reinit_ms = 0;
+static uint32_t  g_ppg_reinit_count   = 0;
+#define PPG_REINIT_COOLDOWN_MS  2000
 
 /* BMI270 FIFO 블록 — SPI DMA 수신 원본 및 디코딩 결과 */
 static uint8_t       bmi_fifo_rx[BMI270_FIFO_RX_LEN] = {0};
@@ -255,6 +264,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   MX_SPI1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
 
@@ -346,6 +356,23 @@ int main(void)
   /* 디스플레이는 꺼진 채로 세운다. 손목을 들 때까지 켜지지 않는다.
    * IWDG 보다 앞에 두는 이유는 내부 HAL_Delay 합계가 약 0.2초이기 때문이다. */
   DisplayService_Init(g_bmi270_ok);
+
+  /* 배터리 측정 시드. DisplayService_Init 뒤에 두는 이유는 첫 화면이
+   * 켜지기 전에 잔량이 채워져 있어야 하기 때문이다 — 앞에 두면 처음 한 번은
+   * SquareLine 기본값 80% 가 잠깐 보인다.
+   *
+   * USB 로만 급전 중이면(스위치 OFF) 분압기도 끊겨 있어 유효값을 못 얻는다.
+   * 그 경우 Battery_IsValid() 가 계속 0 이고 화면은 "--" 를 띄운다. */
+  Battery_Init();
+  if (Battery_IsValid())
+  {
+      printf("[  BAT  ] %.2fV (%u%%)\r\n",
+             (double)Battery_GetVolts(), (unsigned)Battery_GetPercent());
+  }
+  else
+  {
+      printf("[  BAT  ] 측정 경로 없음 — 스위치 OFF 이거나 USB 전용 급전\r\n");
+  }
 
   /* 부팅 시퀀스(센서 재시도 / Blink_Error_Code 의 HAL_Delay)가 모두 끝난
    * 뒤에 켠다. 이 위치가 중요하다 — 앞에서 켜면 재부팅 루프가 된다. */
@@ -455,6 +482,11 @@ int main(void)
       /* ------------------------------------------------------------------
        * [STAGE 4] 화면. 손목을 들었을 때만 켜지고, 켜져 있는 동안만 LVGL 이 돈다.
        * ------------------------------------------------------------------ */
+      /* 배터리는 화면보다 먼저 갱신한다 — 같은 바퀴에서 라벨을 채우게 하려면
+       * 값이 먼저 준비돼 있어야 한다. 내부에서 1초 주기로만 실제 측정하고,
+       * 측정하는 바퀴에만 약 0.33ms 를 쓴다. */
+      Battery_Service();
+
       DisplayService_Service();
 
       /* ------------------------------------------------------------------
@@ -586,7 +618,18 @@ static void Process_IMU_Block(void)
                                             bmi_accel, BMI270_FIFO_MAX_FRAMES);
     if (frames == 0) return;
 
-    FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_IsWorn());
+    /* 낙상 확정 게이트는 '광학적 접촉'(HasContact)까지만 요구한다.
+     *
+     * 원래는 IsWorn() —— 맥박까지 확인된 착용 —— 이었다. 그런데 이 센서로는
+     * 손목에서 맥박이 잡히는 일이 드물어, 정작 사람이 차고 있는데도 게이트가
+     * 열리지 않아 낙상이 통째로 묻혔다. 검출되지 않는 낙상보다는 가끔의 오보가
+     * 낫다는 판단이다 (사람이 차고 있는 기기다).
+     *
+     * ⚠ 대가: HasContact 는 IR DC 와 반사율만 보므로 책상·바닥에 엎어둔
+     *   상태에서도 참이 될 수 있다 (heart_rate_calc.c 상단 주석 참조).
+     *   그 경우 충격 + 정지가 겹치면 오보가 나갈 수 있다. 다만 맥박이 30초간
+     *   없으면 접촉 판정 자체가 해제되므로 창은 그만큼으로 제한된다. */
+    FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_HasContact());
 
     /* 만보기는 착용 판정을 거치지 않는다 — IMU 만으로 성립하는 기능에
      * PPG 접촉 판정을 물리면 MAX30102 고장이 만보기까지 끌고 들어간다.
@@ -919,6 +962,49 @@ static void Service_I2C_Fault(void)
         hi2c1.Instance->CR1 |=  I2C_CR1_SWRST;
         hi2c1.Instance->CR1 &= ~I2C_CR1_SWRST;
         HAL_I2C_Init(&hi2c1);
+    }
+
+    /* ------------------------------------------------------------------
+     * 버스를 고쳤다고 센서가 살아난 것은 아니다.
+     *
+     * 충격이나 전원 드룹은 I2C 오류와 센서 자체 리셋을 동시에 일으킨다.
+     * 위까지는 MCU 쪽 버스만 재건할 뿐이라, 센서가 MODE_CONF=0x00 으로
+     * 돌아가 있으면 LED 가 꺼진 채 FIFO 도 채우지 않는다. 그런데 버스는
+     * 정상이므로 더 이상 오류가 나지 않고, 아무도 이 상태를 깨우지 않는다.
+     * 실측: 충격 직후 측정이 멈춘 뒤 재부팅 전까지 복구되지 않았다.
+     *
+     * 낙상 감지 웨어러블에서 이건 치명적이다 —— 낙상은 곧 충격이고,
+     * HeartRateCalc_IsWorn() 이 맥박 기반이라 PPG 가 죽으면 낙상 판정까지
+     * 함께 꺼진다. 정확히 필요한 순간에 기능이 사라진다.
+     * ------------------------------------------------------------------ */
+    if (!g_max30102_ok) return;
+
+    /* 재초기화 폭주 방지. 센서가 물리적으로 빠졌다면 매 오류마다 50ms 짜리
+     * 초기화를 시도하게 되고, 그러면 메인 루프가 그것만 하다 끝난다. */
+    if ((HAL_GetTick() - g_last_ppg_reinit_ms) < PPG_REINIT_COOLDOWN_MS) return;
+
+    if (MAX30102_IsAlive()) return;   /* 설정이 살아 있으면 건드리지 않는다 */
+
+    g_last_ppg_reinit_ms = HAL_GetTick();
+    g_ppg_reinit_count++;
+
+    printf("[ PPG ] 센서 설정 소실 감지 — 재초기화 (%lu회차)\r\n",
+           (unsigned long)g_ppg_reinit_count);
+
+    if (MAX30102_Init() == HAL_OK)
+    {
+        /* 센서를 새로 세웠으니 신호 파이프라인도 처음부터다.
+         * 필터 상태와 자기상관 이력에는 죽기 직전의 잔재가 남아 있고,
+         * 그걸 새 신호와 한 창에 섞으면 가짜 주기가 만들어진다. */
+        HeartRateCalc_Reset();
+        g_last_ppg_block_ms = HAL_GetTick();
+        printf("[ PPG ] 재초기화 성공 — 측정 재개\r\n");
+    }
+    else
+    {
+        /* 실패해도 g_max30102_ok 를 내리지 않는다. 접촉 불량은 대개
+         * 일시적이라, 쿨다운 뒤 다음 오류에서 다시 시도하는 편이 낫다. */
+        printf("[ PPG ] 재초기화 실패 — 다음 오류에서 재시도\r\n");
     }
 }
 
