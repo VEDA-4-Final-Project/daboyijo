@@ -62,7 +62,7 @@ void CaregiverModule::addChannel(int channel) {
         // 직전 기록이 있고 그 뒤 공백이 3분 이내면 같은 행들에 이어붙인다.
         // log_id 들을 그대로 들고 있으므로 계속 들락거려도 한 행에 누적된다.
         if (!lastIds.empty() && gap >= 0.0 && gap <= kMergeWindowSec
-            && db_.addCareLogDuration(lastIds, dur)) {
+            && db_.addCareLogDuration(channel, lastIds, dur)) {
             std::fprintf(stderr, "[ch%d] 자리 비움 %.0f초 → 직전 케어에 합산 (%zu명)\n",
                          channel + 1, gap, lastIds.size());
             return;

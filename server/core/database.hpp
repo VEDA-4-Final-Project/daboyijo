@@ -1,6 +1,7 @@
 #ifndef DATABASE_HPP
 #define DATABASE_HPP
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,7 +74,10 @@ public:
     // start_time 은 그대로 두고 end_time 만 지금으로 민다. 그래서 이 행은
     // end_time - start_time > duration_sec 가 된다(그 차이가 자리 비운 시간).
     // 한 행이라도 병합에 실패하면 false — 호출자는 새 행으로 남기면 된다.
-    bool addCareLogDuration(const std::vector<long long>& logIds, int addSec);
+    // ★ 병합분도 insertCareLogs 와 같은 재실 교집합을 탄다 — 그 시간에 침대를
+    //   비운 사람에게는 안 더해진다. cameraId 는 그 판정(roi_zones/bed_sessions)에 쓴다.
+    bool addCareLogDuration(int cameraId, const std::vector<long long>& logIds,
+                            int addSec);
     // 환자 위험도의 유일한 소스는 residents.risk_level(Qt가 직접 기록)이다.
     // 과거 patient_status 테이블 경로(get/updatePatientStatus)는 아무도 INSERT하지
     // 않아 항상 비어 있던 죽은 경로라 제거함 — 아래 getRiskLevelByCamera로 통일.
@@ -164,6 +168,11 @@ public:
     //  residentId : -1 이면 cameraId 로 찾는다(1채널 1인 전제).
     //               ROI 마다 입소자를 매핑한 뒤에는 그 값을 넘길 것 —
     //               한 카메라에 침대가 둘이어도 정확히 갈린다.
+    // ★ 넘어온 residentId 가 residents 에 없으면 NULL 로 낮춰서 연다 —
+    //   bed_sessions.resident_id 에는 FK 가 걸려 있는데 매핑을 보관하는
+    //   roi_zones.resident_id 에는 없어서, 입소자가 지워지면 유령 id 가 남는다.
+    //   그대로 INSERT 하면 FK 거부로 세션이 아예 안 열리고, 호출부는 프레임마다
+    //   다시 시도한다 — 재실시간·케어시간이 통째로 0 이 된다.
     long long openBedSession(int cameraId, int residentId = -1);
     // 재실 세션 닫기(침대에서 벗어난 순간). duration_sec 도 여기서 채운다.
     // 이미 닫힌 세션이면 false — 중복 호출로 시간이 늘어나지 않는다.
@@ -196,6 +205,14 @@ private:
     // 그 채널의 재원자 "전원". 케어처럼 한 사건이 여러 사람에게 걸리는 기록용.
     // 위 residentByCameraLocked 도 이걸 써서 첫 사람을 고른다(규칙을 한 곳에).
     std::vector<int> residentsByCameraLocked(int channel);
+    // residents 에 그 id 가 실제로 있는가(퇴원 여부는 따지지 않는다 — 퇴원해도
+    // 그 사람의 과거 기록은 그 사람 것이다). 조회 자체가 실패하면 true 를
+    // 돌려준다 — DB 가 흔들릴 때 멀쩡한 매핑을 NULL 로 지워버리지 않으려는 것.
+    bool residentExistsLocked(int residentId);
+
+    // 유령 매핑 경고를 id 당 한 번만 찍기 위한 기록. 프레임마다 부르는 경로라
+    // 이게 없으면 사람이 누워 있는 내내 같은 줄이 흘러간다.
+    std::set<int> missing_resident_warned_;
 
     std::mutex mutex_;  // conn_ 보호
     MYSQL* conn_ = nullptr;

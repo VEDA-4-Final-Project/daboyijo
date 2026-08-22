@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
     ThemeManager::applyStylesheet(kDark, /*darkMode=*/true);
 
     QSqlDatabase db = QSqlDatabase::addDatabase("QMARIADB");
-    db.setHostName("172.20.32.51");
+    db.setHostName("172.20.32.79");
     db.setPort(3306);
     db.setDatabaseName("daboijo");
     db.setUserName("daboijo");

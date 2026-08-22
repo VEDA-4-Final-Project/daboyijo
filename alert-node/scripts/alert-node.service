@@ -1,0 +1,39 @@
+# 알림 노드 본체를 부팅 때 띄운다 — 모듈 적재까지 ExecStartPre 가 한다
+#
+#   sudo cp alert-node/scripts/alert-node.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now alert-node
+#
+#   로그   journalctl -u alert-node -f
+#   배포   make -C alert-node/app && sudo systemctl restart alert-node
+#
+# 경로가 저장소 작업 트리를 가리킨다 — 체크아웃 위치가 다르면 아래 두 줄을 고칠 것
+
+[Unit]
+Description=daboyijo 알림 노드 (MQTT -> 사이렌 + HUB75 LED)
+
+Wants=network-online.target
+After=network-online.target
+
+# 노드는 브로커에 못 붙으면 일부러 종료한다(main.cpp) — 계속 다시 띄워 줘야 그 설계가 성립한다
+# 이 줄이 없으면 기본 제한(10초에 5번)에 걸려 브로커가 늦게 뜨는 날 영영 안 올라온다
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# 모듈 insmod 와 hub75 밝기 sysfs 쓰기에 root 가 필요하다
+User=root
+
+ExecStartPre=/home/yehoon/FinalProject/daboyijo/alert-node/scripts/load.sh
+
+# stdbuf 가 없으면 stdout 이 journald 파이프에 물려 블록 버퍼가 된다
+ExecStart=/usr/bin/stdbuf -oL /home/yehoon/FinalProject/daboyijo/alert-node/app/alert-node
+
+Restart=always
+RestartSec=5
+
+# 노드가 스스로 5초 안에 끝낸다(SHUTDOWN_LIMIT_SEC) — 그보다 넉넉히
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

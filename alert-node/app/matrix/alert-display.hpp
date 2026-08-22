@@ -39,10 +39,15 @@ public:
     // 스크롤 — passes 번 흘리고 리턴 (1~10 으로 클램프)
     void show(const std::string& msg, severity sev, int passes,
               const AbortFn& abort = nullptr);
+    // 스크롤 — abort 가 끊을 때까지. 안 끊으면 안 돌아오니 abort 없이 부르면 안 됨
+    void showUntilAborted(const std::string& msg, severity sev, const AbortFn& abort);
     // 정지 표시 — 한 번 그리고 리턴, 지울 때까지 드라이버가 계속 띄움
     void showStatic(const std::string& msg, severity sev);
 
 private:
+    // show 와 showUntilAborted 의 알맹이 — passes < 0 이면 무한
+    // 무한을 passes 값으로 공개 안 하는 건 그게 MQTT 로 들어오는 값이라서
+    void scroll(const std::string& msg, severity sev, int passes, const AbortFn& abort);
     void drawText(int x, int y, const std::string& s, const uint8_t rgb[3]);
     void drawBorder(const uint8_t rgb[3], int scale);
     int  measureText(const std::string& s) const;

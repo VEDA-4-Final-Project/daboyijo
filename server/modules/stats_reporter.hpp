@@ -51,4 +51,5 @@ private:
     uint64_t encode_count_ = 0;
     std::chrono::steady_clock::time_point last_report_;
     std::vector<uint64_t> last_counts_;
+    std::vector<uint64_t> last_meta_;   // ★ 실측용 — 메타데이터 패킷 수신량 진단
 };

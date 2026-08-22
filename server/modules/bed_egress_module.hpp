@@ -125,6 +125,11 @@ private:
     //   닫으면 밤새 세션이 수백 개 생긴다. 일정 시간 연속으로 비어야 이탈로 친다.
     std::map<int, std::map<int, std::chrono::steady_clock::time_point>> empty_since_;
 
+    // 세션 열기가 실패한 침대의 다음 시도 시각. 구조: 채널 → [ roi_id → 시각 ]
+    // ★ 이게 없으면 실패가 프레임마다 반복된다. 실패 자체는 못 막지만(원인은 DB
+    //   쪽에 있다) 로그와 쿼리가 초당 수십 번 나가는 것은 막는다.
+    std::map<int, std::map<int, std::chrono::steady_clock::time_point>> retry_open_;
+
     Database* db_ = nullptr;                       // 없으면 재실 기록만 꺼진다
     const IdentityTracker* identity_ = nullptr;    // 요양보호사 제외용
 };
