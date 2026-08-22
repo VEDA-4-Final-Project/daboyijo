@@ -45,6 +45,7 @@
 #include "app_clock.h"
 #include "heart_rate_calc.h"
 #include "step_counter.h"
+#include "battery.h"
 
 /* 손목을 계속 들고 있어도 이 시간이 지나면 끈다.
  *
@@ -67,17 +68,29 @@
 /* 켜져 있는 동안 라벨 갱신 주기 */
 #define DISPLAY_LABEL_MS     1000
 
+/* 배터리 실측 전압을 화면 하단에 같이 띄운다 (캘리브레이션용).
+ *
+ * BATTERY_K_CAL 을 맞추려면 화면 값과 멀티미터 실측을 비교해야 하는데,
+ * 시리얼 로그로는 볼 수가 없다 —— USB 를 꽂으려면 스위치를 꺼야 하고,
+ * 스위치를 끄면 분압기도 같이 끊겨서 값이 안 나온다. 배터리로 돌 때
+ * 전압을 확인할 수 있는 창구는 화면뿐이다.
+ *
+ * K_CAL 을 맞춘 뒤에는 0 으로 되돌릴 것. */
+#define DISPLAY_SHOW_BATT_V  1
+
 static uint8_t  s_on;
 static uint8_t  s_always_on;    /* 손목 판정 불가 — 상시 점등으로 물러선다 */
 static uint32_t s_on_since_ms;
 static uint32_t s_last_label_ms;
 
+#if DISPLAY_SHOW_BATT_V
+/* SquareLine 이 만든 객체가 아니라 여기서 직접 붙인다. UI 를 다시 뽑아도
+ * 사라지지 않고, 지울 때도 이 파일만 건드리면 된다. */
+static lv_obj_t *s_battVolt;
+#endif
+
 /**
   * @brief 화면에 현재 값을 반영한다.
-  *
-  * 배터리(ui_batteryBar / ui_batteryPercent)는 건드리지 않는다 —— 이 보드에는
-  * 전압 측정 경로가 없어서 채울 수 있는 진짜 값이 없다. SquareLine 이 넣어둔
-  * 기본값이 그대로 보인다.
   */
 static void Update_Labels(void)
 {
@@ -85,6 +98,42 @@ static void Update_Labels(void)
     AppClock_GetHMS(&hour, &minute, &second);
     lv_label_set_text_fmt(ui_timeHour,   "%02u", hour);
     lv_label_set_text_fmt(ui_timeMinute, "%02u", minute);
+
+    /* 배터리.
+     *
+     * 유효한 측정이 없으면(스위치로 분압기가 끊긴 USB 전용 급전 상태)
+     * 숫자를 지어내지 않고 "--" 를 띄운다. 0% 로 두면 방전 직전으로 읽히고,
+     * SquareLine 기본값 80% 를 그대로 두면 거짓말이 된다.
+     * 게이지는 그 경우 비워 둔다 — 값이 없다는 것 자체가 정보다. */
+    if (Battery_IsValid())
+    {
+        uint8_t pct = Battery_GetPercent();
+        lv_label_set_text_fmt(ui_batteryPercent, "%u", (unsigned)pct);
+        lv_bar_set_value(ui_batteryBar, pct, LV_ANIM_OFF);
+    }
+    else
+    {
+        lv_label_set_text(ui_batteryPercent, "--");
+        lv_bar_set_value(ui_batteryBar, 0, LV_ANIM_OFF);
+    }
+
+#if DISPLAY_SHOW_BATT_V
+    /* mV 정수로 쪼개서 넣는다. LVGL 의 포맷터는 LV_SPRINTF_USE_FLOAT 가
+     * 꺼져 있으면 %f 를 처리하지 못하고, 이 프로젝트는 꺼져 있다.
+     *
+     * 소수점 세 자리까지 보여주는 이유는 이 값으로 K_CAL 을 역산하기
+     * 때문이다. 두 자리면 4.05 와 4.054 를 구분하지 못해 보정 자체에
+     * 0.1% 오차가 실린다. */
+    if (Battery_IsValid())
+    {
+        int mv = (int)(Battery_GetVolts() * 1000.0f + 0.5f);
+        lv_label_set_text_fmt(s_battVolt, "%d.%03dV", mv / 1000, mv % 1000);
+    }
+    else
+    {
+        lv_label_set_text(s_battVolt, "-.---V");
+    }
+#endif
 
 #if DISPLAY_DUMMY_HR
     /* 시연용 더미 심박. 화면에만 쓰고 BLE 로 나가는 값은 건드리지 않는다 —
@@ -143,6 +192,21 @@ void DisplayService_Init(uint8_t wrist_sensor_ok)
                                    * 블록 처리 주기를 통째로 밀어버린다. */
     lv_port_disp_init();
     ui_init();
+
+#if DISPLAY_SHOW_BATT_V
+    /* 화면 하단 여백에 붙인다.
+     *
+     * 240x280 에서 가운데 y -100..+110 은 120px 시계가 차지하고, 위쪽
+     * (-130..-108)은 로고와 배터리 게이지가 쓴다. 걸음/심박 줄이 y +96..+122
+     * 이므로 그 아래 +122..+140 만 비어 있다. */
+    s_battVolt = lv_label_create(ui_Screen1);
+    lv_obj_set_align(s_battVolt, LV_ALIGN_CENTER);
+    lv_obj_set_x(s_battVolt, 0);
+    lv_obj_set_y(s_battVolt, 130);
+    lv_obj_set_style_text_font(s_battVolt, &lv_font_montserrat_14,
+                               LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(s_battVolt, "-.---V");
+#endif
 
     ST7789_Sleep(1);            /* 패널도 재운 채로 출발 */
     s_on = 0;

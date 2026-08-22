@@ -57,6 +57,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "dma.h"
 #include "i2c.h"
 #include "spi.h"
@@ -79,6 +80,7 @@
 #include "usbd_cdc_if.h"
 #include "hm10.h"
 #include "display_service.h"
+#include "battery.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -262,6 +264,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   MX_SPI1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
 
@@ -353,6 +356,23 @@ int main(void)
   /* 디스플레이는 꺼진 채로 세운다. 손목을 들 때까지 켜지지 않는다.
    * IWDG 보다 앞에 두는 이유는 내부 HAL_Delay 합계가 약 0.2초이기 때문이다. */
   DisplayService_Init(g_bmi270_ok);
+
+  /* 배터리 측정 시드. DisplayService_Init 뒤에 두는 이유는 첫 화면이
+   * 켜지기 전에 잔량이 채워져 있어야 하기 때문이다 — 앞에 두면 처음 한 번은
+   * SquareLine 기본값 80% 가 잠깐 보인다.
+   *
+   * USB 로만 급전 중이면(스위치 OFF) 분압기도 끊겨 있어 유효값을 못 얻는다.
+   * 그 경우 Battery_IsValid() 가 계속 0 이고 화면은 "--" 를 띄운다. */
+  Battery_Init();
+  if (Battery_IsValid())
+  {
+      printf("[  BAT  ] %.2fV (%u%%)\r\n",
+             (double)Battery_GetVolts(), (unsigned)Battery_GetPercent());
+  }
+  else
+  {
+      printf("[  BAT  ] 측정 경로 없음 — 스위치 OFF 이거나 USB 전용 급전\r\n");
+  }
 
   /* 부팅 시퀀스(센서 재시도 / Blink_Error_Code 의 HAL_Delay)가 모두 끝난
    * 뒤에 켠다. 이 위치가 중요하다 — 앞에서 켜면 재부팅 루프가 된다. */
@@ -462,6 +482,11 @@ int main(void)
       /* ------------------------------------------------------------------
        * [STAGE 4] 화면. 손목을 들었을 때만 켜지고, 켜져 있는 동안만 LVGL 이 돈다.
        * ------------------------------------------------------------------ */
+      /* 배터리는 화면보다 먼저 갱신한다 — 같은 바퀴에서 라벨을 채우게 하려면
+       * 값이 먼저 준비돼 있어야 한다. 내부에서 1초 주기로만 실제 측정하고,
+       * 측정하는 바퀴에만 약 0.33ms 를 쓴다. */
+      Battery_Service();
+
       DisplayService_Service();
 
       /* ------------------------------------------------------------------
