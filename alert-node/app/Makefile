@@ -7,13 +7,13 @@
 # 필요: libmosquitto-dev, nlohmann-json3-dev, libasound2-dev
 
 CXX      := g++
-CXXFLAGS := -O2 -Wall -Wextra -std=c++17
+CXXFLAGS := -O2 -Wall -Wextra -std=c++17 $(shell pkg-config --cflags gstreamer-1.0)
 MQTT     := ../../MQTT/MQTT_prod
-INCS     := -I$(MQTT) -IAudioPlayer -Imatrix
-LDLIBS   := -lmosquitto -lasound -pthread
+INCS     := -I$(MQTT) -IAudioPlayer -Imatrix -Istreaming
+LDLIBS   := -lmosquitto -lasound -pthread $(shell pkg-config --libs gstreamer-1.0)
 
 SRCS := main.cpp matrix/alert-display.cpp AudioPlayer/VedaAudioPlayer.cpp \
-        $(MQTT)/MqttClient_veda.cpp
+        $(MQTT)/MqttClient_veda.cpp streaming/AudioReceiver.cpp
 NODE := alert-node
 SUBS := matrix AudioPlayer
 
