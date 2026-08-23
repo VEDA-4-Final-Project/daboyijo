@@ -271,8 +271,8 @@ QString blendHex(const QString& fg, const QString& bg, double f) {
 namespace {
 const char* kSettingsHostA = "server/hostA";     // Pi A (ch0·ch1) 
 const char* kSettingsHostB = "server/hostB";     // Pi B (ch2·ch3)
-const char* kDefaultHostA  = "172.20.32.51";
-const char* kDefaultHostB  = "172.20.32.50";
+const char* kDefaultHostA  = "172.20.32.79";
+const char* kDefaultHostB  = "172.20.32.80";
 
 // 서버 인덱스(0=Pi A, 1=Pi B) → 저장된 호스트(없으면 기본값).
 QString serverHost(int idx) {
@@ -314,7 +314,7 @@ const char* kSettingsBrokerHost = "mqtt/brokerHost";
 const char* kSettingsBrokerPort = "mqtt/brokerPort";
 QString brokerHost() {
     QSettings s;
-    return s.value(kSettingsBrokerHost, "172.20.32.51").toString();
+    return s.value(kSettingsBrokerHost, "172.20.32.79").toString();
 }
 int brokerPort() {
     QSettings s;
@@ -5804,6 +5804,19 @@ void MainWindow::exportReportPdf()
                 .arg(w).arg(h);
         }
     }
+    if (chartHtml.isEmpty()) {
+        // 그래프를 못 그렸을 때(위젯이 없거나 이 날짜에 걸음 데이터가 없어 폭이 0일 때) —
+        // 캡션만 있고 그 아래가 텅 비면 페이지가 어색해 보인다. 그래프가 있었을 때와
+        // 비슷한 높이의 빈 칸을 만들고 안내문을 그 칸 한가운데(가로·세로 모두)에 둔다.
+        const double dpiScale = writer.resolution() / 96.0;
+        const int hMax = int(bodyPx.height() / 3.0 / dpiScale);
+        chartHtml = QStringLiteral(
+            "<p style='margin-top:26px'><b>시간별 활동량</b></p>"
+            "<table width='100%' cellspacing='0' cellpadding='0' border='0'>"
+            "<tr><td align='center' valign='middle' height='%1' "
+            "style='color:#8B98A5'>표시할 활동량 데이터가 없습니다</td></tr></table>")
+            .arg(hMax);
+    }
 
     // ── 이벤트 목록 ──
     // 숫자만 있으면 "새벽 3시"인지 "낮 3시"인지 알 수 없다. 시각이 있어야
@@ -5873,10 +5886,10 @@ void MainWindow::exportReportPdf()
         <span style="font-size:9pt; color:#8B98A5">문서번호 %17<br>생성 %15</span></td>
   </tr>
 </table>
-<hr style="border:2px solid #1E2A32; margin-top:6px">
+<hr style="border:3px solid #C25A10; margin-top:6px">
 
 <table width="100%" cellspacing="0" cellpadding="9" border="0" style="margin-top:10px">
-  <tr bgcolor="#F0F4F8">
+  <tr bgcolor="#FBEAD9">
     <td width="14%"><b>성명</b></td><td width="36%">%1</td>
     <td width="14%"><b>대상일</b></td><td width="36%">%3</td>
   </tr>
@@ -5886,17 +5899,17 @@ void MainWindow::exportReportPdf()
   </tr>
 </table>
 
-<p style="margin-top:20px; font-size:13pt"><b>1. 요약 지표</b></p>
+<p style="margin-top:20px; font-size:13pt"><b style="color:#C25A10">1.</b> <b>요약 지표</b></p>
 <table width="100%" cellspacing="0" cellpadding="11" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
-  <tr bgcolor="#F0F4F8">
+  <tr bgcolor="#FBEAD9">
     <th align="left" width="25%">누워있는 시간</th><th align="left" width="25%">활동량</th>
     <th align="left" width="25%">케어시간</th><th align="left" width="25%">이벤트</th>
   </tr>
   <tr>
-    <td><b style="font-size:17pt">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
-    <td><b style="font-size:17pt">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
-    <td><b style="font-size:17pt">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
-    <td><b style="font-size:17pt">%11회</b><br><span style="color:#5C6B78">%12</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%11회</b><br><span style="color:#5C6B78">%12</span></td>
   </tr>
   <tr style="color:#5C6B78">
     <td>침대에 계셨던 시간의 합계</td>
@@ -5906,15 +5919,15 @@ void MainWindow::exportReportPdf()
   </tr>
 </table>
 
-<p style="margin-top:24px; font-size:13pt"><b>2. 시간별 활동량</b></p>
+<p style="margin-top:24px; font-size:13pt"><b style="color:#C25A10">2.</b> <b>시간별 활동량</b></p>
 %13
 
-<p style="page-break-before:always; font-size:13pt"><b>3. 이벤트 내역</b></p>
+<p style="page-break-before:always; font-size:13pt"><b style="color:#C25A10">3.</b> <b>이벤트 내역</b></p>
 <p style="color:#5C6B78; margin-top:2px">
   감지된 시각과 종류입니다. ‘확인’은 관제 담당자가 영상을 확인해 처리한 건입니다.
 </p>
 <table width="100%" cellspacing="0" cellpadding="10" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
-  <tr bgcolor="#F0F4F8"><th align="left" width="14%">시각</th><th align="left" width="30%">종류</th>
+  <tr bgcolor="#FBEAD9"><th align="left" width="14%">시각</th><th align="left" width="30%">종류</th>
       <th align="left" width="28%">감지 방식</th><th align="left" width="28%">확인 여부</th></tr>
   %14
 </table>
@@ -5987,14 +6000,22 @@ namespace {
 // 서버(gemini_client / cameras.conf)도 별도로 모델을 갖고 있다 — 바꿀 땐 양쪽 같이.
 constexpr const char* kGeminiModel = "gemini-3.6-flash";
 }  // namespace
-// 키 우선순위: 빌드에 박은 값 → QSettings.
+// 키 우선순위: 소스에 박은 값 → 빌드에 박은 값(DABOYIJO_GEMINI_KEY) → QSettings.
 //
-// ★ 소스에 직접 적지 않는다. 이 저장소는 공개라 커밋되는 순간 유출된다.
-//   대신 빌드하는 사람이 -DDABOYIJO_GEMINI_KEY=... 로 주입하고, 사용자는
-//   아무것도 입력하지 않는다 — 키 발급은 서비스 제공자 몫이지 요양원 몫이 아니다.
-//   QSettings 폴백은 개발 중 임시로 다른 키를 물려 볼 때만 쓴다.
+// ⚠ 이 저장소는 공개(public) GitHub repo다. 아래 kHardcodedGeminiKey 에 실제 키를
+//   적고 커밋/푸시하면 그 순간 키가 인터넷에 노출되고, 히스토리에서 지워도 이미
+//   남에게 긁혀갔을 수 있다 — 과금성 남용으로 이어질 수 있다는 점을 알고 쓸 것.
+//   (요청에 따라 CMake 설정 없이 바로 쓸 수 있게 이 자리에 하드코딩 경로를 열어둠)
+namespace {
+constexpr const char* kHardcodedGeminiKey = "AIzaSyCfWoiYaFBOngxCAJDkt5z5t-FCQEhHp_w";  // 여기에 실제 Gemini API 키를 적으세요
+}  // namespace
 QString MainWindow::geminiApiKey() const
 {
+    const QString hardcoded = QString::fromLatin1(kHardcodedGeminiKey).trimmed();
+    if (!hardcoded.isEmpty()) {
+        qDebug() << "[AI] 소스 하드코딩 키 사용, 길이:" << hardcoded.size();
+        return hardcoded;
+    }
 #ifdef DABOYIJO_GEMINI_KEY
     const QString baked = QString::fromLatin1(DABOYIJO_GEMINI_KEY).trimmed();
     // 키 자체는 절대 찍지 않는다 — 길이만으로 "정의가 왔는지/비었는지"가 갈린다.

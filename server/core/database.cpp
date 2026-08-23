@@ -45,25 +45,51 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
         return ids;
     }
 
-    // ── 침대 추적이 이 채널에서 실제로 돌고 있는가 ────────────────
-    // ★ 안전장치. 재실 기록이 없는데 교집합만 믿으면 모든 케어시간이 0 이 된다.
-    //   침대 ROI 를 아직 안 그렸거나 추적이 멈춘 상태가 그렇다. 그때는 "자리에
-    //   없었다"가 아니라 "모른다"이므로, 예전처럼 전원에게 전체 시간을 남긴다.
-    //   기록이 부풀려지는 것보다 통째로 사라지는 쪽이 더 나쁘다.
-    bool bedTracked = false;
-    {
-        char sql[384];
-        std::snprintf(sql, sizeof(sql),
-            "SELECT COUNT(*) FROM bed_sessions "
-            "WHERE camera_id = %d AND in_at < @ce AND COALESCE(out_at, @ce) > @cs",
-            cameraId);
+    // 한 줄짜리 COUNT(*) 조회 헬퍼 — 실패하면 0 (판정을 보수적으로 만든다).
+    auto countOf = [&](const char* sql) -> int {
+        int n = 0;
         if (!mysql_query(conn_, sql)) {
             if (MYSQL_RES* res = mysql_store_result(conn_)) {
                 if (MYSQL_ROW row = mysql_fetch_row(res))
-                    bedTracked = (row[0] && std::atoi(row[0]) > 0);
+                    n = row[0] ? std::atoi(row[0]) : 0;
                 mysql_free_result(res);
             }
         }
+        return n;
+    };
+
+    // ── ① 판정 기준이 있는가: 입소자가 매핑된 침대가 이 채널에 있는가 ──
+    // ★ "재실 기록이 없다"는 두 가지 뜻이라 반드시 갈라야 한다.
+    //     · 침대 ROI 도 매핑도 없다        → "모른다"      → 전원에게 전체 시간(폴백)
+    //     · 침대는 있는데 아무도 안 누웠다 → "자리에 없었다" → 기록하지 않음
+    //   예전엔 bed_sessions 유무만 봐서 둘을 구분 못 했고, 그 결과 빈 방에
+    //   요양사가 잠깐 들어가기만 해도 방 재원자 전원에게 케어시간이 붙었다.
+    //   3점 미만(그리다 만) ROI 는 판정에 못 쓰므로 세지 않는다 — bed_egress 의
+    //   BedZone::valid() 와 같은 기준.
+    char mapped_sql[384];
+    std::snprintf(mapped_sql, sizeof(mapped_sql),
+        "SELECT COUNT(*) FROM roi_zones "
+        "WHERE camera_id = %d AND resident_id IS NOT NULL "
+        "  AND JSON_LENGTH(roi_points) >= 3",
+        cameraId);
+    const bool bedMapped = countOf(mapped_sql) > 0;
+
+    // ── ② 그 창에 실제 재실이 있었는가 ──
+    char tracked_sql[384];
+    std::snprintf(tracked_sql, sizeof(tracked_sql),
+        "SELECT COUNT(*) FROM bed_sessions "
+        "WHERE camera_id = %d AND in_at < @ce AND COALESCE(out_at, @ce) > @cs",
+        cameraId);
+    const bool bedTracked = countOf(tracked_sql) > 0;
+
+    // 판정 기준이 있는데 아무도 안 누워 있었다 = 빈 방에 요양사만 다녀갔다.
+    // 케어받을 사람이 없었으므로 한 행도 남기지 않는다. 빈 목록을 돌려주면
+    // 호출부(CaregiverModule)의 병합 대상도 함께 비워져, 다음 세션이 엉뚱한
+    // 과거 행에 합산되는 일도 막힌다.
+    if (bedMapped && !bedTracked) {
+        std::cout << "[DB] 케어 제외 (카메라 " << (cameraId + 1)
+                  << " — 침대에 아무도 없었음, " << durationSec << "초 버림)\n";
+        return ids;
     }
 
     for (int residentId : residents) {
@@ -115,23 +141,93 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
 
     std::cout << "[DB] 케어로그 저장 (카메라 " << (cameraId + 1) << ", "
               << durationSec << "초, " << ids.size() << "명"
-              << (bedTracked ? ", 재실 교집합 적용" : ", 재실 기록 없어 전체 시간") << ")\n";
+              << (bedTracked ? ", 재실 교집합 적용" : ", 침대 매핑 없어 전체 시간") << ")\n";
     return ids;
 }
 
-bool Database::addCareLogDuration(const std::vector<long long>& logIds, int addSec) {
+bool Database::addCareLogDuration(int cameraId, const std::vector<long long>& logIds,
+                                  int addSec) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_ || logIds.empty()) return false;
+
+    // ★ 병합분도 첫 INSERT 와 같은 규칙을 탄다 — 요양사가 있던 시간 중 그 사람이
+    //   실제로 침대에 있던 만큼만 더한다. 예전엔 여기서 addSec 을 통째로 더해서,
+    //   insertCareLogs 가 교집합으로 걸러낸 시간이 병합 경로로 그대로 새어 들어왔다.
+    //   (병합 창이 3분이라 재방문이 잦은 실제 운영에서 새는 폭이 크다)
+    //
+    // 창을 세션 변수에 한 번만 담는 이유도 insertCareLogs 와 같다 — 행마다 NOW()
+    // 를 부르면 같은 병합인데 사람마다 몇 밀리초씩 어긋난 창으로 계산된다.
+    char win[128];
+    std::snprintf(win, sizeof(win),
+        "SET @cs = NOW() - INTERVAL %d SECOND, @ce = NOW()", addSec);
+    if (mysql_query(conn_, win)) {
+        std::cerr << "[DB] 병합 구간 설정 실패: " << mysql_error(conn_) << "\n";
+        return false;
+    }
+
+    auto countOf = [&](const char* sql) -> int {
+        int n = 0;
+        if (!mysql_query(conn_, sql)) {
+            if (MYSQL_RES* res = mysql_store_result(conn_)) {
+                if (MYSQL_ROW row = mysql_fetch_row(res))
+                    n = row[0] ? std::atoi(row[0]) : 0;
+                mysql_free_result(res);
+            }
+        }
+        return n;
+    };
+
+    char mapped_sql[384];
+    std::snprintf(mapped_sql, sizeof(mapped_sql),
+        "SELECT COUNT(*) FROM roi_zones "
+        "WHERE camera_id = %d AND resident_id IS NOT NULL "
+        "  AND JSON_LENGTH(roi_points) >= 3",
+        cameraId);
+    const bool bedMapped = countOf(mapped_sql) > 0;
+
+    char tracked_sql[384];
+    std::snprintf(tracked_sql, sizeof(tracked_sql),
+        "SELECT COUNT(*) FROM bed_sessions "
+        "WHERE camera_id = %d AND in_at < @ce AND COALESCE(out_at, @ce) > @cs",
+        cameraId);
+    const bool bedTracked = countOf(tracked_sql) > 0;
+
+    // 판정 기준이 있는데 아무도 안 누워 있었다 = 이번 방문엔 케어받은 사람이 없다.
+    // 더할 시간이 0 이므로 UPDATE 자체를 하지 않는다(end_time 도 안 민다).
+    // true 를 돌려주는 건 "처리했다, 새 행 만들지 마라"는 뜻이다 — 여기서 false 를
+    // 주면 호출자가 insertCareLogs 로 넘어가고, 거기서도 같은 이유로 빈 목록이
+    // 돌아와 병합 기준점(log_id)만 잃는다. 다음 방문 때 이어붙일 자리가 사라진다.
+    if (bedMapped && !bedTracked) {
+        std::cout << "[DB] 병합 제외 (카메라 " << (cameraId + 1)
+                  << " — 침대에 아무도 없었음, " << addSec << "초 버림)\n";
+        return true;
+    }
+
+    // 더할 시간 식. 침대 매핑이 없으면(모르는 상태) 예전처럼 전체를 더하고,
+    // resident_id 가 NULL 인 행(재원자 미등록)도 교집합을 낼 대상이 없어 전체를 더한다.
+    char addExpr[640];
+    if (bedMapped) {
+        std::snprintf(addExpr, sizeof(addExpr),
+            "CASE WHEN c.resident_id IS NULL THEN %d ELSE "
+            "(SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, GREATEST(b.in_at, @cs), "
+            "                                   LEAST(COALESCE(b.out_at, @ce), @ce))), 0) "
+            "   FROM bed_sessions b WHERE b.resident_id = c.resident_id "
+            "    AND b.in_at < @ce AND COALESCE(b.out_at, @ce) > @cs) END",
+            addSec);
+    } else {
+        std::snprintf(addExpr, sizeof(addExpr), "%d", addSec);
+    }
 
     // 한 행이라도 못 붙이면 false 를 돌려준다. 일부만 합산되면 같은 방 사람끼리
     // 케어시간이 어긋나므로, 호출자가 전원에게 새 행을 만드는 쪽이 낫다.
     bool allOk = true;
     for (long long logId : logIds) {
-        char sql[256];
+        char sql[1024];
         std::snprintf(sql, sizeof(sql),
-            "UPDATE care_logs SET duration_sec = duration_sec + %d, end_time = NOW() "
-            "WHERE log_id = %lld",
-            addSec, logId);
+            "UPDATE care_logs c SET c.duration_sec = c.duration_sec + (%s), "
+            "                       c.end_time = @ce "
+            "WHERE c.log_id = %lld",
+            addExpr, logId);
 
         if (mysql_query(conn_, sql)) {
             std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
@@ -146,7 +242,9 @@ bool Database::addCareLogDuration(const std::vector<long long>& logIds, int addS
         }
     }
     if (allOk)
-        std::cout << "[DB] 케어로그 병합 (" << logIds.size() << "행, +" << addSec << "초)\n";
+        std::cout << "[DB] 케어로그 병합 (" << logIds.size() << "행, +" << addSec << "초"
+                  << (bedMapped ? ", 재실 교집합 적용" : ", 침대 매핑 없어 전체 시간")
+                  << ")\n";
     return allOk;
 }
 
@@ -584,6 +682,28 @@ int Database::residentByCameraLocked(int channel) {
     return ids.front();
 }
 
+
+// mutex_ 를 이미 쥔 상태에서만 부를 것 (residentsByCameraLocked 와 같은 규칙).
+bool Database::residentExistsLocked(int residentId) {
+    if (!conn_ || residentId <= 0) return false;
+
+    char sql[128];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT 1 FROM residents WHERE resident_id = %d", residentId);
+
+    // 조회가 실패하면 "있다"로 본다 — DB 가 잠깐 흔들렸을 뿐인데 멀쩡한 매핑을
+    // NULL 로 떨어뜨리면, 그날 재실 기록에서 사람 이름만 통째로 사라진다.
+    if (mysql_query(conn_, sql)) {
+        std::cerr << "[DB] 입소자 존재 확인 실패: " << mysql_error(conn_) << "\n";
+        return true;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return true;
+    const bool found = (mysql_fetch_row(res) != nullptr);
+    mysql_free_result(res);
+    return found;
+}
+
 int Database::getResidentByCamera(int channel) {
     std::lock_guard<std::mutex> lock(mutex_);
     return residentByCameraLocked(channel);
@@ -796,6 +916,21 @@ long long Database::openBedSession(int cameraId, int residentId) {
 
     // 호출부가 ROI 매핑으로 이미 정확히 아는 경우엔 그 값을 그대로 쓴다.
     if (residentId < 0) residentId = residentByCameraLocked(cameraId);
+
+    // 지워진 입소자를 물고 있는 매핑이면 사람만 떼고 세션은 연다.
+    // ★ 여기서 막지 않으면 FK 거부로 INSERT 가 실패하고, 호출부(BedEgressModule)
+    //   는 세션이 안 열린 걸로 보고 다음 프레임에 또 부른다 — 사람이 누워 있는
+    //   내내 초당 수십 번 실패하고, 그 침대의 재실·케어 기록은 하나도 안 남는다.
+    //   "누구인지 모르는 재실"이 "재실 기록 없음"보다 낫다.
+    if (residentId > 0 && !residentExistsLocked(residentId)) {
+        if (missing_resident_warned_.insert(residentId).second) {
+            std::cerr << "[DB] ⚠ 카메라 " << (cameraId + 1) << " 침대에 매핑된 입소자 "
+                      << residentId << " 가 residents 에 없다 — 재실을 resident_id "
+                      << "NULL 로 남긴다. roi_zones 의 유령 매핑을 정리할 것.\n";
+        }
+        residentId = 0;
+    }
+
     char resident[16];
     if (residentId > 0) std::snprintf(resident, sizeof(resident), "%d", residentId);
     else                std::snprintf(resident, sizeof(resident), "NULL");

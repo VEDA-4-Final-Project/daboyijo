@@ -1,0 +1,27 @@
+# 알림 노드 커널 모듈만 부팅 때 올린다 — 앱은 손으로 띄운다
+#
+#   sudo cp alert-node/scripts/alert-node-drivers.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now alert-node-drivers
+#
+# 앱까지 자동으로 띄우려면 옆의 alert-node.service 를 쓴다
+
+[Unit]
+Description=daboyijo 알림 노드 드라이버 (wm8960 + hub75)
+
+# .ko 가 /lib/modules 가 아니라 저장소 안에 있어서 그 파일시스템이 먼저 서야 한다
+After=local-fs.target
+
+[Service]
+Type=oneshot
+
+# 끝난 뒤에도 active 로 남겨야 status 에서 "모듈 올라가 있음" 을 볼 수 있다
+RemainAfterExit=yes
+
+# hub75 오버레이는 config.txt 가 부팅 때 이미 올렸다 — 여기선 wm8960 오버레이와 insmod 만
+ExecStart=/home/yehoon/FinalProject/daboyijo/alert-node/scripts/load.sh
+
+# ExecStop 은 안 건다 — 종료할 때 rmmod 로 매달리면 셧다운만 늦고 얻는 게 없다
+
+[Install]
+WantedBy=multi-user.target

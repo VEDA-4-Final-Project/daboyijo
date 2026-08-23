@@ -10,7 +10,8 @@ StatsReporter::StatsReporter(
       store_(store),
       server_(server),
       last_report_(std::chrono::steady_clock::now()),
-      last_counts_(clients.size(), 0) {}
+      last_counts_(clients.size(), 0),
+      last_meta_(clients.size(), 0) {}
 
 void StatsReporter::onFrameSent(int channel, size_t jpegBytes, double procMs,
                                 double prepMs, double encodeMs) {
@@ -33,12 +34,14 @@ void StatsReporter::maybeReport() {
 
     if (last_counts_.size() != clients_.size()) {
         last_counts_.resize(clients_.size(), 0);
+        last_meta_.resize(clients_.size(), 0);
     }
 
     std::ostringstream status;
     for (size_t i = 0; i < clients_.size(); ++i) {
         const int id = clients_[i]->channel();
         const uint64_t count = clients_[i]->frameCount();
+        const uint64_t meta  = clients_[i]->metadataCount();   // ★ 실측용
         const double in_fps =
             static_cast<double>(count - last_counts_[i]) / elapsed.count();
         const double out_fps =
@@ -50,12 +53,15 @@ void StatsReporter::maybeReport() {
             if (d.isHuman()) ++humans;
         }
 
-        char buf[112];
-        std::snprintf(buf, sizeof(buf), "[ch%d] %s in %.1f out %.1ffps 사람%d  ",
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "[ch%d] %s in %.1f out %.1ffps 메타%llu 객체%zu 사람%d  ",
                       id + 1, clients_[i]->connected() ? "OK" : "끊김", in_fps,
-                      out_fps, humans);
+                      out_fps, (unsigned long long)(meta - last_meta_[i]),
+                      store_.latest(id).size(), humans);
         status << buf;
         last_counts_[i] = count;
+        last_meta_[i] = meta;
         stats_[id] = ChannelStats{};
     }
 
