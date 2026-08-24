@@ -45,7 +45,7 @@ EOF
 curl -sS -o "$TMP/text.out" -w "$FMT" \
      -H 'Content-Type: application/json' -H 'Expect:' \
      --max-time 60 --data-binary @"$TMP/text.json" "$URL"
-echo "  응답: $(head -c 200 "$TMP/text.out" | tr -d '\n')"
+echo "  응답: $(head -c 700 "$TMP/text.out" | tr -d '\n')"
 echo
 
 echo "[2/3] 이미지 질의 (지금 상황 보기가 쓰는 경로, ~90KB)"
@@ -76,7 +76,7 @@ if [ -f "$TMP/img.json" ]; then
     curl -sS -o "$TMP/img.out" -w "$FMT" \
          -H 'Content-Type: application/json' -H 'Expect:' \
          --max-time 90 --data-binary @"$TMP/img.json" "$URL"
-    echo "  응답: $(head -c 200 "$TMP/img.out" | tr -d '\n')"
+    echo "  응답: $(head -c 700 "$TMP/img.out" | tr -d '\n')"
 fi
 echo
 

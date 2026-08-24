@@ -126,4 +126,23 @@ private:
     // 메뉴가 아니라 그 채널의 검색 질의로 처리하기 위한 1회성 플래그(소비하면 제거).
     std::mutex search_mutex_;
     std::map<std::string, int> awaiting_search_;
+
+    // ── 📷 지금 상황 보기 호출 절약 ──────────────────────────────
+    // 무료 티어는 일일 호출 수(RPD)가 빠듯한데, 버튼은 누구나 몇 번이고 누를 수
+    // 있다. 응답이 몇 초 걸리므로 사용자는 "안 되나?" 하고 또 누르고, 그때마다
+    // 새 스레드 + 새 Gemini 호출이 나가 한도를 태운다. 그래서 방마다
+    //   · 이미 확인 중이면(in-flight) 새로 부르지 않고 기다리라고만 하고,
+    //   · 방금 받은 답이 있으면(kNowCacheSec 이내) 그 답을 시각과 함께 재사용한다.
+    // 캐시는 짧게 잡는다 — 오래된 상황을 "지금"이라고 보여주면 안 되므로.
+    struct NowCache {
+        std::chrono::steady_clock::time_point at;
+        std::string answer;
+        SnapshotBuffer::Jpeg shot;
+    };
+    // ★ 키가 (채널, 역할)인 이유: 요양사와 보호자는 던지는 프롬프트가 달라
+    //   (kNowQuestionStaff / kNowQuestionGuardian) 답의 톤도 다르다. 채널로만
+    //   캐시하면 보호자에게 요양사용 문면이 그대로 나간다.
+    std::mutex now_mutex_;
+    std::map<std::pair<int, int>, NowCache> now_cache_;
+    std::map<std::pair<int, int>, bool> now_inflight_;
 };
