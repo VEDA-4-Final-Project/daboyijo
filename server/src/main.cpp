@@ -128,7 +128,11 @@ int main(int argc, char* argv[]) {
     NvrModule nvr(config.nvr_storage_path, config.nvr_retention_hours,
                   config.nvr_segment_minutes, config.nvr_http_port);  // [NVR 연속녹화]
     TelegramModule telegram;        // [보호자 알림 + 케어봇]
-    telegram.configure(config.telegram_bot_token, config.telegram_chat_id, config.telegram_chat_ids);
+    telegram.configure(config.telegram_bot_token, config.telegram_chat_id,
+                       config.telegram_chat_ids,
+                       config.telegram_guardian_chat_ids,
+                       config.telegram_staff_chat_ids,
+                       config.telegram_guardian_alerts);
 
     ActivityModule activity(db);    // [일일 리포트] 만보기 → activity_minute
     MqttMasterManager mqtt;         // [mqtt]
@@ -149,15 +153,26 @@ int main(int argc, char* argv[]) {
     // [영상검색] 🔍 버튼이 위임하는 자연어 질의 처리기. vlm(GeminiClient)을 그대로
     // 재사용 — 질의 파싱은 이미지가 필요 없는 텍스트 전용 VlmClient::ask() 사용.
     VideoSearchModule video_search(vlm, db, config.public_host);
-    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, video_search);
+    CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, video_search,
+                         db);
     care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
+    // [케어봇] 요양사 방 선택 버튼에 쓸 채널 목록. 요양사는 전 채널 담당이라
+    // 이 Pi가 맡은 카메라 설정이 곧 담당 목록이다(2-Pi 분할이면 자기 몫만 보인다).
+    {
+        std::vector<int> care_channels;
+        care_channels.reserve(config.cameras.size());
+        for (const auto& cam : config.cameras) care_channels.push_back(cam.channel);
+        care_qa.setChannels(std::move(care_channels));
+    }
     telegram.setCommandHandler([&](int ch, const std::string& chat_id,
+                                   TelegramModule::Role role,
                                    const std::string& text) {
-        care_qa.handleMessage(ch, chat_id, text);
+        care_qa.handleMessage(ch, chat_id, role, text);
     });
     telegram.setCallbackHandler([&](int ch, const std::string& chat_id,
+                                    TelegramModule::Role role,
                                     const std::string& data) {
-        care_qa.handleCallback(ch, chat_id, data);
+        care_qa.handleCallback(ch, chat_id, role, data);
     });
 
     // ── 모듈 간 배선 ─────────────────────────────────────────────
@@ -299,8 +314,13 @@ int main(int argc, char* argv[]) {
         privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, roi_id, evt_ms);
-        telegram.notifyFall(ch);      // 즉시 기본 알림
-        care_qa.reportFall(ch);       // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷 자동 전송
+        // ★ 누가 넘어졌는지는 바로 위에서 IdentityTracker 로 이미 풀었다. 그대로
+        //   넘겨야 (1) 그 입소자의 보호자에게만 가고 (2) 메시지에 이름·침대가 붙는다.
+        //   한 방에 두 분이 계시면 이걸 안 넘기는 순간 "누구인지 모르는 알림"이 된다.
+        const TelegramModule::Subject subject{
+            who.named() ? who.resident_id : 0, name, roi_id};
+        telegram.notifyFall(ch, subject);   // 즉시 기본 알림
+        care_qa.reportFall(ch, subject);    // [케어봇] 몇 초 뒤 VLM 상황 설명+스냅샷
         // 호실은 사람이 특정되면 그 사람 것, 아니면 예전처럼 채널 대표값.
         int room = who.named() ? db.getRoomByResident(who.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(ch);
@@ -332,7 +352,8 @@ int main(int argc, char* argv[]) {
         int64_t evt_ms = blackbox.trigger(e.channel, "EGRESS");
         stream_server.broadcastEvent(e.channel, DBJ_EVT_EGRESS, e.x, e.y, e.roi_id,
                                      evt_ms);
-        telegram.notifyEgress(e.channel);
+        telegram.notifyEgress(
+            e.channel, TelegramModule::Subject{e.resident_id, name, e.roi_id});
         int room = e.resident_id > 0 ? db.getRoomByResident(e.resident_id) : -1;
         if (room < 0) room = db.getRoomByCh(e.channel);
         mqtt.sendAlarmCommand(AlarmEventType::EGRESS,room,name);
@@ -386,8 +407,11 @@ int main(int argc, char* argv[]) {
                 // 웨어러블은 화면 좌표도 침대 번호도 모른다 — 미상으로 내려보낸다
                 stream_server.broadcastEvent(ch, DBJ_EVT_FALL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
-                telegram.notifyFall(ch);
-                care_qa.reportFall(ch);
+                // 웨어러블은 화면 좌표도 침대 번호도 모른다 — roi_id 는 -1(미상).
+                // 대신 device_id 로 사람은 정확히 특정되므로 보호자 라우팅은 정확하다.
+                const TelegramModule::Subject subject{rid > 0 ? rid : 0, name, -1};
+                telegram.notifyFall(ch, subject);
+                care_qa.reportFall(ch, subject);
                 mqtt.sendAlarmCommand(AlarmEventType::FALL,room,name);
                 // ★ 같은 낙상이 카메라 경로로도 들어오면 두 줄이 남는다. 일부러
                 //   지우지 않는다 — source 로 구분되고, 어느 쪽이 먼저 잡았는지가
@@ -403,7 +427,8 @@ int main(int argc, char* argv[]) {
                 int64_t evt_ms = blackbox.trigger(ch, "VITAL_ABNORMAL");
                 stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
-                telegram.notifyVitalAbnormal(ch);
+                telegram.notifyVitalAbnormal(
+                    ch, TelegramModule::Subject{rid > 0 ? rid : 0, name, -1});
                 mqtt.sendAlarmCommand(AlarmEventType::VITAL_ABNORMAL,room,name);
                 char clip[64];
                 std::snprintf(clip, sizeof(clip), "ch%d_%lld_VITAL_ABNORMAL.mp4",
