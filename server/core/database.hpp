@@ -1,5 +1,6 @@
 #ifndef DATABASE_HPP
 #define DATABASE_HPP
+#include <chrono>
 #include <mutex>
 #include <set>
 #include <string>
@@ -220,7 +221,26 @@ private:
     // 이게 없으면 사람이 누워 있는 내내 같은 줄이 흘러간다.
     std::set<int> missing_resident_warned_;
 
+    // 쿼리 하나를 던지는 유일한 통로. mysql_query 를 직접 부르지 말 것 —
+    // 오래 놀다 온 커넥션을 여기서 되살린다(ensureAliveLocked 주석 참고).
+    // 반환값은 mysql_query 와 같다(0=성공).
+    // ★ mutex_ 를 쥔 상태에서 부를 것.
+    int queryLocked(const char* sql);
+    // 커넥션이 살아 있는지 확인하고, 죽었으면 다시 연결한다. 성공 시 true.
+    // ★ mutex_ 를 쥔 상태에서 부를 것.
+    bool ensureAliveLocked();
+
     std::mutex mutex_;  // conn_ 보호
     MYSQL* conn_ = nullptr;
+
+    // 재연결용으로 보관하는 접속 정보 — connect() 가 채운다.
+    std::string host_, user_, password_, dbname_;
+    unsigned int port_ = 3306;
+    // 마지막으로 쿼리가 성공한 시각. 이보다 오래 놀았으면 다음 쿼리 전에
+    // ping 으로 먼저 확인한다(매 쿼리마다 ping 하면 프레임 경로가 손해다).
+    std::chrono::steady_clock::time_point last_ok_{};
+    // DB 자체가 내려가 재연결이 계속 실패할 때 다음 시도를 미루는 시각.
+    // 없으면 프레임마다 접속을 시도하며 같은 실패 로그를 쏟아낸다.
+    std::chrono::steady_clock::time_point next_retry_{};
 };
 #endif
