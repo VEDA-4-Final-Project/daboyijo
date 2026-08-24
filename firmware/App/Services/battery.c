@@ -93,8 +93,17 @@
  * 때문에 전압이 수십 mV 씩 요동친다. 1초 주기에 0.1 이면 시정수 약 10초. */
 #define BATTERY_LPF_ALPHA    0.1f
 
-/* 퍼센트가 이만큼 뛰어오르면 충전으로 보고 단조 감소를 푼다. */
-#define BATTERY_CHARGE_JUMP  5
+/* 표시값 히스테리시스 [%p].
+ *
+ * 이만큼 벌어졌을 때만 표시값을 따라 옮긴다. 1%p 차이로 계속 오르내리는
+ * 깜빡임만 막는 것이 목적이고, 실제 변화는 오르든 내리든 그대로 따라간다.
+ *
+ * 처음에는 '단조 감소 강제'(내려갈 때만 갱신, 5%p 이상 뛰면 충전으로 간주)를
+ * 썼는데 충전 중에 못 쓸 물건이었다. 오르는 쪽이 막히니 표시가 한동안 얼어
+ * 있다가 6%p 씩 계단으로 뛴다 —— 55% 에서 멈춰 있다가 갑자기 80% 가 되는 식.
+ * 전압 쪽 저역통과 필터가 이미 부하 출렁임을 걸러주므로 표시단에서 방향까지
+ * 막을 이유가 없었다. */
+#define BATTERY_PCT_HYST     2
 
 /* 1S 리튬 방전곡선 (무부하 기준).
  *
@@ -114,6 +123,9 @@ static float    s_volts;            /* 필터링된 전압. 0 이면 아직 유�
 static uint8_t  s_percent;
 static uint8_t  s_valid;
 static uint32_t s_last_ms;
+
+static uint16_t s_raw_pa7;          /* 진단용 — 마지막 변환의 채널별 평균 */
+static uint16_t s_raw_vref;
 
 /**
   * @brief 한 채널을 오버샘플해서 합을 돌려준다.
@@ -154,10 +166,14 @@ static uint32_t adc_accumulate(uint32_t channel)
 static float measure_volts(void)
 {
     uint32_t bat = adc_accumulate(ADC_CHANNEL_7);
-    if (bat == 0) return 0.0f;
-
     uint32_t ref = adc_accumulate(ADC_CHANNEL_VREFINT);
-    if (ref == 0) return 0.0f;
+
+    /* 진단용 원시값은 실패 판정보다 먼저 남긴다 — 실패했을 때 무엇이 0 이었는지가
+     * 정확히 알고 싶은 정보다. */
+    s_raw_pa7  = (uint16_t)(bat / BATTERY_OVERSAMPLE);
+    s_raw_vref = (uint16_t)(ref / BATTERY_OVERSAMPLE);
+
+    if (bat == 0 || ref == 0) return 0.0f;
 
     /* 오버샘플 횟수는 분자·분모에 똑같이 들어가 약분되므로 나눌 필요가 없다.
      * VDDA 도 여기서 사라진다 — 두 값을 같은 자로 쟀기 때문이다. */
@@ -203,12 +219,10 @@ static void update_once(void)
 
     uint8_t p = volts_to_percent(s_volts);
 
-    /* 단조 감소 강제.
-     *
-     * 부하가 빠지면 전압이 회복돼서 "45% -> 52% -> 44%" 처럼 왔다갔다한다.
-     * 물리적으로는 정상이지만 사용자 눈에는 고장으로 보인다. 한 번 내려간
-     * 값은 크게 회복될 때(= 충전)만 올린다. */
-    if (!s_valid || p < s_percent || p > s_percent + BATTERY_CHARGE_JUMP)
+    /* 양방향 히스테리시스. 깜빡임만 막고 방향은 막지 않는다. */
+    if (!s_valid ||
+        (int)p >= (int)s_percent + BATTERY_PCT_HYST ||
+        (int)p + BATTERY_PCT_HYST <= (int)s_percent)
     {
         s_percent = p;
     }
@@ -255,4 +269,10 @@ uint8_t Battery_GetPercent(void)
 uint8_t Battery_IsValid(void)
 {
     return s_valid;
+}
+
+void Battery_GetRaw(uint16_t *pa7, uint16_t *vref)
+{
+    if (pa7)  *pa7  = s_raw_pa7;
+    if (vref) *vref = s_raw_vref;
 }

@@ -27,4 +27,14 @@ uint8_t Battery_GetPercent(void);
  * 스위치가 분압기를 끊은 상태(USB 로만 급전)면 계속 0 이다. */
 uint8_t Battery_IsValid(void);
 
+/* 진단용 — 마지막 변환의 채널별 평균 원시값.
+ *
+ * 전압이 이상할 때 어느 쪽이 원인인지 가르는 용도다.
+ *   vref 가 흔들린다  -> ADC 기준/VREFINT 문제
+ *   pa7 만 흔들린다   -> 분압기·스위치 접점·배선 문제
+ *   둘 다 안정한데 전압이 틀리다 -> K_CAL 문제
+ *
+ * VDDA 3.3V 기준 기대값: vref 약 1500, pa7 약 2480 (배터리 4.0V 일 때). */
+void Battery_GetRaw(uint16_t *pa7, uint16_t *vref);
+
 #endif /* APP_SERVICES_BATTERY_H_ */

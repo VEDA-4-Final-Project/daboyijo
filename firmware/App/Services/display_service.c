@@ -76,7 +76,7 @@
  * 전압을 확인할 수 있는 창구는 화면뿐이다.
  *
  * K_CAL 을 맞춘 뒤에는 0 으로 되돌릴 것. */
-#define DISPLAY_SHOW_BATT_V  1
+#define DISPLAY_SHOW_BATT_V  0
 
 static uint8_t  s_on;
 static uint8_t  s_always_on;    /* 손목 판정 불가 — 상시 점등으로 물러선다 */
@@ -124,14 +124,31 @@ static void Update_Labels(void)
      * 소수점 세 자리까지 보여주는 이유는 이 값으로 K_CAL 을 역산하기
      * 때문이다. 두 자리면 4.05 와 4.054 를 구분하지 못해 보정 자체에
      * 0.1% 오차가 실린다. */
+    /* 원시 ADC 값을 같이 띄운다.
+     *
+     * 전압이 이상할 때 원인을 가르는 유일한 방법이다. 시리얼로는 볼 수 없다 ——
+     * USB 를 꽂으려면 스위치를 꺼야 하고 그러면 분압기가 끊긴다.
+     *
+     * VDDA 3.3V 기준 기대값:
+     *   vref 약 1500  (1.21V / 3.3V x 4095, 규격 산포 포함 1465~1540)
+     *   pa7  약 2480  (배터리 4.0V -> 분압 2.0V -> 2.0/3.3 x 4095)
+     *
+     * vref 가 전원을 껐다 켤 때마다 크게 달라지면 ADC 기준 쪽 문제고,
+     * pa7 만 달라지면 분압기·스위치 접점 쪽 문제다. */
+    uint16_t raw_pa7 = 0, raw_vref = 0;
+    Battery_GetRaw(&raw_pa7, &raw_vref);
+
     if (Battery_IsValid())
     {
         int mv = (int)(Battery_GetVolts() * 1000.0f + 0.5f);
-        lv_label_set_text_fmt(s_battVolt, "%d.%03dV", mv / 1000, mv % 1000);
+        lv_label_set_text_fmt(s_battVolt, "%d.%03dV %u/%u",
+                              mv / 1000, mv % 1000,
+                              (unsigned)raw_pa7, (unsigned)raw_vref);
     }
     else
     {
-        lv_label_set_text(s_battVolt, "-.---V");
+        lv_label_set_text_fmt(s_battVolt, "-.---V %u/%u",
+                              (unsigned)raw_pa7, (unsigned)raw_vref);
     }
 #endif
 
