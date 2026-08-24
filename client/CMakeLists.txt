@@ -50,6 +50,11 @@ qt_add_executable(daboyijo
     alertmatrixpreview.h
     timelinebar.cpp
     timelinebar.h
+<<<<<<< HEAD
+=======
+    hub75-font16.h
+    audiotransmitter.h audiotransmitter.cpp
+>>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 )
 
 # 앱 전역 스타일시트 리소스.

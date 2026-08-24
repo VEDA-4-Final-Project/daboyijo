@@ -31,6 +31,11 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
+<<<<<<< HEAD
+=======
+#include "alertbanner.h"
+#include "audiotransmitter.h"
+>>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 
 
 
@@ -215,6 +220,10 @@ struct VitalSample {
     int    spo2        = 0;
     qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
 };
+
+// 오디오 방송을 위한 클래스
+class AudioTransmitter;
+
 
 class MainWindow : public QMainWindow
 {
@@ -932,6 +941,9 @@ private:
     QPushButton* roiChannelButtons[4] = {};    // 채널 선택 버튼(1~4)
     QLabel* roiEditInfo = nullptr;
     void selectRoiChannel(int ch);             // 편집 채널 전환 → 영상/ROI 로드
+
+    // -- 오디오 음성 송출(방송) -- 
+    AudioTransmitter *m_transmitter = nullptr;
 };
 
 #endif // MAINWINDOW_H

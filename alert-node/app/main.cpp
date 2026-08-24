@@ -24,6 +24,7 @@
 #include "MqttClient_veda.hpp"
 #include "VedaAudioPlayer.hpp"
 #include "alert-display.hpp"
+#include "AudioReceiver.h"
 
 namespace {
 
@@ -93,6 +94,8 @@ struct Config {
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
     int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
+    int         broadcast_port    = 5000;      // UDP 방송 수신 포트
+    std::string alsa_device       = "hw:0,0";  // ALSA 재생 장치
 };
 
 // 실행 파일이 있는 디렉터리 — systemd 는 작업 디렉터리가 / 라 상대 경로가 깨짐
@@ -153,6 +156,8 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
         else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
+        else if (k == "broadcast_port")   c.broadcast_port = toInt(k, v, c.broadcast_port); 
+        else if (k == "alsa_device")      c.alsa_device = v;
     }
 }
 
@@ -263,10 +268,29 @@ int main(int argc, char* argv[])
     VedaAudioPlayer player;
     ThreadSafeQueue<AlarmCommand> queue;
 
+
+
     // 아래 STOP 처리 때문에 재생기를 MQTT 스레드와 메인 루프가 같이 만짐
     // stop() 이 재생 스레드를 join 해서 동시에 부르면 같은 스레드를 두 번 join 함
     // 재생기 호출은 전부 이 뮤텍스를 잡고 함
     std::mutex player_mutex;
+
+    // --- 방송 수신 객체 초기화 및 실행 ---
+    AudioReceiver broadcastReceiver;
+
+    // 긴급 방송 시작 전: 기존 사이렌/WAV 즉시 중단 및 ALSA 점유 해제
+    broadcastReceiver.setPreemptCallback([&]() {
+        printf("[방송]방송 수신 -> 기존 오디오 점유 해제\n");
+        std::lock_guard<std::mutex> lk(player_mutex);
+        player.stop();
+    });
+
+    broadcastReceiver.setRestoreCallback([&]() {
+        printf("[방송]방송 수신 종료\n");
+    });
+
+    // 백그라운드 스레드에서 UDP 수신 대기 시작
+    broadcastReceiver.start(cfg.broadcast_port, cfg.alsa_device);
 
     // 평상시(idle) 밝기·음량 = 관제 앱 "적용"으로 커밋된 값. 테스트(matrix=SHOW)는 잠깐
     // 이 값을 벗어나 보여주고, 스크롤이 끝나면 이 값으로 되돌아온다 — 적용해야만 유지된다.
@@ -441,6 +465,7 @@ int main(int argc, char* argv[])
     {
         std::lock_guard<std::mutex> lk(player_mutex);
         player.stop();
+        broadcastReceiver.stop(); // 방송 수신 스레드 안전 종료
     }
     display.clearNoWait();   // vsync 를 기다리다 여기서 매달리지 않게
     printf("\n종료\n");
