@@ -5754,13 +5754,107 @@ void MainWindow::exportReportPdf()
     // 실제로 인쇄되는 영역(여백 제외). writer.width() 는 여백을 포함한 종이 전체라
     // 이미지 폭 기준으로 쓰면 오른쪽이 잘린다.
     const QRect bodyPx = writer.pageLayout().paintRectPixels(writer.resolution());
+    // ★ HTML 의 width/height 는 96dpi 논리 픽셀로 읽히고, 인쇄할 때 장치 해상도만큼
+    //   다시 확대된다(300dpi 면 3.125 배). 이 좌표계를 "1. 요약 지표"가 1페이지에서
+    //   차지하는 높이를 재는 데도 똑같이 쓴다 — 서로 다른 좌표계를 섞으면 어긋난다.
+    const double dpiScale = writer.resolution() / 96.0;
+    const double pageLogicalW = bodyPx.width() / dpiScale;
+    const double pageLogicalH = bodyPx.height() / dpiScale;
 
+    // ── 상단(머리말 + "1. 요약 지표") HTML을 먼저 만든다 ──
+    // ★ 그래프를 "2. 시간별 활동량" 제목 바로 아래, 같은(첫) 페이지에 넣으려면
+    //   그 이미지 높이를 정하기 전에 위 내용이 1페이지에서 이미 얼마를 차지하는지
+    //   알아야 한다. 그래서 상단부만 먼저 문자열로 만들어 QTextDocument 로 한 번
+    //   재보고, 남는 공간만큼만 그래프에 배정한다.
+    const QString dateAndDow = QStringLiteral("%1 (%2)")
+        .arg(reportDate_.toString(QStringLiteral("yyyy년 M월 d일")), koreanDow(reportDate_));
+    const QString careLastStr = metrics_.careLast.isEmpty() ? QString()
+        : QStringLiteral("· 마지막 %1").arg(metrics_.careLast);
+    const QString eventDetailStr = metrics_.eventDetail.isEmpty()
+        ? QStringLiteral("이벤트 없음") : metrics_.eventDetail;
+    const QString generatedStr =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
+    // 문서번호 — 같은 입소자·같은 날짜면 항상 같은 값이라 재발행해도 안 바뀐다.
+    const QString docNumberStr = QStringLiteral("%1-%2")
+        .arg(reportDate_.toString(QStringLiteral("yyyyMMdd")))
+        .arg(reportResidentId_, 4, 10, QLatin1Char('0'));
+
+    const QString htmlTop = QStringLiteral(R"HTML(
+<html><body style="font-family:'맑은 고딕',sans-serif; font-size:11pt; color:#1E2A32; line-height:155%">
+
+<table width="100%" cellspacing="0" cellpadding="0" border="0">
+  <tr>
+    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">Carenet 요양원 통합 모니터링</span>
+        <h1 style="font-size:26pt; margin:2px 0 0 0">일일 리포트</h1></td>
+    <td align="right" valign="bottom">
+        <span style="font-size:9pt; color:#8B98A5">문서번호 %1<br>생성 %2</span></td>
+  </tr>
+</table>
+<hr style="border:3px solid #C25A10; margin-top:6px">
+
+<table width="100%" cellspacing="0" cellpadding="9" border="0" style="margin-top:10px">
+  <tr bgcolor="#FBEAD9">
+    <td width="14%"><b>성명</b></td><td width="36%">%3</td>
+    <td width="14%"><b>대상일</b></td><td width="36%">%4</td>
+  </tr>
+  <tr>
+    <td><b>구분</b></td><td>%5</td>
+    <td><b>작성</b></td><td>자동 기록 (담당자 입력 없음)</td>
+  </tr>
+</table>
+
+<p style="margin-top:20px; font-size:13pt"><b style="color:#C25A10">1.</b> <b>요약 지표</b></p>
+<table width="100%" cellspacing="0" cellpadding="11" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
+  <tr bgcolor="#FBEAD9">
+    <th align="left" width="25%">누워있는 시간</th><th align="left" width="25%">활동량</th>
+    <th align="left" width="25%">케어시간</th><th align="left" width="25%">이벤트</th>
+  </tr>
+  <tr>
+    <td><b style="font-size:17pt; color:#C25A10">%6</b><br><span style="color:#5C6B78">재실 %7회</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%8걸음</b><br><span style="color:#5C6B78">활동 %9분</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%10</b><br><span style="color:#5C6B78">%11회 %12</span></td>
+    <td><b style="font-size:17pt; color:#C25A10">%13회</b><br><span style="color:#5C6B78">%14</span></td>
+  </tr>
+  <tr style="color:#5C6B78">
+    <td>침대에 계셨던 시간의 합계</td>
+    <td>웨어러블이 센 걸음 수와 실제로 움직인 시간</td>
+    <td>요양사가 병실에 머문 시간 중 침대에 계셨던 시간</td>
+    <td>낙상 · 침상이탈 · 생체신호 이상 감지 횟수</td>
+  </tr>
+</table>
+)HTML")
+        // ★ QString::arg 의 다중 인자 오버로드는 최대 9개다. 14개를 9 + 5 로 나눈다.
+        .arg(docNumberStr, generatedStr, metrics_.residentName, dateAndDow, metrics_.residentMeta,
+             humanDuration(metrics_.lyingSec), QString::number(metrics_.lyingCount),
+             QString::number(metrics_.steps), QString::number(metrics_.activeMin))
+        .arg(humanDuration(metrics_.careSec), QString::number(metrics_.careCount), careLastStr,
+             QString::number(metrics_.eventTotal), eventDetailStr);
+
+    // ── 1페이지에 남는 공간 재기 ──
+    // ★ 아래 doc.print(&writer) 는 pageSize 를 지정하지 않은 채 인쇄 장치 DPI 로
+    //   다시 배치한다(맨 아래 주석 참고). 여기서도 똑같이 pageSize 는 주지 않고
+    //   textWidth 만 페이지 폭(96dpi 논리 픽셀)으로 맞춰 같은 방식으로 흘려본다.
+    double usedLogicalH = 0.0;
+    {
+        QTextDocument measureDoc;
+        measureDoc.setHtml(htmlTop + QStringLiteral("</body></html>"));
+        measureDoc.setTextWidth(pageLogicalW);
+        usedLogicalH = measureDoc.size().height();
+    }
+    // "2." 제목 + 설명 두 줄이 차지할 높이는 대략치로 미리 떼어 둔다. 너무 빡빡하게
+    // 잡으면 이 어림치가 틀렸을 때 그래프가 다시 다음 페이지로 밀려나므로, 살짝
+    // 넉넉하게 잡는다(1페이지 아래쪽에 여백이 조금 남는 편이 그래프가 잘리는 것보다 낫다).
+    const double captionReserve = 90.0;
+    // 이보다 좁으면 억지로 욱여넣지 않고 그래프를 다음 페이지로 넘긴다 — 너무
+    // 작은 그래프는 안 넣느니만 못하다.
+    const double minChartLogicalH = 110.0;
+    const double avail = pageLogicalH - usedLogicalH - captionReserve;
+    const bool chartNeedsNewPage = avail < minChartLogicalH;
+    // 다음 페이지로 넘어가면 페이지 전체를 쓸 수 있으니 기존처럼 1/3 로 잡고,
+    // 1페이지에 이어 붙일 땐 실제로 남는 만큼만 배정한다.
+    const double chartBudgetLogical = chartNeedsNewPage ? pageLogicalH / 3.0 : avail;
 
     // ── 그래프를 이미지로 ──
-    // ★ 크기: writer.width() 는 여백을 포함한 종이 전체 폭이라 그대로 쓰면 본문을
-    //   넘어 오른쪽이 잘린다. paintRectPixels() 로 "실제 인쇄되는 영역"을 받아 쓴다.
-    //   가로세로를 둘 다 지정해 비율이 흐트러지지 않게 하고, 세로가 페이지의 1/3 을
-    //   넘으면 세로 기준으로 다시 줄여 그래프 혼자 한 장을 차지하지 않게 한다.
     // ★ 색: 화면은 다크 테마일 수 있는데 종이는 흰색이다. 그대로 뜨면 어두운 상자가
     //   찍히고 회색 눈금이 잘 안 보인다. 그리는 동안만 팔레트를 라이트로 바꿔
     //   렌더하고 곧바로 되돌린다(같은 스레드에서 동기 렌더라 화면에는 영향 없다).
@@ -5786,17 +5880,16 @@ void MainWindow::exportReportPdf()
         QBuffer buf(&png);
         buf.open(QIODevice::WriteOnly);
         if (shot.save(&buf, "PNG")) {
-            // ★ HTML 의 width/height 는 96dpi 논리 픽셀로 읽히고, 인쇄할 때 장치
-            //   해상도만큼 다시 확대된다. 300dpi 면 3.125 배다. bodyPx(장치 픽셀)를
-            //   그대로 넣으면 그 배율로 또 커져 종이 밖으로 나간다 — 나눠서 넣는다.
-            const double dpiScale = writer.resolution() / 96.0;
-            int w = int(bodyPx.width() * 0.98 / dpiScale);
+            // bodyPx(장치 픽셀)를 그대로 넣으면 인쇄 시 배율만큼 또 커져 종이 밖으로
+            // 나간다 — dpiScale 로 나눠 논리 픽셀로 넣는다.
+            int w = int(pageLogicalW * 0.98);
             int h = shot.width() > 0 ? w * shot.height() / shot.width() : 0;
-            const int hMax = int(bodyPx.height() / 3.0 / dpiScale);
+            const int hMax = int(chartBudgetLogical);
             if (h > hMax && h > 0) { w = w * hMax / h; h = hMax; }
+            // ★ "2." 제목이 이미 "시간별 활동량"이라 이 안에서 또 제목을 달지 않는다
+            //   (전엔 여기서 한 번 더 달아 제목이 겹치고, 그만큼 세로 공간도 더 먹었다).
             chartHtml = QStringLiteral(
-                "<p style='margin-top:26px'><b>시간별 활동량</b></p>"
-                "<p style='color:#5C6B78; margin-top:2px'>"
+                "<p style='color:#5C6B78; margin-top:4px'>"
                 "막대 하나가 한 시간 동안 걸은 걸음 수입니다. "
                 "가장 활발했던 시간대는 진하게 표시됩니다.</p>"
                 "<img src='data:image/png;base64,%1' width='%2' height='%3'>")
@@ -5808,10 +5901,8 @@ void MainWindow::exportReportPdf()
         // 그래프를 못 그렸을 때(위젯이 없거나 이 날짜에 걸음 데이터가 없어 폭이 0일 때) —
         // 캡션만 있고 그 아래가 텅 비면 페이지가 어색해 보인다. 그래프가 있었을 때와
         // 비슷한 높이의 빈 칸을 만들고 안내문을 그 칸 한가운데(가로·세로 모두)에 둔다.
-        const double dpiScale = writer.resolution() / 96.0;
-        const int hMax = int(bodyPx.height() / 3.0 / dpiScale);
+        const int hMax = int(chartBudgetLogical);
         chartHtml = QStringLiteral(
-            "<p style='margin-top:26px'><b>시간별 활동량</b></p>"
             "<table width='100%' cellspacing='0' cellpadding='0' border='0'>"
             "<tr><td align='center' valign='middle' height='%1' "
             "style='color:#8B98A5'>표시할 활동량 데이터가 없습니다</td></tr></table>")
@@ -5875,52 +5966,16 @@ void MainWindow::exportReportPdf()
         }
     }
 
-    const QString html = QStringLiteral(R"HTML(
-<html><body style="font-family:'맑은 고딕',sans-serif; font-size:11pt; color:#1E2A32; line-height:155%">
+    // ── 나머지("2. 시간별 활동량" 이후) HTML ──
+    // ★ "2." 제목은 위에서 잰 남는 공간이 너무 좁을 때만(chartNeedsNewPage) 다음
+    //   페이지로 넘긴다. 넉넉하면 style 이 빈 문자열이라 "1. 요약 지표" 바로
+    //   아래, 1페이지 안에서 그대로 이어 그려진다.
+    const QString sectionBreakStyle = chartNeedsNewPage
+        ? QStringLiteral("page-break-before:always; ") : QString();
 
-<table width="100%" cellspacing="0" cellpadding="0" border="0">
-  <tr>
-    <td><span style="font-size:10pt; color:#5C6B78; letter-spacing:2px">Carenet 요양원 통합 모니터링</span>
-        <h1 style="font-size:26pt; margin:2px 0 0 0">일일 리포트</h1></td>
-    <td align="right" valign="bottom">
-        <span style="font-size:9pt; color:#8B98A5">문서번호 %17<br>생성 %15</span></td>
-  </tr>
-</table>
-<hr style="border:3px solid #C25A10; margin-top:6px">
-
-<table width="100%" cellspacing="0" cellpadding="9" border="0" style="margin-top:10px">
-  <tr bgcolor="#FBEAD9">
-    <td width="14%"><b>성명</b></td><td width="36%">%1</td>
-    <td width="14%"><b>대상일</b></td><td width="36%">%3</td>
-  </tr>
-  <tr>
-    <td><b>구분</b></td><td>%2</td>
-    <td><b>작성</b></td><td>자동 기록 (담당자 입력 없음)</td>
-  </tr>
-</table>
-
-<p style="margin-top:20px; font-size:13pt"><b style="color:#C25A10">1.</b> <b>요약 지표</b></p>
-<table width="100%" cellspacing="0" cellpadding="11" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
-  <tr bgcolor="#FBEAD9">
-    <th align="left" width="25%">누워있는 시간</th><th align="left" width="25%">활동량</th>
-    <th align="left" width="25%">케어시간</th><th align="left" width="25%">이벤트</th>
-  </tr>
-  <tr>
-    <td><b style="font-size:17pt; color:#C25A10">%4</b><br><span style="color:#5C6B78">재실 %5회</span></td>
-    <td><b style="font-size:17pt; color:#C25A10">%6걸음</b><br><span style="color:#5C6B78">활동 %7분</span></td>
-    <td><b style="font-size:17pt; color:#C25A10">%8</b><br><span style="color:#5C6B78">%9회 %10</span></td>
-    <td><b style="font-size:17pt; color:#C25A10">%11회</b><br><span style="color:#5C6B78">%12</span></td>
-  </tr>
-  <tr style="color:#5C6B78">
-    <td>침대에 계셨던 시간의 합계</td>
-    <td>웨어러블이 센 걸음 수와 실제로 움직인 시간</td>
-    <td>요양사가 병실에 머문 시간 중 침대에 계셨던 시간</td>
-    <td>낙상 · 침상이탈 · 생체신호 이상 감지 횟수</td>
-  </tr>
-</table>
-
-<p style="margin-top:24px; font-size:13pt"><b style="color:#C25A10">2.</b> <b>시간별 활동량</b></p>
-%13
+    const QString htmlRest = QStringLiteral(R"HTML(
+<p style="%1font-size:13pt"><b style="color:#C25A10">2.</b> <b>시간별 활동량</b></p>
+%2
 
 <p style="page-break-before:always; font-size:13pt"><b style="color:#C25A10">3.</b> <b>이벤트 내역</b></p>
 <p style="color:#5C6B78; margin-top:2px">
@@ -5929,9 +5984,9 @@ void MainWindow::exportReportPdf()
 <table width="100%" cellspacing="0" cellpadding="10" border="1" bordercolor="#DCE4EC" style="margin-top:4px">
   <tr bgcolor="#FBEAD9"><th align="left" width="14%">시각</th><th align="left" width="30%">종류</th>
       <th align="left" width="28%">감지 방식</th><th align="left" width="28%">확인 여부</th></tr>
-  %14
+  %3
 </table>
-%16
+%4
 
 <p style="margin-top:30px; font-size:10pt"><b>측정 방식 안내</b></p>
 <table width="100%" cellspacing="0" cellpadding="8" border="1" bordercolor="#DCE4EC">
@@ -5946,34 +6001,13 @@ void MainWindow::exportReportPdf()
   Carenet 요양원 통합 모니터링 &middot; 이 문서는 시스템이 자동 생성했습니다.
 </p>
 </body></html>)HTML")
-
-
-        // ★ QString::arg 의 다중 인자 오버로드는 최대 9개다. 17개를 한 번에 넘기면
-        //   컴파일이 안 되므로 9 + 8 로 나눈다. 낮은 번호 placeholder 부터
-        //   순서대로 채워지므로 이렇게 쪼개도 결과는 같다.
-        .arg(metrics_.residentName, metrics_.residentMeta,
-             QStringLiteral("%1 (%2)").arg(reportDate_.toString(QStringLiteral("yyyy년 M월 d일")),
-                                           koreanDow(reportDate_)),
-             humanDuration(metrics_.lyingSec), QString::number(metrics_.lyingCount),
-             QString::number(metrics_.steps), QString::number(metrics_.activeMin),
-             humanDuration(metrics_.careSec), QString::number(metrics_.careCount))
-        .arg(metrics_.careLast.isEmpty() ? QString()
-                                         : QStringLiteral("· 마지막 %1").arg(metrics_.careLast),
-             QString::number(metrics_.eventTotal),
-             metrics_.eventDetail.isEmpty() ? QStringLiteral("이벤트 없음")
-                                            : metrics_.eventDetail,
-             chartHtml, eventRows,
-             QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
-             summaryHtml,
-             // 문서번호 — 같은 입소자·같은 날짜면 항상 같은 값이라 재발행해도 안 바뀐다.
-             QStringLiteral("%1-%2").arg(reportDate_.toString(QStringLiteral("yyyyMMdd")))
-                                    .arg(reportResidentId_, 4, 10, QLatin1Char('0')));
+        .arg(sectionBreakStyle, chartHtml, eventRows, summaryHtml);
 
     // ★ doc.setPageSize 를 직접 주지 않는다. 주면 QTextDocument 가 화면 DPI 로
     //   배치된 채 고해상도 페이지에 그대로 얹혀 글자가 1/10 크기로 나온다.
     //   비워 두면 print() 가 문서를 복제해 인쇄 장치 DPI 로 다시 배치해 준다.
     QTextDocument doc;
-    doc.setHtml(html);
+    doc.setHtml(htmlTop + htmlRest);
     doc.print(&writer);
 
     QMessageBox::information(this, QStringLiteral("PDF 내보내기"),
