@@ -987,6 +987,41 @@ std::vector<EventRow> Database::findEvents(bool anyType, EventType type, int cha
     return rows;
 }
 
+int Database::countEvents(bool anyType, EventType type, int channel,
+                          long long startMs, long long endMs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    // 조건 조립은 findEvents 와 글자까지 같아야 한다 — 다르면 "총 N건"과 실제
+    // 목록이 어긋나 사용자가 없는 기록을 찾게 된다.
+    char typeClause[48] = "";
+    if (!anyType) {
+        std::snprintf(typeClause, sizeof(typeClause), "AND event_type = '%s' ", toSql(type));
+    }
+    char channelClause[32] = "";
+    if (channel >= 0) {
+        std::snprintf(channelClause, sizeof(channelClause), "AND camera_id = %d ", channel);
+    }
+
+    char sql[768];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT COUNT(*) FROM events "
+        "WHERE occurred_at BETWEEN FROM_UNIXTIME(%lld/1000.0) AND FROM_UNIXTIME(%lld/1000.0) "
+        "%s%s",
+        startMs, endMs, typeClause, channelClause);
+
+    if (queryLocked(sql)) {
+        std::cerr << "[DB] 이벤트 건수 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return -1;
+    int n = -1;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) n = row[0] ? std::atoi(row[0]) : 0;
+    mysql_free_result(res);
+    return n;
+}
+
 long long Database::openBedSession(int cameraId, int residentId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!conn_) return 0;

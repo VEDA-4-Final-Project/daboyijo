@@ -164,6 +164,13 @@ public:
     std::vector<EventRow> findEvents(bool anyType, EventType type, int channel,
                                      long long startMs, long long endMs, int limit);
 
+    // [영상검색] findEvents 와 같은 조건의 전체 건수(limit 미적용).
+    // findEvents 는 최신순으로 limit 만큼 잘라 오므로, 그것만으로는 "그 시간대에
+    // 정말 그만큼뿐"인지 "잘린 것"인지 구분할 수 없다. 답변에 "총 N건 중 최근
+    // M건" 을 쓰려면 이 값이 필요하다. 실패 시 -1(호출부가 표시를 생략).
+    int countEvents(bool anyType, EventType type, int channel,
+                    long long startMs, long long endMs);
+
     // 침대 재실 세션 열기(입소자가 침대 ROI 안으로 들어온 순간).
     // 반환: session_id, 실패 시 0. 이 id 를 들고 있다가 나갈 때 닫는다.
     //  residentId : -1 이면 cameraId 로 찾는다(1채널 1인 전제).
