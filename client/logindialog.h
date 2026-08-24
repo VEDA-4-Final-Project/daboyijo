@@ -27,6 +27,8 @@ protected:
     // 블러 배경은 QSS로 표현할 수 없다(Qt Widgets에는 backdrop-filter가 없다).
     // 창 전체를 직접 그리고, 그 위에 반투명 카드를 얹는 방식으로 낸다.
     void paintEvent(QPaintEvent* event) override;
+    // 종료 버튼은 레이아웃 밖(배경 위)에 떠 있어서 위치를 직접 잡아줘야 한다.
+    void resizeEvent(QResizeEvent* event) override;
 
 private slots:
     void attemptLogin();
@@ -47,6 +49,7 @@ private:
     QPushButton* loginButton_  = nullptr;
     QLabel*      errorLabel_   = nullptr;
     QFrame*      card_         = nullptr;   // 그림자를 직접 그리려면 카드 위치가 필요하다
+    QPushButton* closeButton_  = nullptr;   // 전체화면에는 타이틀바가 없다 — 종료 경로
 
     QPixmap      background_;               // 블러가 끝난 배경 (창 크기 기준 캐시)
 

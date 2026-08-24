@@ -21,9 +21,16 @@
         #authGlassCard { background: rgba(21, 29, 38, 0.72);
                          border: 1px solid rgba(255, 255, 255, 0.10);
                          border-radius: 18px; }
+
+        /* 전체화면 로그인에는 타이틀바가 없다 — 이 버튼이 앱을 끝내는 유일한
+         * 가시적 경로다. 카드가 아니라 블러 배경 위에 바로 얹히므로 평소엔
+         * 투명하게 두고 hover에서만 판을 드러낸다. */
+        #authClose { background: transparent; color: %(sub); border: none;
+                     border-radius: 22px; font-size: 17px; font-weight: 700; }
+        #authClose:hover { background: rgba(255, 255, 255, 0.14); color: %(text); }
         QLabel { color: %(text); font-family: "Segoe UI", "맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; }
 
-        #authLogo { color: %(accent); font-size: 38px; font-weight: 800; letter-spacing: 4px; }
+        #authLogo { color: %(accent); font-size: 42px; font-weight: 800; letter-spacing: 4px; }
         #authTitle { color: %(text); font-size: 20px; font-weight: 800; }
         #authSubtitle { color: %(sub); font-size: 13px; letter-spacing: 0.5px; }
         #authCaption { color: %(sub); font-size: 12px; font-weight: 700; }

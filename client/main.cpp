@@ -91,7 +91,11 @@ int main(int argc, char *argv[])
             break;              // 로그인 창을 닫음 → 앱 종료
 
         MainWindow w(login.user());
-        w.show();
+        // 로그인 화면과 같은 전체화면으로 띄운다 — 두 화면 사이에 크기가 튀지 않는다.
+        // 타이틀바가 없어 창을 닫는 X도 없지만, 관제 화면에는 로그아웃 버튼이 있어
+        // 로그인 화면으로 돌아올 수 있고 거기서 종료할 수 있다.
+        // MainWindow 생성자의 resize(1680, 960)은 전체화면이 풀렸을 때의 기본 크기로 남는다.
+        w.showFullScreen();
         a.exec();               // 관제 화면이 닫힐 때까지
 
         if (!w.logoutRequested())

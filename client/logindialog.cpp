@@ -15,6 +15,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRadialGradient>
+#include <QResizeEvent>
 #include <QSettings>
 #include <QSqlDatabase>
 #include <QVBoxLayout>
@@ -36,8 +37,9 @@ constexpr char kKeySavedId[] = "login/savedId";
 // 이 파일은 건드릴 필요가 없다.
 constexpr char kBackgroundImage[] = ":/images/login-bg.jpg";
 
-// 카드 너비. 창이 넓어져도 입력 폼 자체는 읽기 좋은 폭을 유지해야 한다.
-constexpr int kCardWidth = 400;
+// 카드 너비. 전체화면이어도 입력 폼 자체는 읽기 좋은 폭을 유지해야 한다 —
+// 화면 폭에 비례해 늘리면 한 줄이 너무 길어져 오히려 읽기 나빠진다.
+constexpr int kCardWidth = 480;
 
 // src를 가우시안 블러한 새 픽스맵을 돌려준다.
 // QGraphicsBlurEffect는 위젯이 아니라 QGraphicsItem에만 걸 수 있어서
@@ -104,10 +106,15 @@ LoginDialog::LoginDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("Carenet · 로그인"));
-    // 배경 사진이 "분위기"로 읽히려면 카드 바깥에 여백이 있어야 한다 —
-    // 420폭 그대로 두면 카드가 창을 다 덮어 블러가 거의 안 보인다.
-    setFixedSize(940, 600);
-    // 로그인 창에는 최대화/도움말 버튼이 의미 없다 — 닫기만 남긴다.
+    // 전체화면. 관제 PC 한 대에 붙박이로 띄우는 화면이라 창 테두리가 의미 없고,
+    // MainWindow도 같은 방식으로 뜨므로(main.cpp) 두 화면 사이에 크기 변화가 없다.
+    // 배경 사진이 "분위기"로 읽히려면 카드 바깥에 여백이 있어야 하는데,
+    // 전체화면이면 그 여백이 가장 넉넉하다.
+    //
+    // resize()는 전체화면이 풀렸을 때 쓰일 기본 크기다. 창 관리자가 전체화면을
+    // 거부하는 환경에서 크기가 0으로 남지 않게 반드시 함께 둔다.
+    resize(1180, 720);
+    setWindowState(Qt::WindowFullScreen);
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 
     buildUi();
@@ -132,7 +139,9 @@ void LoginDialog::buildUi()
     // 곧 블러 배경이 보이는 자리다.
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->addStretch();
+    // 위 5 : 아래 6. 기하학적 정중앙(5:5)에 두면 눈에는 살짝 아래로 처져 보인다 —
+    // 위쪽 여백을 조금 좁혀야 가운데에 놓인 것처럼 읽힌다.
+    root->addStretch(5);
 
     auto* row = new QHBoxLayout();
     row->setContentsMargins(0, 0, 0, 0);
@@ -148,10 +157,22 @@ void LoginDialog::buildUi()
 
     row->addStretch();
     root->addLayout(row);
-    root->addStretch();
+    root->addStretch(6);
+
+    // 전체화면에는 타이틀바가 없다 = 창을 닫는 X 버튼도 없다. 관제 화면은
+    // 로그아웃 버튼으로 여기까지 돌아올 수 있지만, 여기서 앱을 끝낼 길은
+    // 이 버튼뿐이다(Esc도 같은 동작이지만 화면에 보이지 않는다).
+    // 배경 위에 떠 있어야 하므로 레이아웃에 넣지 않고 resizeEvent()에서 배치한다.
+    closeButton_ = new QPushButton(QStringLiteral("✕"), this);
+    closeButton_->setObjectName("authClose");
+    closeButton_->setCursor(Qt::PointingHandCursor);
+    closeButton_->setFixedSize(44, 44);
+    closeButton_->setAutoDefault(false);   // Enter는 로그인 버튼이 받아야 한다
+    closeButton_->setToolTip(QStringLiteral("종료 (Esc)"));
+    connect(closeButton_, &QPushButton::clicked, this, &QDialog::reject);
 
     auto* lay = new QVBoxLayout(card);
-    lay->setContentsMargins(38, 38, 38, 24);
+    lay->setContentsMargins(46, 44, 46, 28);
     lay->setSpacing(0);
 
     // ── 로고 / 타이틀 ──
@@ -261,6 +282,15 @@ void LoginDialog::buildUi()
     // 아이디 칸에서 Enter → 비밀번호로, 비밀번호에서 Enter → 로그인
     connect(idEdit_, &QLineEdit::returnPressed, this, [this] { pwEdit_->setFocus(); });
     connect(pwEdit_, &QLineEdit::returnPressed, this, &LoginDialog::attemptLogin);
+}
+
+void LoginDialog::resizeEvent(QResizeEvent* event)
+{
+    QDialog::resizeEvent(event);
+    if (closeButton_)
+        closeButton_->move(width() - closeButton_->width() - 24, 24);
+    // 배경은 여기서 다시 만들지 않는다 — 크기가 바뀌면 어차피 repaint가 오고,
+    // ensureBackground()가 캐시된 크기와 비교해 그때 한 번만 새로 만든다.
 }
 
 void LoginDialog::ensureBackground()
