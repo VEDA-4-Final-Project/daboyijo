@@ -17,6 +17,7 @@
 #include <QFile>
 #include <QPixmap>
 #include <QDateTime>
+#include <QRandomGenerator>
 #include <QDebug>
 #include <QVBoxLayout>
 #include <QHBoxLayout>

@@ -31,11 +31,11 @@ bool PrivacyMasker::computeFaceRoi(const Detection& d, const cv::Mat& image,
     int y0 = std::max(0, static_cast<int>(d.top * image.rows));
     int x1 = std::min(image.cols, static_cast<int>(d.right * image.cols));
     int y1 = std::min(image.rows, static_cast<int>(d.bottom * image.rows));
-    // 움직임이 빠를때 노출 방지(소량 패딩 — 얼굴에 밀착시키기 위해 축소)
+    // 움직임이 빠를때 노출 방지(패딩)
     int w = x1 - x0;
     int h = y1 - y0;
-    int pad_x = static_cast<int>(w * 0.10);
-    int pad_y = static_cast<int>(h * 0.10);
+    int pad_x = static_cast<int>(w * 0.20);
+    int pad_y = static_cast<int>(h * 0.20);
 
     int px0 = std::max(0, x0 - pad_x);
     int py0 = std::max(0, y0 - pad_y);
