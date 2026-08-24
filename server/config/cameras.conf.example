@@ -83,7 +83,9 @@ telegram_guardian_alerts=1
 
 # 케어봇 실시간 상황 질의응답용 VLM (Google Gemini)
 # - Google AI Studio(https://aistudio.google.com/apikey)에서 API 키 발급 → gemini_api_key
-# - gemini_model: 미지정 시 gemini-flash-latest(현재 안정 Flash 별칭). 필요 시 특정 id로 고정.
+# - gemini_model: 미지정 시 gemini-3.6-flash. 별칭(gemini-flash-latest)은 쓰지 말 것 —
+#   가리키는 모델이 바뀌면 오류 없이 응답만 안 오는 상태로 조용히 멈춘다(2026-08 실측).
+#   모델을 바꿀 땐 tools/gemini_probe.sh 로 실제 응답이 오는지 먼저 확인할 것.
 # - 미설정이면 봇은 질문에 "설정 필요" 안내만 하고 서버는 정상 동작.
 gemini_api_key=
 gemini_model=

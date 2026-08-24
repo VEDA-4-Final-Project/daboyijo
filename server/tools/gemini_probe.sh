@@ -82,9 +82,17 @@ if [ -s "$TMP/models.json" ]; then
 fi
 echo
 
-echo "[4] 모델 고정 — gemini-2.5-flash (별칭 문제 가르기)"
-# gemini-flash-latest 는 별칭이라 어떤 실제 모델을 가리키는지 바뀐다.
-post_case "2.5-flash" "$TMP/text.json" "$(url_for gemini-2.5-flash)"
+echo "[4] 모델 고정 — 별칭 대신 실제 id (별칭 문제 가르기)"
+# gemini-flash-latest 는 별칭이라 어떤 실제 모델을 가리키는지 시기에 따라 바뀐다.
+# 2026-08 실측: 별칭은 응답이 아예 안 오고, 2.5-flash 는 404 + "3.6-flash 를
+# 쓰라"는 안내를 준다. 그래서 고정 id 로 3.6-flash 를 시험한다.
+post_case "3.6-flash" "$TMP/text.json" "$(url_for gemini-3.6-flash)"
+echo
+echo "    (사용 가능한 flash 계열 모델 목록)"
+if [ -s "$TMP/models.json" ]; then
+    grep -o '"name": "models/[^"]*flash[^"]*"' "$TMP/models.json" |
+        sed 's/.*models\//      /; s/"$//' | sort -u
+fi
 echo
 
 echo "[5] 이미지 생성 — 진짜 JPEG 3장"
@@ -131,7 +139,8 @@ cat <<'EOF'
 · [2] -4 만 성공       → IPv6 경로 문제. 코드에서 IPv4 를 강제하면 해결된다.
 · [3] 성공 + [1] 멈춤  → 경로는 정상. 생성 요청만 응답이 안 오는 것이므로
                          [4] 로 별칭/모델을 갈라볼 것.
-· [4] 만 성공          → gemini-flash-latest 별칭이 문제. 모델을 고정한다.
+· [4] 만 성공          → 설정된 모델(별칭)이 문제. cameras.conf 의 gemini_model 을
+                         [4]에서 통한 고정 id 로 바꾼다.
 · [1] 1차 멈춤 + 2차 성공 → 일시적. 코드에 타임아웃 재시도를 넣으면 넘어간다.
 · [5] 만 멈춤          → 이미지 요청 특유의 문제(응답 크기가 아니라 처리 시간).
 ──────────────────────────────────────────────────────

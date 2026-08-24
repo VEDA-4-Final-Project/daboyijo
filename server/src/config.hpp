@@ -54,8 +54,14 @@ struct ServerConfig {
     // 답하지 못하고 폴백 메시지를 보낸다(서버는 정상 동작).
     std::string gemini_api_key;   // Google AI Studio 발급 키
     // 모델 id는 시기별로 바뀌므로 AI Studio에서 현재 값 확인 권장. 미지정 시 기본값.
-    // gemini-flash-latest = 항상 현재 안정 Flash를 가리키는 별칭(모델 은퇴에 강함).
-    std::string gemini_model = "gemini-flash-latest";
+    // ★ 예전 기본값이던 gemini-flash-latest(별칭)를 버린 이유 — 2026-08 실측:
+    //   그 별칭으로 :generateContent 를 부르면 응답이 1바이트도 오지 않고 그대로
+    //   멈춘다(60초 예산을 다 씀). 같은 키·같은 호스트로 모델 목록 GET 은 0.25초에
+    //   24KB 를 정상 수신하므로 회선·키 문제가 아니다. 별칭은 "은퇴에 강하다"는
+    //   이점이 있지만, 가리키는 대상이 바뀌며 조용히 멈추면 알아챌 방법이 없다 —
+    //   404 로 빨리 죽는 고정 id 가 낫다(gemini-2.5-flash 는 실제로 404 를 주며
+    //   3.6-flash 를 쓰라고 안내한다).
+    std::string gemini_model = "gemini-3.6-flash";
 
     // [케어 봇] 📞 연락처 버튼이 회신할 연락처. 미설정 시 "미등록"으로 표시.
     std::string care_contact_caregiver;  // 담당 요양사
