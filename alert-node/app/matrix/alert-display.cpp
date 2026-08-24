@@ -113,6 +113,14 @@ void AlertDisplay::clear()
     flush();
 }
 
+// clear() 와 같지만 vsync 를 안 기다린다 — 헤더의 설명 참고
+void AlertDisplay::clearNoWait()
+{
+    if (!fb_) return;
+    memset(scratch_.data(), 0, scratch_.size());
+    memcpy(fb_, scratch_.data(), scratch_.size());
+}
+
 // 밝기는 패널 전역 설정이라 프레임버퍼가 아닌 드라이버 파라미터로 감
 // ioctl 로도 되지만 /dev/hub75 를 따로 열어야 해서 sysfs 사용 (fbdev 하나로 자족)
 bool AlertDisplay::setBrightness(int v)
@@ -132,7 +140,7 @@ bool AlertDisplay::setBrightness(int v)
 // 스크롤 중 깜빡임(BLINK_FRAMES)의 절반 주기 — 같은 리듬이면 새 경보인지
 // 진행 중인 경보인지 구분이 안 됨
 // 화면 전체는 눈이 부시고 껐다 켜면 잘 안 보여서 테두리만 사용
-void AlertDisplay::blinkCue(severity sev, int times)
+void AlertDisplay::blinkCue(severity sev, int times, const AbortFn& abort)
 {
     if (!fb_) return;
 
@@ -143,12 +151,14 @@ void AlertDisplay::blinkCue(severity sev, int times)
     // usleep 을 빼면 vsync 주기로만 흘러 훨씬 빨라짐
     for (int t = 0; t < times; t++) {
         for (int f = 0; f < half; f++) {
+            if (abort && abort(0)) return;       // 종료 신호면 깜빡임 도중에도 즉시 나감
             memset(scratch_.data(), 0, scratch_.size());
             drawBorder(col, 255);
             flush();
             usleep(FPS_US);
         }
         for (int f = 0; f < half; f++) {
+            if (abort && abort(0)) return;
             memset(scratch_.data(), 0, scratch_.size());
             flush();
             usleep(FPS_US);
@@ -220,19 +230,31 @@ void AlertDisplay::showStatic(const std::string& msg, severity sev)
 void AlertDisplay::show(const std::string& msg, severity sev, int passes,
                         const AbortFn& abort)
 {
-    if (!fb_) return;
-
     // MQTT 로 들어오는 값이라 범위를 안 믿음
     // 0 이면 조용히 아무것도 안 뜨고, 큰 값이면 몇 분씩 붙잡혀 둘 다 디버깅이 나쁨
     if (passes < 1)  passes = 1;
     if (passes > 10) passes = 10;
+    scroll(msg, sev, passes, abort);
+}
+
+void AlertDisplay::showUntilAborted(const std::string& msg, severity sev,
+                                    const AbortFn& abort)
+{
+    scroll(msg, sev, -1, abort);
+}
+
+void AlertDisplay::scroll(const std::string& msg, severity sev, int passes,
+                          const AbortFn& abort)
+{
+    if (!fb_) return;
 
     const uint8_t* col = sevColor(sev);
     const int y    = (rows_ - FONT16_H) / 2;        // 세로 중앙
     const int span = measureText(msg) + cols_;      // 오른쪽 등장 ~ 왼쪽 퇴장
     long frame = 0;
 
-    for (int pass = 0; pass < passes; pass++)
+    // frame 은 바퀴를 넘어가도 안 끊는다 — 되돌리면 깜빡임 리듬이 한 바퀴마다 튄다
+    for (int pass = 0; passes < 0 || pass < passes; pass++)
         for (int off = 0; off <= span; off++, frame++) {
             if (abort && abort(pass)) return;
 

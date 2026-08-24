@@ -30,6 +30,14 @@ public:
     std::vector<Detection> closestTo(
         int channel, std::chrono::steady_clock::time_point t) const;
 
+    // closestTo()에 속도 외삽을 더한 버전. 메타데이터는 ~200ms 간격(5fps)으로만
+    // 오는데 영상은 최대 40fps로 그려지므로, 새 메타데이터가 오기 전까지는 같은
+    // 좌표가 최대 6~8프레임 재사용돼 빠른 움직임에서 블러가 밀린다. 직전 두
+    // 메타데이터 프레임에서 object_id별 이동 속도를 구해 t 시점으로 위치를
+    // 예측 이동시켜, 렌더링 시점의 실제 위치에 더 가깝게 맞춘다.
+    std::vector<Detection> predictedAt(
+        int channel, std::chrono::steady_clock::time_point t) const;
+
     // 가장 최근 감지 결과 (상태 리포트용, 없으면 빈 벡터)
     std::vector<Detection> latest(int channel) const;
 
