@@ -165,7 +165,7 @@ static void Update_Labels(void)
 #else
     /* 심박은 아직 못 구했으면 0 이 온다. 0 을 그대로 띄우면 '심박이 0' 으로
      * 읽히므로 측정 중임을 뜻하는 표시로 바꾼다. */
-    uint32_t bpm = HeartRateCalc_GetBPM();
+    uint32_t bpm = HeartRateCalc_GetBPMHeld();
     if (bpm > 0) lv_label_set_text_fmt(ui_textHeart, "%lu", (unsigned long)bpm);
     else         lv_label_set_text(ui_textHeart, "--");
 #endif
