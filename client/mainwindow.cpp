@@ -579,6 +579,11 @@ MainWindow::MainWindow(const Auth::SessionUser& user, QWidget *parent)
     // 게다가 이 블록은 buildUi() 뒤에 돌면서 표를 setRowCount(0)로 비워, 원장에서
     // 읽어 온 행까지 지웠다. 클립 재생 URL은 events.clip_url(파일명)에 채널별
     // 호스트를 붙여 만든다 — 같은 규칙이라 재생 동작은 그대로다.
+    
+    //-- 오디오 음성 송출 (방송) 
+    // 1. AudioTransmitter 초기화
+    m_transmitter = new AudioTransmitter(this);
+
 }
 
 MainWindow::~MainWindow()
@@ -8615,14 +8620,42 @@ void MainWindow::resendCamerasForServer(int serverIdx)
 // ═══════════════════════════════════════════════════════════
 //  원격 방송(인터콤)
 // ═══════════════════════════════════════════════════════════
+<<<<<<< HEAD
 void MainWindow::onMicToggled(bool on)
+=======
+void MainWindow::onMicPressed()
+{
+    micButton->setText(QStringLiteral("🔴 방송 중"));
+    micButton->setProperty("active", true);
+    micButton->style()->unpolish(micButton);
+    micButton->style()->polish(micButton);
+    QString targetIp = "172.20.35.40"; // 알림 라즈베리파이 IP 
+    quint16 targetPort = 5000;
+
+    if (!m_transmitter->startBroadcast(targetIp, targetPort)) {
+        qWarning() << "방송 시작 실패";
+    }
+
+
+    qDebug() << "인터콤 방송 시작";
+}
+
+void MainWindow::onMicReleased()
+>>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 {
     micButton->setText(on ? QStringLiteral("🔴 방송 중")
                           : QStringLiteral("🎤 방송"));
     micButton->setProperty("active", on);
     micButton->style()->unpolish(micButton);
     micButton->style()->polish(micButton);
+<<<<<<< HEAD
     qDebug() << (on ? "인터콤 방송 시작" : "인터콤 방송 종료");
+=======
+
+    m_transmitter->stopBroadcast();
+
+    qDebug() << "인터콤 방송 종료";
+>>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 }
 
 // ═══════════════════════════════════════════════════════════
