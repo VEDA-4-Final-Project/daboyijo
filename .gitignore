@@ -75,6 +75,7 @@ secrets*
 .env
 server/config/cameras.conf
 server/blackbox_clips/
+relay-node/relay-node.conf
 
 # ===== OS =====
 .DS_Store
