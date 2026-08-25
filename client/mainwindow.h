@@ -749,6 +749,7 @@ private:
     void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
     // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
     void loadPatientsFromDb();
+
     // patients[]를 영상 오버레이·바이탈 카드 라벨에 다시 반영(등록/수정/퇴원 후 호출).
     void refreshPatientLabels();
     void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
