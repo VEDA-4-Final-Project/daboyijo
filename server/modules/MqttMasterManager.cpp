@@ -6,11 +6,11 @@
 
 namespace {
 // 알람 발동 기준
-constexpr int kHrAlarmHigh   = 180;   // 심박 이 값 초과 → 이상
+constexpr int kHrAlarmHigh   = 115;   // 심박 이 값 이상 → 이상
 constexpr int kSpo2AlarmLow  = 90;    // SpO2 이 값 미만 → 이상
 // 정상 복귀 기준 — 발동 기준보다 한 칸 안쪽으로 잡는다(히스테리시스).
 // 89 ↔ 90 을 오갈 때 알람이 껐다 켜졌다 하는 걸 막는다.
-constexpr int kHrClearHigh   = 175;
+constexpr int kHrClearHigh   = 110;
 constexpr int kSpo2ClearLow  = 93;
 // 한 번 튄 값으로 성급히 "정상 복귀"라고 하지 않도록 연속 N회를 요구한다.
 constexpr int kNormalStreakToClear = 3;
@@ -196,7 +196,7 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
 
         // ── 생체신호: 상태다. 이상인 '동안'이 아니라 이상으로 '바뀔 때' 알린다.
         const bool abnormal =
-            (hr_valid && data.heart_rate > kHrAlarmHigh) ||
+            (hr_valid && data.heart_rate >= kHrAlarmHigh) ||
             (spo2_valid && data.spo2 < kSpo2AlarmLow);
         // 복귀 판정은 더 빡빡하게(히스테리시스) — 경계값에서 알람이 떨리지 않게.
         const bool back_to_normal =
