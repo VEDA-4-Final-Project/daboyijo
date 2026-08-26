@@ -70,8 +70,12 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     bool result = (ratio >= threshold_) && (mean_sat >= min_sat_);
 
     if (ratio >= 0.03) {
-        std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
-                     ratio, mean_sat, result ? "O" : "X");
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_log_time_ >= std::chrono::milliseconds(500)) {
+            std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
+                         ratio, mean_sat, result ? "O" : "X");
+            last_log_time_ = now;
+        }
     }
 
     return result;

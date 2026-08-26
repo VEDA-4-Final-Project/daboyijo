@@ -14,11 +14,9 @@ constexpr double kMinSessionSec = 5.0;
 // 가거나 옆 방을 잠깐 보고 오는 정도는 케어가 끊긴 게 아니라고 판단.
 // ★ 비운 시간 자체는 케어시간에 안 들어간다 — 세션마다 감지된 구간만 더한다.
 constexpr double kMergeWindowSec = 180.0;   // 3분
-// ★ 실측 근거: 조끼 S 146~207 / 비조끼 S 55~130.
-//   조끼가 움직이면 모션 블러로 채도가 146까지 떨어지므로 여유를 둬 140으로 컷.
-//   (비조끼도 드물게 148~167로 튀는 프레임이 있어 완전한 분리는 아니다 —
-//    그래서 ratio 조건과 AND로 묶어 두 축을 같이 본다.)
-constexpr double kMinSaturation = 140.0;
+// 조끼 판정 최소 평균 채도. 채도만으로는 완전히 갈리지 않아 ratio 조건과
+// AND로 묶어 두 축을 같이 본다.
+constexpr double kMinSaturation = 150.0;   // 조끼 S 146~207 vs 비조끼 55~130 — 모션 블러로 146까지 떨어져 140 컷
 
 // ── 요양사 유니폼 색(HSV) 튜닝값 ──────────────────────────────────
 // 카메라 화질이 뿌옇고 대비가 낮아 실제 조끼 픽셀의 S/V가 낮게 깔린다.
@@ -29,9 +27,7 @@ constexpr double kMinSaturation = 140.0;
 const cv::Scalar kVestLower(5, 50, 50);
 const cv::Scalar kVestUpper(28, 255, 255);
 // ★ 채도가 주 판정을 맡으므로 ratio는 하한 보증 역할만 한다.
-//   기존 0.08은 서 있는 요양사를 놓쳤고(실측 0.028~0.073 탈락), 반대로 완전히
-//   풀면 비조끼가 S 165로 튀는 프레임(그때 ratio 0.071)이 통과해 헛세션이 열린다.
-constexpr double kVestThreshold = 0.05;
+constexpr double kVestThreshold = 0.2;    // 0.08은 서 있는 요양사를 놓침(실측 0.028~0.073 탈락)
 
 }  // namespace
 
