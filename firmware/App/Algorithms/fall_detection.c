@@ -8,7 +8,7 @@
   *
   *   1단계  자유낙하   SVM < 0.75g 가 3샘플 이상 연속
   *   2단계  충격       SVM > 2.5g
-  *   3단계  정지       충격 후 5초간 움직임이 거의 없음
+  *   3단계  정지       충격 후 3초간 움직임이 거의 없음
   *
   *   세 조건이 모두 성립하고 '착용 확정' 상태여야 낙상으로 신고한다.
   *
@@ -67,7 +67,7 @@
 #define FALL_FREEFALL_LOOKBACK        120    // 루프백 범위 (1.2s)
 #define FALL_FREEFALL_MIN_SAMPLES     3      // 최소 연속 길이 (30ms)
 
-#define FALL_INACTIVITY_WINDOW        500    // 3단계: 충격 후 총 관찰 구간 (5초)
+#define FALL_INACTIVITY_WINDOW        300    // 3단계: 충격 후 총 관찰 구간 (3초)
 #define FALL_INACTIVITY_GUARD         50     // 충격 직후 잔여 진동 무시 구간 (0.5초)
 #define FALL_MOTION_LIMIT_G           0.25f  // 움직임으로 칠 |SVM-1g| 임계
 #define FALL_MOTION_ALLOWED_SAMPLES   150    // 이 이상 움직이면 스스로 회복한 것으로 본다 (1.5초)
@@ -88,20 +88,20 @@ typedef enum {
  * [모듈 내부 정적(static) 변수 관리]
  *
  * 전부 블록 호출 사이에 살아남아야 하는 값들이다. 낙상은 한 블록(0.5초) 안에
- * 끝나지 않고 자유낙하→충격→5초 정지까지 여러 블록에 걸쳐 일어나므로,
+ * 끝나지 않고 자유낙하→충격→3초 정지까지 여러 블록에 걸쳐 일어나므로,
  * 상태를 지역 변수로 두면 블록 경계에서 판정이 끊긴다.
  * 카운터 단위는 모두 '샘플 수' 다 (ODR 100Hz → 100 = 1초).
  * ----------------------------------------------------------------- */
 
 /* 상태머신 현재 위치. 충격을 기다리는 중이거나(MONITORING),
- * 충격을 이미 받고 5초 정지를 검증하는 중이거나(INACTIVITY_CHECK) 둘 중 하나다. */
+ * 충격을 이미 받고 3초 정지를 검증하는 중이거나(INACTIVITY_CHECK) 둘 중 하나다. */
 static FallAlgState_t s_alg_state = FALL_STATE_MONITORING;
 
 static float    s_svm_hist[SVM_HIST_LEN];           // 되짚기(backtracking)용 SVM 이력 링버퍼 (Reset()이 1.0g로 채운다. 0.0f는 자유낙하를 뜻하므로 기본값이 되면 안 된다)
 static uint16_t s_hist_idx = 0;                     // 링버퍼에서 '다음에 쓸' 칸
 static uint32_t s_hist_filled = 0;                  // 링버퍼에 실제로 채워진 샘플 수
 static uint32_t s_inactivity_counter = 0;           // 3단계 정지 검증: 충격 이후 흐른 샘플 수
-static uint32_t s_motion_active_samples = 0;        // 5초 중 '움직였다'고 센 샘플 수
+static uint32_t s_motion_active_samples = 0;        // 3초 중 '움직였다'고 센 샘플 수
 static float    s_block_motion = 0.0f;              // 직전 블록의 SVM 표준편차
 
 /* main.c에 구현된 하드웨어 송신 인터페이스 로드 */
@@ -200,7 +200,7 @@ FallState_t FallDetection_ProcessBlock(const BMI270_Data_t *accel, uint16_t coun
 
                     if (has_ff)
                     {
-                        printf("[ FALL LOG ] 충격 %.2fg + 자유낙하 확인 (최저 %.2fg, %u샘플 연속) → 5초 정지 검증\r\n",
+                        printf("[ FALL LOG ] 충격 %.2fg + 자유낙하 확인 (최저 %.2fg, %u샘플 연속) → 3초 정지 검증\r\n",
                                (double)svm, (double)ff_min, ff_run);
 
                         s_alg_state = FALL_STATE_INACTIVITY_CHECK;

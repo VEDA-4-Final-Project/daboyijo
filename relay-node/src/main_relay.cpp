@@ -15,8 +15,10 @@
 #include <cctype>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -32,6 +34,27 @@ const uint8_t PKT_HEADER = 0xAA;
 const size_t  PKT_LEN    = 7;
 const int QOS_VITAL      = 0;   // 바이탈: 빠르게 (유실 감수)
 const int QOS_FALL       = 1;   // 낙상: 반드시 전달
+
+// ── 시각 동기 (RPi → STM32) ───────────────────────────────────────
+//   [0] 0x55  [1] 시  [2] 분  [3] 초  [4] 체크섬([0]~[3] XOR)
+//
+// 웨어러블에는 RTC 도 백업 배터리도 없어 부팅하면 빌드 시각으로 시작한다.
+// NTP 로 맞춰진 이쪽 시각을 내려보내 화면의 시계와 자정 걸음수 리셋을 맞춘다.
+// 주기적으로 다시 보내 SysTick 드리프트(하루 약 2초)도 함께 잡는다.
+const uint8_t TIME_PKT_HEADER = 0x55;
+const size_t  TIME_PKT_LEN    = 5;
+const int     TIME_SYNC_MS    = 10 * 60 * 1000;   // 10분마다 (연결 직후에도 1회)
+
+// ── 시각 요청 (STM32 → RPi) ───────────────────────────────────────
+//   [0] 0xA5  [1] 0x01(시각)  [2] 체크섬([0]^[1])
+//
+// 웨어러블이 부팅하면 빌드 시각으로 시작한다. 위의 10분 주기만 기다리면
+// 그동안 화면에 틀린 시각이 남는데, MCU 만 리셋되고 BLE 링크는 살아있는 경우
+// 이쪽은 아무 일도 없었다고 보기 때문에 특히 오래 걸린다.
+// 웨어러블이 먼저 물어보면 그 자리에서 답해준다.
+const uint8_t REQ_HEADER   = 0xA5;
+const size_t  REQ_LEN      = 3;
+const uint8_t REQ_TIME     = 0x01;
 
 // 기기마다 달라지는 값 — relay-node.conf 에서 읽음
 struct Config {
@@ -53,6 +76,11 @@ static uint8_t g_prev_fall = 0;   // 낙상 상승엣지 판정용 — 세션 �
 // 조각난 notify 재조립 버퍼 — 전역인 이유는 수명
 // unsubscribe 가 실패하면 콜백이 남는데, 지역변수였다면 죽은 스택을 건드림
 static std::string g_rx_buffer;
+
+// 웨어러블이 시각을 요청했다. notify 콜백(BLE 스레드)이 세우고 runOnce 루프가 소비한다.
+// 콜백 안에서 곧바로 write 하지 않는 이유는 SimpleBLE 재진입을 피하기 위해서다 —
+// 펌웨어에서 ISR 이 플래그만 세우고 메인 루프가 처리하는 것과 같은 이유다.
+static std::atomic<bool> g_time_requested{false};
 
 // 첫 신호는 정상 종료 요청, 두 번째는 강제 탈출
 // 플래그를 보는 곳이 스캔·연결 유지 루프뿐이라 DBus 안에 있으면 Ctrl+C 가 안 먹음
@@ -158,6 +186,12 @@ bool packetIsValid(const std::string& buf) {
     return (uint8_t)buf[2] <= 100 && (uint8_t)buf[3] <= 1;
 }
 
+// 시각 요청 검증 — 종류 바이트와 체크섬을 모두 본다.
+bool requestIsValid(const std::string& buf) {
+    return (uint8_t)buf[1] == REQ_TIME &&
+           (uint8_t)((uint8_t)buf[0] ^ (uint8_t)buf[1]) == (uint8_t)buf[2];
+}
+
 // 패킷 1개 → WearableData → JSON 발행
 void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall, uint16_t steps, MqttClient_veda& client) {
     // 펌웨어가 낙상 플래그를 5초 유지(HM10_FALL_HOLD_MS) — 그대로 흘리면 알람이 5~6번
@@ -181,25 +215,48 @@ void publishPacket(uint8_t hr, uint8_t spo2, uint8_t fall, uint16_t steps, MqttC
               << " (steps=" << steps << ")" << std::endl;
 }
 
-// 조각난 데이터를 0xAA 헤더 기준 PKT_LEN 바이트로 재조립
+// 조각난 데이터를 헤더 기준으로 재조립한다.
+// 웨어러블이 올려보내는 것은 두 종류다 — 바이탈(0xAA, 7B)과 시각 요청(0xA5, 3B).
+// 맨 앞 바이트를 보고 갈라내며, 어느 쪽 헤더도 아니면 1바이트씩 버려 재동기한다.
 void consumeBuffer(std::string& buf, MqttClient_veda& client) {
-    while(true) {
-        size_t h = buf.find((char)PKT_HEADER);
-        if(h == std::string::npos) { buf.clear(); return; }   // 헤더 없음
-        if(h > 0) buf.erase(0, h);                            // 앞쪽 쓰레기 버림
-        if(buf.size() < PKT_LEN) return;                      // 덜 모임 — 다음 notify 대기
+    while(!buf.empty()) {
+        const uint8_t head = (uint8_t)buf[0];
 
-        if(!packetIsValid(buf)) {
-            buf.erase(0, 1);   // 가짜 헤더 → 1바이트 밀고 재동기
+        if(head == PKT_HEADER) {                  // ── 바이탈 ──
+            if(buf.size() < PKT_LEN) return;      // 덜 모임 — 다음 notify 대기
+            if(!packetIsValid(buf)) {
+                buf.erase(0, 1);                  // 가짜 헤더 → 1바이트 밀고 재동기
+                continue;
+            }
+
+            // 걸음 수는 2바이트 리틀엔디안 (lo 먼저)
+            // | 연산에서 int 로 승격되므로 결과를 다시 uint16_t 로 좁힘 (8+8비트라 손실 없음)
+            uint16_t steps = static_cast<uint16_t>(
+                static_cast<uint8_t>(buf[4]) | (static_cast<uint8_t>(buf[5]) << 8));
+            publishPacket(buf[1], buf[2], buf[3], steps, client);
+            buf.erase(0, PKT_LEN);
             continue;
         }
 
-        // 걸음 수는 2바이트 리틀엔디안 (lo 먼저)
-        // | 연산에서 int 로 승격되므로 결과를 다시 uint16_t 로 좁힘 (8+8비트라 손실 없음)
-        uint16_t steps = static_cast<uint16_t>(
-            static_cast<uint8_t>(buf[4]) | (static_cast<uint8_t>(buf[5]) << 8));
-        publishPacket(buf[1], buf[2], buf[3], steps, client);
-        buf.erase(0, PKT_LEN);
+        if(head == REQ_HEADER) {                  // ── 시각 요청 ──
+            if(buf.size() < REQ_LEN) return;
+            if(!requestIsValid(buf)) {
+                buf.erase(0, 1);
+                continue;
+            }
+            // 웨어러블이 물어본 사실 자체를 남긴다.
+            // 이 줄이 없으면 '웨어러블이 요청을 안 보낸 것' 과 '보냈는데 우리가
+            // 답을 못 준 것' 이 로그상 구분되지 않는다 — 업링크는 vital 로그로
+            // 살아있음이 보이지만 요청만 유실되는 경우가 실제로 있다.
+            std::cout << "[Relay Node] 시각 요청 수신 (웨어러블)" << std::endl;
+
+            // 실제 전송은 runOnce 루프가 한다 (위 g_time_requested 주석 참조)
+            g_time_requested = true;
+            buf.erase(0, REQ_LEN);
+            continue;
+        }
+
+        buf.erase(0, 1);   // 알 수 없는 바이트 — 헤더를 만날 때까지 버린다
     }
 }
 
@@ -226,6 +283,59 @@ std::optional<SimpleBLE::Peripheral> findDevice(SimpleBLE::Adapter& adapter) {
 }
 
 // 연결 1회 세션 — 끊길 때까지 수신 후 정리
+// 현재 벽시계(로컬 타임)를 5바이트로 만들어 FFE1 에 write 한다.
+// write_command(=write without response)를 쓴다 — HM-10 투과모드는 응답을
+// 돌려주지 않으므로 write_request 로 보내면 확인 응답을 기다리다 타임아웃 난다.
+bool sendTimeSync(SimpleBLE::Peripheral& peripheral) {
+    std::time_t now = std::time(nullptr);
+    std::tm lt{};
+    if(!localtime_r(&now, &lt)) {
+        // 조용히 빠져나가면 '왜 안 보내지'를 영영 알 수 없다
+        std::cerr << "[Relay Node] 시각 변환 실패 (localtime_r)" << std::endl;
+        return false;
+    }
+
+    uint8_t pkt[TIME_PKT_LEN];
+    pkt[0] = TIME_PKT_HEADER;
+    pkt[1] = (uint8_t)lt.tm_hour;
+    pkt[2] = (uint8_t)lt.tm_min;
+    pkt[3] = (uint8_t)lt.tm_sec;
+
+    uint8_t sum = 0;
+    for(size_t i = 0; i + 1 < TIME_PKT_LEN; i++) sum ^= pkt[i];
+    pkt[TIME_PKT_LEN - 1] = sum;
+
+    // write 에 들어가기 '전' 에 한 줄 남긴다.
+    // 성공 로그만 있으면 예외로 빠졌을 때와 write 안에서 블로킹된 때가
+    // 똑같이 '아무것도 안 찍힘' 으로 보인다. 이 줄이 그 둘을 갈라준다.
+    std::cout << "[Relay Node] 시각 write 시도 → FFE1" << std::endl;
+
+    try {
+        peripheral.write_command(SVC_FFE0, CHAR_FFE1,
+                                 SimpleBLE::ByteArray(pkt, pkt + TIME_PKT_LEN));
+    } catch (const std::exception& e) {
+        std::cerr << "[Relay Node] 시각 전송 실패: " << e.what() << std::endl;
+        return false;
+    } catch (...) {
+        // SimpleBLE 는 백엔드에 따라 std::exception 이 아닌 것을 던지기도 한다.
+        // 여기서 잡지 않으면 runOnce 밖으로 튀어나가 세션이 조용히 끝난다.
+        std::cerr << "[Relay Node] 시각 전송 실패 (알 수 없는 예외)" << std::endl;
+        return false;
+    }
+
+    // 파일 전체가 std::cout + std::endl 이라 여기도 맞춘다.
+    // printf 는 stdout 이 파이프에 물리면 버퍼에 남아 순서가 뒤엉킬 수 있다.
+    char hhmmss[16];
+    std::snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d",
+                  lt.tm_hour, lt.tm_min, lt.tm_sec);
+    // 실제로 나간 바이트를 그대로 남긴다. 웨어러블 쪽 RX 누적과 나란히 놓으면
+    // '보냈는데 안 들어온 것' 인지 '애초에 안 보낸 것' 인지 바로 갈린다.
+    // write_command 는 응답이 없는 write 라 예외가 없다고 도착이 보장되지는 않는다.
+    std::cout << "[Relay Node] 시각 동기 전송 " << hhmmss << " ["
+              << toHex(SimpleBLE::ByteArray(pkt, pkt + TIME_PKT_LEN)) << "]" << std::endl;
+    return true;
+}
+
 void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     auto dev = findDevice(adapter);
     if(!dev) {
@@ -237,8 +347,25 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
     peripheral.connect();
     std::cout << "[Relay Node] Connected: " << peripheral.identifier() << ". subscribing FFE1" << std::endl;
 
+    // 연결된 기기가 실제로 무엇을 허용하는지 그대로 찍는다.
+    //
+    // 다운링크가 죽었을 때 '우리가 안 보냈나' 와 '보낼 수 없는 특성인가' 는
+    // 밖에서 구분되지 않는다. HM-10 클론 중에는 FFE1 이 NOTIFY 만 갖고 있어
+    // write 자체가 불가능한 물건이 있다 — 그 경우 여기서 바로 드러난다.
+    for(auto& service : peripheral.services()) {
+        for(auto& ch : service.characteristics()) {
+            std::cout << "[Relay Node]   " << service.uuid() << " / " << ch.uuid()
+                      << "  read="        << ch.can_read()
+                      << " write_req="    << ch.can_write_request()
+                      << " write_cmd="    << ch.can_write_command()
+                      << " notify="       << ch.can_notify()
+                      << " indicate="     << ch.can_indicate() << std::endl;
+        }
+    }
+
     g_prev_fall = 0;   // 끊긴 사이 상태를 모르므로 엣지 판정 초기화
     g_rx_buffer.clear();   // 이전 세션의 반쪽 패킷 폐기
+    g_time_requested = false;   // 끊기기 직전 요청이 남아 있으면 새 세션에서 헛 전송이 된다
 
     // client 만 캡처 — main 지역변수라 이 함수보다 오래 살고, 버퍼는 전역이라 불필요
     peripheral.notify(SVC_FFE0, CHAR_FFE1, [&client](SimpleBLE::ByteArray bytes) {
@@ -249,8 +376,27 @@ void runOnce(SimpleBLE::Adapter& adapter, MqttClient_veda& client) {
         consumeBuffer(g_rx_buffer, client);
     });
 
+    // 연결 직후 곧바로 한 번 — 웨어러블이 재부팅했다면 빌드 시각으로 떠 있다.
+    sendTimeSync(peripheral);
+    auto last_sync = std::chrono::steady_clock::now();
+
     while(peripheral.is_connected() && g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        // 웨어러블이 물어보면 그 자리에서 답한다 (재부팅 직후가 대부분이다).
+        // exchange 로 꺼내야 요청 하나에 한 번만 응답한다.
+        if(g_time_requested.exchange(false)) {
+            sendTimeSync(peripheral);
+            last_sync = std::chrono::steady_clock::now();   // 방금 보냈으니 주기도 리셋
+            continue;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if(std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sync).count()
+               >= TIME_SYNC_MS) {
+            last_sync = now;
+            sendTimeSync(peripheral);
+        }
     }
 
     // 정리 안 하면 HM-10 이 연결 상태로 남아 광고를 멈춰 다음 스캔에 안 잡힘

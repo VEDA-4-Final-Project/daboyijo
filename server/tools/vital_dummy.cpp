@@ -5,9 +5,12 @@
 // 릴레이 노드가 보내는 것과 똑같은 토픽·똑같은 JSON 이라 서버·관제 앱은 진짜
 // 웨어러블과 구분하지 못한다 — 코드를 한 줄도 안 고치고 바이탈 화면이 살아난다.
 //
-// ★ 값은 "정상 범주" 안에서만 움직인다. 서버 알람(HR>180, SpO2<90)은 물론 관제 앱
-//   주의 등급(HR>=100 또는 <55, SpO2<95)에도 안 걸리게 여유를 두고 잡았다.
-//   알람을 보고 싶으면 이 도구가 아니라 관제 앱의 테스트 버튼을 쓸 것.
+// ★ 기본값은 "정상 범주" 안에서만 움직인다. 서버 알람(HR>=110, SpO2<90)은 물론
+//   관제 앱 주의 등급(HR>=100 또는 <55, SpO2<95)에도 안 걸리게 여유를 두고 잡았다.
+//
+// ★ --hr-spike 를 주면 경보 시험용 시나리오로 바뀐다: 처음 5초는 70~75 BPM,
+//   그 뒤로는 112~115 BPM 을 계속 발행해 심박 경보 임계(110)를 넘긴다.
+//   서버 VITAL_ABNORMAL → Qt 경보 → 알림노드 사이렌까지 한 번에 확인할 때 쓴다.
 //
 // ★ 매 틱 난수를 새로 뽑지 않고 직전 값에서 조금씩 움직인다(랜덤 워크).
 //   그냥 랜덤이면 2초마다 62→88→65 로 튀어서 추세 그래프가 톱니가 되고
@@ -47,6 +50,17 @@ long long nowMs() {
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
+
+// ── 심박 급상승 시나리오(--hr-spike)의 두 구간 ─────────────────
+// 뒤 구간은 경보 임계를 확실히 넘는 값이다 — 서버 kHrAlarmHigh 와 관제 앱
+// vitalLevel() 의 critical 이 둘 다 110 이다. 111 처럼 임계 바로 위를 쓰지
+// 않는 이유: 반올림으로 109 가 한 번이라도 섞이면 경보가 떴다 안 떴다 해서
+// 시험 결과를 믿을 수 없게 된다.
+constexpr double kCalmHrLo  =  70.0;
+constexpr double kCalmHrHi  =  75.0;
+constexpr double kSpikeHrLo = 112.0;
+constexpr double kSpikeHrHi = 115.0;
+
 struct Options {
     std::string db_host = "127.0.0.1";
     std::string db_user = "daboijo";
@@ -60,6 +74,8 @@ struct Options {
     int         limit   = 5;                   // 몇 명분을 쏠지
     bool        all_status = false;            // 재원 필터 없이 전부
     bool        assign_ids = false;            // wearable_id 가 비면 DB 에 채워 넣기
+    bool        hr_spike = false;              // 심박 급상승 시나리오(경보 시험용)
+    int         spike_after_ms = 5000;         // 이 시간이 지나면 상승 구간으로 넘어간다
     std::string conf    = "../config/cameras.conf";   // db_host 를 여기서 주워옴
 };
 
@@ -77,6 +93,10 @@ void usage() {
         "  --topic T        발행 토픽 (기본 veda/wearable/data)\n"
         "  --interval-ms N  발행 주기 (기본 2000)\n"
         "  --limit N        대상 인원 수 (기본 5)\n"
+        "  --hr-spike       심박 급상승 시나리오. 처음 --spike-after-ms 동안 70~75 BPM,\n"
+        "                   그 뒤로는 112~115 BPM 을 계속 발행한다(경보 임계 110 초과).\n"
+        "                   이 옵션을 주면 --interval-ms 기본값이 1000 이 된다.\n"
+        "  --spike-after-ms N  급상승 시점 (기본 5000)\n"
         "  --all            status='재원' 필터 없이 명단 전체에서 고른다\n"
         "  --assign-ids     wearable_id 가 비어 있으면 wearable_NN 을 DB 에 써 넣는다\n"
         "                   (이 옵션 없이는 DB 를 읽기만 하고, 임시 id 로 발행한다)\n";
@@ -145,6 +165,31 @@ struct Person {
         if (walking)               steps += 8 + int(u(rng) * 7);   // 2초에 8~14보
         else if (u(rng) < 0.15)    steps += 1 + int(u(rng) * 3);   // 자리에서 뒤척임
         if (steps > 65535) steps = 0;                              // 릴레이와 같은 2바이트 한계
+    }
+
+    // --hr-spike 전용 틱. 랜덤 워크(tick) 대신 정해진 구간 안에서만 값을 낸다 —
+    // 시험 대상이 "임계값을 넘느냐" 라서 값이 구간 밖으로 새면 안 된다.
+    //
+    // 구간 전환은 계단이다(75 → 113). 사람 심박이 1초 만에 그렇게 뛰지는
+    // 않지만, 중간값이 끼면 100~110 구간(관제 앱 '주의')을 스쳐 지나가 어느
+    // 등급이 경보를 냈는지 불분명해진다.
+    void tickSpike(std::mt19937& rng, bool spiked) {
+        std::uniform_real_distribution<double> u(0.0, 1.0);
+        std::normal_distribution<double>       n(0.0, 1.0);
+
+        const double lo = spiked ? kSpikeHrLo : kCalmHrLo;
+        const double hi = spiked ? kSpikeHrHi : kCalmHrHi;
+        hr = lo + u(rng) * (hi - lo);
+
+        // SpO2 는 정상 범위를 지킨다 — 경보 원인이 심박 하나여야
+        // 어느 조건이 발동했는지 로그만 보고 가릴 수 있다.
+        spo2 += n(rng) * 0.25 + (spo2_base - spo2) * 0.2;
+        if (spo2 < 96.0) spo2 = 96.0;
+        if (spo2 > 99.0) spo2 = 99.0;
+
+        // 심박이 올랐으니 걸음도 조금씩 는다 (판정에는 쓰이지 않는 값)
+        if (u(rng) < 0.5) steps += 1 + int(u(rng) * 3);
+        if (steps > 65535) steps = 0;
     }
 };
 
@@ -223,11 +268,22 @@ int main(int argc, char** argv) {
         else if (a == "--topic")      opt.topic   = next("--topic");
         else if (a == "--interval-ms")opt.interval_ms = std::atoi(next("--interval-ms").c_str());
         else if (a == "--limit")      opt.limit   = std::atoi(next("--limit").c_str());
+        else if (a == "--hr-spike")   opt.hr_spike = true;
+        else if (a == "--spike-after-ms") opt.spike_after_ms = std::atoi(next("--spike-after-ms").c_str());
         else if (a == "--all")        opt.all_status = true;
         else if (a == "--assign-ids") opt.assign_ids = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::cerr << "모르는 옵션: " << a << "\n"; usage(); return 1; }
     }
+    if (opt.spike_after_ms < 0) opt.spike_after_ms = 0;
+
+    // --hr-spike 는 "언제 넘어가는가" 가 시험 대상이라 기본 2초 주기로는 앞
+    // 구간 표본이 두세 개밖에 안 잡힌다. 실제 웨어러블 송신 주기(1초)에 맞춘다.
+    bool interval_from_cli = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp(argv[i], "--interval-ms") == 0) interval_from_cli = true;
+    if (opt.hr_spike && !interval_from_cli) opt.interval_ms = 1000;
+
     if (opt.interval_ms < 100) opt.interval_ms = 100;
     if (opt.limit < 1) opt.limit = 1;
 
@@ -313,12 +369,23 @@ int main(int argc, char** argv) {
     std::cout << "[vital_dummy] " << opt.interval_ms << "ms 마다 '" << opt.topic
               << "' 로 발행한다. Ctrl+C 로 종료.\n";
 
+    if (opt.hr_spike)
+        std::cout << "[vital_dummy] ★ 심박 급상승 시나리오: 처음 "
+                  << opt.spike_after_ms << "ms 는 " << int(kCalmHrLo) << "~" << int(kCalmHrHi)
+                  << " BPM, 그 뒤로는 " << int(kSpikeHrLo) << "~" << int(kSpikeHrHi)
+                  << " BPM (경보 임계 110 초과)
+";
+
     long long ticks = 0;
+    const long long start_ms = nowMs();
     while (g_running) {
         const long long ts = nowMs();
+        // 발행 시작 시각 기준이다 — DB·MQTT 접속에 걸린 시간은 세지 않는다.
+        const bool spiked = opt.hr_spike && (ts - start_ms) >= opt.spike_after_ms;
         std::ostringstream line;
         for (auto& p : people) {
-            p.tick(rng);
+            if (opt.hr_spike) p.tickSpike(rng, spiked);
+            else              p.tick(rng);
 
             WearableData d;
             d.device_id        = p.device_id;
@@ -336,7 +403,9 @@ int main(int argc, char** argv) {
         }
         // 매 틱 5줄씩 토해내면 로그가 못 볼 물건이 된다 — 한 줄로 묶고,
         // 10틱(=20초)마다 한 번만 찍는다.
-        if (ticks % 10 == 0) std::cout << "[vital_dummy]" << line.str() << std::endl;
+        // 시나리오 중에는 매 틱 찍는다 — 10틱(=10초)마다면 전환 순간을 놓친다.
+        if (opt.hr_spike || ticks % 10 == 0)
+            std::cout << "[vital_dummy]" << (spiked ? "[상승]" : "") << line.str() << std::endl;
         ++ticks;
 
         // 종료 신호에 2초를 다 기다리지 않도록 잘게 쪼개 잔다

@@ -160,6 +160,17 @@
 /* 착용 확정 취소 —— 맥박이 이 시간 동안 사라지면 확정을 거둔다. */
 #define WEAR_REVOKE_SAMPLES        1500 // 1500샘플 = 30초
 
+/* 심박 홀드 —— VALID 이 풀린 뒤에도 마지막 실측값을 이만큼 유지한다.
+ *
+ * 낙상 충격은 반드시 PPG 를 망가뜨린다. 정작 값이 가장 필요한 순간에
+ * 확정이 풀려 0 이 나가는 것을 막는다. 심박은 '주기'라 몇 초 전 값도
+ * 여전히 의미가 있다 —— SpO2 는 진폭 비율이라 같은 처리를 하면 안 된다.
+ *
+ * ⚠ 벽시계가 아니라 '처리된 샘플' 기준이다. s_sample_tick 은 모션 블랭킹
+ *   구간에서 돌지 않으므로, 계속 움직이는 상황에서는 실제 경과 시간이
+ *   30초보다 길어진다. 쓰러져 정지한 상태에서는 벽시계와 거의 같다. */
+#define BPM_HOLD_SAMPLES           1500 // 1500샘플 = 30초
+
 /* 맥박 탐색 포기 —— 광학 접촉은 있는데 이 시간 동안 맥박을 못 찾으면
  * 조직이 아니라고 보고 미착용으로 강등한다.
  *
@@ -170,10 +181,17 @@
  * 재진입을 막는다. 그러지 않으면 같은 대상에서 감지-강등을 반복한다.
  *
  * ⚠ 이 시간은 '최악의 착용 확정 시간'보다 길어야 한다. 접촉이 좋으면
- *   10~15초, 나쁘면 25초 부근에서 확정된다. 30초는 여유가 크지 않으므로,
- *   착용했는데 탐색이 중지되는 일이 잦으면 이 값부터 늘릴 것.
- *   (그 경우 손목에서 뗐다 다시 차면 재탐색이 시작된다) */
-#define PULSE_SEARCH_TIMEOUT       1500 // 1500샘플 = 30초
+ *   10~15초, 나쁘면 25초 부근에서 확정된다.
+ *
+ *   30초는 여유가 없었다. 실측 로그에서 손목을 올려둔 채 26초간 정상 신호
+ *   (반사율 3300, 적외비 0.915, PI 0.24%)가 나오는데도 확정 직전에
+ *   타임아웃이 먼저 걸려 '조직이 아님' 으로 강등됐다. 자기상관 경로는
+ *   버퍼 8초 + 연속 일치 2초가 최소이고, 그 앞에 착용 계단 안정화와 AGC
+ *   수렴이 붙으면 20초를 쉽게 넘긴다. 60초로 늘려 확정 기회를 준다.
+ *
+ *   늘린 만큼 무기물에 LED 를 태우는 시간도 늘어나지만, 무기물은 어차피
+ *   r 게이트에서 걸리므로 확정되지는 않는다. */
+#define PULSE_SEARCH_TIMEOUT       3000 // 3000샘플 = 60초
 
 /* SpO2 유효기간. */
 #define SPO2_STALE_SAMPLES         750  // 750샘플 = 15초
@@ -218,9 +236,32 @@
 #define AUTOCORR_LAG_MIN           17       // 176 BPM 대응 (최소 지연)
 #define AUTOCORR_LAG_MAX           75       // 40 BPM 대응 (최대 지연)
 
-/* 상관계수(r) 최소 문턱값 (0.60 이상일 때만 진짜 맥박 인정)
- * - 책상 등 무생물 진동 오확정을 완전히 차단하는 강력한 게이트 */
-#define AUTOCORR_MIN_R             0.60f
+/* 상관계수(r) 최소 문턱값 —— 무생물 오확정을 막는 주 게이트.
+ *
+ * ⚠ 이 값은 update_autocorr() 의 추세 제거 도입과 함께 0.60 에서 내렸다.
+ *
+ * 이전 구현은 창의 평균·추세를 빼지 않아 r 이 지연과 무관하게 0.97 부근에
+ * 붙어 있었다. 즉 0.60 은 아무것도 거르지 못하는 장식이었고, 실제 차단은
+ * 엉뚱하게도 '최대점이 경계에 붙었다' 는 기각이 대신하고 있었다.
+ * (그래서 손목을 올려도 26초 내내 r 0.00 이었다)
+ *
+ * 추세를 제거하면 r 이 진짜 피어슨 상관계수가 되어 스케일이 통째로 바뀐다.
+ * 실측값 (시뮬레이션이 아니라 로그에서 관측한 값):
+ *
+ *     잡음 바닥(맥박 없음)   0.07 ~ 0.16   ← 필터 사슬 통과 백색잡음
+ *     손목 약신호            0.20 ~ 0.28
+ *     손가락 강신호          0.17 ~ 0.47   ← std 133~379 인데도 이 정도다
+ *
+ * ⚠ 손가락조차 0.47 을 못 넘는다는 점이 중요하다. 사인파 모델은 0.86 을
+ *   예측했지만 실제 PPG 는 심박변이(HRV)가 있어 16초 창 안에서 주기가
+ *   미끄러진다. 자기상관은 그 미끄러짐을 그대로 벌점으로 받는다.
+ *   즉 창을 늘릴수록 r 은 오히려 낮아진다.
+ *
+ * 그래서 0.35 는 '자기상관 단독 확정' 이 사실상 일어나지 않는 값이다.
+ * 실질적인 확정 경로는 아래 교차검증(피크 5/5 + CROSS_CONFIRM_MIN_R)이고,
+ * 이쪽은 두 독립 추정기의 합의를 요구하므로 오히려 더 안전하다.
+ * 여기를 내려 단독 확정을 열려면 잡음 바닥 0.16 과의 간격을 반드시 볼 것. */
+#define AUTOCORR_MIN_R             0.35f
 
 /* 자기상관 경로 최소 진폭 하한선 (0 나눗셈 방지용)
  * - r ≥ 0.60 이 잡음 게이트 역할을 하므로 피크 경로(25.0f)보다 하한선이 낮음 */
@@ -262,7 +303,7 @@
  *
  * 무기물 오확정에는 오히려 강하다 —— 잡음이 만드는 가짜 주기는 두
  * 추정기에서 서로 다른 값으로 나오기 때문이다. */
-#define CROSS_CONFIRM_MIN_R        0.45f   // 피크가 보증하므로 단독(0.60)보다 낮다
+#define CROSS_CONFIRM_MIN_R        0.25f   // 피크 5/5 가 보증하므로 단독(0.35)보다 낮다
 #define CROSS_CONFIRM_BPM_TOL      20U     // 두 추정기의 BPM 허용 오차(%)
 
 /* =================================================================
@@ -291,6 +332,11 @@ static uint8_t  s_prev_worn = 0;
 
 static uint32_t s_current_bpm = 0;
 static uint32_t s_current_spo2 = 0;
+
+/* 마지막으로 VALID 였던 심박과 그 시각 (HeartRateCalc_GetBPMHeld 전용).
+ * s_current_bpm 과 달리 확정이 풀려도 지워지지 않는다. */
+static uint32_t s_held_bpm = 0;
+static uint32_t s_held_bpm_tick = 0;
 static uint32_t s_blanking_counter = 0;
 static uint16_t s_print_counter = 0;
 
@@ -469,12 +515,55 @@ static void update_autocorr(void)
     /* 링버퍼를 시간순으로 펴서 읽기 위한 인덱스 변환 */
     #define HIST(i)  s_ac_hist[(base + (i)) % AUTOCORR_N]
 
+    /* 창의 평균과 선형 추세를 제거한다 —— 이 단계가 없으면 자기상관이 무너진다.
+     *
+     * 고역통과 2단을 거쳐도 8~16초 창에는 저주파 잔여분이 남는다. 차단이
+     * 0.24Hz 인데 관측된 베이스라인 드리프트는 0.05Hz 대라 4% 가 통과하고,
+     * 손목은 맥동 자체가 작아 그 4% 가 맥동과 같은 크기가 된다.
+     * (실측 로그: 창 평균이 -80 인데 표준편차가 50 —— 평균이 신호보다 크다)
+     *
+     * 그 상태로 r = Σxy/√(Σx²Σy²) 를 구하면 두 가지가 동시에 망가진다.
+     *
+     *   1) 평균 m 이 남아 있으면 r ≈ (m² + cov)/(m² + var) 가 되어 모든 지연에서
+     *      r 이 1 에 붙는다. 실측 재현 시 지연과 무관하게 0.97~0.98 이 나왔다.
+     *      즉 AUTOCORR_MIN_R(주기성 게이트)이 사실상 무력화된다.
+     *
+     *   2) 단조 증감하는 추세는 자기상관도 지연에 대해 단조 감소시킨다.
+     *      그래서 최대점이 항상 탐색 범위의 왼쪽 끝(AUTOCORR_LAG_MIN)에 붙고,
+     *      아래 경계 기각에 걸려 r 이 0 으로 떨어진다.
+     *      실측 로그에서 손목 착용 26초 내내 'r 0.00@0' 이던 원인이 이것이다.
+     *
+     * 평균과 1차 추세를 빼면 r 이 진짜 피어슨 상관계수가 되어, 무기물(잡음)은
+     * 0.1 아래로 내려가고 맥박은 지연 축에서 뚜렷한 봉우리로 드러난다.
+     *
+     * 인덱스를 창 중앙 기준으로 옮겨 Σt = 0 을 만든다. 그러면 기울기가
+     * Σ(t·y)/Σt² 로 곧장 나와 큰 수끼리 빼는 자리 손실이 생기지 않는다. */
+    float t_mid  = 0.5f * (float)(n_hist - 1);
+    float sum_y  = 0.0f;
+    float sum_ty = 0.0f;
+    for (uint16_t i = 0; i < n_hist; i++)
+    {
+        float v = HIST(i);
+        sum_y  += v;
+        sum_ty += ((float)i - t_mid) * v;
+    }
+
+    float win_mean = sum_y / (float)n_hist;
+
+    /* Σt² = n(n²−1)/12  (t 가 창 중앙 기준일 때의 닫힌 형태) */
+    float nf      = (float)n_hist;
+    float sum_tt  = nf * (nf * nf - 1.0f) / 12.0f;
+    float slope   = (sum_tt > 1.0f) ? (sum_ty / sum_tt) : 0.0f;
+
+    /* 추세 제거 후의 값. 아래 상관 계산은 전부 이것만 쓴다. */
+    #define HISTD(i)  (HIST(i) - win_mean - slope * ((float)(i) - t_mid))
+
     /* 무신호 조기 탈출. 아래 지연별 정규화가 각자 에너지를 다시 구하므로
      * 여기서는 '연산할 가치가 있는가' 만 본다. */
     float energy = 0.0f;
     for (uint16_t i = 0; i < n_hist; i++)
     {
-        float v = HIST(i);
+        float v = HISTD(i);
         energy += v * v;
     }
     if (energy < 1.0f) { s_autocorr_r = 0.0f; s_autocorr_bpm = 0; return; }
@@ -496,8 +585,8 @@ static void update_autocorr(void)
 
         for (uint16_t i = 0; i < n; i++)
         {
-            float x = HIST(i);
-            float y = HIST(i + lag);
+            float x = HISTD(i);
+            float y = HISTD(i + lag);
             sxy += x * y;
             sxx += x * x;
             syy += y * y;
@@ -526,8 +615,8 @@ static void update_autocorr(void)
 
         for (uint16_t i = 0; i < n; i++)
         {
-            float x = HIST(i);
-            float y = HIST(i + half);
+            float x = HISTD(i);
+            float y = HISTD(i + half);
             sxy += x * y;
             sxx += x * x;
             syy += y * y;
@@ -545,6 +634,7 @@ static void update_autocorr(void)
         }
     }
 
+    #undef HISTD
     #undef HIST
 
     /* 경계 최대점은 신뢰하지 않는다.
@@ -750,6 +840,7 @@ static uint8_t update_wear_state(uint32_t ir_mean, uint16_t count)
             {
                 s_is_worn = 0;
                 s_hr_state = HR_STAT_NONE;
+                s_held_bpm = 0;    /* 다른 대상에 채웠을 때 옛 값이 되살아나면 안 된다 */
                 s_air_counter = 0;
 
                 /* 물리적 탈착 — 착용 확정을 여기서만 취소한다.
@@ -837,6 +928,7 @@ static uint8_t update_wear_state(uint32_t ir_mean, uint16_t count)
             {
                 s_is_worn = 0;
                 s_hr_state = HR_STAT_NONE;
+                s_held_bpm = 0;    /* 다른 대상에 채웠을 때 옛 값이 되살아나면 안 된다 */
                 s_search_counter = 0;
                 s_air_counter = 0;
                 s_search_gave_up = 1;
@@ -1369,6 +1461,16 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
         }
     }
 
+    /* 심박 홀드값 갱신.
+     *
+     * 블랭킹 goto 가 건너뛰지 않는 위치여야 한다 —— 움직이는 동안에는
+     * 갱신할 새 값도 없고, 마지막 정상값은 그대로 남아 있어야 한다. */
+    if (s_hr_state == HR_STAT_VALID && s_current_bpm > 0)
+    {
+        s_held_bpm = s_current_bpm;
+        s_held_bpm_tick = s_sample_tick;
+    }
+
     /* SpO2 신선도 —— 오래되면 값을 내린다.
      *
      * 자기상관으로 심박이 유지되는 동안에도 SpO2 는 갱신되지 않는다(R 을 못 구함).
@@ -1491,6 +1593,8 @@ void HeartRateCalc_Reset(void)
     s_is_worn = 0;
     s_current_bpm = 0;
     s_current_spo2 = 0;
+    s_held_bpm = 0;
+    s_held_bpm_tick = 0;
     s_blanking_counter = 0;
     s_print_counter = 0;
     s_stable_peak_counter = 0;
@@ -1606,3 +1710,29 @@ uint8_t  HeartRateCalc_IsWorn(void)     { return s_wear_confirmed; }
 uint8_t  HeartRateCalc_HasContact(void) { return s_is_worn; }
 uint32_t HeartRateCalc_GetBPM(void)  { return (s_hr_state == HR_STAT_VALID) ? s_current_bpm : 0; }
 uint32_t HeartRateCalc_GetSpO2(void) { return (s_hr_state == HR_STAT_VALID) ? s_current_spo2 : 0; }
+
+/* 표시·전송용 심박 —— 확정이 풀려도 마지막 실측값을 BPM_HOLD_SAMPLES 만큼 유지한다.
+ *
+ * 낙상 충격은 곧 큰 움직임이고, 큰 움직임은 모션 블랭킹과 연속 기각을 통해
+ * 반드시 HR_STAT_VALID 를 떨어뜨린다(on_peak_rejected 참조). 그래서 GetBPM()
+ * 을 그대로 쓰면 낙상 알림 패킷에 하필 0 이 실린다. 여기서 그 구멍을 메운다.
+ *
+ * ⚠ 돌려주는 값이 '지금 측정된 값'이 아닐 수 있다. 판정 로직은 반드시
+ *   GetBPM() 을 쓸 것 —— 이 함수는 사람이 보는 화면과 알림 전용이다.
+ *   패킷에는 홀드 여부를 표시할 자리가 없어(hm10.h 7바이트 스펙) 수신 측은
+ *   실측값과 구분하지 못한다. 필드를 늘리려면 relay-node 와 동시 배포해야 한다.
+ *
+ * 홀드가 즉시 끝나는 조건:
+ *   · VALID 재획득    → 실측값으로 복귀
+ *   · 광학 접촉 상실  → 0 (s_held_bpm 도 탈착 지점에서 함께 지운다)
+ *   · 유효기간 만료   → 0
+ */
+uint32_t HeartRateCalc_GetBPMHeld(void)
+{
+    if (s_hr_state == HR_STAT_VALID && s_current_bpm > 0) return s_current_bpm;
+
+    if (!s_is_worn || s_held_bpm == 0) return 0;
+    if ((s_sample_tick - s_held_bpm_tick) > BPM_HOLD_SAMPLES) return 0;
+
+    return s_held_bpm;
+}

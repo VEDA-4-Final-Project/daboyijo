@@ -37,6 +37,9 @@ moc_*.cpp
 moc_*.h
 qrc_*.cpp
 ui_*.h
+# Qt uic 산출물을 걸러내는 규칙인데, SquareLine 이 만든 STM32 UI 헤더까지
+# 삼켜서 firmware/UI 는 예외로 둔다 (ui_helpers.h, ui_Screen1.h 등)
+!firmware/UI/**/*.h
 Makefile*
 !protocol/Makefile
 !server/Makefile
@@ -72,6 +75,7 @@ secrets*
 .env
 server/config/cameras.conf
 server/blackbox_clips/
+relay-node/relay-node.conf
 
 # ===== OS =====
 .DS_Store
