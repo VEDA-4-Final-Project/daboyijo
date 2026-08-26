@@ -16,7 +16,8 @@
 struct Palette {
     const char *bgDeep, *panel, *card, *border,
                *text, *sub, *accent, *onAccent,
-               *normal, *warn, *high, *critical, *info;
+               *normal, *warn, *high, *critical, *info,
+               *select, *onSelect;
 };
 
 // 밝은 의료 톤 (요양원 주간 관제 환경)
@@ -25,7 +26,8 @@ struct Palette {
 inline const Palette kLight {
     "#F4F7FA", "#FFFFFF", "#F0F4F8", "#DCE4EC",
     "#1E2A32", "#5C6B78", "#12B5A6", "#1E2A32",
-    "#257A4A", "#8A6400", "#A05000", "#C23934", "#1D5FA8"
+    "#257A4A", "#8A6400", "#A05000", "#C23934", "#1D5FA8",
+    "#C25A10", "#FFFFFF"
 };
 // 다크 관제실 톤 (야간·통합 관제 환경, 강조색은 어두운 배경용으로 살짝 밝게)
 // 기존 10개 값(D-08)은 한 글자도 바뀌지 않았다. 새로 붙은 것은
@@ -33,7 +35,8 @@ inline const Palette kLight {
 inline const Palette kDark {
     "#0E141B", "#151D26", "#1C2733", "#2A3742",
     "#E6EDF3", "#8B98A5", "#17C7B6", "#0E141B",
-    "#35B368", "#E0A030", "#FF9F45", "#FF5A5F", "#4DA3FF"
+    "#35B368", "#E0A030", "#FF9F45", "#FF5A5F", "#4DA3FF",
+    "#F37321", "#1A1204"
 };
 
 // onAccent — accent 채우기 위에 얹는 전경색 전용 토큰(UI-SPEC 정정 1).
@@ -55,6 +58,16 @@ inline const char* kWarn     = kLight.warn;
 inline const char* kHigh     = kLight.high;
 inline const char* kCritical = kLight.critical;
 inline const char* kInfo     = kLight.info;
+// select — "지금 조작 대상"만 가리키는 선택 강조색(한화비전 Wisenet Viewer 오렌지).
+// accent(청록)와 역할이 다르다: accent는 "앱의 주요 동작"(저장·검색 버튼),
+// select는 "여러 개 중 지금 고른 하나"(선택된 영상 타일 테두리, 활성 레이아웃 탭,
+// 리소스 트리 선택 행, 타임라인 플레이헤드)다. 둘을 같은 색으로 두면 관제 화면에서
+// "누를 것"과 "고른 것"이 구분되지 않는다.
+// 대비: 라이트 #C25A10 on #FFFFFF = 4.72:1(AA) · 다크 #F37321 on #0E141B = 7.51:1.
+// onSelect(채우기 위 전경): 라이트 #FFFFFF on #C25A10 = 4.72:1 · 다크 #1A1204 on
+// #F37321 = 7.16:1 — 두 팔레트 모두 AA 통과(onAccent와 같은 방식).
+inline const char* kSelect   = kLight.select;
+inline const char* kOnSelect = kLight.onSelect;
 
 // 영상 캔버스 전용 고정색 — 테마 토글과 무관하게 항상 어둡게 유지한다(D-07/IA-02).
 // kVideoSurface를 Palette 구조체 "밖"에 독립 상수로 둔 이유: 구조체 안에 넣으면
@@ -68,6 +81,7 @@ inline void applyPalette(const Palette& p) {
     kTextMain = p.text;   kTextSub = p.sub;   kAccent = p.accent; kOnAccent = p.onAccent;
     kNormal = p.normal;   kWarn = p.warn;     kHigh = p.high;
     kCritical = p.critical; kInfo = p.info;
+    kSelect = p.select;   kOnSelect = p.onSelect;
 }
 
 #endif  // THEME_H

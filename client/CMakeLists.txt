@@ -9,6 +9,10 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network Sql Multimedia Mul
 # nlohmann 은 저장소에 들어있는 단일 헤더를 쓰므로 윈도우에 따로 설치할 게 없다.
 set(VEDA_MSG_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../MQTT/MQTT_prod)
 set(VEDA_THIRDPARTY ${CMAKE_CURRENT_SOURCE_DIR}/../server/third_party)
+# LED 미리보기가 알림 노드와 같은 글꼴로 그려야 해서 폰트 헤더도 노드 쪽을 그대로 본다.
+# 예전에는 client/ 에 복사본을 두고 "원본 바뀌면 같이 갱신할 것" 이라고 적어 뒀는데,
+# 1.8MB 짜리를 사람이 맞춰 두는 건 언젠가 어긋난다 - 구조체와 같은 방식으로 공유한다.
+set(VEDA_FONT_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../alert-node/app/matrix)
 
 qt_standard_project_setup()
 qt_add_executable(daboyijo
@@ -44,7 +48,13 @@ qt_add_executable(daboyijo
     mqttqtmanager.h
     alertmatrixpreview.cpp
     alertmatrixpreview.h
+    timelinebar.cpp
+    timelinebar.h
+<<<<<<< HEAD
+=======
     hub75-font16.h
+    audiotransmitter.h audiotransmitter.cpp
+>>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 )
 
 # 앱 전역 스타일시트 리소스.
@@ -57,8 +67,31 @@ qt_add_resources(daboyijo "appstyle"
     FILES resources/style/base.qss resources/style/dialogs.qss
 )
 
-# veda_messages.hpp (노드들과 공유하는 JSON 규격) 과 nlohmann/json.hpp 를 찾을 위치
-target_include_directories(daboyijo PRIVATE ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY})
+# veda_messages.hpp (노드들과 공유하는 JSON 규격), nlohmann/json.hpp,
+# hub75-font16.h (알림 노드와 공유하는 LED 글꼴) 를 찾을 위치
+target_include_directories(daboyijo PRIVATE
+    ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY} ${VEDA_FONT_DIR})
+
+# ── [AI 요약] Gemini API 키 — 빌드 시점 주입 ────────────────────────────────
+# 키를 소스에 박지 않는 이유: 이 저장소는 공개(GitHub)라 커밋되는 순간 크롤러가
+# 주워간다. GitHub 이 노출을 감지해 무효화해 주기도 하지만 그 전에 과금될 수 있고,
+# 한 번 커밋되면 나중에 지워도 git 히스토리에서 계속 꺼낼 수 있다.
+#
+# 그렇다고 사용자(요양원 관리자)에게 키를 발급받아 입력하게 할 수도 없다 — 그건
+# 서비스 제공자가 질 몫이다. 그래서 빌드하는 사람만 키를 주고, 사용자는 버튼만 누른다.
+#
+#   cmake -DDABOYIJO_GEMINI_KEY=AIza... ..
+#   (Qt Creator: 프로젝트 > 빌드 설정 > CMake 에서 DABOYIJO_GEMINI_KEY 값 입력)
+#
+# 비워두면 앱은 QSettings("ai/geminiKey")를 폴백으로 보고, 그것도 없으면
+# AI 요약 버튼이 안내 문구를 띄운다(나머지 기능은 정상 동작).
+# ★ 이 값을 여기 직접 적어 커밋하지 말 것.
+set(DABOYIJO_GEMINI_KEY "" CACHE STRING "Gemini API key (do NOT commit)")
+target_compile_definitions(daboyijo PRIVATE
+    DABOYIJO_GEMINI_KEY="${DABOYIJO_GEMINI_KEY}")
+if(DABOYIJO_GEMINI_KEY STREQUAL "")
+    message(STATUS "DABOYIJO_GEMINI_KEY not set - AI summary falls back to QSettings")
+endif()
 qt_add_translations(
     TARGETS daboyijo
     TS_FILES daboyijo_ko_KR.ts

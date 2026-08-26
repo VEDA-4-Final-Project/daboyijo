@@ -69,11 +69,11 @@ void BlackboxModule::attachChannel(RtspAvClient& client) {
     });
 
     BlackboxRecorder* recorder_ptr = recorder.get();
-    client.setStreamReadyCallback(
+    client.addStreamReadyCallback(
         [recorder_ptr](const AVCodecParameters* cp, int tbn, int tbd) {
             recorder_ptr->setStreamInfo(cp, tbn, tbd);
         });
-    client.setPacketCallback([recorder_ptr](const AVPacket* pkt) {
+    client.addPacketCallback([recorder_ptr](const AVPacket* pkt) {
         recorder_ptr->onPacket(pkt);
     });
 

@@ -7,22 +7,79 @@
 #include <atomic>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <linux/limits.h>
 
 #include "MqttClient_veda.hpp"
 #include "VedaAudioPlayer.hpp"
 #include "alert-display.hpp"
+#include "AudioReceiver.h"
 
 namespace {
 
 std::atomic<bool> running{true};
-void onSignal(int) { running = false; }
+
+// 정리 단계가 어디서 막히든 이 시간 안에는 프로세스가 사라진다
+constexpr unsigned SHUTDOWN_LIMIT_SEC = 5;
+
+void onSignal(int)
+{
+    if (!running) std::_Exit(1);        // 두 번째 신호 — 정리 포기 (중계 노드와 같은 규칙)
+    running = false;
+
+    // 우리가 깨울 수 없는 곳에 걸려도 반드시 끝나게 하는 마지막 안전장치.
+    // 패널 vsync 대기, 오디오 스레드 join, mosquitto 소켓 정리처럼 남의 코드
+    // 안에서 멈추면 running 을 아무리 내려도 소용이 없다. SIGALRM 은 기본 동작이
+    // 프로세스 종료라 핸들러도 필요 없고, alarm() 은 시그널 핸들러에서 불러도
+    // 되는 몇 안 되는 함수다. systemd 가 곧바로 재시작한다.
+    alarm(SHUTDOWN_LIMIT_SEC);
+}
+
+// std::signal 은 glibc 에서 SA_RESTART 가 켜진 BSD 의미다 — 잠들어 있던 syscall 이
+// 시그널을 먹고도 커널이 자동으로 재시작해 버린다. hub75 의 FBIO_WAITFORVSYNC 가
+// -ERESTARTSYS 를 돌려주므로, 패널 커널 스레드가 멎으면 Ctrl+C 가 통째로 삼켜진다.
+// 그래서 sigaction 으로 SA_RESTART 없이 직접 건다.
+void installSignalHandlers()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = onSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;                    // SA_RESTART 없음 — 블로킹 syscall 이 EINTR 로 깨야 한다
+    sigaction(SIGINT,  &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+}
+
+// MQTT 네트워크 스레드를 만드는 동안만 종료 시그널을 막는다 — 새 스레드가 이 마스크를
+// 물려받아, 시그널을 그쪽이 가로채는 일이 없어진다(메인이 usleep/ioctl 에서 EINTR 로
+// 깨야 running 확인이 빠르다).
+//
+// 오디오 재생 스레드에는 일부러 안 씌운다. 모든 스레드가 막아버리면 메인이
+// playWav 안쪽 join 처럼 긴 곳에 들어갔을 때 시그널이 펜딩으로 갇혀, 핸들러가
+// 아예 안 돌고 워치독도 안 걸린다. 한 스레드는 받을 수 있게 열어 둔다.
+struct SignalGuard {
+    sigset_t prev;
+    SignalGuard()
+    {
+        sigset_t block;
+        sigemptyset(&block);
+        sigaddset(&block, SIGINT);
+        sigaddset(&block, SIGTERM);
+        pthread_sigmask(SIG_BLOCK, &block, &prev);
+    }
+    ~SignalGuard() { pthread_sigmask(SIG_SETMASK, &prev, nullptr); }
+};
 
 // ---------------- 설정 ----------------
 
@@ -32,10 +89,13 @@ struct Config {
     std::string node_id     = "alarm_rpi_01";
     std::string topic       = "veda/alarm/control";
     std::string audio_dir   = "sounds";
-    std::string idle_text   = "감시 중";      // 평상시 표시 — 64px 안에 들어갈 것
+    std::string idle_text   = "감시 중";      // 평상시 문구 — 64px 안에 들어갈 것
+    std::string idle_mode   = "clock";        // clock = 시각, text = idle_text
     int         matrix_passes = 3;            // 서버가 안 정하면 이만큼 흘림
     int         matrix_brightness = 128;      // 평상시(idle) 밝기 0~255 — 테스트는 이 값으로 복귀
     std::string ca_path     = "";             // 브로커 검증용 CA — 비면 평문 폴백
+    int         broadcast_port    = 5000;      // UDP 방송 수신 포트
+    std::string alsa_device       = "hw:0,0";  // ALSA 재생 장치
 };
 
 // 실행 파일이 있는 디렉터리 — systemd 는 작업 디렉터리가 / 라 상대 경로가 깨짐
@@ -88,9 +148,16 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "topic")       c.topic       = v;
         else if (k == "audio_dir")   c.audio_dir   = v;
         else if (k == "idle_text")   c.idle_text   = v;
+        else if (k == "idle_mode") {
+            if (v == "clock" || v == "text") c.idle_mode = v;
+            else fprintf(stderr, "[설정] idle_mode 는 clock 또는 text - \"%s\" 무시\n",
+                         v.c_str());
+        }
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
         else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
+        else if (k == "broadcast_port")   c.broadcast_port = toInt(k, v, c.broadcast_port); 
+        else if (k == "alsa_device")      c.alsa_device = v;
     }
 }
 
@@ -105,22 +172,53 @@ severity toSeverity(const std::string& type)
     return SEV_INFO;
 }
 
-// 패널에 흘릴 문구 — 호실을 알면 노드가 조립, 모르면 서버 문구 사용
+// 패널에 흘릴 문구 — 아는 이벤트면 노드가 조립(호실·이름은 아는 만큼만),
+// 모르는 이벤트일 때만 서버 문구 사용
 std::string toText(const AlarmCommand& c)
 {
+    // 이벤트 문구는 노드가 정한다 — 서버 message 는 로그용 영문("room101 FALL")이라
+    // 폰트에 글자가 없어 그대로 띄우면 숫자만 남고 사실상 안 보인다.
+    std::string phrase;
+    if      (c.type == "FALL")           phrase = "낙상 발생";
+    else if (c.type == "EGRESS")         phrase = "침상 이탈";
+    else if (c.type == "VITAL_ABNORMAL") phrase = "생체 이상";
+
     // room 은 네트워크에서 온 값이라 범위를 안 믿음 — 보내는 쪽이 초기화를 빠뜨리면
     // 쓰레기 정수가 실려 옴 (실측: -589012800)
     // 그대로 띄우면 표시도 틀리고 자릿수만큼 스크롤이 길어져(10자리 = 13초)
     // 뒤따르는 진짜 경보가 밀림, 0 은 원래부터 "모름"
-    if (c.room <= 0 || c.room > 9999) return c.message;
+    const bool roomKnown = (c.room > 0 && c.room <= 9999);
+    const std::string where = roomKnown ? std::to_string(c.room) + "호 " : std::string();
+
+    // 아는 이벤트가 아니면(관제 앱 CONTROL 등) 서버 문구를 그대로 쓴다 —
+    // 그쪽은 폰트에 있는 문구를 보내도록 발신부에서 맞춰 둔다(client kAlertTestText).
+    if (phrase.empty()) return where + c.message;
 
     // 64px 를 한 바퀴 흘리는 데 문구 길이만큼 시간이 듦
-    // 바뀌는 정보(호실)를 맨 앞에 두고 나머지는 최소한으로
-    const std::string room = std::to_string(c.room);
-    if (c.type == "FALL")           return room + "호 낙상 발생";
-    if (c.type == "EGRESS")         return room + "호 침상 이탈";
-    if (c.type == "VITAL_ABNORMAL") return room + "호 생체 이상";
-    return room + "호 " + c.message;
+    // 바뀌는 정보(호실·이름)를 맨 앞에 두고 나머지는 최소한으로
+    // c.name 은 서버가 가운데 글자를 O 로 가려서 보낸 것 — 여기선 그대로 붙이기만 한다.
+    // 호실이나 이름을 모르면 그 부분만 빼고, 이벤트 문구는 어떤 경우에도 남긴다.
+    const std::string who = c.name.empty() ? std::string() : (c.name + " ");
+    return where + who + phrase;
+}
+
+// 시계를 믿어도 되는지 — 파이엔 RTC 배터리가 없어 부팅 직후 시각은 fake-hwclock 이
+// 복원한 지난번 종료 시각이다. timesyncd 가 NTP 로 맞추고 나서야 이 파일을 만든다
+bool timeSynced()
+{
+    struct stat st;
+    return stat("/run/systemd/timesync/synchronized", &st) == 0;
+}
+
+// "14:23:05" — 진행폭이 딱 64px 지만 숫자가 제 칸 안에서 들여 그려져 안 잘린다
+std::string currentTime()
+{
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    char buf[16];
+    strftime(buf, sizeof(buf), "%H:%M:%S", &lt);
+    return buf;
 }
 
 // 절대 경로면 그대로, 파일명만 오면 audio_dir 에서 찾음
@@ -130,12 +228,33 @@ std::string toAudioPath(const Config& cfg, const std::string& file)
     return exeDir() + "/" + cfg.audio_dir + "/" + file;
 }
 
+// 방번호 파일이 없으면(아직 안 녹음된 방) 타입 기반 공용 파일로 대체
+std::string resolveAudioPath(const Config& cfg, const AlarmCommand& cmd)
+{
+    std::string primary = toAudioPath(cfg, cmd.audio_file);
+    // audio_file 은 네트워크에서 온 값이라 경로가 비정상일 수 있고(이름이 너무 길다든지),
+    // SD 카드 I/O 오류로도 조회가 실패할 수 있다. 예외를 던지는 exists(p) 를 쓰면
+    // 그 순간 알림 노드가 통째로 죽으므로 error_code 판을 쓴다 — 조회가 실패하면
+    // "파일이 없다" 로 보고 아래 공용 파일로 넘어간다.
+    std::error_code ec;
+    if (primary.empty() || std::filesystem::exists(primary, ec)) return primary;
+
+    std::string fallbackName;
+    if (cmd.type == "FALL")                fallbackName = "fall_alert.wav";
+    else if (cmd.type == "EGRESS")         fallbackName = "egress_alert.wav";
+    else if (cmd.type == "VITAL_ABNORMAL") fallbackName = "vital_alert.wav";
+    else return primary;   // CONTROL(테스트) 등은 그대로 — 대체 대상 아님
+
+    std::string fallback = toAudioPath(cfg, fallbackName);
+    std::cerr << "[Audio] " << cmd.audio_file << " 없음 — " << fallbackName << " 로 대체\n";
+    return fallback;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
-    signal(SIGINT, onSignal);
-    signal(SIGTERM, onSignal);
+    installSignalHandlers();
 
     Config cfg;
     std::string confPath = exeDir() + "/alert-node.conf";
@@ -149,10 +268,29 @@ int main(int argc, char* argv[])
     VedaAudioPlayer player;
     ThreadSafeQueue<AlarmCommand> queue;
 
+
+
     // 아래 STOP 처리 때문에 재생기를 MQTT 스레드와 메인 루프가 같이 만짐
     // stop() 이 재생 스레드를 join 해서 동시에 부르면 같은 스레드를 두 번 join 함
     // 재생기 호출은 전부 이 뮤텍스를 잡고 함
     std::mutex player_mutex;
+
+    // --- 방송 수신 객체 초기화 및 실행 ---
+    AudioReceiver broadcastReceiver;
+
+    // 긴급 방송 시작 전: 기존 사이렌/WAV 즉시 중단 및 ALSA 점유 해제
+    broadcastReceiver.setPreemptCallback([&]() {
+        printf("[방송]방송 수신 -> 기존 오디오 점유 해제\n");
+        std::lock_guard<std::mutex> lk(player_mutex);
+        player.stop();
+    });
+
+    broadcastReceiver.setRestoreCallback([&]() {
+        printf("[방송]방송 수신 종료\n");
+    });
+
+    // 백그라운드 스레드에서 UDP 수신 대기 시작
+    broadcastReceiver.start(cfg.broadcast_port, cfg.alsa_device);
 
     // 평상시(idle) 밝기·음량 = 관제 앱 "적용"으로 커밋된 값. 테스트(matrix=SHOW)는 잠깐
     // 이 값을 벗어나 보여주고, 스크롤이 끝나면 이 값으로 되돌아온다 — 적용해야만 유지된다.
@@ -207,7 +345,7 @@ int main(int argc, char* argv[])
                 cfg.ca_path.empty() ? "" : " [TLS]");
         return 1;
     }
-    client.startLoop();
+    { SignalGuard g; client.startLoop(); }   // 네트워크 스레드는 시그널을 안 받게 만든다
     // QoS 1 로 구독 — 실제 등급은 발행·구독 중 낮은 쪽이라 여기가 0 이면
     // 보내는 쪽이 1 로 보내도 마지막 구간에서 0 으로 깎임
     client.publish(statusTopic, "online", 1, true);   // retain — 아직 연결 전이면 큐에 담겼다 뒤에 나간다
@@ -217,18 +355,31 @@ int main(int argc, char* argv[])
     printf("[알림노드] %s 로 %s 구독 시작 (node_id=%s)\n",
            cfg.broker_host.c_str(), cfg.topic.c_str(), cfg.node_id.c_str());
 
-    // 표시 정책은 노드가 정함 — 서버는 발행 시점에 뒤에 뭐가 올지 모름
-    //   최소 한 바퀴는 끝까지 — 안 그러면 연달아 올 때 앞의 것이 한 프레임만 스침
-    //   그 뒤에 대기 중인 게 있으면 넘어감, 우선순위는 없음
-    auto aborted = [&](int passesDone) {
-        return !running || (passesDone >= 1 && !queue.empty());
+    // 다음 명령이 오면 즉시 넘어감 — 경보 화면이 해제 전까지 안 끝나서,
+    // 한 바퀴를 보장하면 앞 경보가 뒤에 온 경보를 막아서게 된다
+    auto aborted = [&](int) {
+        return !running || !queue.empty();
     };
-    bool idleShown = false;
+    bool        idleShown = false;   // 평상시 화면이 떠 있나 — 경보가 덮으면 내려감
+    std::string idleClock;           // 그때 그린 시각 — 초가 넘어가면 다시 그림
+
+    bool clockReady = false;         // 한 번 동기화되면 안 되돌아가니 그 뒤론 안 봄
+    auto clockOn = [&] {
+        if (cfg.idle_mode != "clock") return false;
+        if (!clockReady) clockReady = timeSynced();
+        return clockReady;
+    };
 
     while (running) {
         AlarmCommand cmd;
         if (!queue.tryPop(cmd)) {
-            if (!idleShown) { display.showStatic(cfg.idle_text, SEV_INFO); idleShown = true; }
+            // 바뀔 때만 그린다 — 폴링이 100ms 라 그냥 그리면 열 번 중 아홉은 헛일
+            std::string now = clockOn() ? currentTime() : std::string();
+            if (!idleShown || now != idleClock) {
+                display.showStatic(now.empty() ? cfg.idle_text : now, SEV_INFO);
+                idleClock = now;
+                idleShown = true;
+            }
             usleep(100000);
             continue;
         }
@@ -267,18 +418,31 @@ int main(int argc, char* argv[])
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.setVolume(playVolume);   // 테스트=그 음량 / 이벤트=평상시 음량
-            player.playWav(toAudioPath(cfg, cmd.audio_file), cmd.loop);   // 비동기
+            player.playWav(resolveAudioPath(cfg, cmd), cmd.loop);   // 비동기
         } else if (cmd.audio_action == "STOP") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.stop();   // 대개 MQTT 콜백이 이미 껐다 — 두 번째 호출은 무해
         }
 
         if (cmd.matrix_action == "SHOW") {
-            // 서버가 지정하면 그대로, 안 주면 노드 기본값
-            int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
             severity sev = toSeverity(cmd.type);
-            display.blinkCue(sev);              // 새 경보라는 신호
-            display.show(toText(cmd), sev, passes, aborted);
+            display.blinkCue(sev, 2, aborted);  // 새 경보라는 신호 (종료 신호면 중단)
+
+            // 실제 경보는 해제할 때까지 흘린다 — 소리와 같은 규칙. 몇 바퀴 돌고
+            // 사라지면 아무도 없던 사이의 경보는 없었던 것과 같아진다
+            // 테스트는 제외 — 눌러 본 사람이 해제까지 눌러야 꺼지면 사고다
+            // 종류까지 보는 건 is_test 를 안 보내는 발신자(기본값 false) 때문
+            const bool holdUntilCleared =
+                !cmd.is_test && (cmd.type == "FALL" || cmd.type == "EGRESS" ||
+                                 cmd.type == "VITAL_ABNORMAL");
+
+            if (holdUntilCleared) {
+                display.showUntilAborted(toText(cmd), sev, aborted);
+            } else {
+                // 서버가 지정하면 그대로, 안 주면 노드 기본값
+                int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
+                display.show(toText(cmd), sev, passes, aborted);
+            }
         }
         else if (cmd.matrix_action == "CLEAR")
             display.clear();
@@ -301,8 +465,9 @@ int main(int argc, char* argv[])
     {
         std::lock_guard<std::mutex> lk(player_mutex);
         player.stop();
+        broadcastReceiver.stop(); // 방송 수신 스레드 안전 종료
     }
-    display.clear();
+    display.clearNoWait();   // vsync 를 기다리다 여기서 매달리지 않게
     printf("\n종료\n");
     return 0;
 }

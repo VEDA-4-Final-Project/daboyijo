@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS residents (
 ALTER TABLE residents ADD COLUMN IF NOT EXISTS wearable_id VARCHAR(32);
 ALTER TABLE residents ADD UNIQUE KEY IF NOT EXISTS uk_wearable_id (wearable_id);
 
+-- 쓰지 않는 컬럼 정리 (생년월일·보호자 정보) — 폼/조회 어디서도 읽지 않는다.
+ALTER TABLE residents DROP COLUMN IF EXISTS birth_date;
+ALTER TABLE residents DROP COLUMN IF EXISTS guardian_name;
+ALTER TABLE residents DROP COLUMN IF EXISTS guardian_phone;
+ALTER TABLE residents DROP COLUMN IF EXISTS guardian_relation;
+
 -- 케어로그 (세션마다 한 줄, camera_id 기준으로 기록)
 -- ★ duration_sec 는 실제로 요양사가 감지된 시간의 합이라 end_time - start_time 과
 --    다를 수 있다. 요양사가 3분 안에 돌아오면 새 줄을 만들지 않고 이 줄의
@@ -64,3 +70,14 @@ ALTER TABLE roi_zones ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
 ALTER TABLE roi_zones MODIFY COLUMN roi_name VARCHAR(30) NOT NULL DEFAULT '';
 ALTER TABLE roi_zones ADD UNIQUE KEY IF NOT EXISTS uk_camera_roi (camera_id, roi_id);
+
+-- ★ 유령 매핑 정리 + 재발 방지.
+-- roi_zones.resident_id 에는 제약이 없었는데 bed_sessions.resident_id 에는 FK 가
+-- 걸려 있어서, 입소자 행이 사라지면 그 침대는 재실 세션 INSERT 가 FK 로 거부됐다
+-- (그 침대의 재실시간·케어시간이 통째로 0 이 된다). 먼저 없는 사람을 가리키는
+-- 매핑을 끊고, 같은 FK 를 여기에도 걸어 다시 생기지 않게 한다.
+UPDATE roi_zones z LEFT JOIN residents r ON r.resident_id = z.resident_id
+   SET z.resident_id = NULL
+ WHERE z.resident_id IS NOT NULL AND r.resident_id IS NULL;
+ALTER TABLE roi_zones ADD CONSTRAINT IF NOT EXISTS fk_roi_resident
+    FOREIGN KEY (resident_id) REFERENCES residents(resident_id) ON DELETE SET NULL;

@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QTcpSocket>
+#include <QSslSocket>
 #include <QByteArray>
 #include <QLabel>
 #include <QPolygonF>
@@ -14,6 +15,7 @@
 #include <QSet>
 #include <QMap>
 #include <QPixmap>
+#include <QColor>
 
 #include <QHash>
 #include <QVector>
@@ -29,7 +31,11 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
+<<<<<<< HEAD
+=======
 #include "alertbanner.h"
+#include "audiotransmitter.h"
+>>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 
 
 
@@ -89,6 +95,14 @@ struct dbj_evt_header_t {
     uint16_t y;             // 2B (발생 위치 정규화 y ×10000)
     uint64_t timestamp_ms;  // 8B (서버 Unix time ms)
 };                          // 18B
+
+// 역방향(서버→클라) 영상검색 결과 — magic=0xDB4E. 헤더 뒤 UTF-8 텍스트(text_len 바이트).
+struct dbj_search_result_header_t {
+    uint16_t magic;         // 2B (0xDB4E)
+    uint8_t  version;       // 1B (0x01)
+    uint8_t  channel;       // 1B (0~3, 요청한 채널)
+    uint32_t text_len;      // 4B (이어지는 UTF-8 답변 텍스트 바이트 수)
+};                          // 8B
 #pragma pack(pop)
 
 // 제어 메시지 상수 (서버와 합의된 값 — protocol/video_stream.h와 동일하게 유지)
@@ -100,6 +114,9 @@ static constexpr uint8_t kCtrlCameraClear = 0x06;  // 채널 카메라 해제
 static constexpr uint8_t kCtrlImageSet = 0x07;     // 카메라 이미지 파라미터 (헤더 뒤 dbj_image_params_t)
 static constexpr uint8_t kCtrlFocusSet = 0x08;     // 카메라 포커스 (헤더 뒤 dbj_focus_t)
 static constexpr uint8_t kCtrlRoiBind = 0x09;      // 침대 ↔ 입소자 매핑 (헤더 뒤 dbj_roi_bind_t)
+static constexpr uint8_t kCtrlSearchQuery = 0x0A;  // 영상검색 질의 (헤더 뒤 UTF-8 질의 문자열)
+static constexpr int kSearchQueryMax = 300;        // DBJ_SEARCH_QUERY_MAX
+static constexpr uint8_t kChannelAll = 0xFF;       // SEARCH_QUERY channel 자리의 "전체 채널" (DBJ_CHANNEL_ALL)
 static constexpr uint8_t kFocusWhole = 0;          // 전체 자동초점
 static constexpr uint8_t kFocusArea = 1;           // 클릭 영역 초점
 static constexpr int kRoiCoordScale = 10000;
@@ -115,9 +132,13 @@ static constexpr uint8_t kEvtFall = 0x01;       // 낙상 확정
 static constexpr uint8_t kEvtBedEgress = 0x02;  // 침대 이탈
 static constexpr uint8_t kEvtVitalAbnormal = 0x03;  // 웨어러블 생체데이터 이상 (x,y 미사용)
 
+// 영상검색 결과 메시지 상수 (서버 스펙)
+static constexpr uint16_t kSearchMagic = 0xDB4E;
+
 #include "videoview.h"   // RoiZone / kMaxRoiZones — 침대 목록을 값으로 들고 있어 필요
 
-class FramePreview;  // 이미지 탭 적용 전/후 프리뷰 (videoview.h)
+class FramePreview;  // 채널 스트립 썸네일 (videoview.h)
+class WipeCompare;   // 이미지 탭 적용 전/후 와이프 비교 (videoview.h)
 class Sparkline;  // 심박 미니 추세 그래프 (sparkline.h)
 class QDialog;
 class QPushButton;
@@ -140,6 +161,9 @@ class QPropertyAnimation;
 class QCalendarWidget;
 class QHBoxLayout;
 class ActivityChart;
+class QTreeWidget;
+class QTreeWidgetItem;
+class TimelineBar;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -150,6 +174,30 @@ struct PatientInfo {
     QString name;   // 환자 이름
     QString bed;    // 위치 표기 — 병실/침대 제거 후 "채널 N"을 담는다(오버레이/바이탈 공용)
     QString room;   // 호실 — MQTT 알림 명령에 실어 보낸다(알림 노드가 LED에 띄운다)
+};
+
+// NVR(연속녹화) 세그먼트 1개 — /list 응답 파일명(ch{N}_{startMs}.mp4)을 파싱한 결과.
+// 콤보박스로 채널 필터링할 때 재요청 없이 이 목록에서 다시 골라 쓴다.
+struct NvrSegmentInfo {
+    int channel = -1;
+    qint64 startMs = 0;
+    QString url;
+};
+
+// 이벤트 기록 표의 한 줄. DB 원장(events)에서 읽어온 것과 실시간으로 도착한 것이
+// 같은 모양을 갖도록 한 곳에 정의한다 — 두 경로가 따로 표를 채우면 열 순서·색·
+// 클립 URL 규칙이 조용히 갈라진다.
+struct EventLogRow {
+    qint64  eventId = -1;      // events.event_id (-1 = 방금 소켓으로 온 것, 아직 조회 전)
+    qint64  occurredMs = 0;
+    int     channel = -1;
+    QString typeCode;          // FALL / EGRESS / VITAL_ABNORMAL (DB ENUM과 같은 값)
+    QString source;            // CAMERA / WEARABLE
+    QString residentName;      // 비어 있으면 "미상"으로 표시
+    QString place;             // "101호 · 채널 2 · 침대 1"
+    QString clipUrl;           // 호스트까지 붙인 완성 URL (비어 있으면 재생 불가)
+    bool    confirmed = false;
+    QString confirmedBy;
 };
 
 // 입소자 한 명의 표시 정보. 한 채널에 여러 명이 있을 수 있어 채널 단위인
@@ -172,6 +220,10 @@ struct VitalSample {
     int    spo2        = 0;
     qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
 };
+
+// 오디오 방송을 위한 클래스
+class AudioTransmitter;
+
 
 class MainWindow : public QMainWindow
 {
@@ -204,12 +256,15 @@ private slots:
     // 그리기 완료 → 서버 전송 + 로컬 목록 반영
     void onRoiCompleted(int channel, int roiId, const QPolygonF& normPts);
     void onRoiZoneSelected(int channel, int roiId);  // 영상에서 침대 클릭 → 목록 강조
-    void onMicPressed();    // 마이크 버튼 누름 — 방송 시작
-    void onMicReleased();   // 마이크 버튼 뗌 — 방송 종료
+    void onMicToggled(bool on);  // 마이크 버튼 토글 — 한 번 클릭하면 방송 시작, 다시 누르면 종료
     void onAlarmClearClicked();  // 경보 해제
     void onAddCameraClicked();   // "카메라 연결" — CCTV IP 입력 → 서버로 전송
     void onSearchCameraClicked();// "카메라 검색" — ONVIF WS-Discovery로 같은 망 카메라 탐색
     void onCameraClearClicked(); // "카메라 해제" — 모든 채널 CAMERA_CLEAR 전송
+    // 소켓은 붙어있는데 카메라 쪽 스트림만 멈추는 경우(setLive(true)는 프레임
+    // 도착 때만 불려서 이런 정지를 아무도 알려주지 않는다) — 주기적으로 마지막
+    // 프레임 시각을 점검해 LIVE 배지를 "미연결"로 되돌린다.
+    void checkChannelHealth();
 
     // ── MQTT (웨어러블·알림 노드) ─────────────────────────
     // 영상 경로(TCP)와 별개로, 브로커를 통해 들어오는 것들을 받는 슬롯.
@@ -237,23 +292,124 @@ private:
     //   ch0·ch1 → Pi A(sockets[0]) / ch2·ch3 → Pi B(sockets[1]).
     static constexpr int kNumServers = 2;
     static int serverForChannel(int ch) { return ch < 2 ? 0 : 1; }
-    QTcpSocket *sockets[kNumServers] = {};
+    // QSslSocket은 QTcpSocket 파생이라 나머지 코드(sock->state()/write() 등)는
+    // QTcpSocket*로 받아써도 그대로 동작 — TLS 전용 API(connectToHostEncrypted 등)를
+    // 쓰는 지점(connectToServer)만 QSslSocket*가 필요하다.
+    QSslSocket *sockets[kNumServers] = {};
     QByteArray buffers[kNumServers];   // 연결마다 바이트 스트림이 별개 → 버퍼도 분리
     QTcpSocket* socketForChannel(int ch) { return sockets[serverForChannel(ch)]; }
+    // ── 확장 지점 메모(room 개념 도입, 2026-08) ──────────────────────
+    // 이 파일의 고정크기-4 배열들(channelViews/videoCards/patients/
+    // residentsByChannel_ 등 총 19곳)과 setVideoFocus()의 2×2 그리드 배치는
+    // 전부 "카메라 1대(4채널) = 방 1개"를 전제한다. 카메라를 더 붙여 방이
+    // 여러 개가 되는 걸 실제로 지원하려면 이 배열들을 채널 인덱스가 아니라
+    // (room, 채널) 쌍 기반의 동적 컨테이너로, setVideoFocus()도 데이터 기반
+    // 레이아웃으로 재작성해야 한다 — 지금은 리스크 대비 이득이 낮아 보류.
+    // room "이름" 자체는 이미 표시 레이어(currentRoomName(), mainwindow.cpp)에
+    // 도입돼 있어 방을 늘릴 때 그 값부터 목록으로 확장하면 된다.
     VideoView* channelViews[4] = {};  // 4분할 영상+ROI 오버레이 위젯
     QWidget* videoCards[4] = {};      // 영상 카드(스포트라이트 재배치용)
     QGridLayout* videoGrid = nullptr; // 영상 월 그리드(재배치 대상)
-    int focusedChannel_ = -2;         // 스포트라이트 채널(-1=균등 2×2, -2=아직 미배치)
+    // 마지막으로 실제 적용한 배치의 서명. relayoutGrid()가 이 값과 비교해
+    // 달라졌을 때만 위젯을 옮긴다 — 채널을 고를 때마다 4장을 떼었다 붙이면
+    // 영상이 깜빡인다. -1은 "아직 한 번도 배치 안 함".
+    int gridKey_ = -1;
     // 낙상·침상이탈 감지 시 그 채널을 크게, 나머지는 작게. -1이면 균등 2×2로 복귀.
     void setVideoFocus(int channel);
+    // ── Wisenet Viewer 스타일 관제 화면 구성 (2026-08) ─────────────
+    // 화면을 세 덩어리로 나눈다: [리소스 트리] [레이아웃 탭 + 영상 그리드 +
+    // 타임라인] [바이탈 패널]. 그리드 배치는 "프리셋(gridLayout_) × 선택 채널
+    // (selectedChannel_) × 숨긴 타일(tileHidden_)" 세 상태의 함수이며,
+    // 그 셋 중 무엇이 바뀌든 relayoutGrid() 한 곳에서만 배치가 결정된다 —
+    // 배치 코드가 여러 갈래로 흩어지면 경보 스포트라이트와 사용자가 고른
+    // 레이아웃이 서로를 덮어써 어긋난다.
+    enum class GridLayout { Quad, Spotlight, Single };
+    GridLayout gridLayout_ = GridLayout::Quad;
+    int  selectedChannel_ = 0;      // 지금 조작 대상 채널(선택 강조색 테두리)
+    bool tileHidden_[4] = {};       // 타일 ×로 레이아웃에서 뺀 채널(카메라 해제 아님)
+    void relayoutGrid();            // 위 세 상태 → videoGrid 실제 배치
+    void setGridLayout(GridLayout mode);
+    void selectChannel(int ch);     // 타일 선택 + 리소스 트리 강조 동기화
+    void setTileHidden(int ch, bool hidden);
+    QString channelDisplayName(int ch) const;   // "CH1 · 김복순" (타일/트리 공용)
+
+    // 좌측 리소스 패널 — Root > 그룹 > CH01~04 + 레이아웃 프리셋.
+    QWidget* buildResourcePanel();
+    void     refreshResourceTree();          // 카메라 연결/입소자 변경 시 라벨·색 갱신
+    void     setResourceCollapsed(bool on);
+    QFrame*          resourcePanel_ = nullptr;
+    QTreeWidget*     resourceTree_ = nullptr;
+    QLineEdit*       resourceSearch_ = nullptr;
+    QPushButton*     resourceToggle_ = nullptr;
+    QWidget*         resourceBody_ = nullptr;   // 펼쳤을 때 보이는 부분(검색+트리)
+    QLabel*          resourceHead_ = nullptr;   // "리소스" 제목 — 접으면 숨긴다
+    // 접었을 때 대신 보이는 세로 칩 레일(CH1~4). 44px 빈 막대만 남기면 무엇을
+    // 접었는지도, 어떻게 펴는지도 알 수 없다 — 채널 상태는 접어도 남긴다.
+    QWidget*         resourceRail_ = nullptr;
+    QPushButton*     resChipBtns_[4] = {};
+    bool             resourceCollapsed_ = false;
+    QTreeWidgetItem* camItems_[4] = {};
+    // 지금 영상월이 보여 주는 방. 0 = 실제 카메라가 붙은 방, 1 이상 = 아직 빈 자리로
+    // 화면엔 "카메라 미연결" 타일 4장만 뜬다. 서버 스트림은 그대로 살아 있고
+    // (101호는 계속 녹화·감지된다) 표시만 끊는 개념이다.
+    int selectedRoom_ = 0;
+    void selectRoom(int room);   // 트리에서 방을 고르면 영상월을 그 방으로 전환
+    void applyRoomView();        // selectedRoom_에 맞춰 타일·바이탈·트리를 다시 맞춘다
+    QString tileDisplayName(int ch) const;   // 빈 방에서는 입소자 이름을 붙이지 않는다
+
+    // 그리드 위 레이아웃 탭 + 타일에 얹는 크롬(닫기 버튼 / 호버 툴바)
+    QWidget*     buildLayoutTabs();
+    QWidget*     buildTileChrome(int channel, QWidget* card);
+    // 크롬(닫기·툴바)은 레이아웃 밖 자식이라 카드 크기에 맞춰 직접 옮겨 준다.
+    void         layoutTileChrome(int channel);
+    void         saveChannelSnapshot(int channel);   // 타일 툴바 스냅샷 저장
+    QPushButton* layoutTabBtns_[3] = {};
+    QPushButton* tileCloseBtns_[4] = {};
+    QWidget*     tileToolbars_[4] = {};
+
+    // ── 하단 타임라인 + 재생바 ──────────────────────────────────
+    // 라이브/재생 전환은 영상 영역을 통째로 갈아끼운다(liveOrPlaybackStack_):
+    // 0 = 실시간 그리드, 1 = NVR 재생 화면. 소켓 프레임은 라이브에서만 보이고
+    // 재생 중에도 계속 수신은 된다 — 되돌아오면 곧바로 최신 화면이 뜬다.
+    QWidget* buildTransportBar();
+    void     refreshTimeline();              // NVR 세그먼트·이벤트 → 타임라인 반영
+    void     setPlaybackMode(bool on);
+    void     seekPlaybackTo(qint64 ms);      // 그 시각을 담은 세그먼트를 찾아 재생
+    TimelineBar*    timeline_ = nullptr;
+    QStackedWidget* liveOrPlaybackStack_ = nullptr;
+    QVideoWidget*   playbackVideo_ = nullptr;
+    // 재생 모드로 막 넘어왔을 때(아직 시각을 안 고른 상태)와 그 시각에 녹화가
+    // 없을 때 보여주는 안내. 검은 화면만 띄우면 "고장인가"로 읽힌다.
+    QLabel*         playbackPlaceholder_ = nullptr;
+    QMediaPlayer*   playbackPlayer_ = nullptr;
+    QPushButton*    liveModeBtn_ = nullptr;
+    QPushButton*    playbackModeBtn_ = nullptr;
+    QPushButton*    transportPlayBtn_ = nullptr;
+    QLabel*         transportTimeLabel_ = nullptr;
+    QComboBox*      transportSpeedCombo_ = nullptr;
+    QTimer          timelineTimer_;          // 라이브일 때 창을 "지금"에 맞춰 미는 타이머
+    bool            playbackMode_ = false;
+    qint64          playbackSegStartMs_ = 0; // 지금 재생 중인 세그먼트의 시작 시각
+    // 낙상·침상이탈이 난 시각 — 타임라인 마커. 이벤트 로그와 별개로 가볍게 들고 있는다.
+    struct TimelineEvent { qint64 atMs; int channel; QColor color; };
+    QVector<TimelineEvent> timelineEvents_;
+    void pushTimelineEvent(int channel, qint64 atMs, const QColor& color);
+
     // 채널별 마지막 카메라 RTSP URL — Pi가 잠깐 끊겼다 붙을 때 자동 재전송용(세션 한정,
     // 비밀번호가 포함돼 QSettings엔 저장하지 않는다). 비어 있으면 미연결.
     QString lastCameraUrl_[4];
     // 채널별 카메라 연결 여부(QSettings 지속) — 서버는 Qt를 껐다 켜도 스트리밍을
     // 유지하므로, 재시작 후 URL이 없어도 이 플래그로 "해제" 대상을 안다. 비어 있으면 미연결.
     bool cameraActive_[4] = {};
+    // 채널별 마지막 영상 프레임 수신 시각(에폭 ms). 0이면 이번 세션에서 아직
+    // 한 장도 못 받음. checkChannelHealth()가 이 값으로 "신호 끊김"을 판정한다.
+    qint64 lastFrameMs_[4] = {};
     bool serverConnected_[kNumServers] = {};  // Pi별 직전 연결 상태(재접속 전이 감지)
-    bool videoSuppressed_[4] = {};   // 해제한 채널 — 재연결 전까지 들어오는 프레임 무시(검은 화면 유지)
+    bool videoSuppressed_[4] = {};   // 지금 이 화면에 그리면 안 되는 채널(파생값, applyRoomView가 계산)
+    // 사용자가 "해제"한 채널. videoSuppressed_와 나눠 둔 이유: 표시 여부는
+    // (보고 있는 방) × (해제 여부) 두 조건의 곱인데, 방을 오갈 때마다 한 변수에
+    // 겹쳐 쓰면 해제해 둔 채널이 방 전환만으로 되살아난다.
+    bool videoCleared_[4] = {};
     bool roiDrawing = false;     // 현재 어느 채널이든 ROI 그리는 중인지
     bool fallActive[4] = {};     // 채널별 낙상 경보 활성 상태
     bool bedEgressActive[4] = {};  // 채널별 침상이탈 경보 활성 상태
@@ -267,13 +423,13 @@ private:
     QDialog* helpDialog = nullptr;             // 기능 설명 창(1회 생성 후 재사용)
     QListWidget* helpList = nullptr;           // 좌측 주제 목록
     QTextBrowser* helpBrowser = nullptr;       // 우측 내용
+    int helpTopicShown_ = 0;                   // 현재 보고 있는 주제(목록 행 번호가 아니다)
     void renderHelpTopic(int idx);             // 선택 주제를 현재 테마 색으로 렌더
 
     // ── 로그인 세션 ──
     Auth::SessionUser currentUser;         // 현재 로그인한 사용자
     bool logoutRequested_ = false;         // 종료 vs 로그아웃 구분
     QLabel* userNameLabel = nullptr;       // 헤더의 사용자 이름
-    QLabel* userAvatarLabel = nullptr;     // 이름 첫 글자 원형 배지
     QPushButton* logoutButton = nullptr;   // 로그아웃 버튼
 
     bool darkMode = true;              // 현재 다크모드 여부 (기본 다크 관제 톤)
@@ -307,11 +463,13 @@ private:
     QTimer vitalsTimer;
     QTimer careTimeTimer;        // 케어 타임 대시보드 주기 갱신(care_logs 재조회)
     QTimer reconnectTimer;       // 영상 서버 자동 재접속
+    QTimer channelHealthTimer;   // 채널별 프레임 정지(신호 끊김) 감시
 
     // ── TAB 구조 ──────────────────────────────────────────
     // ── 좌측 네비 레일 + 본문 스택 (예전 상단 QTabWidget 대체) ──
-    static constexpr int kNavCount = 5;
-    QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 5개 + 접기 토글)
+    static constexpr int kNavCount = 6;
+    static constexpr int kNavEventLog = 1;  // 영상 재생기(블랙박스/NVR)가 있는 페이지 — 다른 페이지에서 클립 재생 시 이동 대상
+    QWidget* buildNavRail();          // 레일 구성(아이콘+라벨 6개 + 접기 토글)
     void     refreshNavIcons();       // 팔레트 전환 시 아이콘 색 재생성
     void     setNavCollapsed(bool on);// 접기/펼치기 (QSettings에 저장)
     QFrame*         navRail = nullptr;
@@ -326,6 +484,32 @@ private:
     QComboBox* filterRoom = nullptr;
     QComboBox* filterEventType = nullptr;
     QTableWidget* logTable = nullptr;
+    // 이벤트 기록 표의 열 순서. 인덱스를 코드 곳곳에 숫자로 흩뿌리면 열을 하나
+    // 끼워 넣을 때마다 조용히 어긋나므로 이름으로 고정한다.
+    enum LogCol { LogWhen = 0, LogType, LogPlace, LogResident, LogSource, LogStatus,
+                  LogColCount };
+    // 0열 아이템에 실어 두는 부가 데이터. Qt::UserRole+N 을 직접 쓰지 않는다.
+    enum LogRole { LogClipUrl = Qt::UserRole, LogChannel, LogTimestamp, LogEventId };
+
+    QComboBox* filterChannel = nullptr;     // 전체 채널 / CH1~4
+    QComboBox* filterConfirmed = nullptr;   // 전체 / 미확인만 / 확인만
+    QLabel*    logCountLabel = nullptr;     // "N건 · 미확인 M건"
+    QLabel*    logEmptyHint = nullptr;      // 조회 결과 0건일 때 표 위에 띄우는 안내
+    QLabel*    eventContextLabel = nullptr; // 우측 재생기 위 "누가 · 언제 · 어디서"
+
+    // events 원장을 현재 필터 조건으로 조회해 표를 통째로 다시 채운다.
+    // 이 함수가 표의 유일한 채움 경로다(실시간 도착분만 insertEventRow로 덧붙는다).
+    void reloadEventLog();
+    // 표에 한 줄 넣기 — DB 조회분/실시간 도착분 공용.
+    void insertEventRow(const EventLogRow& e);
+    // 실시간 이벤트를 표에 얹는다(서버는 같은 이벤트를 DB에도 쓴다 — 다음 조회 때 합쳐진다).
+    void appendLiveEvent(int channel, int roiId, qint64 occurredMs,
+                         const QString& typeCode, const QString& source);
+    // 종류 코드 → 화면 문구/색. 표·필터·요약이 같은 사전을 본다.
+    static QString eventTypeLabel(const QString& code);
+    static QString eventSourceLabel(const QString& code);
+    // 결과 건수·미확인 수 갱신 + 빈 상태 안내 표시
+    void refreshLogSummary();
     QLabel* blackboxPlaceholder = nullptr;
     QVideoWidget* blackboxVideoWidget = nullptr;
     QStackedWidget* blackboxStack = nullptr;
@@ -336,6 +520,54 @@ private:
     bool blackboxSeeking = false;   // 사용자가 재생바를 잡고 있는 중
     QString blackboxUrl;            // 현재 재생/재시도 중인 클립 URL
     int blackboxRetries = 0;        // 저장 완료 전 재시도 횟수
+    qint64 blackboxPendingSeekMs_ = -1;   // durationChanged 이후 한 번 적용할 탐색 위치(-1=없음)
+
+    // NVR(연속녹화) 세그먼트 목록. 화면에 목록으로 띄우지는 않는다 — 관제화면
+    // 하단 타임라인이 이 데이터를 시간축 위에 그리고, 이벤트 기록의
+    // [이 시점 NVR에서 이어보기]가 여기서 해당 세그먼트를 찾아 쓴다.
+    QVector<NvrSegmentInfo> nvrSegments_;
+
+    // 이벤트↔NVR 연결: 로그에서 마지막으로 연 이벤트의 채널/시각(NVR 시점 점프용)
+    int selectedEventChannel_ = -1;
+    qint64 selectedEventTimestampMs_ = -1;
+    QPushButton* nvrJumpButton = nullptr;
+    QPushButton* clipDownloadButton = nullptr;
+
+    // ── 영상검색(🔍) — 좌측 네비의 독립 페이지(실제 VMS의 Search 섹션처럼).
+    //    케어봇(video_search_module)과 같은 서버 로직 재사용. 질의는
+    //    DBJ_CTRL_SEARCH_QUERY, 응답은 DBJ_SEARCH_MAGIC.
+    QComboBox* searchChannelCombo = nullptr;
+    QLineEdit* searchQueryEdit = nullptr;
+    QPushButton* searchButton = nullptr;
+
+    // 검색 결과 한 건. 서버가 돌려주는 답변은 자유 문장이 아니라
+    //   "· 2026-08-18 11:06 · 채널 4 · 낙상 · 전승현님" + 다음 줄에 클립 URL
+    // 형식의 목록이라(video_search_module.cpp), 그대로 파싱해 리스트로 만든다.
+    struct SearchHit {
+        QString when;    // "2026-08-18 11:06"
+        QString meta;    // "채널 4 · 낙상 · 전승현님"
+        QString url;     // 클립 주소(없을 수 있다)
+    };
+    QListWidget*    searchResultList_ = nullptr;
+    QLabel*         searchCountLabel_ = nullptr;
+    QLabel*         searchMessage_ = nullptr;   // 결과가 목록이 아닐 때(안내·오류) 표시
+    QLabel*         searchContext_ = nullptr;   // 재생기 위 "언제 · 무슨 일"
+    // 재생기는 이 페이지 전용이다. 이벤트 기록 페이지의 재생기(blackboxPlayer)를
+    // 빌려 쓰려면 그쪽 페이지로 이동해야 해서, 검색하다 말고 화면이 튀었다.
+    QStackedWidget* searchPlayerStack_ = nullptr;   // 0=안내 / 1=영상
+    QVideoWidget*   searchVideo_ = nullptr;
+    QMediaPlayer*   searchPlayer_ = nullptr;
+    QSlider*        searchSeek_ = nullptr;
+    QPushButton*    searchPlayPause_ = nullptr;
+    QLabel*         searchTimeLabel_ = nullptr;
+    bool            searchSeeking_ = false;     // 사용자가 재생바를 잡고 있는 중
+    // 서버 답변 → 결과 목록. 목록으로 볼 수 없는 답변이면 message 에 원문을 담는다.
+    static QVector<SearchHit> parseSearchReply(const QString& text, QString* message);
+    void playSearchClip(const QString& url, const QString& context);
+    QWidget* buildVideoSearchTab();          // 네비 "영상 검색" 페이지 전체
+    void sendSearchQuery();
+    // onReadyRead가 DBJ_SEARCH_MAGIC 패킷을 다 모으면 호출 — 답변 표시 + 버튼 복구
+    void onSearchResultReceived(int channel, const QString& text);
     // ── 일일 리포트: 날짜 선택 ──────────────────────────────
     // 리포트는 "특정 날짜 + 특정 입소자" 단위다. 그 날짜를 고르는 곳.
     // 여기서 고른 날짜를 updateCareTime()을 비롯한 모든 집계 쿼리가 함께 본다
@@ -344,6 +576,8 @@ private:
     QLabel* reportDateLabel = nullptr;   // 우측 상단 "2026-08-13 (목)"
     QDate   reportDate_ = QDate::currentDate();
     QWidget* buildReportCalendar();      // 좌측 날짜 선택 칼럼
+    // 달력 요일 머리글/주말 색 — QSS가 닿지 않는 부분이라 코드로 칠한다.
+    void     applyCalendarPalette(QCalendarWidget* cal);
 
     // ── 일일 리포트: 입소자 선택 + 지표 ────────────────────
     // 리포트는 "날짜 + 사람" 한 명 단위다(PDF 한 장, AI 요약 한 문단이 그 단위).
@@ -364,6 +598,36 @@ private:
     // 24시간 활동량 그래프 (걸음 막대 + 심박 선). 값은 updateCareTime()이 넣는다.
     ActivityChart* activityChart = nullptr;
 
+    // ── 리포트 지표 스냅샷 ────────────────────────────────────
+    // updateCareTime()이 계산한 값을 그대로 보관한다. PDF·AI 요약이 이걸 읽어야
+    // 화면에 보이는 숫자와 문서에 찍히는 숫자가 반드시 같아진다 — 각자 다시
+    // 조회하면 그 사이 데이터가 바뀌었을 때 "화면은 57분, PDF는 58분"이 된다.
+    struct ReportMetrics {
+        bool    valid = false;
+        QString residentName, residentMeta;
+        int     lyingSec = 0,  lyingCount = 0;
+        int     steps = 0,     activeMin = 0;
+        int     careSec = 0,   careCount = 0;
+        QString careLast;                      // "20:16" (없으면 빈 문자열)
+        int     eventTotal = 0;
+        QString eventDetail;                   // "낙상1 · 생체1"
+    };
+    ReportMetrics metrics_;
+    void exportReportPdf();      // [PDF 내보내기] 버튼 — 이 날짜·이 입소자 한 장
+
+    // ── AI 요약 (Gemini) ──────────────────────────────────────
+    // ★ 리포트의 숫자는 전부 SQL 이 만든다. AI 는 그 완성된 수치를 받아 문장만 쓴다.
+    //   AI 에게 계산을 시키면 같은 날짜를 두 번 열 때 값이 달라지고 근거도 못 댄다.
+    //   그래서 프롬프트에는 metrics_ 의 집계값만 넣고, 원본 로그는 보내지 않는다
+    //   (개인정보 노출도 줄고 토큰도 아낀다).
+    void requestAiSummary();          // [AI 요약] 버튼 — 없으면 생성, 있으면 캐시 표시
+    void loadCachedSummary();         // 날짜·입소자가 바뀔 때 daily_reports 에서 읽기
+    void setSummaryText(const QString& text, bool cached);
+    QString geminiApiKey() const;     // QSettings 에 저장된 키(없으면 빈 문자열)
+    QLabel*      summaryLabel = nullptr;   // 요약 문장 표시
+    QPushButton* summaryBtn = nullptr;     // [AI 요약] / [다시 생성]
+    bool         summaryBusy_ = false;     // 중복 요청 방지
+
     // ── TAB3: DB 관리 ──────────────────────────────────────
     // 입소자 목록 = 카드 그리드(사람당 카드 1개). 카드 클릭 → 편집 다이얼로그.
     // ── 마스터(좌측 목록) ──
@@ -383,7 +647,6 @@ private:
 
     // ── 디테일(우측 인라인 편집) — 예전엔 팝업이었으나 페이지에 내장 ──
     QStackedWidget* residentDetailStack = nullptr;  // 0=플레이스홀더 / 1=편집기
-    QLabel*  dlgAvatar        = nullptr;  // 이름 이니셜 원형 배지
     QLabel*  dlgNameBig       = nullptr;  // 큰 이름
     QLabel*  dlgSubMeta       = nullptr;  // "201호-2 · 채널 2" 등
     QLabel*  dlgStatusBadge   = nullptr;  // 재원/퇴원
@@ -397,8 +660,9 @@ private:
     QWidget* admissionBox = nullptr;   // 입원 이력 패널(신규 등록 시 숨김)
 
 
-    // 상세/편집 폼 — 기본정보 (병실/침대는 제거, 위치는 카메라 채널로 표기)
+    // 상세/편집 폼 — 기본정보 (침대는 제거, 위치는 호실·카메라 채널로 표기)
     QLineEdit* editName       = nullptr;
+    QLineEdit* editRoom       = nullptr;   // 호실 배정 (residents.room)
     QLineEdit* editCameraId   = nullptr;
     QLineEdit* editWearableId = nullptr;
 
@@ -408,11 +672,6 @@ private:
     QDateEdit* editAdmittedAt    = nullptr;  // 입원일
     QDateEdit* editDischargeDue  = nullptr;  // 퇴원 예정일
     QComboBox* editStatus        = nullptr;  // 재원/퇴원
-
-    // 상세/편집 폼 — 보호자 정보
-    QLineEdit* editGuardianName     = nullptr;
-    QLineEdit* editGuardianPhone    = nullptr;
-    QLineEdit* editGuardianRelation = nullptr;
 
     // 특이사항
     QTextEdit* editNotes = nullptr;
@@ -452,19 +711,16 @@ private:
     void updateAlarmBanner();               // 활성 경보에 따라 문구·표시 갱신
     void animateAlarmToast(bool show);      // 위→아래 슬라이드 인/아웃
 
-    // 상시 노출용 경보 배너(Phase 3/02 신설) — #alarmToast와 별개 위젯.
-    // buildUi()에서 생성돼 hide() 상태로 Phase 4(ALERT-03)에 인계된다(D-03/PD-08).
-    AlertBanner* alertBanner_ = nullptr;
-    // 활성 경보 목록을 만드는 헬퍼 — 등급 판정(vitalSeverity)과 도형 선택
-    // (severityGlyph)이 전부 이 함수 안에서 끝나 배너로는 완성값만 넘어간다.
-    QList<AlertItem> collectAlertItems() const;
-
     // TAB2 빌드 헬퍼 (이벤트 기록)
     QWidget* buildEventLogTab();       // 필터 + 로그 표 + 인라인 블랙박스
     QWidget* buildSearchFilters();
     QWidget* buildLogTable();
     QWidget* buildBlackboxPlayer();    // 인라인 재생 카드(페이지 우측)
     void playBlackboxClip(const QString& url);   // 블랙박스 클립 재생
+    void playBlackboxClipAt(const QString& url, qint64 seekMs);  // 재생 후 지정 위치로 탐색
+    void refreshNvrSegments();         // 각 Pi의 /list(NVR 포트)를 받아 nvrSegments_ 갱신(→ refreshTimeline)
+    void jumpToNvrContext();           // 선택된 로그 이벤트 시점의 NVR 세그먼트를 찾아 그 위치로 재생
+    void downloadCurrentClip();        // 현재 재생 중인 클립을 로컬에 저장
     void markLogConfirmed(int row);                // 영상 확인 → 상태 '확인'(초록) 마킹
     void applyLogFilters(bool withDates = false);  // 로그 표 필터링(이벤트/날짜)
     // 로그가 바뀔 때마다 행 색(이벤트/상태 배지)을 다시 칠하고 요약 카드 값을 갱신한다.
@@ -493,6 +749,7 @@ private:
     void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
     // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
     void loadPatientsFromDb();
+
     // patients[]를 영상 오버레이·바이탈 카드 라벨에 다시 반영(등록/수정/퇴원 후 호출).
     void refreshPatientLabels();
     void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
@@ -567,7 +824,7 @@ private:
     QPushButton* roiButton = nullptr;   // "ROI 지정" 버튼
     QPushButton* roiClearButton = nullptr;   // "ROI 제거" 버튼
     QPushButton* roiToggleButton = nullptr;  // "ROI 표시" 토글
-    QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — press-and-hold
+    QPushButton* micButton = nullptr;        // 🎤 원격 방송(인터콤) — 클릭 토글
     QPushButton* alarmClearButton = nullptr; // 경보 해제 (현장 사이렌/LED 끄기)
     QPushButton* addCameraButton = nullptr;  // 📷 카메라 연결 (CCTV IP 입력→서버 전송)
     QPushButton* searchCameraButton = nullptr; // 🔍 카메라 검색 (ONVIF WS-Discovery)
@@ -583,6 +840,11 @@ private:
     // ── 카메라 설정 통합 UI ──
     // 3단 구성: [채널 스트립(썸네일)] │ [스테이지(큰 영상)] │ [인스펙터(모드별 설정)]
     QWidget* buildCamModeSegment();   // 상단 페이지 모드 세그먼트(연결/ROI/이미지)
+    QWidget* buildCamRoomSegment();   // 상단 방 세그먼트(101호/102호…) — selectedRoom_ 공유
+    void rebuildCamRoomSegment();     // 방 목록이 바뀌면 세그먼트 버튼을 다시 만든다
+    void rebuildResourceRooms();      // 방 목록이 바뀌면 리소스 트리 Root 아래를 다시 만든다
+    void onAddRoomClicked();          // [+] 호실 추가
+    void removeRoom(int room);        // 방 자리 삭제(0번 실카메라 방은 지울 수 없다)
     QWidget* buildCamChannelStrip();  // 좌측 채널 썸네일 타일 4개
     QWidget* buildCamInspector();     // 우측 인스펙터(헤더 + 모드별 페이지 스택)
     QWidget* buildCamConnectPage();   // 인스펙터 '연결' 페이지(접속 폼 + 검색표)
@@ -599,7 +861,12 @@ private:
     QLabel* camInspPill = nullptr;          // 인스펙터 헤더 연결 상태 알약
     QLabel* camInspIp = nullptr;            // 인스펙터 헤더 카메라 주소
     QPushButton* camModeBtns[3] = {};       // [0]연결 [1]ROI [2]이미지 세그먼트
+    QWidget* camRoomSeg_ = nullptr;         // 방 세그먼트 컨테이너(방 추가 시 다시 채운다)
+    QVector<QPushButton*> camRoomBtns_;     // 방 세그먼트 버튼(방 수만큼)
     QStackedWidget* camControlStack = nullptr;  // 인스펙터 페이지 스택
+    // 카메라 없는 방으로 옮길 때 접속 폼을 비우는데, 돌아올 때 되돌리려고 잠시 보관한다.
+    // (IP·계정·비밀번호 순) 비우지 않으면 102호 화면에 101호 주소가 그대로 남는다.
+    QString camFormBackup_[3];
     QStackedWidget* camStageStack = nullptr;    // 스테이지(0=영상 / 1=이미지 프리뷰)
     QString camMode_ = QStringLiteral("연결");
 
@@ -631,13 +898,30 @@ private:
     void     sendImageParams(int channel, int b, int c, int s);
     // 카메라 초점 — area=false 전체 자동초점, true 클릭 지점(nx,ny 정규화 0~1) 영역 초점.
     void     sendFocus(int channel, bool area, float nx, float ny);
-    // imgAfter(실시간 프리뷰) 클릭 → 그 지점 영역 초점 전송.
+    // 영상 타일 호버 툴바 표시/숨김 + 타일 크롬 재배치.
     bool     eventFilter(QObject* obj, QEvent* ev) override;
     ClickSlider* imgBright = nullptr;
     ClickSlider* imgContrast = nullptr;
     ClickSlider* imgSaturation = nullptr;
-    FramePreview* imgBefore = nullptr;                 // 적용 전 스냅샷
-    FramePreview* imgAfter = nullptr;                   // 실시간(적용 후)
+    // 이미지/초점 조작은 카메라가 붙어 있을 때만 의미가 있다. 미연결 채널에서
+    // 눌러도 아무 일도 일어나지 않으므로, 눌리는 것처럼 보이게 두지 않는다.
+    QPushButton* imgApplyBtn = nullptr;
+    QPushButton* imgResetBtn = nullptr;
+    QPushButton* imgFocusBtn = nullptr;
+    QLabel*      imgDisabledHint = nullptr;   // 왜 못 만지는지 알려주는 한 줄
+    // 채널별 마지막 적용값(밝기/대비/채도). 카메라의 실제 현재값을 읽어오는 게
+    // 아니라 "이 PC에서 마지막으로 보낸 값"이다 — 프로토콜에 조회가 없다.
+    // 채널을 오갈 때 값이 따라오게 하고, 앱을 껐다 켜도 남는다.
+    void loadImageParams(int channel);        // QSettings → 슬라이더
+    void saveImageParams(int channel);        // 슬라이더 → QSettings
+    // 현재 선택 채널의 연결 여부에 맞춰 ROI/이미지 컨트롤을 켜고 끈다.
+    void refreshCamControlsEnabled();
+    // 연결 탭의 4채널 상태 요약 배지(CH1~4)
+    // 적용 전/후 와이프 비교 화면(영상 1장 + 드래그 구분선).
+    // 두 장을 따로 놓으면 각 장이 절반으로 줄고 카드에 여백이 남아, 다른 탭과
+    // 틀도 어긋났다. 한 장으로 겹치면 연결·ROI 탭의 큰 영상과 크기가 같아진다.
+    WipeCompare* imgWipe_ = nullptr;
+    void setImagePreviewFrame(const QPixmap& pm);      // 실시간 프레임 주입
     QPixmap  lastFramePix_[4];                         // 채널별 최신 프레임(프리뷰용)
 
     // ── 카메라 탭(인라인) 위젯 ──
@@ -649,6 +933,8 @@ private:
     QLabel* discoveryStatus = nullptr;
     QUdpSocket* discoverySocket = nullptr;     // 팝업 수명 동안 재사용
     QSet<QString> discoverySeen;               // 중복 응답 제거
+    QTimer* discoverySweepTimer = nullptr;     // 유니캐스트 스윕 송신기(조금씩 나눠 보냄)
+    QList<quint32> discoverySweepQueue;        // 스윕 남은 대상 IPv4
 
     // ── ROI 탭(인라인 편집기) 위젯 ──
     VideoView* roiEditorView = nullptr;        // 선택 채널 영상을 팝업에 표시 + ROI 그림
@@ -656,6 +942,9 @@ private:
     QPushButton* roiChannelButtons[4] = {};    // 채널 선택 버튼(1~4)
     QLabel* roiEditInfo = nullptr;
     void selectRoiChannel(int ch);             // 편집 채널 전환 → 영상/ROI 로드
+
+    // -- 오디오 음성 송출(방송) -- 
+    AudioTransmitter *m_transmitter = nullptr;
 };
 
 #endif // MAINWINDOW_H

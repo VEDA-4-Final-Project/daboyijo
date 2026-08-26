@@ -49,8 +49,11 @@ public:
     bool cameraConnected() const { return cameraConnected_; }
 
     // NVR 스타일 오버레이 — 영상 위에 직접 그리는 정보.
+    // 배치는 Wisenet Viewer를 따른다: 좌상단에 [LIVE] + 카메라 이름 한 줄.
     void setOverlayInfo(const QString& info);  // 좌하단 라벨(예: "201호-1 · 전승현")
-    void setLive(bool on);                      // 우상단 LIVE/미연결 표시등
+    // 좌상단 LIVE 배지 옆에 붙는 카메라 이름("CH1 · 김복순"). 비우면 채널 태그만.
+    void setDisplayName(const QString& name);
+    void setLive(bool on);                      // 좌상단 LIVE/미연결 표시등
     bool live() const { return live_; }
     // 영상 모서리를 둥글게(0=직각). 카드(#videoCard/#camStage)의 radius와 맞춰
     // 모서리에 검은 각이 삐져나오지 않게 한다.
@@ -88,6 +91,9 @@ signals:
     void drawModeChanged(int channel, bool on);
     // 그리기 모드가 아닐 때 침대를 클릭 — roiId=-1이면 빈 곳을 눌러 선택 해제
     void zoneSelected(int channel, int roiId);
+    // 타일 아무 곳이나 눌렀다 — 관제 그리드에서 "지금 다루는 채널"을 바꾸는 신호.
+    // zoneSelected와 별개다: 침대를 안 눌러도(빈 영상 위여도) 타일 선택은 일어난다.
+    void tileClicked(int channel);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -116,6 +122,7 @@ private:
     bool cameraConnected_ = false;  // 카메라 연결 상태 (시작 시 미연결)
     int cornerRadius_ = 0;          // 영상 모서리 반경(0=직각)
     QString overlayInfo_;           // 좌하단 오버레이 라벨(병상·이름)
+    QString displayName_;           // 좌상단 LIVE 옆 카메라 이름
     bool live_ = false;             // 우상단 LIVE 표시등 상태
     QString vitalTemp_, vitalHr_;   // 우상단 바이탈(체온·심박) 텍스트
     QColor vitalColor_{0x8B, 0x98, 0xA5};  // 바이탈 상태색(기본 회색)
@@ -145,6 +152,14 @@ public:
     void clearFrame();                     // 비우고 안내 문구로 되돌림
     bool hasFrame() const { return !frame_.isNull(); }
     QRectF imageRect() const;              // 레터박스 여백 뺀 실제 영상 사각형
+    // 원본 프레임의 가로/세로 비. 프레임이 없으면 16:9로 가정한다 — 부모가
+    // 이 값으로 상자 크기를 잡으면 레터박스(검은 여백) 자체가 생기지 않는다.
+    qreal frameAspect() const;
+    // 영상 좌상단에 얹는 이름표("적용 전" / "적용 후 · 실시간").
+    // 영상 밖 라벨로 두면 검은 배경 위 작은 회색 글씨가 되어 잘 안 읽히고,
+    // 캡션 줄만큼 영상이 작아진다. 반투명 캡슐 위에 얹으면 둘 다 해결된다.
+    // live=true면 앞에 빨간 점을 찍어 "지금 들어오는 화면"임을 구분한다.
+    void setCaption(const QString& text, bool live = false);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -152,6 +167,51 @@ protected:
 private:
     QPixmap frame_;
     QString placeholder_;
+    QString caption_;
+    bool captionLive_ = false;
+};
+
+// 카메라 이미지 조정용 "적용 전 / 적용 후" 와이프 비교 화면.
+//
+// 영상 한 장이 스테이지를 꽉 채우고(VideoView와 같은 cover 방식 — 넘치는 부분은
+// 중앙 크롭), 가운데 세로 구분선을 끌면 왼쪽은 적용 전 스냅샷, 오른쪽은 실시간이
+// 보인다. 두 장을 따로 놓으면 각 장이 절반 크기로 줄고 남는 여백이 생기는데,
+// 겹쳐 놓으면 같은 지점의 밝기 차이를 경계선 하나로 바로 비교할 수 있다.
+//
+// 적용 전 스냅샷이 없으면 구분선 없이 실시간 화면만 보여준다.
+class WipeCompare : public QWidget {
+    Q_OBJECT
+public:
+    explicit WipeCompare(QWidget* parent = nullptr);
+
+    void setAfter(const QPixmap& pm);    // 실시간(적용 후)
+    void setBefore(const QPixmap& pm);   // [적용] 직전에 굳힌 스냅샷
+    void clearBefore();
+    void clearFrames();
+    bool hasBefore() const { return !before_.isNull(); }
+
+    // 화면을 채운 영상의 배치 사각형(위젯 밖으로 넘칠 수 있다).
+    // 클릭 지점을 프레임 정규화 좌표로 바꿀 때 쓴다 — VideoView::displayRect와 같은 규칙.
+    QRectF imageRect() const;
+
+signals:
+    // 구분선을 끌지 않고 화면을 그냥 클릭 — 그 지점에 초점을 맞춰 달라는 뜻.
+    void focusRequested(float nx, float ny);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+
+private:
+    qreal splitX() const { return width() * split_; }
+    void drawChip(QPainter& p, const QRectF& box, const QString& text, bool live) const;
+
+    QPixmap before_, after_;
+    qreal split_ = 0.5;      // 구분선 위치(0~1)
+    bool dragging_ = false;
+    QPointF pressPos_;
 };
 
 #endif  // VIDEOVIEW_H

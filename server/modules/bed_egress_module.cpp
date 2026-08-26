@@ -1,5 +1,6 @@
 #include "bed_egress_module.hpp"
 #include "database.hpp"
+#include "identity_tracker.hpp"   // 재실에서 요양보호사를 빼기 위해
 
 #include <algorithm>
 #include <ctime>
@@ -9,6 +10,17 @@
 namespace {
 // 경계선 좌표 흔들림 노이즈로 1초에 알람이 수십 번 연타되는 것을 막는 쿨다운
 constexpr double kAlarmCooldownSec = 10.0;
+
+// [재실] 침대가 이만큼 연속으로 비어 보여야 "나갔다"로 친다.
+// 카메라는 이불을 덮고 자는 사람을 프레임 단위로 자주 놓친다 — 한 프레임 안 보인다고
+// 바로 세션을 닫으면 하룻밤에 세션이 수백 개 생기고 재실시간도 그만큼 잘게 쪼개진다.
+// 반대로 너무 길면 화장실 다녀온 짧은 이탈이 재실로 묻힌다. 10초는 그 사이 값이다.
+constexpr double kVacancyConfirmSec = 10.0;
+
+// [재실] 세션 열기가 실패했을 때 다음 시도까지 기다리는 시간.
+// syncBedSessions 는 메타데이터 프레임마다 돈다. 실패를 기억하지 않으면 사람이
+// 누워 있는 내내 매 프레임 INSERT 를 다시 던지고 같은 에러가 로그를 덮는다.
+constexpr double kOpenRetrySec = 30.0;
 }  // namespace
 
 void BedEgressModule::updatePatientStatus(int channel, int roi_id, int status) {
@@ -78,13 +90,38 @@ void BedEgressModule::initializeFromDb(Database& db) {
 
 void BedEgressModule::resetZoneState(int channel, int roi_id) {
     std::lock_guard<std::mutex> lock(mutex_);
+    // ★ 침대를 지우면 그 침대의 열린 재실 세션도 닫는다. 안 닫으면 그 세션은
+    //   영영 열린 채로 남아 리포트에서 "지금까지 계속 누워있음"으로 읽힌다.
+    auto closeOpen = [&](int roi) {
+        auto ch = open_sessions_.find(channel);
+        if (ch == open_sessions_.end()) return;
+        if (roi == BedZoneStore::kRoiIdAll) {
+            if (db_) for (auto& z : ch->second) if (z.second > 0) db_->closeBedSession(z.second);
+            ch->second.clear();
+        } else {
+            auto z = ch->second.find(roi);
+            if (z != ch->second.end()) {
+                if (db_ && z->second > 0) db_->closeBedSession(z->second);
+                ch->second.erase(z);
+            }
+        }
+    };
+
     if (roi_id == BedZoneStore::kRoiIdAll) {
+        closeOpen(BedZoneStore::kRoiIdAll);
+        empty_since_.erase(channel);
+        retry_open_.erase(channel);
         patient_statuses_.erase(channel);
         channel_default_.erase(channel);
         last_zone_.erase(channel);
         last_alarm_time_.erase(channel);
         return;
     }
+    closeOpen(roi_id);
+    auto es = empty_since_.find(channel);
+    if (es != empty_since_.end()) es->second.erase(roi_id);
+    auto ra = retry_open_.find(channel);
+    if (ra != retry_open_.end()) ra->second.erase(roi_id);
     auto ch = patient_statuses_.find(channel);
     if (ch != patient_statuses_.end()) ch->second.erase(roi_id);
     auto lz = last_zone_.find(channel);
@@ -93,6 +130,84 @@ void BedEgressModule::resetZoneState(int channel, int roi_id) {
             if (entry.second == roi_id) entry.second = kNoZone;
         }
     }
+}
+
+// ── [일일 리포트] 침대 재실 세션 열기/닫기 ────────────────────────
+// mutex_ 를 쥔 채 호출된다.
+//
+// ★ DB 호출을 락 안에서 하는 이유: 세션 전환은 드물다(침대당 하루 몇 번). 알람
+//   콜백처럼 소켓 전송·블랙박스·텔레그램을 줄줄이 하는 무거운 경로가 아니라
+//   INSERT/UPDATE 한 방이라, 락을 잠깐 쥐는 편이 "락 풀고 → DB 호출 → 다시 락 잡아
+//   session_id 저장" 하는 것보다 단순하고 그 사이에 끼어드는 경우도 없다.
+//   Database 는 자체 뮤텍스를 쓰고 이 모듈을 되부르지 않으므로 교착도 없다.
+void BedEgressModule::syncBedSessions(int channel, const std::map<int, BedZone>& zones,
+                                      const std::map<int, int>& occupancy,
+                                      std::chrono::steady_clock::time_point now) {
+    auto& open = open_sessions_[channel];
+    auto& empty = empty_since_[channel];
+    auto& retry_at = retry_open_[channel];
+
+    for (const auto& entry : zones) {
+        const BedZone& zone = entry.second;
+        if (!zone.valid()) continue;                 // 그리다 만 침대는 판정 대상 아님
+
+        const int roi = zone.roi_id;
+        const auto occ = occupancy.find(roi);
+        const bool now_occupied = (occ != occupancy.end() && occ->second > 0);
+        const long long open_id = open.count(roi) ? open[roi] : 0;
+
+        if (now_occupied) {
+            empty.erase(roi);                        // 다시 찼으니 빈 시각 취소
+            if (open_id == 0) {
+                // 직전 시도가 실패했으면 쿨다운이 끝날 때까지 건너뛴다 —
+                // 프레임마다 실패를 되풀이하면 로그가 그 에러로만 덮인다.
+                auto ra = retry_at.find(roi);
+                if (ra != retry_at.end() && now < ra->second) continue;
+
+                // 침대에 사람이 들어왔다 — 재실 시작.
+                // 사람은 침대에 매핑된 입소자다(0 이면 미지정 → resident_id NULL).
+                const long long id = db_->openBedSession(channel, zone.resident_id);
+                if (id > 0) {
+                    open[roi] = id;
+                    retry_at.erase(roi);
+                    std::fprintf(stderr, "[BedEgress] ch%d 침대%d 재실 시작 (입소자 %d)\n",
+                                 channel + 1, roi + 1, zone.resident_id);
+                } else {
+                    retry_at[roi] =
+                        now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                  std::chrono::duration<double>(kOpenRetrySec));
+                }
+            }
+            continue;
+        }
+
+        // 비어 보인다 — 다만 곧바로 닫지 않는다(이불·가림으로 인한 순간 미검출).
+        if (open_id == 0) continue;                  // 원래 비어 있던 침대
+        auto since = empty.find(roi);
+        if (since == empty.end()) { empty[roi] = now; continue; }   // 방금부터 비어 보임
+        if (std::chrono::duration<double>(now - since->second).count() < kVacancyConfirmSec)
+            continue;                                // 아직 확정 전 — 더 지켜본다
+
+        if (db_->closeBedSession(open_id)) {
+            std::fprintf(stderr, "[BedEgress] ch%d 침대%d 재실 종료\n", channel + 1, roi + 1);
+        }
+        open.erase(roi);
+        empty.erase(roi);
+    }
+}
+
+void BedEgressModule::flushBedSessions() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return;
+    int n = 0;
+    for (auto& ch : open_sessions_) {
+        for (auto& z : ch.second)
+            if (z.second > 0 && db_->closeBedSession(z.second)) ++n;
+        ch.second.clear();
+    }
+    empty_since_.clear();
+    retry_open_.clear();
+    if (n > 0) std::fprintf(stderr, "[BedEgress] 종료 — 열린 재실 세션 %d건 마감\n", n);
 }
 
 // 22:00부터 익일 05:59:59까지 야간으로 판정
@@ -125,8 +240,27 @@ void BedEgressModule::processDetections(int channel, const std::vector<Detection
     std::vector<int> current_obj_ids;
     std::vector<EgressEvent> triggers;  // 락 밖에서 안전하게 콜백을 쏘기 위한 임시 보관함
 
+    // ── [일일 리포트] 이번 프레임의 침대별 재실 인원 ──
+    // 전이(안→밖)가 아니라 "지금 몇 명 있나"로 세는 이유: 추적 ID 는 사람이 가려지면
+    // 바뀌는데, 인원수는 ID 가 바뀌어도 그대로다. 전이 기반으로 세면 자다가 ID 가
+    // 갈릴 때마다 세션이 닫혔다 열린다.
+    // 요양보호사는 뺀다 — 침대에 걸터앉으면 발끝이 ROI 안으로 들어와, 그대로 두면
+    // "환자가 누워있던 시간"에 방문 시간이 섞인다.
+    std::map<int, int> occupancy;   // roi_id → 인원
+    if (db_) {
+        for (const auto& det : dets) {
+            if (!det.isHuman()) continue;
+            if (identity_ && identity_->identify(channel, det.object_id).caregiver) continue;
+            const int z = feetInWhichZone(det, zones);
+            if (z != kNoZone) occupancy[z]++;
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // 알람 판정보다 먼저 — 재실 기록은 위험도·야간과 무관하게 항상 남아야 한다.
+        if (db_) syncBedSessions(channel, zones, occupancy, now);
+
         auto& last_zone = last_zone_[channel];
 
         for (const auto& det : dets) {

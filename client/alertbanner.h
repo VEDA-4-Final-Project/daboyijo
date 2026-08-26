@@ -35,8 +35,8 @@ class AlertBanner : public QFrame {
 public:
     explicit AlertBanner(QWidget* parent = nullptr);
 
-    // 활성 경보 목록을 통째로 받아 다시 그린다. 비어 있으면 고정 카피 한 줄
-    // + normal 등급으로 전환하되 위젯을 숨기지 않는다(UI-SPEC §13 empty).
+    // 활성 경보 목록을 통째로 받아 다시 그린다. 비어 있으면 위젯을 숨긴다 —
+    // "활성 경보 없음" 고정 카피는 쓰지 않는다.
     void setActiveAlerts(const QList<AlertItem>& items);
 
 private:
