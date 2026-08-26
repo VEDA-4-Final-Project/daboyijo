@@ -57,6 +57,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "dma.h"
 #include "i2c.h"
 #include "spi.h"
@@ -74,9 +75,12 @@
 #include "fall_detection.h"
 #include "heart_rate_calc.h"
 #include "step_counter.h"
+#include "wrist_raise.h"
 #include "app_clock.h"
 #include "usbd_cdc_if.h"
 #include "hm10.h"
+#include "display_service.h"
+#include "battery.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -139,6 +143,13 @@ static uint32_t  g_i2c_recover_count  = 0;   // I2C 오류로 버스 복구한 �
 static uint32_t  g_i2c_busy_since_ms = 0;
 #define I2C_BUSY_STUCK_MS  3000           // 정상 트랜잭션은 수 ms 안에 끝난다
 
+/* PPG 센서 재초기화 (충격으로 센서만 리셋된 경우의 복구).
+ * 쿨다운은 재초기화 폭주를 막는다 —— 센서가 물리적으로 빠졌다면
+ * 매 오류마다 50ms 짜리 초기화를 시도하다 메인 루프가 잠식된다. */
+static uint32_t  g_last_ppg_reinit_ms = 0;
+static uint32_t  g_ppg_reinit_count   = 0;
+#define PPG_REINIT_COOLDOWN_MS  2000
+
 /* BMI270 FIFO 블록 — SPI DMA 수신 원본 및 디코딩 결과 */
 static uint8_t       bmi_fifo_rx[BMI270_FIFO_RX_LEN] = {0};
 static BMI270_Data_t bmi_accel[BMI270_FIFO_MAX_FRAMES] = {0};
@@ -157,6 +168,14 @@ volatile uint32_t g_fall_flag_ms = 0;
 
 /* 주기 송신 시각. 낙상 즉시 송신도 이 시각을 갱신해야 패킷이 겹치지 않는다. */
 static uint32_t g_last_vital_ms = 0;
+
+/* 시각 요청 재시도.
+ *
+ * 부팅 직후에는 BLE 가 아직 안 붙어 있을 수 있어 요청 한 번은 유실되기 쉽다.
+ * 동기가 설 때까지만 주기적으로 다시 묻고, 맞춰지면 스스로 멈춘다.
+ * 3바이트짜리라 몇 번 더 보내도 비용이 없다. */
+static uint32_t g_last_time_req_ms = 0;
+#define TIME_REQ_RETRY_MS   5000
 
 /* ── 독립 워치독(IWDG) ──────────────────────────────────────────────
  *
@@ -222,6 +241,7 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -243,8 +263,19 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
+  MX_SPI1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   hm10_init(&huart2); /* HM-10 을 USART2 에 등록 (기존 낙상 알림 UART 재활용) */
+
+  /* 수신 개시 — RPi 가 BLE 로 내려주는 시각을 받는다.
+   * 이후에는 ISR 이 스스로 재무장하므로 여기서 한 번만 부르면 된다.
+   * 실패는 조용히 넘기지 않는다 — 수신이 통째로 죽는데 겉으로는
+   * '시계가 안 맞는다' 로만 보여 원인을 찾기 어렵다. */
+  if (hm10_start_receive() != HAL_OK)
+  {
+      printf("[ HM10 ] 시각 수신 무장 실패 — 시각 동기 사용 불가\r\n");
+  }
 
   HAL_Delay(2500); // 센서 전원 및 아날로그 회로 안정화 대기
 
@@ -287,6 +318,7 @@ int main(void)
   FallDetection_Init();
   HeartRateCalc_Init();
   StepCounter_Init();
+  WristRaise_Init();
   AppClock_Init();
 
   /* 3. 통신 라인 안전 초기화 */
@@ -321,6 +353,27 @@ int main(void)
          g_bmi270_ok ? "ok" : "OFF", g_max30102_ok ? "ok" : "OFF",
          LOWPOWER_STOP_MODE ? "STOP" : "WFI");
 
+  /* 디스플레이는 꺼진 채로 세운다. 손목을 들 때까지 켜지지 않는다.
+   * IWDG 보다 앞에 두는 이유는 내부 HAL_Delay 합계가 약 0.2초이기 때문이다. */
+  DisplayService_Init(g_bmi270_ok);
+
+  /* 배터리 측정 시드. DisplayService_Init 뒤에 두는 이유는 첫 화면이
+   * 켜지기 전에 잔량이 채워져 있어야 하기 때문이다 — 앞에 두면 처음 한 번은
+   * SquareLine 기본값 80% 가 잠깐 보인다.
+   *
+   * USB 로만 급전 중이면(스위치 OFF) 분압기도 끊겨 있어 유효값을 못 얻는다.
+   * 그 경우 Battery_IsValid() 가 계속 0 이고 화면은 "--" 를 띄운다. */
+  Battery_Init();
+  if (Battery_IsValid())
+  {
+      printf("[  BAT  ] %.2fV (%u%%)\r\n",
+             (double)Battery_GetVolts(), (unsigned)Battery_GetPercent());
+  }
+  else
+  {
+      printf("[  BAT  ] 측정 경로 없음 — 스위치 OFF 이거나 USB 전용 급전\r\n");
+  }
+
   /* 부팅 시퀀스(센서 재시도 / Blink_Error_Code 의 HAL_Delay)가 모두 끝난
    * 뒤에 켠다. 이 위치가 중요하다 — 앞에서 켜면 재부팅 루프가 된다. */
   IWDG_Start();
@@ -328,6 +381,7 @@ int main(void)
   /* 첫 송신을 한 주기 뒤로 맞춘다. 0 으로 두면 부팅에 이미 3초 남짓 쓴 상태라
    * 기준점이 어긋난 채 시작한다. */
   g_last_vital_ms = HAL_GetTick();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -363,6 +417,18 @@ int main(void)
        * 걸음 수는 Reset() 이 아니라 SetSteps(0) 으로 지운다 — 자정에 걷고 있는
        * 중일 수 있고, 그때 필터와 리듬 상태까지 날리면 진행 중이던 보행이
        * 끊겨 다음 4걸음을 다시 검증해야 한다. 지울 것은 누적값뿐이다. */
+      /* RPi 가 내려준 시각이 있으면 반영한다.
+       * ISR 은 검증만 하고 값을 남겨두며, 시계를 실제로 미는 것은 여기다.
+       * AppClock_Service() 보다 먼저 부른다 — 시각을 갈아끼운 직후에 진행분을
+       * 더하면 방금 맞춘 값이 한 틱 어긋난 채로 시작한다. */
+      uint8_t sync_h, sync_m, sync_s;
+      if (hm10_take_time(&sync_h, &sync_m, &sync_s))
+      {
+          AppClock_SetTime(sync_h, sync_m, sync_s);
+          printf("[ CLOCK ] BLE 시각 동기 %02u:%02u:%02u\r\n",
+                 (unsigned)sync_h, (unsigned)sync_m, (unsigned)sync_s);
+      }
+
       AppClock_Service();
 
       if (AppClock_ConsumeMidnight())
@@ -373,6 +439,30 @@ int main(void)
       }
 
       uint32_t now = HAL_GetTick();
+
+      /* 시각이 아직 안 맞았으면 릴레이에 요청한다.
+       * 릴레이의 10분 주기만 기다리면 그동안 화면에 빌드 시각이 남는데,
+       * MCU 만 리셋되고 BLE 링크는 살아있는 경우 릴레이는 아무 일도 없었다고
+       * 보기 때문에 특히 오래 걸린다. 먼저 물어보는 쪽이 확실하다. */
+      if (!AppClock_IsSynced() && (now - g_last_time_req_ms >= TIME_REQ_RETRY_MS))
+      {
+          g_last_time_req_ms = now;
+          hm10_request_time();
+
+          /* 요청과 함께 수신 계측을 같이 찍는다.
+           *
+           * 시각이 안 맞는 현상은 원인이 셋인데 밖에서는 똑같아 보인다.
+           *   RX=0            HM-10 TX → PA3 구간이 죽음. 릴레이가 뭘 보냈든 무관하다
+           *   RX 증가 + bad 증가   바이트는 오는데 규격이 안 맞음 (양쪽 스펙 확인)
+           *   RX 증가 + bad 0      0x55 가 아닌 다른 것이 옴 (HM-10 AT 응답 등)
+           * err 가 함께 늘면 보드레이트나 노이즈를 의심한다. */
+          uint32_t rx_total = 0, rx_err = 0, rx_bad = 0;
+          uint8_t  rx_last = 0;
+          hm10_get_rx_stats(&rx_total, &rx_err, &rx_bad, &rx_last);
+          printf("[ HM10 ] 시각 요청 송신 — RX 누적 %lu B / 오류 %lu / 불량패킷 %lu / 마지막 0x%02X\r\n",
+                 (unsigned long)rx_total, (unsigned long)rx_err,
+                 (unsigned long)rx_bad, (unsigned)rx_last);
+      }
 
       /* 낙상 플래그 유지 시간 경과 시 자동 해제 */
       if (g_fall_flag && (now - g_fall_flag_ms >= HM10_FALL_HOLD_MS))
@@ -390,8 +480,20 @@ int main(void)
       }
 
       /* ------------------------------------------------------------------
-       * [STAGE 4] 처리할 일이 없으면 잠든다.
+       * [STAGE 4] 화면. 손목을 들었을 때만 켜지고, 켜져 있는 동안만 LVGL 이 돈다.
+       * ------------------------------------------------------------------ */
+      /* 배터리는 화면보다 먼저 갱신한다 — 같은 바퀴에서 라벨을 채우게 하려면
+       * 값이 먼저 준비돼 있어야 한다. 내부에서 1초 주기로만 실제 측정하고,
+       * 측정하는 바퀴에만 약 0.33ms 를 쓴다. */
+      Battery_Service();
+
+      DisplayService_Service();
+
+      /* ------------------------------------------------------------------
+       * [STAGE 5] 처리할 일이 없으면 잠든다.
        *   센서 인터럽트(EXTI) 또는 DMA 완료가 곧 기상 신호다.
+       *   SysTick 이 1ms 마다 깨우므로 화면이 켜져 있어도 LVGL 갱신 주기
+       *   (LV_DEF_REFR_PERIOD 33ms)를 놓치지 않는다.
        * ------------------------------------------------------------------ */
       Enter_Idle();
   }
@@ -516,12 +618,28 @@ static void Process_IMU_Block(void)
                                             bmi_accel, BMI270_FIFO_MAX_FRAMES);
     if (frames == 0) return;
 
-    FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_IsWorn());
+    /* 낙상 확정 게이트는 '광학적 접촉'(HasContact)까지만 요구한다.
+     *
+     * 원래는 IsWorn() —— 맥박까지 확인된 착용 —— 이었다. 그런데 이 센서로는
+     * 손목에서 맥박이 잡히는 일이 드물어, 정작 사람이 차고 있는데도 게이트가
+     * 열리지 않아 낙상이 통째로 묻혔다. 검출되지 않는 낙상보다는 가끔의 오보가
+     * 낫다는 판단이다 (사람이 차고 있는 기기다).
+     *
+     * ⚠ 대가: HasContact 는 IR DC 와 반사율만 보므로 책상·바닥에 엎어둔
+     *   상태에서도 참이 될 수 있다 (heart_rate_calc.c 상단 주석 참조).
+     *   그 경우 충격 + 정지가 겹치면 오보가 나갈 수 있다. 다만 맥박이 30초간
+     *   없으면 접촉 판정 자체가 해제되므로 창은 그만큼으로 제한된다. */
+    FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_HasContact());
 
     /* 만보기는 착용 판정을 거치지 않는다 — IMU 만으로 성립하는 기능에
      * PPG 접촉 판정을 물리면 MAX30102 고장이 만보기까지 끌고 들어간다.
      * (상세 근거는 step_counter.c 상단 '착용 판정을 쓰지 않는 이유') */
     StepCounter_ProcessBlock(bmi_accel, frames);
+
+    /* 손목 자세 판정 — 화면을 켤지 말지는 DisplayService 가 이 결과를 보고 정한다.
+     * 만보기와 같은 이유로 착용 판정을 거치지 않는다. PPG 가 고장 나도 화면은
+     * 켜져야 한다. */
+    WristRaise_ProcessBlock(bmi_accel, frames);
 
     /* 버퍼 상한에 걸려 잘라 읽었다면 FIFO 에 아직 데이터가 남아있다.
      * INT 핀은 펄스 방식이라 새 엣지가 오지 않을 수 있으므로 스스로 재무장한다.
@@ -674,7 +792,7 @@ static void Enter_Idle(void)
 // 현재 바이탈 + 낙상 플래그 + 걸음 수를 HM-10 7바이트 패킷으로 송신
 static void HM10_Send_Now(void)
 {
-    uint32_t bpm  = HeartRateCalc_GetBPM();
+    uint32_t bpm  = HeartRateCalc_GetBPMHeld();   /* 낙상 순간 0 이 나가지 않게 홀드값 사용 */
     uint32_t spo2 = HeartRateCalc_GetSpO2();
     uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   /* 심박 8bit 클램프 */
 
@@ -844,6 +962,49 @@ static void Service_I2C_Fault(void)
         hi2c1.Instance->CR1 |=  I2C_CR1_SWRST;
         hi2c1.Instance->CR1 &= ~I2C_CR1_SWRST;
         HAL_I2C_Init(&hi2c1);
+    }
+
+    /* ------------------------------------------------------------------
+     * 버스를 고쳤다고 센서가 살아난 것은 아니다.
+     *
+     * 충격이나 전원 드룹은 I2C 오류와 센서 자체 리셋을 동시에 일으킨다.
+     * 위까지는 MCU 쪽 버스만 재건할 뿐이라, 센서가 MODE_CONF=0x00 으로
+     * 돌아가 있으면 LED 가 꺼진 채 FIFO 도 채우지 않는다. 그런데 버스는
+     * 정상이므로 더 이상 오류가 나지 않고, 아무도 이 상태를 깨우지 않는다.
+     * 실측: 충격 직후 측정이 멈춘 뒤 재부팅 전까지 복구되지 않았다.
+     *
+     * 낙상 감지 웨어러블에서 이건 치명적이다 —— 낙상은 곧 충격이고,
+     * HeartRateCalc_IsWorn() 이 맥박 기반이라 PPG 가 죽으면 낙상 판정까지
+     * 함께 꺼진다. 정확히 필요한 순간에 기능이 사라진다.
+     * ------------------------------------------------------------------ */
+    if (!g_max30102_ok) return;
+
+    /* 재초기화 폭주 방지. 센서가 물리적으로 빠졌다면 매 오류마다 50ms 짜리
+     * 초기화를 시도하게 되고, 그러면 메인 루프가 그것만 하다 끝난다. */
+    if ((HAL_GetTick() - g_last_ppg_reinit_ms) < PPG_REINIT_COOLDOWN_MS) return;
+
+    if (MAX30102_IsAlive()) return;   /* 설정이 살아 있으면 건드리지 않는다 */
+
+    g_last_ppg_reinit_ms = HAL_GetTick();
+    g_ppg_reinit_count++;
+
+    printf("[ PPG ] 센서 설정 소실 감지 — 재초기화 (%lu회차)\r\n",
+           (unsigned long)g_ppg_reinit_count);
+
+    if (MAX30102_Init() == HAL_OK)
+    {
+        /* 센서를 새로 세웠으니 신호 파이프라인도 처음부터다.
+         * 필터 상태와 자기상관 이력에는 죽기 직전의 잔재가 남아 있고,
+         * 그걸 새 신호와 한 창에 섞으면 가짜 주기가 만들어진다. */
+        HeartRateCalc_Reset();
+        g_last_ppg_block_ms = HAL_GetTick();
+        printf("[ PPG ] 재초기화 성공 — 측정 재개\r\n");
+    }
+    else
+    {
+        /* 실패해도 g_max30102_ok 를 내리지 않는다. 접촉 불량은 대개
+         * 일시적이라, 쿨다운 뒤 다음 오류에서 다시 시도하는 편이 낫다. */
+        printf("[ PPG ] 재초기화 실패 — 다음 오류에서 재시도\r\n");
     }
 }
 
