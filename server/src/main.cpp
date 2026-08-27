@@ -541,8 +541,9 @@ int main(int argc, char* argv[]) {
     // [데모] MoveNet 관절 오버레이 — Qt 송출본에만 그린다(스냅샷 뜬 뒤, 낙상
     // 선택본 만든 뒤). 꺼져 있으면 등록 자체를 안 해 비용이 0이다.
     if (config.pose_overlay) {
-        pipeline.setOverlay([&](int ch, cv::Mat& img) {
-            pose_overlay.draw(ch, img);
+        pipeline.setOverlay([&](int ch, cv::Mat& img,
+                                const std::vector<Detection>& dets) {
+            pose_overlay.draw(ch, img, dets);
         });
     }
 

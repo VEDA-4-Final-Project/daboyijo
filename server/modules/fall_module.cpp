@@ -113,7 +113,12 @@ void FallModule::processFrame(const AiJob& job) {
                     static_cast<float>(roi.y) / job.raw_frame.rows,
                     static_cast<float>(roi.width) / job.raw_frame.cols,
                     static_cast<float>(roi.height) / job.raw_frame.rows);
-                overlay_->put(job.channel, t.object_id, kp_draw, box, lying);
+                // 지연 보정 기준점 — 이 크롭을 뜰 때 쓴 WiseAI bbox 그대로.
+                // 그리는 쪽이 "그때 bbox → 지금 bbox" 변환을 계산한다.
+                const cv::Rect2f anchor(t.left, t.top, t.right - t.left,
+                                        t.bottom - t.top);
+                overlay_->put(job.channel, t.object_id, kp_draw, box, anchor,
+                              lying);
             }
         }
 

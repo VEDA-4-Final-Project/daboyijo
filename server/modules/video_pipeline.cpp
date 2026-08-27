@@ -105,6 +105,12 @@ void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
                 fall_variant_ &&
                 fall_variant_(frame->channel, small, clean, dets, selective);
 
+            // [데모 오버레이] dets는 바로 아래 submit에서 move 되므로, 오버레이가
+            // 쓸 몫을 미리 복사해 둔다(객체 몇 개짜리 벡터라 비용은 미미하고,
+            // 오버레이가 꺼져 있으면 복사조차 안 한다).
+            std::vector<Detection> dets_for_overlay;
+            if (overlay_) dets_for_overlay = dets;
+
             // AI 워커에 최신 일감 던지기 (덮어쓰기 방식 — 밀림 방지)
             ai_.submit({std::move(raw), std::move(clean), frame->channel,
                         std::move(dets)});
@@ -153,7 +159,8 @@ void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
             // 스냅샷용 JPEG는 오버레이 전 그림이므로, 송출용으로는 다시 인코딩한다
             // (오버레이가 꺼져 있으면 이 재인코딩 자체가 없다).
             if (overlay_ && has_client) {
-                overlay_(frame->channel, has_selective ? selective : small);
+                overlay_(frame->channel, has_selective ? selective : small,
+                         dets_for_overlay);
                 jpeg_full.clear();
                 jpeg_sel.clear();
             }

@@ -44,7 +44,10 @@ public:
         const std::vector<Detection>& dets, cv::Mat& out)>;
 
     // 송출 직전 오버레이 (image를 제자리 수정). setOverlay 주석 참조.
-    using Overlay = std::function<void(int channel, cv::Mat& image)>;
+    // dets를 같이 넘기는 이유: 오버레이가 그리는 건 몇 프레임 전 분석 결과라,
+    // 이 프레임의 최신 좌표(속도 외삽 반영)로 위치를 맞춰 그려야 뒤처져 보이지 않는다.
+    using Overlay = std::function<void(int channel, cv::Mat& image,
+                                       const std::vector<Detection>& dets)>;
 
     VideoPipeline(StreamServer& server,
                   DetectionStore& store, AiWorker& ai, StatsReporter& stats,

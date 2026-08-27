@@ -5,8 +5,11 @@
 #include <map>
 #include <mutex>
 
+#include <vector>
+
 #include <opencv2/core.hpp>
 
+#include "detection.hpp"
 #include "pose_estimator.hpp"
 
 // [데모 오버레이] MoveNet 관절을 송출 영상 위에 그려 "AI가 지금 보고 있는 것"을
@@ -25,20 +28,32 @@ public:
         std::array<PoseEstimator::Keypoint, PoseEstimator::kNumKeypoints>;
 
     // 추론 1회 결과 저장.
-    //   kp_in_crop : 크롭 이미지 기준 0~1 좌표 (PoseEstimator::toCropNorm 적용 후)
-    //   crop_norm  : 그 크롭이 프레임에서 차지한 영역 (프레임 기준 0~1)
-    //   lying      : isLyingPose() 판정 결과 (색으로 표시)
+    //   kp_in_crop  : 크롭 이미지 기준 0~1 좌표 (PoseEstimator::toCropNorm 적용 후)
+    //   crop_norm   : 그 크롭이 프레임에서 차지한 영역 (프레임 기준 0~1)
+    //   anchor_norm : 그 크롭을 뜰 때 쓴 WiseAI bbox (프레임 기준 0~1).
+    //                 draw()의 지연 보정 기준점 — 아래 draw() 주석 참조.
+    //   lying       : isLyingPose() 판정 결과 (색으로 표시)
     void put(int channel, int object_id, const Keypoints& kp_in_crop,
-             const cv::Rect2f& crop_norm, bool lying);
+             const cv::Rect2f& crop_norm, const cv::Rect2f& anchor_norm,
+             bool lying);
 
     // 이 채널의 최근 관절을 image 위에 그린다(제자리 수정). 오래된 결과는
     // 그리지 않는다 — 사람이 사라졌는데 점만 남아 있으면 더 이상하다.
-    void draw(int channel, cv::Mat& image) const;
+    //
+    // dets: 이 프레임의 감지 좌표(DetectionStore::predictedAt 결과 — 촬영시각까지
+    // 속도 외삽된 최신 bbox). 관절은 최대 한 추론 주기(pose_interval_sec) 전
+    // 사진의 것이라 그대로 찍으면 사람보다 뒤처져 보인다. 그래서 "추론 당시
+    // bbox → 이 프레임 bbox" 변환을 관절 뭉치에 통째로 먹여 위치를 따라가게 한다.
+    // (자세의 '모양'은 여전히 한 주기 전 것이지만, 눈이 쫓는 '위치'는 맞는다)
+    void draw(int channel, cv::Mat& image,
+              const std::vector<Detection>& dets) const;
 
 private:
     struct Entry {
+        int object_id = 0;  // 지연 보정 때 이 프레임의 bbox를 찾는 키
         Keypoints kp;       // 크롭 기준 0~1
         cv::Rect2f box;     // 프레임 기준 0~1 (크롭 영역)
+        cv::Rect2f anchor;  // 프레임 기준 0~1 (추론 당시 WiseAI bbox)
         bool lying = false;
         std::chrono::steady_clock::time_point at;
     };
