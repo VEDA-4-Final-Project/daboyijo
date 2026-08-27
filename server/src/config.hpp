@@ -82,6 +82,20 @@ struct ServerConfig {
     int nvr_retention_hours = 12;   // 이보다 오래된 세그먼트는 자동 삭제
     int nvr_segment_minutes = 10;   // 세그먼트 파일 하나의 길이
     int nvr_http_port = 5502;       // Qt가 NVR 세그먼트 목록/재생을 받아가는 포트
+
+    // ── [데모] MoveNet 관절 오버레이 ─────────────────────────────
+    // 1이면 Qt로 나가는 영상에 MoveNet 관절(점·뼈대)과 판정 상태를 그려 보낸다.
+    // 시연에서 "AI가 실제로 자세를 보고 있다"를 눈으로 보여주는 용도라 기본은 꺼짐
+    // (송출본에만 그린다 — Gemini·텔레그램으로 가는 스냅샷엔 안 들어간다).
+    // ★ 켤 때는 아래 두 주기도 같이 줄여야 점이 사람을 따라간다. 운영 기본값은
+    //   CPU를 아끼려고 객체당 2초에 한 번만 추론하므로, 점이 2초간 얼어붙는다.
+    bool pose_overlay = false;
+    // 객체 1명당 자세 추론 주기(초). 0 이하(미설정)면 기본값 2.0 유지.
+    // 시연 권장값 0.2~0.3 — 사람이 1~2명일 때만 감당된다(Thunder 추론 ~100ms).
+    double pose_interval_sec = 0;
+    // 채널당 AI 워커 처리 주기 하한(초). 0 이하(미설정)면 기본값 0.25 유지.
+    // pose_interval_sec를 아무리 줄여도 이 값이 상한이라 같이 줄여야 한다.
+    double ai_job_interval_sec = 0;
 };
 
 // 형식: "채널번호=RTSP URL" 또는 "stream_port=포트", '#' 주석

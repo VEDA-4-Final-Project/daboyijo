@@ -47,6 +47,15 @@ public:
     bool estimate(const cv::Mat& personCropBgr,
                   std::array<Keypoint, kNumKeypoints>& out) const;
 
+    // [데모 오버레이] estimate() 출력을 "크롭 이미지 기준 0~1" 좌표로 되돌린다.
+    // estimate()가 주는 좌표는 모델 입력(정사각형 레터박스) 기준이라, 그대로
+    // 크롭 위에 찍으면 검은 여백만큼 어긋난다. 판정(isLyingPose)은 레터박스
+    // 좌표를 그대로 써야 맞으므로(비율 보존 = 각도 보존) 이 변환은 화면에
+    // 그릴 때만 쓴다. cropSize는 estimate()에 넣었던 그 크롭의 크기.
+    // 미준비·잘못된 크기면 false(kp는 건드리지 않음).
+    bool toCropNorm(const cv::Size& cropSize,
+                    std::array<Keypoint, kNumKeypoints>& kp) const;
+
     // estimate() 결과로 "누운 자세"인지 판정한다. 세 신호의 OR — 하나라도
     // 걸리면 누움 (임계값은 pose_estimator.cpp 상단, 실측 전 잠정값):
     //   ① 몸통 기울기: 어깨중점→엉덩이중점 벡터가 수직에서 kLyingAngleDeg

@@ -14,6 +14,7 @@
 #include "detection.hpp"
 #include "fall_detector.hpp"
 #include "pose_estimator.hpp"
+#include "pose_overlay.hpp"
 
 // ══ [낙상감지] 모듈 — 담당자는 이 파일과 core/fall_detector.*,
 //    video/pose_estimator.* 만 수정하면 된다 ══
@@ -37,6 +38,15 @@ public:
     // AiWorker start 전, 카메라 루프에서 호출할 것.
     void addChannel(int channel);
 
+    // [데모 오버레이] 관절 좌표를 흘려보낼 곳 연결 (nullptr이면 아무것도 안 함).
+    // 시연 영상용으로 cameras.conf 의 pose_overlay=1 일 때만 main.cpp가 배선한다.
+    void setPoseOverlay(PoseOverlay* overlay) { overlay_ = overlay; }
+
+    // 객체 1명당 자세 추론 주기(초). 기본 2초는 CPU를 아끼는 운영값이라 화면의
+    // 점이 2초에 한 번만 갱신된다 — 시연에선 cameras.conf 의 pose_interval_sec 로
+    // 짧게(0.2~0.3초) 줄여 점이 사람을 따라가게 한다.
+    void setPoseIntervalSec(double sec) { if (sec > 0) pose_interval_sec_ = sec; }
+
     // 침대 ROI 보관소 연결 (main.cpp가 소유, 여기서는 읽기만).
     // ROI는 낙상·침상이탈·객체 귀속이 같은 값을 봐야 해서 한 곳에만 둔다 —
     // 모듈마다 사본을 들면 삭제·매핑 갱신이 한쪽에만 반영되는 사고가 난다.
@@ -58,6 +68,11 @@ private:
         // 객체 → 마지막 추론 시각 (객체당 추론 주기 제한용)
         std::map<int, std::chrono::steady_clock::time_point> last_pose_time;
     };
+
+    // [데모 오버레이] main.cpp 소유 (자체 락 보유). 미설정이면 오버레이 없음.
+    PoseOverlay* overlay_ = nullptr;
+    // 객체당 추론 주기 — 운영 기본값 2초(setPoseIntervalSec 주석 참조).
+    double pose_interval_sec_ = 2.0;
 
     // fall_detector_ 보호 (RTSP 수신 스레드들 + 채널별 AI 워커 스레드 공유)
     std::mutex mutex_;

@@ -127,28 +127,44 @@ void VideoPipeline::runChannel(int /*channel*/, FrameQueue& queue,
                     .count() >= kSnapshotInterval;
             const bool has_client = server_.clientCount() > 0;
 
+            // ── 스냅샷 버퍼(A/B)는 오버레이 "전"에 뜬다 ───────────────
+            // 버퍼 A는 Gemini로, 버퍼 B는 보호자 텔레그램으로 나가는 그림이라
+            // 데모용 관절 점이 섞이면 안 된다. 오버레이는 아래에서 Qt 송출본에만.
+
+            // 오버레이가 켜져 있으면 송출본은 그린 뒤에 인코딩해야 하므로, 여기서는
+            // 스냅샷용으로 필요할 때만 뜬다 (안 그러면 프레임마다 두 번 인코딩한다).
+            const bool encode_for_client = has_client && !overlay_;
+
             // 전원 블러본(버퍼 A): 스냅샷 주기이거나, 평상시 클라 송출용일 때만 인코딩.
             std::vector<unsigned char> jpeg_full;
-            if (snapshot_due || (!has_selective && has_client))
+            if (snapshot_due || (!has_selective && encode_for_client))
                 encode(small, jpeg_full);
             if (snapshot_due) snapshots_.put(frame->channel, jpeg_full, now);
 
-            // Qt 송출·버퍼 B: 낙상 중이면 선택본, 아니면 전원 블러본.
+            // 낙상 선택본: 스냅샷 주기이거나 클라 송출용일 때만 인코딩.
+            std::vector<unsigned char> jpeg_sel;
+            if (has_selective && (snapshot_due || encode_for_client))
+                encode(selective, jpeg_sel);
+            // [보호자] 낙상 선택본 스냅샷 보관 (텔레그램 낙상 사진용).
+            if (has_selective && snapshot_due)
+                snapshots_fall_.put(frame->channel, jpeg_sel, now);
+
+            // [데모 오버레이] Qt로 나갈 그림에만 관절을 그린다. 위에서 이미 뜬
+            // 스냅샷용 JPEG는 오버레이 전 그림이므로, 송출용으로는 다시 인코딩한다
+            // (오버레이가 꺼져 있으면 이 재인코딩 자체가 없다).
+            if (overlay_ && has_client) {
+                overlay_(frame->channel, has_selective ? selective : small);
+                jpeg_full.clear();
+                jpeg_sel.clear();
+            }
+
+            // Qt 송출: 낙상 중이면 선택본, 아니면 전원 블러본.
             size_t bytes = 0;
-            if (has_selective) {
-                // 낙상 선택본: 스냅샷 주기이거나 클라 송출용일 때만 인코딩.
-                std::vector<unsigned char> jpeg_sel;
-                if (snapshot_due || has_client) encode(selective, jpeg_sel);
-                // [보호자] 낙상 선택본 스냅샷 보관 (텔레그램 낙상 사진용).
-                if (snapshot_due) snapshots_fall_.put(frame->channel, jpeg_sel, now);
-                if (has_client) {
-                    bytes = jpeg_sel.size();
-                    server_.broadcast(frame->channel, std::move(jpeg_sel));
-                }
-            } else if (has_client) {
-                // 평상시: 전원 블러본을 복사 없이 그대로 송출 (버퍼 A엔 이미 put 완료).
-                bytes = jpeg_full.size();
-                server_.broadcast(frame->channel, std::move(jpeg_full));
+            if (has_client) {
+                std::vector<unsigned char>& out = has_selective ? jpeg_sel : jpeg_full;
+                if (out.empty()) encode(has_selective ? selective : small, out);
+                bytes = out.size();
+                server_.broadcast(frame->channel, std::move(out));
             }
 
             if (snapshot_due) last_snap_time = now;

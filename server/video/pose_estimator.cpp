@@ -57,6 +57,24 @@ constexpr float kMaxTorsoRatioForeshort = 1.0f;
 // 흔들릴 수 있으니 작게 잡는다. 1.0이면 무효과. 실측 로그로 튜닝.
 constexpr double kInputGamma = 1.15;
 
+// 레터박스 배치 계산 — estimate()의 전처리와 toCropNorm()의 역변환이 반드시
+// 같은 기하를 써야 해서 한 곳에 모아 둔다(어긋나면 관절 점이 몸에서 밀려 찍힌다).
+struct Letterbox {
+    int new_w, new_h;   // 비율 유지 축소 후 크기
+    int off_x, off_y;   // 정사각형 입력 안에서의 좌상단 위치(검은 여백)
+};
+
+Letterbox computeLetterbox(int src_w, int src_h, int dst_w, int dst_h) {
+    const float scale = std::min(static_cast<float>(dst_w) / src_w,
+                                 static_cast<float>(dst_h) / src_h);
+    Letterbox lb;
+    lb.new_w = std::max(1, static_cast<int>(std::round(src_w * scale)));
+    lb.new_h = std::max(1, static_cast<int>(std::round(src_h * scale)));
+    lb.off_x = (dst_w - lb.new_w) / 2;
+    lb.off_y = (dst_h - lb.new_h) / 2;
+    return lb;
+}
+
 }  // namespace
 
 struct PoseEstimator::Impl {
@@ -144,17 +162,13 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
     cv::Mat rgb;
     cv::cvtColor(personCropBgr, rgb, cv::COLOR_BGR2RGB);
 
-    const float scale = std::min(static_cast<float>(impl_->input_w) / rgb.cols,
-                                 static_cast<float>(impl_->input_h) / rgb.rows);
-    const int new_w = std::max(1, static_cast<int>(std::round(rgb.cols * scale)));
-    const int new_h = std::max(1, static_cast<int>(std::round(rgb.rows * scale)));
+    const Letterbox lb = computeLetterbox(rgb.cols, rgb.rows,
+                                          impl_->input_w, impl_->input_h);
     cv::Mat scaled;
-    cv::resize(rgb, scaled, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+    cv::resize(rgb, scaled, cv::Size(lb.new_w, lb.new_h), 0, 0, cv::INTER_LINEAR);
 
     cv::Mat resized(impl_->input_h, impl_->input_w, rgb.type(), cv::Scalar(0, 0, 0));
-    const int off_x = (impl_->input_w - new_w) / 2;
-    const int off_y = (impl_->input_h - new_h) / 2;
-    scaled.copyTo(resized(cv::Rect(off_x, off_y, new_w, new_h)));
+    scaled.copyTo(resized(cv::Rect(lb.off_x, lb.off_y, lb.new_w, lb.new_h)));
 
     // [밝기 보정] 작은 모델 입력에만 아주 약한 감마 보정 — 어두운 방 자세 판정 보강.
     // 다운스케일 후라 픽셀 수가 적어 비용이 거의 0. 검은 레터박스 여백은 감마(0)=0
@@ -203,6 +217,21 @@ bool PoseEstimator::estimate(const cv::Mat& personCropBgr,
         std::fprintf(stderr, "[pose] 알 수 없는 출력 타입: %d\n",
                      static_cast<int>(output->type));
         return false;
+    }
+    return true;
+}
+
+bool PoseEstimator::toCropNorm(const cv::Size& cropSize,
+                               std::array<Keypoint, kNumKeypoints>& kp) const {
+    if (!isReady() || cropSize.width <= 0 || cropSize.height <= 0) return false;
+
+    // estimate()가 만든 것과 같은 레터박스 배치를 구해 그대로 되돌린다:
+    //   입력 픽셀 = kp * 입력크기  →  여백(off) 빼고 축소본 크기(new)로 나누면 크롭 기준 0~1
+    const Letterbox lb = computeLetterbox(cropSize.width, cropSize.height,
+                                          impl_->input_w, impl_->input_h);
+    for (auto& k : kp) {
+        k.x = (k.x * impl_->input_w - lb.off_x) / lb.new_w;
+        k.y = (k.y * impl_->input_h - lb.off_y) / lb.new_h;
     }
     return true;
 }

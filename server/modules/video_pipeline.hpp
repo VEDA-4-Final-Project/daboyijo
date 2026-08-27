@@ -43,6 +43,9 @@ public:
         int channel, const cv::Mat& full_blur, const cv::Mat& clean,
         const std::vector<Detection>& dets, cv::Mat& out)>;
 
+    // 송출 직전 오버레이 (image를 제자리 수정). setOverlay 주석 참조.
+    using Overlay = std::function<void(int channel, cv::Mat& image)>;
+
     VideoPipeline(StreamServer& server,
                   DetectionStore& store, AiWorker& ai, StatsReporter& stats,
                   SnapshotBuffer& snapshots, SnapshotBuffer& snapshots_fall)
@@ -51,6 +54,13 @@ public:
 
     // run() 전에 등록할 것. 실행 순서 = 등록 순서.
     void addStage(FrameStage s) { stages_.push_back(std::move(s)); }
+
+    // [데모 오버레이] Qt 송출본에만 그리는 단계 (MoveNet 관절 스켈레톤 등).
+    // addStage()와 갈리는 지점 두 가지:
+    //   · 스냅샷 버퍼(Gemini·텔레그램)에는 안 들어간다 — 스냅샷을 뜬 뒤에 그린다.
+    //   · 낙상 선택본이 만들어진 뒤에 그린다 — 얼굴 복원(clean 복사)에 점이
+    //     지워지지 않게. 즉 "낙상 중이라 얼굴이 드러난 그림" 위에도 그대로 남는다.
+    void setOverlay(Overlay o) { overlay_ = std::move(o); }
 
     // 낙상 선택본 생성 콜백 등록 (선택 사항). 미등록이면 항상 전원 블러본 송출.
     void setFallVariant(FallVariant f) { fall_variant_ = std::move(f); }
@@ -79,4 +89,5 @@ private:
     SnapshotBuffer& snapshots_fall_;  // 버퍼 B: 낙상 선택본 (보호자 텔레그램용)
     std::vector<FrameStage> stages_;
     FallVariant fall_variant_;
+    Overlay overlay_;  // [데모] 미등록이면 아무것도 그리지 않음
 };

@@ -45,6 +45,12 @@ public:
     // 채널 등록 — 채널당 워커 스레드 1개가 생긴다. start() 전에 호출할 것.
     void addChannel(int channel);
 
+    // 채널당 AI 처리 주기 하한(초)을 바꾼다. 기본 0.25초(=최대 4회/초)는 CPU
+    // 상한 조절 손잡이다(ai_worker.cpp 상단 주석). 시연 오버레이처럼 자세 추정을
+    // 자주 돌려야 할 때만 cameras.conf 의 ai_job_interval_sec 로 줄인다.
+    // start() 전에 호출할 것.
+    void setMinJobIntervalSec(double sec) { if (sec > 0) min_job_interval_sec_ = sec; }
+
     // 채널별 최신 일감 1장만 유지 (덮어쓰기로 밀림 방지). 아무 스레드나 호출 가능.
     // 등록 안 된 채널의 일감은 버린다.
     void submit(AiJob job);
@@ -63,6 +69,8 @@ private:
 
     void run(Slot& slot);
 
+    // 채널당 처리 주기 하한 — 기본값 근거는 ai_worker.cpp 상단 주석 참조.
+    double min_job_interval_sec_ = 0.25;
     std::vector<Processor> processors_;
     std::map<int, std::unique_ptr<Slot>> slots_;  // 채널 → 전담 슬롯
     std::atomic<bool> running_{false};

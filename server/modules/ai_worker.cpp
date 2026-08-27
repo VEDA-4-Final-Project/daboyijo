@@ -10,7 +10,8 @@ namespace {
 // 자세 추정은 fall_module이 객체당 2초 주기로 따로 제한). 단일 워커 시절엔
 // 스레드 1개가 자연스럽게 총량을 눌렀지만, 채널별 워커에선 이 값이 CPU 상한
 // 조절 손잡이다. 값을 줄이면 반응이 빨라지고 CPU가 오른다.
-constexpr double kMinJobIntervalSec = 0.25;  // 채널당 최대 4회/초
+// 기본값은 ai_worker.hpp의 min_job_interval_sec_(0.25초 = 채널당 최대 4회/초)에
+// 있고, cameras.conf 의 ai_job_interval_sec 로 덮어쓸 수 있다.
 
 }  // namespace
 
@@ -57,7 +58,7 @@ void AiWorker::run(Slot& slot) {
         // 처리 주기 하한 유지 — 일감함엔 최신 1장만 남으니 밀릴 걱정 없음
         if (std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                           last_run)
-                .count() < kMinJobIntervalSec) {
+                .count() < min_job_interval_sec_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }

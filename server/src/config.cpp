@@ -125,6 +125,19 @@ ServerConfig loadServerConfig(const std::string& path) {
             if (!value.empty()) config.nvr_http_port = std::stoi(value);
             continue;
         }
+        if (key == "pose_overlay") {
+            // 시연용 스위치 — 명시적으로 켤 때만 켠다(오타면 꺼진 채로).
+            config.pose_overlay = (value == "1" || value == "true" || value == "yes");
+            continue;
+        }
+        if (key == "pose_interval_sec") {
+            if (!value.empty()) config.pose_interval_sec = std::stod(value);
+            continue;
+        }
+        if (key == "ai_job_interval_sec") {
+            if (!value.empty()) config.ai_job_interval_sec = std::stod(value);
+            continue;
+        }
         // 입소자별 보호자: telegram_guardian_chat_id_<입소자id>=<chat_id>
         // ★ 아래 telegram_chat_id_ 검사보다 먼저 와야 한다 — 접두사가 겹치지는
         //   않지만, 키를 읽는 순서가 곧 우선순위라는 걸 눈에 보이게 두려는 것.
