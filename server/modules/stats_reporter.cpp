@@ -84,6 +84,10 @@ void StatsReporter::maybeReport() {
     prep_ms_total_ = 0;
     encode_ms_total_ = 0;
     encode_count_ = 0;
-    std::printf("%s\n", status.str().c_str());
+    // 로그 정리로 비활성화 — 부하 측정(fps·CPU·온도·인코딩 시간)이 필요할 때 해제.
+    // 위 집계와 카운터 리셋은 그대로 돌려둔다: 그것까지 멈추면 다시 켰을 때 첫
+    // 리포트가 그동안 쌓인 값이라 엉뚱하게 나온다.
+    // std::printf("%s\n", status.str().c_str());
+    (void)status;  // 로그 끈 동안 미사용 경고 방지 (위 주석 해제 시 같이 지울 것)
     last_report_ = now;
 }

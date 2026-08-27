@@ -69,10 +69,12 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     //   ratio는 "잡힌 덩어리가 노이즈 수준은 아님"을 보증하는 하한 역할만 맡긴다.
     bool result = (ratio >= threshold_) && (mean_sat >= min_sat_);
 
-    if (ratio >= 0.03) {
-        std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
-                     ratio, mean_sat, result ? "O" : "X");
-    }
+    // 로그 정리로 비활성화 — 임계값(threshold_/min_sat_) 튜닝할 때 해제할 것.
+    // 사람이 잡힐 때마다 초당 몇 번씩 찍혀 콘솔이 이 줄로 덮인다.
+    // if (ratio >= 0.03) {
+    //     std::fprintf(stderr, "[caregiver] ratio=%.3f S=%.0f → %s\n",
+    //                  ratio, mean_sat, result ? "O" : "X");
+    // }
 
     return result;
 }
