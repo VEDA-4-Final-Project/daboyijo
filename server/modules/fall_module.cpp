@@ -1,6 +1,7 @@
 #include "fall_module.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <string>
 
@@ -11,7 +12,8 @@ namespace {
 // 높음. 우리 실부하(채널당 1~2명, 2초 간격)는 초당 2~4회 추론이면 되고 Thunder
 // 예산(초당 9.9회, movenet_bench.py 실측)에 여유가 있어 시도해볼 만하다.
 const std::string kPoseModelPath = "models/movenet_thunder_int8.tflite";
-constexpr double kPoseIntervalSec = 2.0;
+// 객체당 추론 주기의 기본값은 fall_module.hpp의 pose_interval_sec_(2초)에 있고,
+// cameras.conf 의 pose_interval_sec 로 덮어쓸 수 있다(시연 오버레이용으로 짧게).
 // 채널별 워커 구조에선 최악의 경우 4채널이 동시에 추론할 수 있다. 인스턴스당
 // 2스레드면 동시 8스레드가 4코어를 다퉈(RTSP 디코딩·인코딩까지 포함) 오히려
 // 전체가 느려지므로 1로 제한한다. 추론 1회가 느려지는 대신(실측 필요, 예상
@@ -75,8 +77,8 @@ void FallModule::processFrame(const AiJob& job) {
     for (const auto& t : observed) {
         auto& last = ch.last_pose_time[t.object_id];
         if (std::chrono::duration<double>(pose_now - last).count() <
-            kPoseIntervalSec) {
-            continue;  // 객체당 kPoseIntervalSec 주기로 추론 제한
+            pose_interval_sec_) {
+            continue;  // 객체당 pose_interval_sec_ 주기로 추론 제한
         }
         last = pose_now;
 
@@ -88,10 +90,37 @@ void FallModule::processFrame(const AiJob& job) {
 
         // 무거운 추론은 락 밖에서 — 메인 스트리밍·메타 콜백을 막지 않는다.
         // (저조도 보정은 PoseEstimator가 모델 입력 단계에서 처리 — pose_estimator.cpp)
-        bool lying = ch.estimator.isLyingDown(job.raw_frame(roi));
+        // isLyingDown() 대신 estimate()+isLyingPose()로 쪼개 쓴다 — 판정 결과만이
+        // 아니라 관절 좌표 자체가 필요해서다(데모 오버레이). 판정 로직은 동일.
+        std::array<PoseEstimator::Keypoint, PoseEstimator::kNumKeypoints> kp;
+        if (!ch.estimator.estimate(job.raw_frame(roi), kp)) continue;
+        const bool lying = ch.estimator.isLyingPose(kp);
         std::fprintf(stderr, "[pose] ch%d obj%d 판정=%s (crop %dx%d)\n",
                      job.channel + 1, t.object_id, lying ? "누움" : "서있음",
                      roi.width, roi.height);
+
+        // [데모 오버레이] 관절을 화면에 그리려면 좌표계를 두 번 바꿔야 한다:
+        //   ① 모델 입력(레터박스) 기준 → 크롭 기준 (toCropNorm)
+        //   ② 크롭이 원본 프레임에서 차지한 영역(정규화)을 함께 넘겨, 그릴 때
+        //      송출 해상도로 환산 (PoseOverlay::draw)
+        // 사본(kp_draw)을 쓰는 이유: 위 isLyingPose()는 레터박스 좌표 그대로여야
+        // 각도 판정이 맞다(비율 보존). 판정용 좌표계와 그리기용 좌표계가 다르다.
+        if (overlay_) {
+            auto kp_draw = kp;
+            if (ch.estimator.toCropNorm(roi.size(), kp_draw)) {
+                const cv::Rect2f box(
+                    static_cast<float>(roi.x) / job.raw_frame.cols,
+                    static_cast<float>(roi.y) / job.raw_frame.rows,
+                    static_cast<float>(roi.width) / job.raw_frame.cols,
+                    static_cast<float>(roi.height) / job.raw_frame.rows);
+                // 지연 보정 기준점 — 이 크롭을 뜰 때 쓴 WiseAI bbox 그대로.
+                // 그리는 쪽이 "그때 bbox → 지금 bbox" 변환을 계산한다.
+                const cv::Rect2f anchor(t.left, t.top, t.right - t.left,
+                                        t.bottom - t.top);
+                overlay_->put(job.channel, t.object_id, kp_draw, box, anchor,
+                              lying);
+            }
+        }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);

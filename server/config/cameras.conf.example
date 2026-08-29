@@ -83,7 +83,9 @@ telegram_guardian_alerts=1
 
 # 케어봇 실시간 상황 질의응답용 VLM (Google Gemini)
 # - Google AI Studio(https://aistudio.google.com/apikey)에서 API 키 발급 → gemini_api_key
-# - gemini_model: 미지정 시 gemini-flash-latest(현재 안정 Flash 별칭). 필요 시 특정 id로 고정.
+# - gemini_model: 미지정 시 gemini-3.6-flash. 별칭(gemini-flash-latest)은 쓰지 말 것 —
+#   가리키는 모델이 바뀌면 오류 없이 응답만 안 오는 상태로 조용히 멈춘다(2026-08 실측).
+#   모델을 바꿀 땐 tools/gemini_probe.sh 로 실제 응답이 오는지 먼저 확인할 것.
 # - 미설정이면 봇은 질문에 "설정 필요" 안내만 하고 서버는 정상 동작.
 gemini_api_key=
 gemini_model=
@@ -91,6 +93,20 @@ gemini_model=
 # 케어봇 📞 연락처 버튼이 회신할 연락처 (미설정 시 "미등록"으로 표시)
 care_contact_caregiver=담당 요양사 홍길동 010-0000-0000
 care_contact_manager=관리자 김철수 010-1111-1111
+
+# ── [시연용] MoveNet 관절 오버레이 ──────────────────────────────
+# 1로 켜면 Qt로 나가는 영상 위에 MoveNet 관절 17개(점·뼈대)와 판정 상태를 그린다.
+# 사람이 잡히면 초록 스켈레톤, "누움" 판정이 나면 빨강 + LYING 라벨로 바뀌므로
+# 낙상 감지가 무엇을 보고 판단하는지 영상으로 보여줄 수 있다.
+#  · Qt·프로토콜은 그대로다 — 서버가 인코딩 직전 프레임에 직접 그린다.
+#  · 송출본에만 그린다 — Gemini·텔레그램으로 나가는 스냅샷엔 안 들어간다.
+#  · 시연이 끝나면 0으로 되돌릴 것(CPU와 화면을 그대로 되돌린다).
+pose_overlay=0
+# 자세 추론 주기 두 개. 운영 기본값(2초/명, 0.25초/채널)은 CPU를 아끼는 값이라
+# 오버레이를 켜도 점이 2초에 한 번만 움직인다. 시연에선 아래처럼 줄일 것.
+# 사람이 1~2명일 때 기준(Thunder 추론 1회 ~100ms) — 인원이 많으면 다시 올릴 것.
+pose_interval_sec=0.3
+ai_job_interval_sec=0.15
 
 # (A) 부팅 즉시 연결 — URL을 직접 지정
 0=rtsp://admin:비밀번호@172.20.35.140:554/0/profile2/media.smp

@@ -16,6 +16,8 @@ bool Database::connect(const std::string& host, const std::string& user,
                        const std::string& password, const std::string& dbname,
                        unsigned int port) {
     if (!conn_) { std::cerr << "mysql_init 실패\n"; return false; }
+    // 재연결 때 다시 쓸 수 있게 접속 정보를 보관한다(ensureAliveLocked).
+    host_ = host; user_ = user; password_ = password; dbname_ = dbname; port_ = port;
     if (!mysql_real_connect(conn_, host.c_str(), user.c_str(),
                             password.c_str(), dbname.c_str(),
                             port, nullptr, 0)) {
@@ -23,8 +25,83 @@ bool Database::connect(const std::string& host, const std::string& user,
         return false;
     }
     mysql_set_character_set(conn_, "utf8mb4");   // 한글 안 깨지게
+    last_ok_ = std::chrono::steady_clock::now();
     std::cout << "[DB] 연결 성공\n";
     return true;
+}
+
+// ── 끊긴 커넥션 되살리기 ────────────────────────────────────────────
+// MariaDB 는 놀고 있는 접속을 wait_timeout(기본 8시간) 뒤에 그냥 끊는다. 중간에
+// 낀 공유기·NAT 는 더 짧게 끊기도 한다. 서버는 부팅 때 한 번 연결하고 그 핸들을
+// 계속 들고 있으므로, 카메라가 안 붙은 밤을 하루 넘기면 다음 쿼리가
+// "MySQL server has gone away"(2006) 로 실패한다 — 영상검색처럼 어쩌다 한 번
+// 쓰는 경로가 늘 첫 희생자다(쓰기 경로는 자주 돌아 스스로 커넥션을 살려둔다).
+//
+// libmariadb 의 MYSQL_OPT_RECONNECT 를 켜지 않는 이유: 재연결이 조용히 일어나
+// 세션 상태(@변수·임시 테이블)가 사라진 걸 아무도 모른 채 지나가고, MySQL
+// 쪽에서는 이미 폐기된 옵션이라 이식성도 없다. 여기서 직접 다룬다.
+namespace {
+// libmariadb <errmsg.h> 의 값. 헤더 경로가 배포판마다 갈려(errmsg.h /
+// mariadb/errmsg.h) 상수만 직접 적는다 — 클라이언트 프로토콜 상수라 안 바뀐다.
+constexpr unsigned kErrServerGone = 2006;  // CR_SERVER_GONE_ERROR
+constexpr unsigned kErrServerLost = 2013;  // CR_SERVER_LOST
+// 마지막 성공 후 이만큼 지났으면 쿼리 전에 ping 으로 먼저 확인한다. 프레임마다
+// 도는 경로(재실 판정 등)가 매번 왕복 한 번을 더 쓰지 않게 하는 문턱이다.
+constexpr int kAliveCheckSec = 60;
+// DB 가 통째로 내려간 동안 재연결을 다시 시도하기까지의 간격.
+constexpr int kReconnectBackoffSec = 5;
+}  // namespace
+
+bool Database::ensureAliveLocked() {
+    if (!conn_) return false;
+    const auto now = std::chrono::steady_clock::now();
+    // 방금 실패했으면 바로 다시 두드리지 않는다 — 프레임마다 도는 경로가
+    // DB 가 내려간 내내 같은 실패 로그를 쏟는 걸 막는다.
+    if (now < next_retry_) return false;
+    if (mysql_ping(conn_) == 0) { next_retry_ = {}; return true; }   // 살아 있음
+
+    // 죽었다 — 핸들을 버리고 새로 만든다. ping 이 실패한 핸들을 그대로 재사용하면
+    // libmariadb 판마다 동작이 갈린다.
+    std::cerr << "[DB] 접속이 끊겼습니다 (" << mysql_error(conn_) << ") — 재연결 시도\n";
+    mysql_close(conn_);
+    conn_ = mysql_init(nullptr);
+    if (!conn_) { std::cerr << "[DB] 재연결 실패: mysql_init\n"; return false; }
+    if (!mysql_real_connect(conn_, host_.c_str(), user_.c_str(),
+                            password_.c_str(), dbname_.c_str(),
+                            port_, nullptr, 0)) {
+        std::cerr << "[DB] 재연결 실패: " << mysql_error(conn_) << "\n";
+        // 핸들은 살려둔다 — 백오프가 지나면 다음 호출이 다시 시도한다.
+        next_retry_ = std::chrono::steady_clock::now() +
+                      std::chrono::seconds(kReconnectBackoffSec);
+        return false;
+    }
+    mysql_set_character_set(conn_, "utf8mb4");
+    next_retry_ = {};
+    last_ok_ = std::chrono::steady_clock::now();
+    std::cout << "[DB] 재연결 성공\n";
+    return true;
+}
+
+int Database::queryLocked(const char* sql) {
+    if (!conn_) return 1;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_ok_ >= std::chrono::seconds(kAliveCheckSec))
+        ensureAliveLocked();   // 실패해도 아래에서 한 번 더 부딪혀 본다
+
+    int rc = mysql_query(conn_, sql);
+    if (rc) {
+        // ping 문턱(60초) 안에서 끊긴 경우 — 재연결하고 딱 한 번만 다시 던진다.
+        // ★ SET @변수 로 시작하는 여러 문장짜리 집계(insertCareLogs 등)가 중간에
+        //   이 길로 들어오면 세션 변수가 사라진 채 재시도된다. 그때 집계는 0 이
+        //   되는데, 그 경로들이 이미 "조회 실패=0(보수적)"으로 설계돼 있어 틀린
+        //   값이 아니라 덜 센 값으로 끝난다.
+        const unsigned e = mysql_errno(conn_);
+        if ((e == kErrServerGone || e == kErrServerLost) && ensureAliveLocked())
+            rc = mysql_query(conn_, sql);
+    }
+    if (rc == 0) last_ok_ = std::chrono::steady_clock::now();
+    return rc;
 }
 
 std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
@@ -40,7 +117,7 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     char win[128];
     std::snprintf(win, sizeof(win),
         "SET @cs = NOW() - INTERVAL %d SECOND, @ce = NOW()", durationSec);
-    if (mysql_query(conn_, win)) {
+    if (queryLocked(win)) {
         std::cerr << "[DB] 케어 구간 설정 실패: " << mysql_error(conn_) << "\n";
         return ids;
     }
@@ -48,7 +125,7 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
     // 한 줄짜리 COUNT(*) 조회 헬퍼 — 실패하면 0 (판정을 보수적으로 만든다).
     auto countOf = [&](const char* sql) -> int {
         int n = 0;
-        if (!mysql_query(conn_, sql)) {
+        if (!queryLocked(sql)) {
             if (MYSQL_RES* res = mysql_store_result(conn_)) {
                 if (MYSQL_ROW row = mysql_fetch_row(res))
                     n = row[0] ? std::atoi(row[0]) : 0;
@@ -123,7 +200,7 @@ std::vector<long long> Database::insertCareLogs(int cameraId, int durationSec) {
             "SELECT %d, %s, d, @cs, @ce FROM (SELECT %s AS d) t WHERE d > 0",
             cameraId, resident, durExpr);
 
-        if (mysql_query(conn_, sql)) {
+        if (queryLocked(sql)) {
             std::cerr << "[DB] 케어로그 INSERT 실패: " << mysql_error(conn_) << "\n";
             continue;   // 한 사람이 실패해도 나머지는 남긴다
         }
@@ -160,14 +237,14 @@ bool Database::addCareLogDuration(int cameraId, const std::vector<long long>& lo
     char win[128];
     std::snprintf(win, sizeof(win),
         "SET @cs = NOW() - INTERVAL %d SECOND, @ce = NOW()", addSec);
-    if (mysql_query(conn_, win)) {
+    if (queryLocked(win)) {
         std::cerr << "[DB] 병합 구간 설정 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
 
     auto countOf = [&](const char* sql) -> int {
         int n = 0;
-        if (!mysql_query(conn_, sql)) {
+        if (!queryLocked(sql)) {
             if (MYSQL_RES* res = mysql_store_result(conn_)) {
                 if (MYSQL_ROW row = mysql_fetch_row(res))
                     n = row[0] ? std::atoi(row[0]) : 0;
@@ -229,7 +306,7 @@ bool Database::addCareLogDuration(int cameraId, const std::vector<long long>& lo
             "WHERE c.log_id = %lld",
             addExpr, logId);
 
-        if (mysql_query(conn_, sql)) {
+        if (queryLocked(sql)) {
             std::cerr << "[DB] 케어로그 병합 실패: " << mysql_error(conn_) << "\n";
             allOk = false;
             continue;
@@ -265,7 +342,7 @@ int Database::getRiskLevelByCamera(int channel) {
         "FROM residents WHERE camera_id = %d AND status = '재원'",
         channel);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 위험도 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -297,7 +374,7 @@ int Database::getRiskLevelByResident(int residentId) {
         "WHEN '상' THEN 3 WHEN '중' THEN 2 WHEN '하' THEN 1 ELSE 3 END "
         "FROM residents WHERE resident_id = %d", residentId);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 입소자 위험도 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -319,7 +396,7 @@ std::string Database::getResidentName(int residentId) {
     std::snprintf(sql, sizeof(sql),
         "SELECT name FROM residents WHERE resident_id = %d", residentId);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 입소자 이름 조회 실패: " << mysql_error(conn_) << "\n";
         return std::string();
     }
@@ -344,7 +421,7 @@ std::vector<int> Database::getResidentsInBed(int cameraId) {
         "WHERE camera_id = %d AND out_at IS NULL AND resident_id IS NOT NULL",
         cameraId);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 재실 세션 조회 실패: " << mysql_error(conn_) << "\n";
         return out;
     }
@@ -366,7 +443,7 @@ int Database::getRoomByResident(int residentId) {
     std::snprintf(sql, sizeof(sql),
         "SELECT room FROM residents WHERE resident_id = %d", residentId);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 입소자 호실 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -405,7 +482,7 @@ bool Database::saveRoiZone(int cameraId, int roiId,
         std::to_string(cameraId) + ", " + std::to_string(roiId) + ", '', '" + json +
         "') ON DUPLICATE KEY UPDATE roi_points = VALUES(roi_points)";
 
-    if (mysql_query(conn_, sql.c_str())) {
+    if (queryLocked(sql.c_str())) {
         std::cerr << "[DB] 침대 ROI 저장 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
@@ -433,7 +510,7 @@ bool Database::bindRoiZoneResident(int cameraId, int roiId, int residentId) {
             "WHERE camera_id = %d AND roi_id = %d", cameraId, roiId);
     }
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 침대 입소자 매핑 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
@@ -456,7 +533,7 @@ bool Database::deleteRoiZone(int cameraId, int roiId) {
             cameraId, roiId);
     }
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 침대 ROI 삭제 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
@@ -468,7 +545,7 @@ std::vector<RoiZoneRow> Database::loadRoiZones() {
     std::vector<RoiZoneRow> rows;
     if (!conn_) return rows;
 
-    if (mysql_query(conn_,
+    if (queryLocked(
             "SELECT camera_id, roi_id, resident_id, roi_points FROM roi_zones "
             "ORDER BY camera_id, roi_id")) {
         std::cerr << "[DB] 침대 ROI 로드 실패: " << mysql_error(conn_) << "\n";
@@ -524,7 +601,7 @@ int Database::getCHById(const std::string& wearable_id){
         "SELECT camera_id "
         "FROM residents WHERE wearable_id = '%s'", esc);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -559,7 +636,7 @@ int Database::getRoomById(const std::string& wearable_id){
         "SELECT room "
         "FROM residents WHERE wearable_id = '%s'", esc);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -589,7 +666,7 @@ int Database::getRoomByCh(int channel){
         "SELECT room "
         "FROM residents WHERE camera_id = %d", channel);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -652,7 +729,7 @@ std::vector<int> Database::residentsByCameraLocked(int channel) {
         "WHERE camera_id = %d AND status = '재원' ORDER BY resident_id",
         channel);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 입소자 조회 실패: " << mysql_error(conn_) << "\n";
         return ids;
     }
@@ -693,7 +770,7 @@ bool Database::residentExistsLocked(int residentId) {
 
     // 조회가 실패하면 "있다"로 본다 — DB 가 잠깐 흔들렸을 뿐인데 멀쩡한 매핑을
     // NULL 로 떨어뜨리면, 그날 재실 기록에서 사람 이름만 통째로 사라진다.
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 입소자 존재 확인 실패: " << mysql_error(conn_) << "\n";
         return true;
     }
@@ -727,7 +804,7 @@ int Database::getResidentByWearable(const std::string& wearable_id) {
     std::snprintf(sql, sizeof(sql),
         "SELECT resident_id FROM residents WHERE wearable_id = '%s'", esc);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 웨어러블 입소자 조회 실패: " << mysql_error(conn_) << "\n";
         return -1;
     }
@@ -808,7 +885,7 @@ long long Database::insertEvent(EventType type, EventSource source, int cameraId
             match, toSql(type), toSql(source),
             when, kDedupWindowSec, when, kDedupWindowSec);
 
-        if (!mysql_query(conn_, sql)) {
+        if (!queryLocked(sql)) {
             if (MYSQL_RES* res = mysql_store_result(conn_)) {
                 long long twinId = 0;
                 if (MYSQL_ROW row = mysql_fetch_row(res))
@@ -819,7 +896,7 @@ long long Database::insertEvent(EventType type, EventSource source, int cameraId
                     char up[128];
                     std::snprintf(up, sizeof(up),
                         "UPDATE events SET source = 'BOTH' WHERE event_id = %lld", twinId);
-                    if (mysql_query(conn_, up)) {
+                    if (queryLocked(up)) {
                         std::cerr << "[DB] 이벤트 병합 실패: " << mysql_error(conn_) << "\n";
                         // 병합에 실패했으면 새 줄이라도 남긴다 — 아래로 흘려보낸다.
                     } else {
@@ -844,7 +921,7 @@ long long Database::insertEvent(EventType type, EventSource source, int cameraId
         when, cameraId, resident, toSql(type), toSql(source),
         hasClip ? "'" : "", hasClip ? esc : "NULL", hasClip ? "'" : "");
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 이벤트 기록 실패: " << mysql_error(conn_) << "\n";
         return 0;
     }
@@ -882,7 +959,7 @@ std::vector<EventRow> Database::findEvents(bool anyType, EventType type, int cha
         "%s%sORDER BY occurred_at DESC LIMIT %d",
         startMs, endMs, typeClause, channelClause, limit);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 이벤트 검색 실패: " << mysql_error(conn_) << "\n";
         return rows;
     }
@@ -908,6 +985,41 @@ std::vector<EventRow> Database::findEvents(bool anyType, EventType type, int cha
     }
     mysql_free_result(res);
     return rows;
+}
+
+int Database::countEvents(bool anyType, EventType type, int channel,
+                          long long startMs, long long endMs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    // 조건 조립은 findEvents 와 글자까지 같아야 한다 — 다르면 "총 N건"과 실제
+    // 목록이 어긋나 사용자가 없는 기록을 찾게 된다.
+    char typeClause[48] = "";
+    if (!anyType) {
+        std::snprintf(typeClause, sizeof(typeClause), "AND event_type = '%s' ", toSql(type));
+    }
+    char channelClause[32] = "";
+    if (channel >= 0) {
+        std::snprintf(channelClause, sizeof(channelClause), "AND camera_id = %d ", channel);
+    }
+
+    char sql[768];
+    std::snprintf(sql, sizeof(sql),
+        "SELECT COUNT(*) FROM events "
+        "WHERE occurred_at BETWEEN FROM_UNIXTIME(%lld/1000.0) AND FROM_UNIXTIME(%lld/1000.0) "
+        "%s%s",
+        startMs, endMs, typeClause, channelClause);
+
+    if (queryLocked(sql)) {
+        std::cerr << "[DB] 이벤트 건수 조회 실패: " << mysql_error(conn_) << "\n";
+        return -1;
+    }
+    MYSQL_RES* res = mysql_store_result(conn_);
+    if (!res) return -1;
+    int n = -1;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) n = row[0] ? std::atoi(row[0]) : 0;
+    mysql_free_result(res);
+    return n;
 }
 
 long long Database::openBedSession(int cameraId, int residentId) {
@@ -941,7 +1053,7 @@ long long Database::openBedSession(int cameraId, int residentId) {
         "VALUES (%d, %s, NOW())",
         cameraId, resident);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 재실 세션 시작 실패: " << mysql_error(conn_) << "\n";
         return 0;
     }
@@ -964,7 +1076,7 @@ bool Database::closeBedSession(long long sessionId) {
         "WHERE session_id = %lld AND out_at IS NULL",
         sessionId);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 재실 세션 종료 실패: " << mysql_error(conn_) << "\n";
         return false;
     }
@@ -981,7 +1093,7 @@ int Database::closeDanglingBedSessions() {
     if (!conn_) return 0;
 
     // 지어낸 시간을 남기지 않으려고 in_at 그대로 닫고 0초로 만든다(헤더 주석 참고).
-    if (mysql_query(conn_,
+    if (queryLocked(
             "UPDATE bed_sessions SET out_at = in_at, duration_sec = 0 "
             "WHERE out_at IS NULL")) {
         std::cerr << "[DB] 미종료 재실 세션 정리 실패: " << mysql_error(conn_) << "\n";
@@ -1018,7 +1130,7 @@ bool Database::upsertActivityMinute(int residentId, long long minuteEpochSec,
         "hr_avg = VALUES(hr_avg), spo2_avg = VALUES(spo2_avg)",
         residentId, minuteEpochSec, stepsDelta, stepsCum, hr, spo2);
 
-    if (mysql_query(conn_, sql)) {
+    if (queryLocked(sql)) {
         std::cerr << "[DB] 활동량 기록 실패: " << mysql_error(conn_) << "\n";
         return false;
     }

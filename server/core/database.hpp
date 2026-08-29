@@ -1,5 +1,6 @@
 #ifndef DATABASE_HPP
 #define DATABASE_HPP
+#include <chrono>
 #include <mutex>
 #include <set>
 #include <string>
@@ -163,6 +164,13 @@ public:
     std::vector<EventRow> findEvents(bool anyType, EventType type, int channel,
                                      long long startMs, long long endMs, int limit);
 
+    // [영상검색] findEvents 와 같은 조건의 전체 건수(limit 미적용).
+    // findEvents 는 최신순으로 limit 만큼 잘라 오므로, 그것만으로는 "그 시간대에
+    // 정말 그만큼뿐"인지 "잘린 것"인지 구분할 수 없다. 답변에 "총 N건 중 최근
+    // M건" 을 쓰려면 이 값이 필요하다. 실패 시 -1(호출부가 표시를 생략).
+    int countEvents(bool anyType, EventType type, int channel,
+                    long long startMs, long long endMs);
+
     // 침대 재실 세션 열기(입소자가 침대 ROI 안으로 들어온 순간).
     // 반환: session_id, 실패 시 0. 이 id 를 들고 있다가 나갈 때 닫는다.
     //  residentId : -1 이면 cameraId 로 찾는다(1채널 1인 전제).
@@ -220,7 +228,26 @@ private:
     // 이게 없으면 사람이 누워 있는 내내 같은 줄이 흘러간다.
     std::set<int> missing_resident_warned_;
 
+    // 쿼리 하나를 던지는 유일한 통로. mysql_query 를 직접 부르지 말 것 —
+    // 오래 놀다 온 커넥션을 여기서 되살린다(ensureAliveLocked 주석 참고).
+    // 반환값은 mysql_query 와 같다(0=성공).
+    // ★ mutex_ 를 쥔 상태에서 부를 것.
+    int queryLocked(const char* sql);
+    // 커넥션이 살아 있는지 확인하고, 죽었으면 다시 연결한다. 성공 시 true.
+    // ★ mutex_ 를 쥔 상태에서 부를 것.
+    bool ensureAliveLocked();
+
     std::mutex mutex_;  // conn_ 보호
     MYSQL* conn_ = nullptr;
+
+    // 재연결용으로 보관하는 접속 정보 — connect() 가 채운다.
+    std::string host_, user_, password_, dbname_;
+    unsigned int port_ = 3306;
+    // 마지막으로 쿼리가 성공한 시각. 이보다 오래 놀았으면 다음 쿼리 전에
+    // ping 으로 먼저 확인한다(매 쿼리마다 ping 하면 프레임 경로가 손해다).
+    std::chrono::steady_clock::time_point last_ok_{};
+    // DB 자체가 내려가 재연결이 계속 실패할 때 다음 시도를 미루는 시각.
+    // 없으면 프레임마다 접속을 시도하며 같은 실패 로그를 쏟아낸다.
+    std::chrono::steady_clock::time_point next_retry_{};
 };
 #endif

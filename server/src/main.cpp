@@ -37,6 +37,7 @@
 #include "fall_module.hpp"
 #include "identity_tracker.hpp"
 #include "frame_queue.hpp"
+#include "pose_overlay.hpp"
 #include "privacy_masker.hpp"
 #include "protocol/video_stream.h"
 #include "onvif_imaging.hpp"
@@ -116,6 +117,20 @@ int main(int argc, char* argv[]) {
 
     FallModule fall;                // [낙상감지]
     BedEgressModule bed_egress;     // [침상탈출]
+    // [데모] MoveNet 관절 오버레이 — pose_overlay=1 일 때만 배선한다(아래).
+    // 파이프라인보다 오래 살아야 해서 여기서 만든다(pipeline.run 동안 참조됨).
+    PoseOverlay pose_overlay;
+    if (config.pose_overlay) {
+        fall.setPoseOverlay(&pose_overlay);
+        std::fprintf(stderr,
+                     "[main] 데모 오버레이 켜짐 — MoveNet 관절을 송출 영상에 그린다 "
+                     "(자세추론 %.2fs/명, AI워커 %.2fs)\n",
+                     config.pose_interval_sec > 0 ? config.pose_interval_sec : 2.0,
+                     config.ai_job_interval_sec > 0 ? config.ai_job_interval_sec : 0.25);
+    }
+    // 추론 주기(시연에선 짧게) — 0 이하면 각 모듈의 기본값이 그대로 유지된다.
+    fall.setPoseIntervalSec(config.pose_interval_sec);
+    ai_worker.setMinJobIntervalSec(config.ai_job_interval_sec);
     fall.setBedZones(&bed_zones);
     bed_egress.setBedZones(&bed_zones);
     // [일일 리포트] 침대 재실 시간(bed_sessions) 기록. identity 는 요양보호사를
@@ -139,7 +154,7 @@ int main(int argc, char* argv[]) {
     // 실패해도 서버는 계속 뜬다(영상·낙상 판정은 MQTT와 무관) — 다만 그 사이
     // 알람은 알림 노드에 닿지 않으므로, 조용히 넘기지 말고 크게 남긴다.
     // 연결은 백그라운드에서 계속 재시도된다(MqttMasterManager::init 참고).
-    if (!mqtt.init("172.20.32.79", 8883)) {
+    if (!mqtt.init("dabo.local", 8883)) {
         std::fprintf(stderr,
                      "[main] MQTT 브로커 미연결 상태로 시작합니다 — 웨어러블 수신과 "
                      "알림 노드 알람은 재접속될 때까지 동작하지 않습니다.\n");
@@ -522,6 +537,15 @@ int main(int argc, char* argv[]) {
                           const std::vector<Detection>& dets) {
         privacy_masker.process(ch, img, dets);
     });
+
+    // [데모] MoveNet 관절 오버레이 — Qt 송출본에만 그린다(스냅샷 뜬 뒤, 낙상
+    // 선택본 만든 뒤). 꺼져 있으면 등록 자체를 안 해 비용이 0이다.
+    if (config.pose_overlay) {
+        pipeline.setOverlay([&](int ch, cv::Mat& img,
+                                const std::vector<Detection>& dets) {
+            pose_overlay.draw(ch, img, dets);
+        });
+    }
 
     // 채널별 큐 등록 → run()이 채널마다 전용 처리 스레드를 띄운다.
     for (auto& entry : queues) {

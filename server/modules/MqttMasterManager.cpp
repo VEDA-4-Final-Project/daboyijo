@@ -197,6 +197,7 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
         // ── 생체신호: 상태다. 이상인 '동안'이 아니라 이상으로 '바뀔 때' 알린다.
         const bool abnormal =
             (hr_valid && data.heart_rate >= kHrAlarmHigh) ||
+            (hr_valid && data.heart_rate >= kHrAlarmHigh) ||
             (spo2_valid && data.spo2 < kSpo2AlarmLow);
         // 복귀 판정은 더 빡빡하게(히스테리시스) — 경계값에서 알람이 떨리지 않게.
         const bool back_to_normal =

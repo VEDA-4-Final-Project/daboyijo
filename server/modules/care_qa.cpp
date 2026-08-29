@@ -16,6 +16,11 @@ constexpr int kKeyframes = 3;       // VLM에 보낼 키프레임 수
 constexpr double kSpanSec = 5.0;    // 최근 몇 초 구간에서 뽑을지
 constexpr double kReportCooldownSec = 60.0;  // 낙상 자동 리포트 최소 간격
 
+// 📷 지금 상황 보기 답변 재사용 창. 짧게 잡는다 — 이 값이 길수록 Gemini 호출은
+// 아끼지만, 그만큼 오래된 장면을 "지금"이라며 보여주게 된다(캐시로 답할 땐
+// 항상 "N초 전 확인"을 같이 적는 이유).
+constexpr double kNowCacheSec = 45.0;
+
 // 📋 전체 방 현황은 방 수만큼 Gemini 를 부른다. 무료 티어 일일 한도(RPD)를 방 수
 // 배로 태우므로 방당 1장만 보낸다 — 📷 단일 조회(3장)보다 정확도는 떨어지지만
 // "지금 이 방 사람이 어떤 자세인가" 수준은 1장으로도 판단된다.
@@ -83,6 +88,42 @@ nlohmann::json button(const std::string& text, const std::string& data) {
     b["text"] = text;
     b["callback_data"] = data;
     return b;
+}
+
+// VLM 실패를 사용자 문면으로. 사유마다 사용자가 할 수 있는 일이 다르므로 나눈다 —
+// 예전엔 전부 "일시적으로 …다시 시도해 주세요"로 뭉갰는데, 무료 한도가 소진된
+// 상황에서는 아무리 다시 눌러도 안 되면서 호출만 더 쌓였다.
+const char* vlmFailureText(VlmError e) {
+    switch (e) {
+        case VlmError::Quota:
+            return "오늘 AI 상황 설명 사용량(무료 한도)을 다 썼어요. 한도는 매일 "
+                   "초기화됩니다. 대신 지금 사진을 바로 보내드릴게요.";
+        case VlmError::Timeout:
+            return "AI 응답이 늦어 설명을 받지 못했어요. 대신 지금 사진을 바로 "
+                   "보내드릴게요.";
+        case VlmError::Network:
+            return "인터넷 연결 문제로 설명을 받지 못했어요. 대신 지금 사진을 바로 "
+                   "보내드릴게요.";
+        case VlmError::NotConfigured:
+            return "상황 확인 기능이 설정돼 있지 않아요. (관리자 설정 필요)";
+        case VlmError::Rejected:
+        case VlmError::Empty:
+        case VlmError::None:
+            break;
+    }
+    return "일시적으로 상황 설명을 만들지 못했어요. 대신 지금 사진을 바로 "
+           "보내드릴게요.";
+}
+
+// 📋 전체 방 현황은 방마다 한 줄이라 짧은 문면을 따로 쓴다.
+const char* vlmFailureShort(VlmError e) {
+    switch (e) {
+        case VlmError::Quota:   return "AI 무료 한도 소진 — 오늘은 설명 불가";
+        case VlmError::Timeout: return "AI 응답 지연 — 확인 실패";
+        case VlmError::Network: return "연결 문제 — 확인 실패";
+        default:                break;
+    }
+    return "확인 실패 — 잠시 후 다시 시도";
 }
 
 }  // namespace
@@ -300,8 +341,15 @@ void CareQaModule::sendOverview(const std::string& chat_id, Role role) {
                 msg += "영상이 들어오지 않음";
                 continue;
             }
-            const std::string a = vlm_.describe(frames, kOverviewQuestion);
-            msg += a.empty() ? std::string("확인 실패 — 잠시 후 다시 시도") : a;
+            VlmError err = VlmError::None;
+            const std::string a = vlm_.describe(frames, kOverviewQuestion, &err);
+            msg += a.empty() ? std::string(vlmFailureShort(err)) : a;
+            // 한도가 소진됐으면 남은 방도 전부 같은 결과다. 계속 돌면 사용자를
+            // 방 수만큼 더 기다리게 만들 뿐이라 여기서 끊는다.
+            if (err == VlmError::Quota) {
+                msg += "\n\n※ AI 무료 한도가 소진돼 나머지 방은 확인하지 못했어요.";
+                break;
+            }
         }
         telegram_.sendMessage(chat_id, msg);
         sendMenu(-1, chat_id, role);
@@ -405,9 +453,66 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             sendMenu(ch, chat_id, role);
             return;
         }
+        // ── 호출 절약: 방금 받은 답 재사용 / 중복 요청 차단 ──
+        // (배경은 care_qa.hpp 의 now_cache_ 주석 참고)
+        // 락은 상태를 읽고 표시를 세우는 데만 쓴다 — 텔레그램 왕복(수 초)을 락
+        // 안에서 하면 그 방의 다른 요청이 그동안 통째로 막힌다.
+        const auto now_key = std::make_pair(ch, static_cast<int>(role));
+        std::string cached_answer;
+        SnapshotBuffer::Jpeg cached_shot;
+        int cached_age = 0;
+        bool busy = false;
+        {
+            std::lock_guard<std::mutex> lock(now_mutex_);
+            const auto now = std::chrono::steady_clock::now();
+            auto c = now_cache_.find(now_key);
+            if (c != now_cache_.end()) {
+                const double age =
+                    std::chrono::duration<double>(now - c->second.at).count();
+                if (age < kNowCacheSec) {
+                    cached_answer = c->second.answer;
+                    cached_shot = c->second.shot;
+                    cached_age = static_cast<int>(age + 0.5);
+                }
+            }
+            if (cached_answer.empty()) {
+                busy = now_inflight_[now_key];
+                if (!busy) now_inflight_[now_key] = true;
+            }
+        }
+        if (!cached_answer.empty()) {
+            // 몇 초 전 답을 다시 쓴다. "지금"이라고 속이지 않도록 언제 확인한
+            // 것인지 반드시 같이 적는다.
+            telegram_.sendMessage(chat_id,
+                                  roomPrefix(ch, role) + "(" +
+                                      std::to_string(cached_age) + "초 전 확인)\n" +
+                                      cached_answer);
+            if (!cached_shot.empty()) {
+                telegram_.sendPhoto(chat_id, cached_shot, "지금 상황 📷");
+            }
+            sendMenu(ch, chat_id, role);
+            return;
+        }
+        if (busy) {
+            telegram_.sendMessage(chat_id,
+                roomPrefix(ch, role) + "이미 확인 중이에요. 잠시만 기다려 주세요…");
+            return;
+        }
+
         // 수 초 걸리는 VLM 왕복은 폴링 루프를 막지 않도록 별도 스레드에서.
         // VLM 답변 전송이 끝난 뒤 메뉴를 다시 띄우려면 this가 필요하다(sendMenu).
-        std::thread([this, ch, chat_id, role]() {
+        std::thread([this, ch, chat_id, role, now_key]() {
+            // 어느 경로로 빠져나가든 in-flight 표시는 반드시 내린다 — 안 내리면
+            // 그 방의 📷 버튼이 영구히 "이미 확인 중"으로 막힌다.
+            struct InflightGuard {
+                CareQaModule* self;
+                std::pair<int, int> key;
+                ~InflightGuard() {
+                    std::lock_guard<std::mutex> lock(self->now_mutex_);
+                    self->now_inflight_[key] = false;
+                }
+            } guard{this, now_key};
+
             auto frames = snapshots_.recentKeyframes(ch, kKeyframes, kSpanSec);
             if (frames.empty()) {
                 telegram_.sendMessage(chat_id,
@@ -417,12 +522,25 @@ void CareQaModule::handleCallback(int channel, const std::string& chat_id,
             }
             const char* q =
                 role == Role::Staff ? kNowQuestionStaff : kNowQuestionGuardian;
-            std::string answer = vlm_.describe(frames, q);
+            VlmError err = VlmError::None;
+            std::string answer = vlm_.describe(frames, q, &err);
             if (answer.empty()) {
+                // ★ 설명이 실패해도 사진은 보낸다. 사진은 이미 우리 손에 있고
+                //   Gemini와 무관한데, 예전엔 설명 실패를 이유로 사진까지 안 보내서
+                //   "지금 상황"을 알 방법이 아예 없어졌다. 사람이 눈으로 보는 게
+                //   AI 설명보다 확실하기도 하다.
                 telegram_.sendMessage(chat_id,
-                    "일시적으로 상황을 확인하기 어려워요. 잠시 후 다시 시도해 주세요.");
+                                      roomPrefix(ch, role) + vlmFailureText(err));
+                telegram_.sendPhoto(chat_id, frames.back(), "지금 상황 📷");
                 sendMenu(ch, chat_id, role);
                 return;
+            }
+            // 성공한 답만 캐시한다 — 실패 문면을 캐시하면 45초 동안 재시도조차
+            // 막혀서, 잠깐의 네트워크 문제가 그 방의 조회를 통째로 얼린다.
+            {
+                std::lock_guard<std::mutex> lock(now_mutex_);
+                now_cache_[now_key] = {std::chrono::steady_clock::now(), answer,
+                                       frames.back()};
             }
             telegram_.sendMessage(chat_id, roomPrefix(ch, role) + answer);
             telegram_.sendPhoto(chat_id, frames.back(), "지금 상황 📷");

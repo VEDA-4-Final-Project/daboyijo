@@ -12,9 +12,25 @@
  */
         QDialog { background: %(bgDeep); }
         #authCard { background: %(panel); }
+
+        /* 로그인 창 전용 "유리" 카드.
+         * LoginDialog::paintEvent()가 그린 블러 배경 위에 얹히므로 배경이
+         * 반투명(rgba)이다 — 자식 위젯은 부모가 먼저 그려진 뒤에 그려지기
+         * 때문에 알파가 그대로 섞인다. 회원가입 창의 #authCard는 불투명
+         * 배경 위에 있어 같은 값을 주면 탁해지므로 이름을 분리해 뒀다. */
+        #authGlassCard { background: rgba(21, 29, 38, 0.72);
+                         border: 1px solid rgba(255, 255, 255, 0.10);
+                         border-radius: 18px; }
+
+        /* 전체화면 로그인에는 타이틀바가 없다 — 이 버튼이 앱을 끝내는 유일한
+         * 가시적 경로다. 카드가 아니라 블러 배경 위에 바로 얹히므로 평소엔
+         * 투명하게 두고 hover에서만 판을 드러낸다. */
+        #authClose { background: transparent; color: %(sub); border: none;
+                     border-radius: 22px; font-size: 17px; font-weight: 700; }
+        #authClose:hover { background: rgba(255, 255, 255, 0.14); color: %(text); }
         QLabel { color: %(text); font-family: "Segoe UI", "맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", sans-serif; }
 
-        #authLogo { color: %(accent); font-size: 34px; font-weight: 800; letter-spacing: 3px; }
+        #authLogo { color: %(accent); font-size: 42px; font-weight: 800; letter-spacing: 4px; }
         #authTitle { color: %(text); font-size: 20px; font-weight: 800; }
         #authSubtitle { color: %(sub); font-size: 13px; letter-spacing: 0.5px; }
         #authCaption { color: %(sub); font-size: 12px; font-weight: 700; }
@@ -29,6 +45,19 @@
         #authCheck::indicator { width: 14px; height: 14px; border: 1px solid %(border);
                                 border-radius: 3px; background: %(bgDeep); }
         #authCheck::indicator:checked { background: %(accent); border-color: %(accent); }
+
+        /* 위 #authEdit/#authCheck 규칙을 유리 카드 안에서만 덮어쓴다.
+         * 불투명 %(bgDeep)를 그대로 두면 반투명 카드 위에 검은 사각형만
+         * 도드라져 유리 느낌이 깨진다. 셀렉터가 둘이라 우선순위는 위 규칙보다
+         * 높지만, 읽는 사람이 순서로도 알 수 있게 덮어쓸 원본 뒤에 둔다. */
+        #authGlassCard #authEdit { background: rgba(9, 13, 18, 0.55);
+                                   border: 1px solid rgba(255, 255, 255, 0.14); }
+        #authGlassCard #authEdit:focus { background: rgba(9, 13, 18, 0.75);
+                                         border: 1px solid %(accent); }
+        #authGlassCard #authCheck::indicator { background: rgba(9, 13, 18, 0.55);
+                                               border: 1px solid rgba(255, 255, 255, 0.14); }
+        #authGlassCard #authCheck::indicator:checked { background: %(accent);
+                                                       border-color: %(accent); }
 
         #authHint { color: %(sub); font-size: 11px; }
         #authHint[invalid="true"] { color: %(critical); font-weight: 600; }
