@@ -43,9 +43,43 @@ stream_port=5500
 #      질문에 방별 상황을 답하려면 반드시 telegram_chat_id_<채널>로 지정해야 한다
 #      (기본 telegram_chat_id만 있으면 방을 특정 못 해 안내만 나감).
 telegram_bot_token=
+
+# ── 수신자 역할: 보호자(Guardian) / 요양사(Staff) ────────────────────────
+# 봇은 하나만 쓰고, 누가 무엇을 받는지는 아래 키로 갈린다.
+#
+#  telegram_chat_id_<채널>              그 방을 조회할 수 있는 보호자들(콤마로 여럿)
+#  telegram_guardian_chat_id_<입소자id> 그 입소자 사고를 받을 보호자 1명
+#  telegram_staff_chat_id               요양사(전 채널 담당). 콤마로 여럿
+#  telegram_chat_id                     채널 지정이 하나도 없을 때의 기본 수신자
+#
+# 낙상처럼 사람이 특정되는 사건은 입소자 매핑을 먼저 쓴다. 신원 미상이면 그 방
+# 보호자 전원으로 폴백한다 — 방에 두 분이 계신데 매핑이 없을 때 "둘 다에게"가
+# "엉뚱한 한 명에게만"보다 낫기 때문.
+#
+# 역할별로 이렇게 다르다:
+#  · 보호자 — 자기 방만 보이고, 🔕 오늘 알림 끄기 버튼이 있다(침상 이탈에만 적용).
+#  · 요양사 — 전 채널. 먼저 방을 고르고 들어간다. 무음 버튼이 없다(근무 중 알림을
+#             끄는 경로를 두지 않는다). 낙상·생체이상은 양쪽 다 항상 받는다.
+#
+# ── 시연 예시: 1번 방에 어르신 두 분, 보호자 2 + 요양사 2 ──────────────
+#   telegram_chat_id_0=111111111,222222222       # 1번 방을 볼 수 있는 보호자 둘
+#   telegram_guardian_chat_id_1=111111111        # 입소자1(김○○)의 보호자
+#   telegram_guardian_chat_id_2=222222222        # 입소자2(이○○)의 보호자
+#   telegram_staff_chat_id=333333333,444444444   # 요양사 둘 — 전 채널
+# 이러면 침대1 김○○ 낙상 시 111111111 + 요양사 둘에게만 가고, 222222222 에게는
+# 가지 않는다. 입소자 id 는 residents 테이블의 resident_id 값이다.
+#
+# ※ 입소자 매핑을 안 쓰고 방 단위로만 굴려도 동작한다(그 방 보호자 전원에게 발송).
 telegram_chat_id=
 telegram_chat_id_0=
 telegram_chat_id_1=
+telegram_guardian_chat_id_1=
+telegram_staff_chat_id=
+
+# 보호자에게 사건 알림(낙상·이탈·생체이상)을 보낼지. 0이면 보호자는 봇으로 조회만
+# 하고 알림은 받지 않는다(요양사 알림은 이 값과 무관하게 항상 나간다).
+# 미지정 시 1 = 기존처럼 보호자도 알림을 받는다.
+telegram_guardian_alerts=1
 
 # 케어봇 실시간 상황 질의응답용 VLM (Google Gemini)
 # - Google AI Studio(https://aistudio.google.com/apikey)에서 API 키 발급 → gemini_api_key

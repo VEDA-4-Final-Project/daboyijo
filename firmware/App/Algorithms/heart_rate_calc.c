@@ -160,6 +160,17 @@
 /* 착용 확정 취소 —— 맥박이 이 시간 동안 사라지면 확정을 거둔다. */
 #define WEAR_REVOKE_SAMPLES        1500 // 1500샘플 = 30초
 
+/* 심박 홀드 —— VALID 이 풀린 뒤에도 마지막 실측값을 이만큼 유지한다.
+ *
+ * 낙상 충격은 반드시 PPG 를 망가뜨린다. 정작 값이 가장 필요한 순간에
+ * 확정이 풀려 0 이 나가는 것을 막는다. 심박은 '주기'라 몇 초 전 값도
+ * 여전히 의미가 있다 —— SpO2 는 진폭 비율이라 같은 처리를 하면 안 된다.
+ *
+ * ⚠ 벽시계가 아니라 '처리된 샘플' 기준이다. s_sample_tick 은 모션 블랭킹
+ *   구간에서 돌지 않으므로, 계속 움직이는 상황에서는 실제 경과 시간이
+ *   30초보다 길어진다. 쓰러져 정지한 상태에서는 벽시계와 거의 같다. */
+#define BPM_HOLD_SAMPLES           1500 // 1500샘플 = 30초
+
 /* 맥박 탐색 포기 —— 광학 접촉은 있는데 이 시간 동안 맥박을 못 찾으면
  * 조직이 아니라고 보고 미착용으로 강등한다.
  *
@@ -321,6 +332,11 @@ static uint8_t  s_prev_worn = 0;
 
 static uint32_t s_current_bpm = 0;
 static uint32_t s_current_spo2 = 0;
+
+/* 마지막으로 VALID 였던 심박과 그 시각 (HeartRateCalc_GetBPMHeld 전용).
+ * s_current_bpm 과 달리 확정이 풀려도 지워지지 않는다. */
+static uint32_t s_held_bpm = 0;
+static uint32_t s_held_bpm_tick = 0;
 static uint32_t s_blanking_counter = 0;
 static uint16_t s_print_counter = 0;
 
@@ -824,6 +840,7 @@ static uint8_t update_wear_state(uint32_t ir_mean, uint16_t count)
             {
                 s_is_worn = 0;
                 s_hr_state = HR_STAT_NONE;
+                s_held_bpm = 0;    /* 다른 대상에 채웠을 때 옛 값이 되살아나면 안 된다 */
                 s_air_counter = 0;
 
                 /* 물리적 탈착 — 착용 확정을 여기서만 취소한다.
@@ -911,6 +928,7 @@ static uint8_t update_wear_state(uint32_t ir_mean, uint16_t count)
             {
                 s_is_worn = 0;
                 s_hr_state = HR_STAT_NONE;
+                s_held_bpm = 0;    /* 다른 대상에 채웠을 때 옛 값이 되살아나면 안 된다 */
                 s_search_counter = 0;
                 s_air_counter = 0;
                 s_search_gave_up = 1;
@@ -1443,6 +1461,16 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
         }
     }
 
+    /* 심박 홀드값 갱신.
+     *
+     * 블랭킹 goto 가 건너뛰지 않는 위치여야 한다 —— 움직이는 동안에는
+     * 갱신할 새 값도 없고, 마지막 정상값은 그대로 남아 있어야 한다. */
+    if (s_hr_state == HR_STAT_VALID && s_current_bpm > 0)
+    {
+        s_held_bpm = s_current_bpm;
+        s_held_bpm_tick = s_sample_tick;
+    }
+
     /* SpO2 신선도 —— 오래되면 값을 내린다.
      *
      * 자기상관으로 심박이 유지되는 동안에도 SpO2 는 갱신되지 않는다(R 을 못 구함).
@@ -1565,6 +1593,8 @@ void HeartRateCalc_Reset(void)
     s_is_worn = 0;
     s_current_bpm = 0;
     s_current_spo2 = 0;
+    s_held_bpm = 0;
+    s_held_bpm_tick = 0;
     s_blanking_counter = 0;
     s_print_counter = 0;
     s_stable_peak_counter = 0;
@@ -1680,3 +1710,29 @@ uint8_t  HeartRateCalc_IsWorn(void)     { return s_wear_confirmed; }
 uint8_t  HeartRateCalc_HasContact(void) { return s_is_worn; }
 uint32_t HeartRateCalc_GetBPM(void)  { return (s_hr_state == HR_STAT_VALID) ? s_current_bpm : 0; }
 uint32_t HeartRateCalc_GetSpO2(void) { return (s_hr_state == HR_STAT_VALID) ? s_current_spo2 : 0; }
+
+/* 표시·전송용 심박 —— 확정이 풀려도 마지막 실측값을 BPM_HOLD_SAMPLES 만큼 유지한다.
+ *
+ * 낙상 충격은 곧 큰 움직임이고, 큰 움직임은 모션 블랭킹과 연속 기각을 통해
+ * 반드시 HR_STAT_VALID 를 떨어뜨린다(on_peak_rejected 참조). 그래서 GetBPM()
+ * 을 그대로 쓰면 낙상 알림 패킷에 하필 0 이 실린다. 여기서 그 구멍을 메운다.
+ *
+ * ⚠ 돌려주는 값이 '지금 측정된 값'이 아닐 수 있다. 판정 로직은 반드시
+ *   GetBPM() 을 쓸 것 —— 이 함수는 사람이 보는 화면과 알림 전용이다.
+ *   패킷에는 홀드 여부를 표시할 자리가 없어(hm10.h 7바이트 스펙) 수신 측은
+ *   실측값과 구분하지 못한다. 필드를 늘리려면 relay-node 와 동시 배포해야 한다.
+ *
+ * 홀드가 즉시 끝나는 조건:
+ *   · VALID 재획득    → 실측값으로 복귀
+ *   · 광학 접촉 상실  → 0 (s_held_bpm 도 탈착 지점에서 함께 지운다)
+ *   · 유효기간 만료   → 0
+ */
+uint32_t HeartRateCalc_GetBPMHeld(void)
+{
+    if (s_hr_state == HR_STAT_VALID && s_current_bpm > 0) return s_current_bpm;
+
+    if (!s_is_worn || s_held_bpm == 0) return 0;
+    if ((s_sample_tick - s_held_bpm_tick) > BPM_HOLD_SAMPLES) return 0;
+
+    return s_held_bpm;
+}

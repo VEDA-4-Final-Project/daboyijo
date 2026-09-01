@@ -9,7 +9,7 @@ class QTimer;
 
 // 알림 노드의 64x32 HUB75 패널을 관제 앱 안에서 그대로 흉내 내는 미리보기.
 //
-// alert-node/app/matrix/alert-display.cpp 의 렌더링(같은 hub75-font16 글꼴, 오른쪽→왼쪽
+// alert-node/app/matrix/alert-display.cpp 의 렌더링(같은 font16 글꼴, 오른쪽→왼쪽
 // 스크롤, 위아래 등급색 테두리)을 Qt 로 이식해 WYSIWYG 를 맞춘다. 밝기 슬라이더를 올리면
 // 픽셀 색이 곧바로 그 레벨(brightness/255)로 밝아진다 — 이게 이 위젯의 핵심 목적이다.
 //

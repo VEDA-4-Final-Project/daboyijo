@@ -1,4 +1,4 @@
-/* 자동 생성 파일 - genfont.py 가 만든다, 직접 고치지 말 것 */
+/* 자동 생성 파일 - gen_font.py 가 만든다, 직접 고치지 말 것 */
 /* 나눔고딕Bold 15px, 셀 16행, 비트 0x8000=맨 왼쪽 */
 #ifndef HUB75_FONT16_H
 #define HUB75_FONT16_H

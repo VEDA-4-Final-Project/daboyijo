@@ -12,7 +12,7 @@ MOSQUITTO_CONF_DIR="/etc/mosquitto/ca_certificates"
 # 여기 없는 주소로 붙으면 이름 불일치로 핸드셰이크가 끊긴다.
 # 브로커 IP 가 바뀌거나 늘면 이 값만 고치거나 환경변수로 넘긴다:
 #   BROKER_IPS="172.20.31.17,172.20.31.16" ./generate_certs.sh
-BROKER_IPS="${BROKER_IPS:-172.20.32.51}"
+BROKER_IPS="${BROKER_IPS:-172.20.31.33}"
 BROKER_DNS="${BROKER_DNS:-DaboBroker}"
 
 # 서버 인증서 유효기간은 398 일을 넘기면 안 된다.

@@ -104,6 +104,11 @@ public slots:
     bool sendAlarmTest(const QString& target_device,
                        int brightness255, int volumePct, int qos = 1);
 
+    // 원격 방송(인터콤) 토글. on=true 면 노드가 사이렌/WAV 를 즉시 멈추고 마이크만
+    // 내보낸다(audio_action=MIC_ON), false 면 마이크를 놓아 WAV 재생이 다시 가능한
+    // 상태로 되돌린다(MIC_OFF). matrix 는 안 건드린다 — 방송 중에도 경보 화면은 그대로.
+    bool sendBroadcastToggle(const QString& target_device, bool on, int qos = 1);
+
 signals:
     void connected();
     void disconnected();

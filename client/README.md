@@ -104,5 +104,5 @@ cmake -S . -B build -DDABOYIJO_GEMINI_KEY=<발급받은 키>
 - MQTT JSON 계약: [`MQTT/MQTT_prod/veda_messages.hpp`](../MQTT/MQTT_prod/veda_messages.hpp)
 - 토픽 문자열은 `mqttqtmanager.h`의 상수 한 곳에서만 정의합니다 —
   한 글자라도 어긋나면 **에러 없이 조용히 아무 일도 안 일어납니다**
-- LED 미리보기는 `hub75-font16.h`에 있는 글자만 보입니다(숫자·"확인"은 있음).
+- LED 미리보기는 `font16.h`에 있는 글자만 보입니다(숫자·"확인"은 있음).
   알림 노드와 같은 폰트 파일을 씁니다

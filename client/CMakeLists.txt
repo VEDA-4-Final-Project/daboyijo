@@ -50,6 +50,8 @@ qt_add_executable(daboyijo
     alertmatrixpreview.h
     timelinebar.cpp
     timelinebar.h
+    font16.h
+    audiotransmitter.h audiotransmitter.cpp
 )
 
 # 앱 전역 스타일시트 리소스.
@@ -63,7 +65,7 @@ qt_add_resources(daboyijo "appstyle"
 )
 
 # veda_messages.hpp (노드들과 공유하는 JSON 규격), nlohmann/json.hpp,
-# hub75-font16.h (알림 노드와 공유하는 LED 글꼴) 를 찾을 위치
+# font16.h (알림 노드와 공유하는 LED 글꼴) 를 찾을 위치
 target_include_directories(daboyijo PRIVATE
     ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY} ${VEDA_FONT_DIR})
 

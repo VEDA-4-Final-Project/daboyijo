@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-# genfont.py - 한글 완성형 전체와 ASCII 를 16px 비트맵으로 구워 C 헤더로 뽑는다
+# gen_font.py - 한글 완성형 전체와 ASCII 를 16px 비트맵으로 구워 C 헤더로 뽑는다
 #
-# 나눔고딕Bold 를 PIL 로 렌더링해서 hub75-font16.h 를 만든다
+# 나눔고딕Bold 를 PIL 로 렌더링해서 font16.h 를 만든다
 #   - 글자 하나당 16행, 각 행은 uint16 (비트 0x8000 = 맨 왼쪽 칸)
 #   - adv = 다음 글자로 커서를 옮길 칸 수 (한글은 넓고 숫자는 좁다)
 #
 # 완성형 11172 자를 전부 넣는다(450KB) - 입주자 이름은 DB 에서 오는 임의의 한글이라
 # 골라 담으면 목록 밖 글자에서 렌더러가 조용히 8px 를 건너뛰고 지나간다
 #
-# 실행: python3 genfont.py   (fonts-nanum 설치 필요, 5초쯤)
+# 실행: python3 gen_font.py   (fonts-nanum 설치 필요, 5초쯤)
 
 import os
 import sys
@@ -20,7 +20,7 @@ SIZE = 15          # 16행 안에 안정적으로 들어가는 크기 (미리보
 H    = 16          # 글자 높이 (칸)
 THRESH = 110       # 안티에일리어싱 알파 임계값 - 이보다 진하면 켠 픽셀
 # 헤더를 쓰는 소스가 같은 디렉터리에 있어서, 어디서 실행하든 여기에 쓴다
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub75-font16.h")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font16.h")
 
 # 한글 완성형 전체 (U+AC00 ~ U+D7A3)
 CHARS_KO = "".join(chr(c) for c in range(0xAC00, 0xD7A3 + 1))
@@ -76,7 +76,7 @@ for ch in CHARS_KO + CHARS_ASCII:
 glyphs.sort(key=lambda g: g[0])             # 코드포인트 오름차순 (C 에서 이진탐색 가능)
 
 with open(OUT, "w", encoding="utf-8") as f:
-    f.write("/* 자동 생성 파일 - genfont.py 가 만든다, 직접 고치지 말 것 */\n")
+    f.write("/* 자동 생성 파일 - gen_font.py 가 만든다, 직접 고치지 말 것 */\n")
     f.write("/* 나눔고딕Bold %dpx, 셀 %d행, 비트 0x8000=맨 왼쪽 */\n" % (SIZE, H))
     f.write("#ifndef HUB75_FONT16_H\n#define HUB75_FONT16_H\n#include <stdint.h>\n\n")
     f.write("#define FONT16_H %d\n\n" % H)

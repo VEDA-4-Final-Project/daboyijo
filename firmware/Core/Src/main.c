@@ -792,7 +792,7 @@ static void Enter_Idle(void)
 // 현재 바이탈 + 낙상 플래그 + 걸음 수를 HM-10 7바이트 패킷으로 송신
 static void HM10_Send_Now(void)
 {
-    uint32_t bpm  = HeartRateCalc_GetBPM();
+    uint32_t bpm  = HeartRateCalc_GetBPMHeld();   /* 낙상 순간 0 이 나가지 않게 홀드값 사용 */
     uint32_t spo2 = HeartRateCalc_GetSpO2();
     uint8_t  hr   = (bpm > 255) ? 255 : (uint8_t)bpm;   /* 심박 8bit 클램프 */
 

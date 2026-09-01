@@ -53,4 +53,9 @@ uint8_t  HeartRateCalc_IsSettling(void);
 uint32_t HeartRateCalc_GetBPM(void);
 uint32_t HeartRateCalc_GetSpO2(void);
 
+/* 화면·BLE 표시용 심박. VALID 이 풀려도 마지막 실측값을 최대 30초 유지한다.
+ * 낙상 순간에는 충격이 PPG 를 망가뜨려 GetBPM() 이 0 을 돌려주기 때문이다.
+ * 값의 신선도를 보장하지 않으므로 판정 로직은 GetBPM() 을 쓸 것. */
+uint32_t HeartRateCalc_GetBPMHeld(void);
+
 #endif /* APP_ALGORITHMS_HEART_RATE_CALC_H_ */

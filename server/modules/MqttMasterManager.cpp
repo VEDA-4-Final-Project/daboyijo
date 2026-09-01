@@ -6,11 +6,11 @@
 
 namespace {
 // 알람 발동 기준
-constexpr int kHrAlarmHigh   = 180;   // 심박 이 값 초과 → 이상
+constexpr int kHrAlarmHigh   = 110;   // 심박 이 값 이상 → 이상 (Qt vitalLevel() 의 critical 기준과 같은 값)
 constexpr int kSpo2AlarmLow  = 90;    // SpO2 이 값 미만 → 이상
 // 정상 복귀 기준 — 발동 기준보다 한 칸 안쪽으로 잡는다(히스테리시스).
 // 89 ↔ 90 을 오갈 때 알람이 껐다 켜졌다 하는 걸 막는다.
-constexpr int kHrClearHigh   = 175;
+constexpr int kHrClearHigh   = 105;
 constexpr int kSpo2ClearLow  = 93;
 // 한 번 튄 값으로 성급히 "정상 복귀"라고 하지 않도록 연속 N회를 요구한다.
 constexpr int kNormalStreakToClear = 3;
@@ -18,7 +18,7 @@ constexpr int kNormalStreakToClear = 3;
 // 이름 가운데 글자를 O 로 가린다 — 원본 이름이 MQTT 로 안 나가게 여기서 미리 가린다.
 // UTF-8 완성형 한글은 3바이트라 바이트 단위로 자르면 글자가 깨지므로, 리드바이트
 // 상위비트로 코드포인트 경계를 찾아 글자 단위로 자른다. 알림노드 LED 폰트가 지금은
-// 딱 정해진 이름 몇 개만 지원하므로(hub75-font16.h), 여기서도 일반적인 임의 이름이
+// 딱 정해진 이름 몇 개만 지원하므로(font16.h), 여기서도 일반적인 임의 이름이
 // 아니라 그 글자들만 상정한다.
 std::string maskMiddleChar(const std::string& name) {
     std::vector<std::pair<size_t, size_t>> spans;   // (offset, byte 길이) — 코드포인트별
@@ -196,7 +196,7 @@ void MqttMasterManager::onMessageReceived(const std::string& topic, const std::s
 
         // ── 생체신호: 상태다. 이상인 '동안'이 아니라 이상으로 '바뀔 때' 알린다.
         const bool abnormal =
-            (hr_valid && data.heart_rate > kHrAlarmHigh) ||
+            (hr_valid && data.heart_rate >= kHrAlarmHigh) ||
             (spo2_valid && data.spo2 < kSpo2AlarmLow);
         // 복귀 판정은 더 빡빡하게(히스테리시스) — 경계값에서 알람이 떨리지 않게.
         const bool back_to_normal =

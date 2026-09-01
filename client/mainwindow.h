@@ -31,6 +31,8 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
+#include "alertbanner.h"
+#include "audiotransmitter.h"
 
 
 
@@ -215,6 +217,10 @@ struct VitalSample {
     int    spo2        = 0;
     qint64 arrivedAtMs = 0;   // 값이 오래됐는지 판단용
 };
+
+// 오디오 방송을 위한 클래스
+class AudioTransmitter;
+
 
 class MainWindow : public QMainWindow
 {
@@ -740,6 +746,7 @@ private:
     void refreshAdmissionTable(int residentId);   // residentId < 0 이면 표를 비운다
     // residents(status='재원')를 camera_id로 채널에 매핑해 patients[]를 DB로 채운다.
     void loadPatientsFromDb();
+
     // patients[]를 영상 오버레이·바이탈 카드 라벨에 다시 반영(등록/수정/퇴원 후 호출).
     void refreshPatientLabels();
     void showChangeLogDialog(int admissionId);    // 그 입원 건의 변경 내역 팝업
@@ -932,6 +939,9 @@ private:
     QPushButton* roiChannelButtons[4] = {};    // 채널 선택 버튼(1~4)
     QLabel* roiEditInfo = nullptr;
     void selectRoiChannel(int ch);             // 편집 채널 전환 → 영상/ROI 로드
+
+    // -- 오디오 음성 송출(방송) -- 
+    AudioTransmitter *m_transmitter = nullptr;
 };
 
 #endif // MAINWINDOW_H

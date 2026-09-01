@@ -3,6 +3,7 @@
 
 #include "detection.hpp"
 #include <opencv2/opencv.hpp>
+#include <chrono>
 
 // 옷 색(HSV) 기반 보호사 판정기
 class CaregiverDetector {
@@ -39,6 +40,9 @@ private:
     //   조끼 판정 최소 평균 채도. 실측상 조끼는 S 150~207,
     //   피부·사복·나무는 S 55~137로 갈려서 이 값이 주 판정 역할을 한다.
     double min_sat_ = 150.0;
+
+    // 디버그 로그 스로틀 — 프레임마다 쏟아지지 않게 0.5초에 한 번만 출력
+    mutable std::chrono::steady_clock::time_point last_log_time_{};
 };
 
 #endif // CAREGIVER_DETECTOR_HPP
