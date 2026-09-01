@@ -6,7 +6,8 @@
 #include <functional>
 #include <string>
 #include <vector>
-#include "alert-event.hpp"
+#include "severity.hpp"
+#include "clock-font.h"
 
 // 64x32 HUB75 패널에 한글 경보 스크롤
 //
@@ -39,16 +40,21 @@ public:
     // 스크롤 — passes 번 흘리고 리턴 (1~10 으로 클램프)
     void show(const std::string& msg, severity sev, int passes,
               const AbortFn& abort = nullptr);
-    // 스크롤 — abort 가 끊을 때까지. 안 끊으면 안 돌아오니 abort 없이 부르면 안 됨
-    void showUntilAborted(const std::string& msg, severity sev, const AbortFn& abort);
     // 정지 표시 — 한 번 그리고 리턴, 지울 때까지 드라이버가 계속 띄움
     void showStatic(const std::string& msg, severity sev);
+    // 고급진 그라데이션 시계 — "HH:MM:SS" 형식, 그대로 6자리 다 그리고 콜론은 1Hz 점멸
+    void showClock(const std::string& hhmmss);
+    // 낙상 경보 — 왼쪽에 alert.gif 반복 재생, 오른쪽에 금색 한글 스크롤. 등급 띠는 없음
+    // passes 음수는 abort 가 끊을 때까지 (show() 와 동일한 규칙)
+    void showFallAlert(const std::string& msg, int passes, const AbortFn& abort = nullptr);
 
 private:
-    // show 와 showUntilAborted 의 알맹이 — passes < 0 이면 무한
-    // 무한을 passes 값으로 공개 안 하는 건 그게 MQTT 로 들어오는 값이라서
+    // show() 의 알맹이 — passes < 0 이면 무한(show() 는 이 값을 안 받고 늘 클램프해서 넘김)
     void scroll(const std::string& msg, severity sev, int passes, const AbortFn& abort);
-    void drawText(int x, int y, const std::string& s, const uint8_t rgb[3]);
+    // clipLeft — 이보다 왼쪽 픽셀은 안 그림 (showFallAlert 가 아이콘 영역을 가리는 데 씀)
+    void drawText(int x, int y, const std::string& s, const uint8_t rgb[3], int clipLeft = 0);
+    void drawClockGlyph(int x, int y, const clockpix_t* glyph, int w, int h);
+    void drawAlertGifIcon(int x, int y, int frameIdx);
     void drawBorder(const uint8_t rgb[3], int scale);
     int  measureText(const std::string& s) const;
     void flush();                                       // vsync 대기 후 한 번에 복사
