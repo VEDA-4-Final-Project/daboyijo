@@ -47,7 +47,6 @@ Makefile*
 !alert-node/drivers/wm8960/Makefile
 !alert-node/drivers/hub75/Makefile
 !alert-node/app/Makefile
-!alert-node/app/matrix/Makefile
 !alert-node/app/AudioPlayer/Makefile
 
 # ===== STM32CubeIDE / Eclipse =====

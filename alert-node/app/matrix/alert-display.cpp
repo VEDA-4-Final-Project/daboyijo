@@ -3,7 +3,8 @@
 // 그리기는 전부 scratch_ 에 하고 flush() 가 프레임 경계에서 한 번에 복사
 // fb_ 에 직접 그리면 스캔이 그리는 도중을 앞질러 스크롤이 찢어짐 (단일 버퍼)
 #include "alert-display.hpp"
-#include "hub75-font16.h"
+#include "font16.h"
+#include "alert-gif.h"
 
 #include <cstdio>
 #include <cstring>
@@ -179,7 +180,8 @@ int AlertDisplay::measureText(const std::string& s) const
 }
 
 // 문구를 (x, y) 부터 한 색으로 그림 — 화면 밖은 잘라냄
-void AlertDisplay::drawText(int x, int y, const std::string& s, const uint8_t rgb[3])
+// clipLeft 보다 왼쪽인 픽셀도 안 그림 — showFallAlert 가 아이콘 자리를 가리는 데 씀
+void AlertDisplay::drawText(int x, int y, const std::string& s, const uint8_t rgb[3], int clipLeft)
 {
     for (const char* p = s.c_str(); *p; ) {
         uint32_t cp;
@@ -194,12 +196,64 @@ void AlertDisplay::drawText(int x, int y, const std::string& s, const uint8_t rg
                 uint16_t bits = g->rows[row];
                 for (int col = 0; col < 16; col++) {
                     int px = x + col;
-                    if (!(bits & (0x8000 >> col)) || px < 0 || px >= cols_) continue;
+                    if (!(bits & (0x8000 >> col)) || px < clipLeft || px >= cols_) continue;
                     memcpy(&scratch_[static_cast<size_t>(py * stride_ + px * 3)], rgb, 3);
                 }
             }
         x += g->adv;
     }
+}
+
+// alert.gif 한 프레임을 (x, y) 에 그림 — 원본이 불투명이라 알파 체크 없이 그대로 복사
+void AlertDisplay::drawAlertGifIcon(int x, int y, int frameIdx)
+{
+    const auto& frame = alert_gif[frameIdx];
+    for (int row = 0; row < ALERT_GIF_H; row++) {
+        int py = y + row;
+        if (py < 0 || py >= rows_) continue;
+        for (int col = 0; col < ALERT_GIF_W; col++) {
+            const alertgifpix_t& p = frame[row][col];
+            int px = x + col;
+            if (px < 0 || px >= cols_) continue;
+            const uint8_t rgb[3] = { p.r, p.g, p.b };
+            memcpy(&scratch_[static_cast<size_t>(py * stride_ + px * 3)], rgb, 3);
+        }
+    }
+}
+
+// 왼쪽 alert.gif + 오른쪽 금색 한글 스크롤, 등급 띠 없음. passes < 0 이면 abort 가
+// 끊을 때까지(scroll() 과 같은 규칙) — frame 을 안 되돌려야 아이콘 애니메이션이 안 끊긴다
+void AlertDisplay::showFallAlert(const std::string& msg, int passes, const AbortFn& abort)
+{
+    if (!fb_) return;
+    if (passes > 10) passes = 10;
+
+    constexpr int ICON_X = 1;
+    constexpr int ICON_GAP = 2;
+    // alert.gif 원본 자체에 아래쪽 여백이 있어 그냥 세로 중앙에 놓으면 위로 치우쳐 보임 — 보정
+    const int iconY  = (rows_ - ALERT_GIF_H) / 2 + 2;
+    const int textY  = (rows_ - FONT16_H) / 2;
+    const int clipLeft = ICON_X + ALERT_GIF_W + ICON_GAP;       // 텍스트가 아이콘을 못 가리게
+
+    static const uint8_t TEXT_COL[3] = { 255, 200, 30 };   // 금색 단색 — 삼각형과 어울림
+
+    // 등장(clipLeft~cols_ 폭만큼) ~ 퇴장 — 아이콘에 가려지는 구간은 처음부터 빼서 헛김이 없다
+    const int span = measureText(msg) + (cols_ - clipLeft);
+    long frame = 0;
+
+    for (int pass = 0; passes < 0 || pass < passes; pass++)
+        for (int off = 0; off <= span; off++, frame++) {
+            if (abort && abort(pass)) return;
+
+            long t = (frame * FPS_US / 1000) % (ALERT_GIF_FRAMES * ALERT_GIF_FRAME_MS);
+            int iconIdx = (int)(t / ALERT_GIF_FRAME_MS);
+
+            memset(scratch_.data(), 0, scratch_.size());
+            drawAlertGifIcon(ICON_X, iconY, iconIdx);
+            drawText(cols_ - off, textY, msg, TEXT_COL, clipLeft);
+            flush();
+            usleep(FPS_US);
+        }
 }
 
 // 위아래 등급색 띠 — scale 은 0=꺼짐, 255=최대 (깜빡임용)
@@ -213,6 +267,61 @@ void AlertDisplay::drawBorder(const uint8_t rgb[3], int scale)
             memcpy(&scratch_[static_cast<size_t>(y * stride_ + x * 3)], c, 3);
             memcpy(&scratch_[static_cast<size_t>((rows_ - 1 - y) * stride_ + x * 3)], c, 3);
         }
+}
+
+// 시계 숫자/콜론 글리프 하나를 (x, y) 에 그림 — clock-font.h 는 이미 무채색
+// 그라데이션 + 고스트 세그먼트가 구워져 있어 색을 따로 안 받는다(글리프 자체가 색)
+void AlertDisplay::drawClockGlyph(int x, int y, const clockpix_t* glyph, int w, int h)
+{
+    for (int gy = 0; gy < h; gy++) {
+        int py = y + gy;
+        if (py < 0 || py >= rows_) continue;
+        for (int gx = 0; gx < w; gx++) {
+            const clockpix_t& p = glyph[gy * w + gx];
+            if (!p.a) continue;
+            int px = x + gx;
+            if (px < 0 || px >= cols_) continue;
+            const uint8_t rgb[3] = { p.r, p.g, p.b };
+            memcpy(&scratch_[static_cast<size_t>(py * stride_ + px * 3)], rgb, 3);
+        }
+    }
+}
+
+// "HH:MM:SS" 를 그대로 큼직하게 그림 — 콜론은 초 단위로 점멸(1Hz)
+// idle_mode=clock 전용, 요양원 로비에서 보기 좋게 초록 그라데이션 톤으로 통일
+void AlertDisplay::showClock(const std::string& hhmmss)
+{
+    if (!fb_) return;
+    // "HH:MM:SS" 형식이 아니면 그냥 무시 — clock_digit[10] 인덱싱 전에 반드시 걸러야 함
+    auto isDigit = [](char c) { return c >= '0' && c <= '9'; };
+    if (hhmmss.size() < 8 || hhmmss[2] != ':' || hhmmss[5] != ':' ||
+        !isDigit(hhmmss[0]) || !isDigit(hhmmss[1]) || !isDigit(hhmmss[3]) ||
+        !isDigit(hhmmss[4]) || !isDigit(hhmmss[6]) || !isDigit(hhmmss[7]))
+        return;
+
+    const int digits[6] = {
+        hhmmss[0] - '0', hhmmss[1] - '0',
+        hhmmss[3] - '0', hhmmss[4] - '0',
+        hhmmss[6] - '0', hhmmss[7] - '0',
+    };
+    const int sec = digits[4] * 10 + digits[5];
+    const bool colonOn = (sec % 2) == 0;
+
+    constexpr int GAP = 1;
+    constexpr int TOTAL_W = 6 * CLOCK_DIGIT_W + 2 * CLOCK_COLON_W + 7 * GAP;
+    int x = (cols_ - TOTAL_W) / 2;
+    const int y = (rows_ - CLOCK_DIGIT_H) / 2;
+
+    memset(scratch_.data(), 0, scratch_.size());
+    for (int i = 0; i < 6; i++) {
+        drawClockGlyph(x, y, &clock_digit[digits[i]][0][0], CLOCK_DIGIT_W, CLOCK_DIGIT_H);
+        x += CLOCK_DIGIT_W + GAP;
+        if (i == 1 || i == 3) {
+            drawClockGlyph(x, y, &clock_colon[colonOn ? 1 : 0][0][0], CLOCK_COLON_W, CLOCK_DIGIT_H);
+            x += CLOCK_COLON_W + GAP;
+        }
+    }
+    flush();
 }
 
 // 화면보다 긴 문구는 양옆이 잘림 — 짧게 넘기는 건 호출자 몫
@@ -235,12 +344,6 @@ void AlertDisplay::show(const std::string& msg, severity sev, int passes,
     if (passes < 1)  passes = 1;
     if (passes > 10) passes = 10;
     scroll(msg, sev, passes, abort);
-}
-
-void AlertDisplay::showUntilAborted(const std::string& msg, severity sev,
-                                    const AbortFn& abort)
-{
-    scroll(msg, sev, -1, abort);
 }
 
 void AlertDisplay::scroll(const std::string& msg, severity sev, int passes,
