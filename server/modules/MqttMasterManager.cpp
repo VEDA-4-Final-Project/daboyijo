@@ -18,7 +18,7 @@ constexpr int kNormalStreakToClear = 3;
 // 이름 가운데 글자를 O 로 가린다 — 원본 이름이 MQTT 로 안 나가게 여기서 미리 가린다.
 // UTF-8 완성형 한글은 3바이트라 바이트 단위로 자르면 글자가 깨지므로, 리드바이트
 // 상위비트로 코드포인트 경계를 찾아 글자 단위로 자른다. 알림노드 LED 폰트가 지금은
-// 딱 정해진 이름 몇 개만 지원하므로(hub75-font16.h), 여기서도 일반적인 임의 이름이
+// 딱 정해진 이름 몇 개만 지원하므로(font16.h), 여기서도 일반적인 임의 이름이
 // 아니라 그 글자들만 상정한다.
 std::string maskMiddleChar(const std::string& name) {
     std::vector<std::pair<size_t, size_t>> spans;   // (offset, byte 길이) — 코드포인트별

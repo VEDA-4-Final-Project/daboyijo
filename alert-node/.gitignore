@@ -36,7 +36,6 @@ Module.symvers
 # 유저스페이스 앱 실행 파일 - 확장자가 없어 패턴으로 안 잡히니 이름으로 적는다
 # 앱을 추가하면 여기에 한 줄 추가할 것
 app/alert-node
-app/matrix/alert-demo
 app/AudioPlayer/veda_player
 app/AudioPlayer/2veda_player
 

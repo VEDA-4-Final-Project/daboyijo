@@ -1,7 +1,7 @@
 // 64x32 HUB75 패널 미리보기 — alert-node/app/matrix/alert-display.cpp 의 이식본.
 // 그리기 로직(글꼴 이진탐색·UTF-8 디코드·스크롤·테두리)은 원본과 1:1 로 맞춘다.
 #include "alertmatrixpreview.h"
-#include "hub75-font16.h"
+#include "font16.h"
 
 #include <QPainter>
 #include <QTimer>
