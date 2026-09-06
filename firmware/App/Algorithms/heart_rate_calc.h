@@ -19,7 +19,8 @@ void HeartRateCalc_Init(void);
   *
   * @param samples   MAX30102 FIFO 한 블록 (RED/IR)
   * @param count     배열 유효 길이
-  * @param motion_g  직전 IMU 블록의 움직임 강도(|SVM-1g| 평균, g).
+  * @param motion_g  직전 IMU 블록의 움직임 강도 — 블록 내 SVM 의 '표준편차'(g).
+  *                  평균 편차가 아니다 (FallDetection_GetBlockMotion 주석 참조).
   *                  모션 블랭킹 판단에 쓰인다.
   */
 void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, float motion_g);

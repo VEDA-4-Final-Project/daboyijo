@@ -17,7 +17,7 @@
 ```mermaid
 flowchart LR
     subgraph 수집
-        W["🏃 웨어러블<br/>STM32F411CEU6<br/>BMI270 · MAX30102"]
+        W["🏃 웨어러블<br/>STM32F411CEU6<br/>BMI270 · MAX30102 · ST7789"]
         C["📹 한화비전 CCTV<br/>PNM-C16083RVQ<br/>4센서 4채널"]
     end
 
@@ -33,7 +33,7 @@ flowchart LR
         T["💬 텔레그램 케어봇<br/>보호자용"]
     end
 
-    W -->|"BLE · 7바이트 · 1Hz"| R
+    W <-->|"BLE · 바이탈 7B 1Hz<br/>· 시각 동기"| R
     R -->|"MQTT/TLS<br/>veda/wearable/data"| S
     C -->|"RTSP<br/>영상 + WiseAI 메타"| S
     S -->|"MQTT/TLS<br/>veda/alarm/control"| A
@@ -45,7 +45,7 @@ flowchart LR
 | 계층 | 구성 요소 | 역할 |
 | --- | --- | --- |
 | **수집** | 한화비전 CCTV **PNM-C16083RVQ** (4센서 멀티디렉셔널) | RTSP 스트리밍 + **WiseAI 객체 감지 메타데이터** (한 연결에 영상·메타 동시) |
-| **수집** | 웨어러블 (STM32F411CEU6) | BMI270 IMU 낙상 감지·만보기, MAX30102 PPG 심박/SpO2, 착용 판정 |
+| **수집** | 웨어러블 (STM32F411CEU6) | BMI270 IMU 낙상 감지·만보기·손목 들기, MAX30102 PPG 심박/SpO2·착용 판정, ST7789 손목 화면 |
 | **수집** | 중계 노드 (RPi 4) | HM-10 BLE 수신 → 패킷 재조립·검증 → 단절 대비 버퍼링 → MQTT 발행 |
 | **처리** | 중앙 서버 (RPi 4 **2대**) | RTSP 수신·디코딩, 자세 추정 낙상 판정, 침상이탈, 프라이버시 블러, 블랙박스/NVR, DB, MQTT |
 | **출력** | 알림 노드 (RPi 4) | MQTT 구독 → **직접 구현한 커널 드라이버**로 HUB75 LED 경보 + WM8960 오디오 사이렌 |
@@ -64,7 +64,7 @@ flowchart LR
 ```
 [카메라]   WiseAI bbox → 침대 ROI 게이팅 → MoveNet 자세 판정 → 지속 확인 ─┐
                                                                         ├─→ 즉시 경보
-[웨어러블]  BMI270 → 자유낙하 → 충격 → 5초 정지 → 착용 확정 ─────────────┘
+[웨어러블]  BMI270 → 충격 → (되짚어) 자유낙하 → 3초 정지 → 착용 확정 ────┘
                                                                             │
               DB 기록 시: 5초 안의 같은 사람·같은 종류·다른 경로 → source = BOTH 로 승격
 ```
@@ -72,7 +72,7 @@ flowchart LR
 | 경로 | 판정 방식 |
 | --- | --- |
 | **카메라** | 침대 ROI 안은 무시(취침) → ROI 밖 사람만 bbox 크롭 → **MoveNet Thunder**로 자세 추정 → 몸통 기울기 · 상하 반전 · 원근 단축 **3신호 OR** + 하체 veto → 일정 시간 지속 시 확정 |
-| **웨어러블** | SVM < 0.75g 자유낙하 3샘플 연속 → SVM > 2.5g 충격 → 5초간 정지 → **착용 확정 상태**일 때만 신고 |
+| **웨어러블** | SVM > 10g **충격을 먼저 잡고** 1.2초 링버퍼를 되짚어 SVM < 0.75g 자유낙하 3샘플 연속을 확인 → 충격 후 3초 관찰에서 정지 → **광학 접촉(착용) 상태**일 때만 신고 |
 
 ### ⚠️ AND가 아니라 OR인 이유
 
@@ -86,6 +86,7 @@ AND로 묶으면 **웨어러블 미착용·배터리 방전 시 낙상을 통째
 신뢰도가 더 높다는 정보이기도 합니다.
 
 > 5초 창은 펌웨어가 낙상 플래그를 유지하는 시간(`HM10_FALL_HOLD_MS`)과 같은 값입니다.
+> (판정에 쓰이는 3초 정지 관찰 구간과는 다른 값입니다.)
 
 ---
 
@@ -93,7 +94,8 @@ AND로 묶으면 **웨어러블 미착용·배터리 방전 시 낙상을 통째
 
 | 구간 | 방식 | 정의 위치 |
 | --- | --- | --- |
-| 웨어러블 → 중계 노드 | **BLE** (HM-10 투과모드), 7바이트 바이너리 + XOR 체크섬, 1Hz | `firmware/App/Drivers/hm10.h` |
+| 웨어러블 → 중계 노드 | **BLE** (HM-10 투과모드), 바이탈 7바이트 바이너리 + XOR 체크섬, 1Hz | `firmware/App/Drivers/hm10.h` |
+| 중계 노드 → 웨어러블 | 같은 BLE 링크의 역방향 — 시각 동기 5바이트(`0x55`), 10분 주기. 웨어러블이 3바이트 요청(`0xA5`)으로 먼저 물을 수도 있음 | `firmware/App/Drivers/hm10.h` |
 | 중계 노드 → 서버 | **MQTT/TLS** `veda/wearable/data` — `WearableData` JSON | `MQTT/MQTT_prod/veda_messages.hpp` |
 | 서버 → 알림 노드 | **MQTT/TLS** `veda/alarm/control` — `AlarmCommand` JSON | `MQTT/MQTT_prod/veda_messages.hpp` |
 | 카메라 → 서버 | RTSP (영상 H.264 + ONVIF 메타데이터 트랙 동시 수신) | `docs/wiseai-메타데이터-명세.md` |
@@ -130,11 +132,13 @@ AND로 묶으면 **웨어러블 미착용·배터리 방전 시 낙상을 통째
 
 ### 📟 웨어러블 (`firmware/`)
 
-- BMI270 FIFO 블록 단위 **낙상 3단계 판정** (자유낙하 → 충격 → 정지)
-- MAX30102 PPG 기반 **심박·SpO2**, 모션 블랭킹으로 움직임 구간 제외
-- **만보기** — 착용 여부와 무관하게 상시 계수, 케이던스 검증
-- **착용 판정** — 맥박 검출 기반. 미착용 시 낙상 확정 보류
-- 저전력 — WFI Sleep / Stop Mode 전환 (Stop 진입 시 클럭 복구 처리)
+- BMI270 FIFO 블록 단위 **낙상 3단계 백트래킹 판정** (충격을 먼저 잡고 과거의 자유낙하를 되짚음 → 정지 확인)
+- MAX30102 PPG 기반 **심박·SpO2** — AGC + 피크 검출과 자기상관 이중 추정, 모션 블랭킹으로 움직임 구간 제외
+- **만보기** — 착용 여부와 무관하게 상시 계수, 시간·리듬 게이트 검증, 자정 자동 초기화
+- **착용 판정** — 광학 접촉(IR DC·반사율) 기반. 미접촉 시 낙상 확정 보류
+- **손목 화면** — ST7789 240×280 + LVGL. 손목을 들었을 때만 켜지고, 꺼진 동안은 패널까지 재웁니다. 시각·심박·걸음 수·배터리 표시
+- **시각 동기** — RTC가 없어 중계 노드가 BLE로 내려준 시각을 씁니다(웨어러블이 먼저 요청도 함)
+- 저전력 — WFI Sleep / Stop Mode 전환 (Stop 진입 시 클럭 복구 처리), IWDG 8초 워치독
 
 ### 🔔 알림 노드 (`alert-node/`)
 
@@ -168,7 +172,7 @@ daboyijo/
  │   └─ models/      #   MoveNet Thunder int8 (.tflite)
  ├─ MQTT/            # MQTT 공용 구현(MQTT_prod) · 개발 트리(MQTT_dev) · 인증서 스크립트
  ├─ client/          # Qt 관제 클라이언트 (Qt 6.5, CMake)
- ├─ firmware/        # STM32 웨어러블 펌웨어 (App/Drivers · App/Algorithms)
+ ├─ firmware/        # STM32 웨어러블 펌웨어 (App/Drivers · App/Algorithms · App/Services · UI+LVGL)
  ├─ relay-node/      # 중계 노드 — BLE 수신·버퍼링·MQTT 발행
  ├─ alert-node/      # 알림 노드 — 커널 드라이버(hub75/wm8960) + MQTT 구독 앱
  ├─ protocol/        # ★ 전 모듈 공통 패킷 구조체·메시지 타입 정의
@@ -226,7 +230,7 @@ AI 요약을 쓰려면 CMake 변수 `DABOYIJO_GEMINI_KEY`를 지정해야 합니
 - **언어/빌드**: C / C++17, Make, CMake
 - **서버**: Raspberry Pi OS, OpenCV, FFmpeg(libav), **TensorFlow Lite (MoveNet Thunder)**, OpenSSL, libcurl, MariaDB, mosquitto, Google Gemini API
 - **클라이언트**: **Qt 6.5** (Widgets · Network · Sql · Multimedia · Mqtt), QSslSocket, QPdfWriter
-- **펌웨어**: STM32CubeIDE 1.18.1, CubeMX 6.14.1, HAL, I2C/SPI/UART, USB CDC
+- **펌웨어**: STM32CubeIDE 1.18.1, CubeMX 6.14.1, HAL, I2C/SPI(DMA)/UART/ADC, USB CDC, **LVGL 9.1** + SquareLine Studio
 - **노드**: 리눅스 커널 모듈(HUB75 · WM8960), ALSA, SimpleBLE, libmosquitto
 - **카메라 연동**: RTSP, ONVIF (Imaging · WS-Security), 한화 SUNAPI
 - **협업**: Git/GitHub, Jira(KAN), Notion
