@@ -31,11 +31,8 @@
 #include "mqttqtmanager.h"
 #include "clickslider.h"
 #include "vitaltile.h"
-<<<<<<< HEAD
-=======
 #include "alertbanner.h"
 #include "audiotransmitter.h"
->>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 
 
 

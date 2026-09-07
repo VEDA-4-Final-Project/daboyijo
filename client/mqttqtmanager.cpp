@@ -344,6 +344,31 @@ bool MqttQtManager::sendAlarmTest(const QString& target_device,
     return sendAlarmCommand(cmd, qos);
 }
 
+bool MqttQtManager::sendBroadcastToggle(const QString& target_device, bool on, int qos)
+{
+    AlarmCommand cmd{};
+    cmd.target_device = target_device.toStdString();
+    cmd.room          = 0;
+
+    cmd.type          = "CONTROL";
+    cmd.message       = on ? "방송 시작" : "방송 종료";
+
+    // 새 audio_action 값 — 기존 PLAY/STOP 과 별개. 노드가 모르는 값이면(구버전)
+    // 그냥 무시되고 사이렌/WAV 동작에는 영향이 없다(둘 다 == 비교라 안전).
+    cmd.audio_action  = on ? "MIC_ON" : "MIC_OFF";
+    cmd.audio_file    = "";
+    cmd.volume        = 0;
+    cmd.loop          = false;
+
+    cmd.matrix_action = "NONE";   // 경보 화면은 방송과 무관 — 그대로 둔다
+    cmd.matrix_passes = 0;
+    cmd.brightness    = 0;
+
+    cmd.timestamp     = nowMs();
+
+    return sendAlarmCommand(cmd, qos);
+}
+
 void MqttQtManager::subscribeAll()
 {
     // MQTT 는 clean session 이면 재연결할 때 브로커가 구독 목록을 잊는다.

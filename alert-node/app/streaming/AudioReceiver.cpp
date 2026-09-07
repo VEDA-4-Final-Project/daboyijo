@@ -20,6 +20,12 @@ bool AudioReceiver::start(int port, const std::string &alsaDevice) {
         return true;
     }
 
+    // isRunning() 을 여기서 먼저 세운다 — preempt 콜백이 도는 동안(잠깐이지만) 다른
+    // 스레드가 isRunning()==false 를 보고 ALSA 장치를 새로 열려 들면 우리가 곧 열
+    // 장치와 부딪힌다. 파이프라인 스레드는 아직 없어도 "곧 이 장치를 쓴다" 는
+    // 사실 자체는 이 시점부터 참이다.
+    m_isRunning = true;
+
     // 1. 기존 재생 스레드가 ALSA hw:2,0을 점유 중인 경우 해제 요청 (동기 대기)
     if (m_onPreempt) {
         std::cout << "[AudioReceiver] 기존 오디오 점유 해제 요청 중...\n";
@@ -27,7 +33,6 @@ bool AudioReceiver::start(int port, const std::string &alsaDevice) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50)); // 커널 디바이스 반환 대기
     }
 
-    m_isRunning = true;
     m_workerThread = std::thread(&AudioReceiver::workerLoop, this, port, alsaDevice);
     return true;
 }

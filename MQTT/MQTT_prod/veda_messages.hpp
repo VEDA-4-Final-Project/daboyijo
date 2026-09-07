@@ -41,7 +41,7 @@ struct AlarmCommand {
     std::string name;
 
     // 오디오
-    std::string audio_action;
+    std::string audio_action;   // PLAY | STOP | MIC_ON | MIC_OFF
     std::string audio_file;
     int         volume;
     bool        loop;

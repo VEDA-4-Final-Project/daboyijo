@@ -8620,42 +8620,36 @@ void MainWindow::resendCamerasForServer(int serverIdx)
 // ═══════════════════════════════════════════════════════════
 //  원격 방송(인터콤)
 // ═══════════════════════════════════════════════════════════
-<<<<<<< HEAD
+// 마이크 버튼 토글 — 켜면 알림 노드에 MIC_ON 을 보내 사이렌/WAV 를 멈추고 마이크만
+// 내보내게 하고, 우리 쪽 마이크 캡처(m_transmitter)도 그 노드로 UDP 송신을 시작한다.
+// 끄면 반대로 MIC_OFF 를 보내 노드가 WAV 를 다시 재생할 수 있는 상태로 돌아간다.
+// 순서: 노드가 사이렌을 먼저 끊게(MQTT) 하고 나서 오디오를 흘려보내기 시작한다 —
+// 반대로 하면 노드가 아직 사이렌을 쥔 채로 우리 패킷이 먼저 도착해 초반 소리가 씹힌다.
 void MainWindow::onMicToggled(bool on)
-=======
-void MainWindow::onMicPressed()
-{
-    micButton->setText(QStringLiteral("🔴 방송 중"));
-    micButton->setProperty("active", true);
-    micButton->style()->unpolish(micButton);
-    micButton->style()->polish(micButton);
-    QString targetIp = "172.20.35.40"; // 알림 라즈베리파이 IP 
-    quint16 targetPort = 5000;
-
-    if (!m_transmitter->startBroadcast(targetIp, targetPort)) {
-        qWarning() << "방송 시작 실패";
-    }
-
-
-    qDebug() << "인터콤 방송 시작";
-}
-
-void MainWindow::onMicReleased()
->>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
 {
     micButton->setText(on ? QStringLiteral("🔴 방송 중")
                           : QStringLiteral("🎤 방송"));
     micButton->setProperty("active", on);
     micButton->style()->unpolish(micButton);
     micButton->style()->polish(micButton);
-<<<<<<< HEAD
-    qDebug() << (on ? "인터콤 방송 시작" : "인터콤 방송 종료");
-=======
 
-    m_transmitter->stopBroadcast();
+    const QString targetIp   = "172.20.35.40"; // 알림 라즈베리파이 IP
+    const quint16 targetPort = 5000;
+    const QString node = (alertNode_ && !alertNode_->currentText().isEmpty())
+                              ? alertNode_->currentText()
+                              : QStringLiteral("alarm_rpi_01");
 
-    qDebug() << "인터콤 방송 종료";
->>>>>>> fe8a61ed75e3ee7886f4de291b20a00e91e26ba6
+    if (on) {
+        if (mqtt) mqtt->sendBroadcastToggle(node, true);
+        if (!m_transmitter->startBroadcast(targetIp, targetPort)) {
+            qWarning() << "방송 시작 실패";
+        }
+        qDebug() << "인터콤 방송 시작";
+    } else {
+        m_transmitter->stopBroadcast();
+        if (mqtt) mqtt->sendBroadcastToggle(node, false);
+        qDebug() << "인터콤 방송 종료";
+    }
 }
 
 // ═══════════════════════════════════════════════════════════

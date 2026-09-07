@@ -28,7 +28,7 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
     cv::Mat mask;
     cv::inRange(hsv, lower_, upper_, mask);
 
-    // 끊긴 조각 이어붙이기 — 주름·그림자로 갈라진 조끼를 한 덩어리로 복원
+    // 끊긴 조각 이어붙이기 — 주름·그림자로 갈라진 유니폼을 한 덩어리로 복원
     cv::morphologyEx(mask, mask, cv::MORPH_CLOSE,
                      cv::getStructuringElement(cv::MORPH_RECT, {5, 5}));
 
@@ -64,8 +64,10 @@ bool CaregiverDetector::isCaregiver(const cv::Mat& personROI) const {
 
     // ★ 최종 판정 = 면적 조건 AND 채도 조건
     //   ratio는 자세(서 있음/앉음)에 따라 3~5배씩 변해서 단독 판정이 불가능하다.
-    //   실측에서 조끼가 ratio 0.028로 탈락하고, 사복 입은 사람이 0.18로 통과하는
-    //   역전이 확인됨. 그래서 재질 고유값이라 자세와 무관한 채도를 주 판정으로 쓰고,
+    //   조끼를 쓰던 시절 실측에서 조끼가 ratio 0.028로 탈락하고 사복 입은 사람이
+    //   0.18로 통과하는 역전까지 확인됐다(그 수치는 지금 유니폼과 분포가 다르니
+    //   현재 임계값의 근거로 읽지 말 것 — caregiver_module.cpp 상단 참고).
+    //   그래서 재질 고유값이라 자세와 무관한 채도를 주 판정으로 쓰고,
     //   ratio는 "잡힌 덩어리가 노이즈 수준은 아님"을 보증하는 하한 역할만 맡긴다.
     bool result = (ratio >= threshold_) && (mean_sat >= min_sat_);
 

@@ -1,4 +1,5 @@
 // 알림 노드 본체 — MQTT 로 AlarmCommand 를 받아 오디오(wm8960)·LED(hub75)로 출력
+// 낙상/침상이탈/생체이상은 alert.gif(경고 삼각형) + 금색 스크롤로 표시 (테두리 깜빡임 없음)
 //
 // 콜백은 큐에 넣고 바로 리턴 — 패널 스크롤이 십수 초라 콜백에서 직접 그리면
 // 그동안 다음 메시지를 못 받음
@@ -156,20 +157,24 @@ void loadConfig(const std::string& path, Config& c)
         else if (k == "matrix_passes") c.matrix_passes = toInt(k, v, c.matrix_passes);
         else if (k == "matrix_brightness") c.matrix_brightness = toInt(k, v, c.matrix_brightness);
         else if (k == "ca_path")     c.ca_path     = v;
-        else if (k == "broadcast_port")   c.broadcast_port = toInt(k, v, c.broadcast_port); 
+        else if (k == "broadcast_port")   c.broadcast_port = toInt(k, v, c.broadcast_port);
         else if (k == "alsa_device")      c.alsa_device = v;
     }
 }
 
 // ---------------- 명령 해석 ----------------
 
-severity toSeverity(const std::string& type)
+// 타입 하나로 색과 렌더 방식을 한 번에 정한다 — 따로 두 곳에서 판단하면 새 타입을
+// 추가할 때 한쪽만 고치기 쉽다(색은 받는데 아이콘은 안 받는 식으로 어긋남)
+struct EventClass { severity sev; bool fallIcon; };
+
+EventClass classifyEvent(const std::string& type)
 {
-    if (type == "FALL" || type == "EGRESS") return SEV_CRIT;
-    if (type == "VITAL_ABNORMAL")           return SEV_WARN;
+    if (type == "FALL" || type == "EGRESS") return { SEV_CRIT, true };
+    if (type == "VITAL_ABNORMAL")           return { SEV_WARN, true };
     // CONTROL(관제 앱 "테스트")도 주황 — Qt 미리보기와 색을 맞춘다(둘 다 SEV_WARN 색상).
-    if (type == "CONTROL")                  return SEV_WARN;
-    return SEV_INFO;
+    if (type == "CONTROL")                  return { SEV_WARN, false };
+    return { SEV_INFO, false };
 }
 
 // 패널에 흘릴 문구 — 아는 이벤트면 노드가 조립(호실·이름은 아는 만큼만),
@@ -268,8 +273,6 @@ int main(int argc, char* argv[])
     VedaAudioPlayer player;
     ThreadSafeQueue<AlarmCommand> queue;
 
-
-
     // 아래 STOP 처리 때문에 재생기를 MQTT 스레드와 메인 루프가 같이 만짐
     // stop() 이 재생 스레드를 join 해서 동시에 부르면 같은 스레드를 두 번 join 함
     // 재생기 호출은 전부 이 뮤텍스를 잡고 함
@@ -289,8 +292,9 @@ int main(int argc, char* argv[])
         printf("[방송]방송 수신 종료\n");
     });
 
-    // 백그라운드 스레드에서 UDP 수신 대기 시작
-    broadcastReceiver.start(cfg.broadcast_port, cfg.alsa_device);
+    // 기본은 꺼진 상태 — 부팅 직후부터 물고 있으면 그 사이 WAV 가 항상 막힌다.
+    // 관제 앱이 MIC_ON 을 보낼 때만 broadcastReceiver.start() 로 실제 수신을 연다
+    // (아래 client.setCallback 참조). 그때까지는 ALSA 장치가 자유로워 WAV 가 바로 나간다.
 
     // 평상시(idle) 밝기·음량 = 관제 앱 "적용"으로 커밋된 값. 테스트(matrix=SHOW)는 잠깐
     // 이 값을 벗어나 보여주고, 스크롤이 끝나면 이 값으로 되돌아온다 — 적용해야만 유지된다.
@@ -322,6 +326,18 @@ int main(int argc, char* argv[])
             if (cmd.audio_action == "STOP") {
                 std::lock_guard<std::mutex> lk(player_mutex);
                 player.stop();
+            }
+            // 방송 토글의 오디오 쪽만 여기서 즉시 처리 — STOP 과 같은 이유
+            // (지금 발신자는 matrix_action=NONE 만 같이 보내 큐 쪽은 대개 no-op 이지만,
+            //  나중에 다른 필드를 같이 실어 보내는 발신자가 생겨도 조용히 버려지지 않게
+            //  STOP 처럼 큐에도 넣는다)
+            else if (cmd.audio_action == "MIC_ON") {
+                // 마이크가 우선 — start() 안의 preempt 콜백이 사이렌/WAV 를 끊어 준다
+                // (player_mutex 도 그 콜백이 알아서 잠근다, 여기서 또 잠글 필요 없음)
+                broadcastReceiver.start(cfg.broadcast_port, cfg.alsa_device);
+            }
+            else if (cmd.audio_action == "MIC_OFF") {
+                broadcastReceiver.stop();   // ALSA 장치 반납 — 이후 PLAY 가 다시 가능
             }
             queue.push(cmd);            // 오래 걸리는 일은 메인 루프에서
         } catch (const std::exception& e) {
@@ -376,7 +392,8 @@ int main(int argc, char* argv[])
             // 바뀔 때만 그린다 — 폴링이 100ms 라 그냥 그리면 열 번 중 아홉은 헛일
             std::string now = clockOn() ? currentTime() : std::string();
             if (!idleShown || now != idleClock) {
-                display.showStatic(now.empty() ? cfg.idle_text : now, SEV_INFO);
+                if (now.empty()) display.showStatic(cfg.idle_text, SEV_INFO);
+                else              display.showClock(now);   // 무채색 그라데이션 7세그먼트
                 idleClock = now;
                 idleShown = true;
             }
@@ -417,31 +434,41 @@ int main(int argc, char* argv[])
 
         if (cmd.audio_action == "PLAY") {
             std::lock_guard<std::mutex> lk(player_mutex);
-            player.setVolume(playVolume);   // 테스트=그 음량 / 이벤트=평상시 음량
-            player.playWav(resolveAudioPath(cfg, cmd), cmd.loop);   // 비동기
+            // 마이크 방송 중엔 WAV 를 틀지 않는다 — MIC_ON 이 이미 사이렌/WAV 를
+            // 끊어 뒀지만, 방송이 켜져 있는 동안 새로 들어오는 PLAY 도 막아야
+            // ALSA 장치를 다시 붙들려다 EBUSY 로 조용히 씹히는 일이 없다.
+            if (broadcastReceiver.isRunning()) {
+                fprintf(stderr, "[Audio] 방송 중이라 재생 건너뜀: %s\n", cmd.audio_file.c_str());
+            } else {
+                player.setVolume(playVolume);   // 테스트=그 음량 / 이벤트=평상시 음량
+                player.playWav(resolveAudioPath(cfg, cmd), cmd.loop);   // 비동기
+            }
         } else if (cmd.audio_action == "STOP") {
             std::lock_guard<std::mutex> lk(player_mutex);
             player.stop();   // 대개 MQTT 콜백이 이미 껐다 — 두 번째 호출은 무해
         }
 
         if (cmd.matrix_action == "SHOW") {
-            severity sev = toSeverity(cmd.type);
-            display.blinkCue(sev, 2, aborted);  // 새 경보라는 신호 (종료 신호면 중단)
+            const EventClass ec = classifyEvent(cmd.type);
 
+            // 낙상/침상이탈/생체이상 — 셋 다 alert.gif(경고 삼각형) + 금색 스크롤로 통일.
+            // 아이콘 등장 자체가 새 경보 신호를 겸해서 이쪽은 테두리 깜빡임(blinkCue)을 안 씀.
+            // CONTROL(관제 앱 "테스트") 등 그 외 타입만 기존처럼 blinkCue 로 새 경보를 알린다.
+            //
             // 실제 경보는 해제할 때까지 흘린다 — 소리와 같은 규칙. 몇 바퀴 돌고
             // 사라지면 아무도 없던 사이의 경보는 없었던 것과 같아진다
             // 테스트는 제외 — 눌러 본 사람이 해제까지 눌러야 꺼지면 사고다
-            // 종류까지 보는 건 is_test 를 안 보내는 발신자(기본값 false) 때문
-            const bool holdUntilCleared =
-                !cmd.is_test && (cmd.type == "FALL" || cmd.type == "EGRESS" ||
-                                 cmd.type == "VITAL_ABNORMAL");
+            const bool holdUntilCleared = !cmd.is_test && ec.fallIcon;
+            const int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
 
-            if (holdUntilCleared) {
-                display.showUntilAborted(toText(cmd), sev, aborted);
+            if (ec.fallIcon) {
+                // showFallAlert 도 passes<0 이면 abort 가 끊을 때까지 돈다(scroll() 과 동일 규칙) —
+                // 한 번만 불러야 아이콘 애니메이션이 안 끊기고, 패널이 없어도(fb_==nullptr) 그 자리서
+                // 바로 리턴하니 예전처럼 while 로 빈 호출을 반복하며 CPU 를 먹지 않는다
+                display.showFallAlert(toText(cmd), holdUntilCleared ? -1 : passes, aborted);
             } else {
-                // 서버가 지정하면 그대로, 안 주면 노드 기본값
-                int passes = cmd.matrix_passes > 0 ? cmd.matrix_passes : cfg.matrix_passes;
-                display.show(toText(cmd), sev, passes, aborted);
+                display.blinkCue(ec.sev, 2, aborted);  // 새 경보라는 신호 (종료 신호면 중단)
+                display.show(toText(cmd), ec.sev, passes, aborted);
             }
         }
         else if (cmd.matrix_action == "CLEAR")
