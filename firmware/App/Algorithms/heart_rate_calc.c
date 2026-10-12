@@ -34,7 +34,8 @@
   *   B. 자기상관 (약신호용, 느림)
   *      최대 16초 창에서 지연별 상관계수를 훑어 주기를 찾는다. 개별 봉우리가
   *      잡음에 묻혀도 주기는 드러난다. 8초분이 쌓이면 추정을 시작하고,
-  *      r ≥ 0.60 이 4블록 연속 일치하면 확정한다.
+  *      r ≥ AUTOCORR_MIN_R(0.35) 이 4블록 연속 일치하면 확정한다.
+  *      피크 경로가 5/5 를 채웠다면 r ≥ 0.25 만으로 교차검증 확정도 된다.
   *
   *   손가락은 관류가 좋아(std 250~800) A 로 충분하다. 손목은 신호가 10~50배
   *   약해(std 10~50) 개별 봉우리를 못 찾으므로 B 가 그 구간을 담당한다.
@@ -43,7 +44,9 @@
   *
   *   두 단계로 나뉜다.
   *     s_is_worn        광학적 접촉. DC 크기와 반사율로 판정한다.
-  *     s_wear_confirmed 맥박까지 확인된 착용. 낙상 감지를 여는 근거다.
+  *     s_wear_confirmed 맥박까지 확인된 착용 (IsWorn). 현재 낙상 게이트는
+  *                      이것이 아니라 s_is_worn(HasContact)을 쓴다 —
+  *                      main.c Process_IMU_Block 주석 참조.
   *
   *   책상·바닥도 빛을 반사해 s_is_worn 은 참이 될 수 있다. 그러나 진폭 계열
   *   지표(DC·PI·std)는 무기물과 손목이 서로 겹쳐 구분에 쓸 수 없다.
@@ -174,7 +177,7 @@
 /* 맥박 탐색 포기 —— 광학 접촉은 있는데 이 시간 동안 맥박을 못 찾으면
  * 조직이 아니라고 보고 미착용으로 강등한다.
  *
- * 접촉 판정(반사율·적외비)을 통과했지만 실제로는 맥박이 없는 대상이
+ * 접촉 판정(DC·반사율)을 통과했지만 실제로는 맥박이 없는 대상이
  * 존재한다. 그대로 두면 LED 를 계속 태우면서 진단 로그만 무한히 찍는다.
  *
  * 강등 후에는 실제로 떼어낼 때까지(허공 수준으로 DC 가 떨어질 때까지)
@@ -264,7 +267,7 @@
 #define AUTOCORR_MIN_R             0.35f
 
 /* 자기상관 경로 최소 진폭 하한선 (0 나눗셈 방지용)
- * - r ≥ 0.60 이 잡음 게이트 역할을 하므로 피크 경로(25.0f)보다 하한선이 낮음 */
+ * - r ≥ AUTOCORR_MIN_R 이 잡음 게이트 역할을 하므로 피크 경로(25.0f)보다 하한선이 낮음 */
 #define AUTOCORR_MIN_STD           8.0f
 
 /* 생리학적 심박 범위 (45 ~ 150 BPM).
@@ -275,8 +278,8 @@
 
 /* 자기상관 경로가 '착용 확정'까지 낼 수 있는 상한 (120 BPM).
  *
- * 생리학적 범위(150)와 일부러 분리한다. 확정은 낙상 감지를 여는 안전 판정이라
- * 단순 추정보다 보수적이어야 하고, 무기물 진동이 만드는 가짜 주기는 지연(lag)
+ * 생리학적 범위(150)와 일부러 분리한다. 확정은 심박값을 내보내고 착용을
+ * 확정하는 판정이라 단순 추정보다 보수적이어야 하고, 무기물 진동이 만드는 가짜 주기는 지연(lag)
  * 하한 쪽 — 즉 고BPM 대역 — 에 몰리기 때문이다.
  *
  * 120 BPM 은 lag 25 에 해당한다. 실제 손목 확정값은 lag 32~54 구간이라
@@ -298,7 +301,7 @@
  *
  * 피크 경로와 자기상관은 독립적이다. 하나는 시간영역의 봉우리 간격을,
  * 다른 하나는 주파수영역의 주기성을 본다. 둘이 같은 심박을 가리키면
- * 각자의 단독 확정 문턱(피크 std 200 / 자기상관 r 0.60)보다 느슨한
+ * 각자의 단독 확정 문턱(피크 std 200 / 자기상관 r 0.35)보다 느슨한
  * 조건으로도 확정할 수 있다.
  *
  * 무기물 오확정에는 오히려 강하다 —— 잡음이 만드는 가짜 주기는 두
@@ -342,7 +345,7 @@ static uint16_t s_print_counter = 0;
 
 /* 착용 상태 머신 제어 카운터 */
 static uint16_t s_air_counter = 0;
-static uint8_t  s_wear_confirmed = 0;   // 맥박으로 확인된 착용 — 낙상 감지의 근거
+static uint8_t  s_wear_confirmed = 0;   // 맥박으로 확인된 착용 (IsWorn) — 낙상 게이트에는 쓰지 않는다
 static uint32_t s_no_pulse_counter = 0; // 확정 후 맥박이 사라진 누적 시간
 static uint32_t s_search_counter = 0;   // 확정 전 맥박을 찾고 있는 누적 시간
 static uint8_t  s_search_gave_up = 0;   // 탐색 포기 후 재진입 잠금 (떼어내야 풀린다)
@@ -390,7 +393,7 @@ static float s_ac_ring_red[LPF_TAPS] = {0.0f};
 static uint8_t s_ac_idx = 0;
 static uint8_t s_ac_filled = 0;
 
-/* 자기상관용 장기 파형 버퍼 (8초) */
+/* 자기상관용 장기 파형 버퍼 (16초, 8초부터 추정 시작) */
 static float    s_ac_hist[AUTOCORR_N] = {0.0f};
 static uint16_t s_ac_hist_idx = 0;
 static uint32_t s_ac_hist_filled = 0;
@@ -417,7 +420,8 @@ static uint8_t s_spo2_idx = 0;
 static uint8_t s_spo2_filled = 0;
 
 /**
-  * @brief 최근 2초 파형의 peak-to-peak 로 피크 문턱을 산출한다.
+  * @brief 최근 2초 파형의 평균·표준편차로 피크 문턱을 산출한다
+  *        (문턱 = 평균 + PEAK_STD_RATIO × 표준편차, peak-to-peak 는 PI 계산용).
   *
   * 창(window) 통계는 매 블록 처음부터 다시 계산되므로 구조적으로 잠기지 않는다.
   * 신호가 작아지면 문턱도 따라 내려온다.
@@ -466,7 +470,7 @@ static void update_peak_threshold(void)
     float var  = (sum_sq / (float)n) - (mean * mean);
     if (var < 0.0f) var = 0.0f;              // 부동소수 오차 방어
     float sd = sqrtf(var);
-    s_ac_std = sd;                           // 진단 표시용 (품질 판정의 실제 기준값)
+    s_ac_std = sd;                           // 품질 판정의 실제 기준값 (진단 표시에도 쓴다)
 
     if (sd < MIN_PULSE_STD)
     {
@@ -490,11 +494,12 @@ static void update_peak_threshold(void)
 /**
   * @brief 자기상관으로 심박 주기를 추정한다 (블록당 1회).
   *
-  * 정규화 자기상관:  r(τ) = Σ x[i]·x[i+τ] / Σ x[i]²
-  * τ 를 40~180BPM 에 해당하는 범위에서 훑어 최대점을 찾는다.
+  * 정규화 상관:  r(τ) = Σ x[i]·x[i+τ] / √(Σ x[i]² · Σ x[i+τ]²)
+  * (x 는 창 평균·선형 추세를 뺀 값 — 아래 추세 제거 주석 참조)
+  * τ 를 40~176BPM 에 해당하는 범위(AUTOCORR_LAG_MIN~MAX)에서 훑어 최대점을 찾는다.
   *
-  * 연산량은 60 lag × 약 325 곱 = 약 2만 MAC 이고 0.5초에 한 번만 돈다.
-  * 96MHz FPU 코어에서는 무시할 수준이다.
+  * 연산량은 59 lag × 최대 약 780 샘플 ≈ 4.5만 회(회당 MAC 3개)이고
+  * 0.5초에 한 번만 돈다. 96MHz FPU 코어에서는 무시할 수준이다.
   */
 static void update_autocorr(void)
 {
@@ -708,7 +713,8 @@ static void on_peak_rejected(void)
 }
 
 /**
-  * @brief 현재 관류지수(%) — 신호가 생체 신호인지 판별하는 유일한 근거
+  * @brief 현재 관류지수(%) — 진단 표시 전용. 무기물과 손목의 PI 가 겹쳐
+  *        생체 판별에는 쓰지 않는다 (파일 상단 '착용 판정' 참조).
   */
 static float current_pi(void)
 {
@@ -720,7 +726,7 @@ static float current_pi(void)
  *
  * 닿아 있는 대상이 바뀌었거나 움직임으로 신호가 끊겼을 때만 부른다.
  * AGC 이득 변경에서는 부르지 않는다 —— R 은 비율이라 전류가 바뀌어도
- * 값이 유효하고, 버리면 9박동을 다시 모아야 한다. */
+ * 값이 유효하고, 버리면 SPO2_MEDIAN_N(5)박동을 다시 모아야 한다. */
 static void reset_spo2_samples(void)
 {
     s_spo2_idx = 0;
@@ -843,12 +849,13 @@ static uint8_t update_wear_state(uint32_t ir_mean, uint16_t count)
                 s_held_bpm = 0;    /* 다른 대상에 채웠을 때 옛 값이 되살아나면 안 된다 */
                 s_air_counter = 0;
 
-                /* 물리적 탈착 — 착용 확정을 여기서만 취소한다.
-                 * 낙상 감지가 꺼지는 유일한 경로다. */
+                /* 물리적 탈착 — 착용 확정도 함께 취소한다.
+                 * (확정은 접촉 대상 변화와 맥박 소실 30초에서도 취소된다.
+                 *  낙상 게이트는 s_is_worn 이므로 이 탈착 지점에서 꺼진다) */
                 if (s_wear_confirmed)
                 {
                     s_wear_confirmed = 0;
-                    printf("[ WEAR ] 탈착 — 착용 확정 해제, 낙상 감지 중지\r\n");
+                    printf("[ WEAR ] 탈착 — 착용 확정 해제, 광학 접촉 상실 (낙상 게이트 닫힘)\r\n");
                 }
                 else if (low_reflectance)
                 {
@@ -899,7 +906,8 @@ static uint8_t update_wear_state(uint32_t ir_mean, uint16_t count)
                  *
                  * 접촉 대상이 바뀌었다는 것은 지금 무엇에 닿아 있는지 모른다는
                  * 뜻이다. 이전 물체에서 얻은 확정을 넘겨받으면, 손목에서 책상으로
-                 * 옮겨도 취소 타이머가 만료될 때까지 책상이 낙상 감지 대상이 된다. */
+                 * 옮겨도 취소 타이머가 만료될 때까지 책상이 '착용 확정' 으로 남고
+                 * 맥박 탐색 타임아웃도 돌지 않는다. */
                 if (s_wear_confirmed)
                 {
                     s_wear_confirmed = 0;
@@ -1108,7 +1116,7 @@ static void detect_peak(void)
 
                 if (s_spo2_filled >= SPO2_MEDIAN_N)
                 {
-                    /* 표본이 9개뿐이라 삽입정렬 사본으로 충분하다 */
+                    /* 표본이 5개뿐이라 삽입정렬 사본으로 충분하다 */
                     float sorted[SPO2_MEDIAN_N];
                     for (uint8_t i = 0; i < SPO2_MEDIAN_N; i++) sorted[i] = s_spo2_samples[i];
 
@@ -1144,12 +1152,12 @@ static void detect_peak(void)
                 s_hr_state = HR_STAT_VALID;
 
                 /* 맥박 확인은 살아있는 조직 위에 있다는 증거다. 여기서
-                 * 착용을 확정하고 물리적으로 뺄 때까지 유지한다. 손목은 검출이
-                 * 간헐적이라, 맥박이 잠깐 끊겼다고 낙상 감지를 내리면 안 된다. */
+                 * 착용을 확정한다. 손목은 검출이 간헐적이라 맥박이 잠깐 끊겼다고
+                 * 바로 거두지 않고, 탈착·접촉 대상 변화·맥박 30초 소실 때만 해제한다. */
                 if (!s_wear_confirmed)
                 {
                     s_wear_confirmed = 1;
-                    printf("[ WEAR ] 맥박 확인 — 착용 확정, 낙상 감지 활성\r\n");
+                    printf("[ WEAR ] 맥박 확인 — 착용 확정\r\n");
                 }
             }
         }
@@ -1197,15 +1205,14 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
     uint32_t ir_mean = (uint32_t)(ir_sum / count);
     s_ir_dc_display = ir_mean;
 
-    /* RED/IR DC 비율 —— 반사량이 아니라 '무엇에 닿아 있는가'를 보는 값.
+    /* RED/IR DC 비율 —— 반사량이 아니라 '무엇에 닿아 있는가'를 보려던 값.
      *
      * 조직은 660nm(RED)를 헤모글로빈이 강하게 흡수하고 880nm(IR)는 훨씬 잘
      * 통과시키므로 IR DC 가 RED DC 보다 뚜렷하게 크다. 무기물은 두 파장을
-     * 비슷하게 반사한다. 반사율(DC ÷ 전류)과 달리 밀착 정도에 영향받지 않아,
-     * 바닥에 딱 붙여 반사율이 조직 수준으로 올라간 경우에도 구분이 남는다.
+     * 비슷하게 반사할 것으로 기대했다.
      *
-     * 지금은 진단 표시 전용이다. 손목과 무기물의 실측 분포를 확인한 뒤에
-     * 판정 문턱을 정한다. */
+     * 진단 표시 전용이다. 실측해 보니 손목과 바닥재의 분포가 겹쳐 어떤
+     * 문턱으로도 분리되지 않아 판정에서 뺐다 (파일 상단 RED/IR 주석 참조). */
     s_red_ir_ratio = (ir_mean > 0)
                    ? ((float)(uint32_t)(red_sum / count) / (float)ir_mean)
                    : 0.0f;
@@ -1247,9 +1254,9 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
         goto SYSTEM_PRINT_LOOP;
     }
 
-    /* 무기물 판정을 위한 타임아웃은 더 이상 없다.
-     * 착용은 맥박 확인으로만 성립하므로(파일 상단 [착용 판정 구조] 참조),
-     * 책상·침대는 애초에 확정되지 않는다. 시간을 재며 추측할 이유가 없다. */
+    /* 착용 확정은 맥박 확인으로만 성립하므로(파일 상단 '착용 판정' 참조)
+     * 책상·침대는 확정되지 않는다. 무기물에서 접촉(s_is_worn)을 거두는 것은
+     * update_wear_state() 의 PULSE_SEARCH_TIMEOUT 이 맡는다. */
 
     /* -----------------------------------------------------------------
      * [3단계] 배열 전체를 훑는 필터 + 피크 검출 파이프라인
@@ -1397,7 +1404,7 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
         if (!s_wear_confirmed)
         {
             s_wear_confirmed = 1;
-            printf("[ WEAR ] 맥박 확인(주기성 r=%.2f, %lu BPM) — 착용 확정, 낙상 감지 활성\r\n",
+            printf("[ WEAR ] 맥박 확인(주기성 r=%.2f, %lu BPM) — 착용 확정\r\n",
                    (double)s_autocorr_r, (unsigned long)s_autocorr_bpm);
         }
     }
@@ -1406,7 +1413,7 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
      * 교차검증 확정 —— 피크 경로와 자기상관이 같은 심박을 가리킬 때
      *
      * 피크 경로는 검증을 마쳤지만(5/5) 단독 확정 문턱(std 200)에 못 미치고,
-     * 자기상관은 아직 단독 문턱(r 0.60)에 도달하지 못한 구간이 손목에서는
+     * 자기상관은 아직 단독 문턱(r 0.35)에 도달하지 못한 구간이 손목에서는
      * 길게 이어진다. 그 사이 두 추정기가 이미 같은 답을 내고 있다면
      * 더 기다릴 이유가 없다.
      *
@@ -1434,7 +1441,7 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
             if (!s_wear_confirmed)
             {
                 s_wear_confirmed = 1;
-                printf("[ WEAR ] 맥박 확인(교차검증 피크 %lu / 주기성 %lu BPM, r=%.2f) — 착용 확정, 낙상 감지 활성\r\n",
+                printf("[ WEAR ] 맥박 확인(교차검증 피크 %lu / 주기성 %lu BPM, r=%.2f) — 착용 확정\r\n",
                        (unsigned long)peak_bpm, (unsigned long)s_autocorr_bpm,
                        (double)s_autocorr_r);
             }
@@ -1499,7 +1506,7 @@ void HeartRateCalc_ProcessBlock(const MAX30102_Data_t *samples, uint16_t count, 
                 s_no_pulse_counter = 0;
                 s_current_bpm = 0;
                 s_current_spo2 = 0;
-                printf("[ WEAR ] 맥박 %d초간 소실 — 착용 확정 해제, 낙상 감지 중지\r\n",
+                printf("[ WEAR ] 맥박 %d초간 소실 — 착용 확정 해제 (광학 접촉은 유지)\r\n",
                        WEAR_REVOKE_SAMPLES / SAMPLING_FREQ);
             }
         }
@@ -1541,7 +1548,7 @@ SYSTEM_PRINT_LOOP:
              *
              *   PI      관류지수(AC/DC). 0.2~1% 가 손목 정상 범위,
              *           0.1% 미만이면 접촉 압력이나 LED 전류를 의심한다.
-             *   DC      25만 초과면 ADC 포화, 3만 미만이면 접촉 불량.
+             *   DC      25만 초과면 ADC 포화, 3.5만(PPG_AIR_THRESHOLD) 미만이면 접촉 불량.
              *   std/문턱 '피크 0' 이 신호가 없어서인지 문턱이 높아서인지 가른다.
              *   r/정지/일치  자기상관 확정의 세 관문. */
             float pi = current_pi();   /* 표시 전용 — 판정에는 쓰지 않는다 */
@@ -1703,9 +1710,10 @@ void HeartRateCalc_NotifyGainChange(void)
 /* 과도응답 안정화 구간인가. AGC 가 이 값을 보고 이득 판단을 미룬다. */
 uint8_t HeartRateCalc_IsSettling(void) { return (s_settle_counter > 0); }
 
-/* 낙상 판정이 참조하는 착용 여부.
+/* 맥박으로 확인된 착용 여부 (현재 어떤 게이트에도 쓰이지 않는다).
  * 광학적 접촉(s_is_worn)이 아니라 '맥박으로 확인된 착용'을 돌려준다.
- * 책상·침대는 맥박이 없어 여기서 1 이 될 수 없다. */
+ * 책상·침대는 맥박이 없어 여기서 1 이 될 수 없다.
+ * 낙상 판정은 HasContact() 를 쓴다 (main.c Process_IMU_Block 주석 참조). */
 uint8_t  HeartRateCalc_IsWorn(void)     { return s_wear_confirmed; }
 uint8_t  HeartRateCalc_HasContact(void) { return s_is_worn; }
 uint32_t HeartRateCalc_GetBPM(void)  { return (s_hr_state == HR_STAT_VALID) ? s_current_bpm : 0; }

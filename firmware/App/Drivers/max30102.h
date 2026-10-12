@@ -70,7 +70,7 @@
 /* AGC 가 겨냥하는 목표 DC.
  * 광량이 늘면 AC/DC 비율(PI)은 그대로여도 AC 의 절대 카운트가 커져 SNR 이
  * 좋아진다. 손목처럼 맥동이 작은 부위에서는 이 절대 크기가 검출 성패를 가른다.
- * 18비트 상한(262143)까지 약 9만 카운트의 포화 여유를 남긴 값이다. */
+ * 18비트 상한(262143)까지 약 10만 카운트의 포화 여유를 남긴 값이다. */
 #define MAX30102_DC_TARGET           165000UL
 
 /* AGC 가 재조정을 멈출 조건 (목표치 ±20%).
@@ -134,7 +134,7 @@ uint8_t MAX30102_IsAlive(void);
 /* 자동 이득 조절. 블록마다 IR DC 평균을 넘겨 호출한다.
  * 블로킹 I2C 쓰기를 수행하므로 메인 루프에서만 호출할 것.
  * @return 전류를 바꿨으면 1 — 호출 측은 신호 파이프라인을 재안정화해야 한다. */
-uint8_t MAX30102_AutoGain(uint32_t ir_dc, uint8_t is_worn);
+uint8_t MAX30102_AutoGain(uint32_t ir_dc, uint8_t is_worn);   /* is_worn = 광학 접촉(HasContact) */
 uint8_t MAX30102_GetLedCurrent(void);
 
 /* FIFO 블록을 I2C DMA 로 일괄 수거 시작 */

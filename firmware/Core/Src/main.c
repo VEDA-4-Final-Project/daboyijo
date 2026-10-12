@@ -23,8 +23,11 @@
   *   Collect_IMU_Block() FIFO 길이 조회 후 SPI DMA 시작
   *   Process_IMU_Block() 낙상 판정 → 움직임 값 산출
   *   Collect_PPG_Block() EXTI 유실 / BUSY 고착 시 스트림 복구
-  *   Process_PPG_Block() AGC → 심박/SpO2 (IMU 움직임 값을 참조하므로 뒤에)
+  *   Process_PPG_Block() 심박/SpO2 → AGC (IMU 움직임 값을 참조하므로 뒤에)
+  *   AppClock_*()        BLE 시각 반영, 시계 진행, 자정 걸음 수 초기화
   *   HM10_Send_Now()     BLE 주기 송신 (1초)
+  *   Battery_Service()   배터리 측정 (1초)
+  *   DisplayService_Service() 손목 들기에 따라 화면 점등/소등, LVGL 구동
   *   Enter_Idle()        할 일 없으면 취침
   *
   * ── 엣지 인터럽트 폴백 ──────────────────────────────────────────────
@@ -187,8 +190,9 @@ static uint32_t g_last_time_req_ms = 0;
  * 다룬다 (KR/PR/RLR/SR 네 개가 전부다).
  *
  * LSI(약 32kHz) 기준 1000 × 256 / 32000 ≈ 8초. LSI 는 17~47kHz 로 흔들리므로
- * 최악의 경우에도 5.4초는 확보된다. 메인 루프의 최장 블로킹이 I2C 버스
- * 복구(약 22ms)라 여유가 충분하다. */
+ * 최악의 경우에도 5.4초는 확보된다. 메인 루프의 최장 블로킹은 화면 점등
+ * (패널 기상 120ms + 전체 렌더)과 I2C 복구 + PPG 재초기화(약 22ms + 50ms 남짓)
+ * 정도라 여유가 충분하다. */
 #define IWDG_KEY_RELOAD   0xAAAAU
 #define IWDG_KEY_ENABLE   0xCCCCU
 #define IWDG_KEY_UNLOCK   0x5555U
@@ -302,7 +306,7 @@ int main(void)
 
   /* 최종 실패한 센서는 LED 깜빡임 횟수로 알린다 (USB 미연결 시 유일한 단서) */
   if (!g_bmi270_ok) {
-      printf(">> [ERROR] BMI270 disabled — 낙상 감지 사용 불가\r\n");
+      printf(">> [ERROR] BMI270 disabled — 낙상·만보기·손목 들기 사용 불가 (화면 상시 점등)\r\n");
       Blink_Error_Code(2);
   }
   if (!g_max30102_ok) {
@@ -328,15 +332,16 @@ int main(void)
   if (g_bmi270_ok)
   {
       if (BMI270_ConfigFifoAndInterrupts() != HAL_OK) {
-          printf(">> [ERROR] BMI270 FIFO/INT 구성 실패 — 낙상 감지 사용 불가\r\n");
+          printf(">> [ERROR] BMI270 FIFO/INT 구성 실패 — 낙상·만보기·손목 들기 사용 불가 (화면 상시 점등)\r\n");
           g_bmi270_ok = 0;
           Blink_Error_Code(4);
       }
       else {
-          /* any-motion 은 "완전 정지 시 웨이크업 생략"용 절전 게이트일 뿐이다.
-           * 실패해도 FIFO 워터마크만으로 감지는 정상 동작하므로 치명적이지 않다. */
+          /* any-motion 은 "완전 정지 시 웨이크업 생략" 절전 게이트로 쓰려고 구성해 둔
+           * 것이다. 다만 현재 INT2 를 소비하는 코드가 없어(아래 EXTI 콜백 참조) 실제
+           * 절전 효과는 없다. 실패해도 감지는 FIFO 워터마크가 담당하므로 무관하다. */
           if (BMI270_ConfigAnyMotion(300, 100) != HAL_OK) {
-              printf("[WARNING] any-motion 게이트 비활성 — 절전 효율만 저하됩니다.\r\n");
+              printf("[WARNING] any-motion 구성 실패 — 미사용 기능이라 동작에는 영향 없음\r\n");
           }
       }
   }
@@ -413,10 +418,6 @@ int main(void)
       /* ------------------------------------------------------------------
        * [STAGE 3] HM-10 BLE 주기 송신 (HM10_VITAL_PERIOD_MS = 1초) — 바이탈 + 낙상 플래그 + 걸음 수
        * ------------------------------------------------------------------ */
-      /* 벽시계 진행 + 자정 처리.
-       * 걸음 수는 Reset() 이 아니라 SetSteps(0) 으로 지운다 — 자정에 걷고 있는
-       * 중일 수 있고, 그때 필터와 리듬 상태까지 날리면 진행 중이던 보행이
-       * 끊겨 다음 4걸음을 다시 검증해야 한다. 지울 것은 누적값뿐이다. */
       /* RPi 가 내려준 시각이 있으면 반영한다.
        * ISR 은 검증만 하고 값을 남겨두며, 시계를 실제로 미는 것은 여기다.
        * AppClock_Service() 보다 먼저 부른다 — 시각을 갈아끼운 직후에 진행분을
@@ -431,6 +432,10 @@ int main(void)
 
       AppClock_Service();
 
+      /* 자정 처리.
+       * 걸음 수는 Reset() 이 아니라 SetSteps(0) 으로 지운다 — 자정에 걷고 있는
+       * 중일 수 있고, 그때 필터와 리듬 상태까지 날리면 진행 중이던 보행이
+       * 끊겨 다음 4걸음을 다시 검증해야 한다. 지울 것은 누적값뿐이다. */
       if (AppClock_ConsumeMidnight())
       {
           printf("[ CLOCK ] 자정 — 걸음 수 초기화 (%lu 걸음)\r\n",
@@ -627,8 +632,10 @@ static void Process_IMU_Block(void)
      *
      * ⚠ 대가: HasContact 는 IR DC 와 반사율만 보므로 책상·바닥에 엎어둔
      *   상태에서도 참이 될 수 있다 (heart_rate_calc.c 상단 주석 참조).
-     *   그 경우 충격 + 정지가 겹치면 오보가 나갈 수 있다. 다만 맥박이 30초간
-     *   없으면 접촉 판정 자체가 해제되므로 창은 그만큼으로 제한된다. */
+     *   그 경우 충격 + 정지가 겹치면 오보가 나갈 수 있다. 다만 맥박을 찾지
+     *   못한 채 60초(PULSE_SEARCH_TIMEOUT)가 지나면 접촉 판정 자체가 해제되므로
+     *   창은 그만큼으로 제한된다. 직전까지 착용 확정 상태였다면 확정 해제
+     *   (WEAR_REVOKE_SAMPLES 30초) 뒤에 이 60초가 시작되어 최대 90초다. */
     FallDetection_ProcessBlock(bmi_accel, frames, HeartRateCalc_HasContact());
 
     /* 만보기는 착용 판정을 거치지 않는다 — IMU 만으로 성립하는 기능에
@@ -655,7 +662,8 @@ static void Process_IMU_Block(void)
   *
   * INT 핀이 눌린 채 남으면 하강 엣지가 오지 않아 스트림이 영구 정지한다.
   * 일정 시간 블록이 없으면 직접 수거를 걸어 복구한다.
-  * FIFO_DATA 를 읽으면 A_FULL 이 해제되면서 INT 핀도 다시 풀린다.
+  * 수거가 끝나면 Process_PPG_Block() 이 INT_STAT_1 을 읽어 A_FULL 을 해제하고,
+  * 그때 INT 핀도 다시 풀린다.
   */
 static void Collect_PPG_Block(void)
 {
@@ -873,10 +881,11 @@ void SPI2_DMA_Reset_Unlock(void)
     HAL_GPIO_WritePin(BMI270_CS_GPIO_Port, BMI270_CS_Pin, GPIO_PIN_SET);
 }
 
-/* 센서 하드웨어 인터럽트 —— 이 시스템의 유일한 기상 신호
+/* 센서 하드웨어 인터럽트 —— 센서 데이터 도착을 알리는 기상 신호
+ * (WFI 는 SysTick 1ms, DMA/UART 완료 인터럽트로도 깨어난다)
  *   PB0 : MAX30102 FIFO Almost Full (25샘플 = 0.5초)
  *   PA5 : BMI270 INT1 = FIFO 워터마크
- *   PA6 : BMI270 INT2 = any-motion (절전 게이트)
+ *   PA6 : BMI270 INT2 = any-motion (구성만 되어 있고 현재 소비하지 않음)
  *
  * ISR 안에서는 블로킹 판독을 하지 않는다. FIFO 길이 조회가 필요한 IMU 쪽은
  * 플래그만 세우고 실제 수거는 메인 루프로 넘긴다. */
@@ -885,7 +894,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     switch (GPIO_Pin)
     {
         case MAX30102_INT_Pin:
-            /* FIFO_DATA 연속 판독이 RD_PTR 전진과 인터럽트 해제를 겸한다.
+            /* FIFO_DATA 연속 판독이 RD_PTR 을 전진시킨다. A_FULL 해제는
+             * 블록 처리 때 Process_PPG_Block() 이 INT_STAT_1 판독으로 확실히 한다.
              *
              * hi2c1.State 확인이 핵심이다. 메인 루프가 블로킹 판독 중일 때
              * 여기서 DMA 를 걸면 같은 핸들을 양쪽에서 만지게 되어 상태 머신이 깨진다.
@@ -906,8 +916,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
             break;
 
         case BMI270_INT2_Pin:
-            /* any-motion 은 절전 게이트 용도다. FIFO 워터마크가 감지를 담당하므로
-             * 여기서 할 일은 없다 — 인터럽트를 소비해 EXTI 를 정리하는 것으로 충분하다. */
+            /* any-motion 은 절전 게이트로 쓰려던 것이지만 아직 구현되지 않았다.
+             * FIFO 워터마크가 감지를 담당하므로 여기서 할 일은 없다 —
+             * 인터럽트를 소비해 EXTI 를 정리하는 것으로 끝난다. */
             break;
 
         default:
@@ -974,8 +985,9 @@ static void Service_I2C_Fault(void)
      * 실측: 충격 직후 측정이 멈춘 뒤 재부팅 전까지 복구되지 않았다.
      *
      * 낙상 감지 웨어러블에서 이건 치명적이다 —— 낙상은 곧 충격이고,
-     * HeartRateCalc_IsWorn() 이 맥박 기반이라 PPG 가 죽으면 낙상 판정까지
-     * 함께 꺼진다. 정확히 필요한 순간에 기능이 사라진다.
+     * 낙상 확정 게이트인 HeartRateCalc_HasContact() 가 PPG(IR DC) 기반이라
+     * PPG 가 죽으면 낙상 판정까지 함께 꺼진다. 정확히 필요한 순간에 기능이
+     * 사라진다.
      * ------------------------------------------------------------------ */
     if (!g_max30102_ok) return;
 

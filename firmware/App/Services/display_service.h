@@ -18,7 +18,8 @@ void DisplayService_Service(void);
 
 uint8_t DisplayService_IsOn(void);
 
-/* 손목과 무관하게 강제로 켠다 (낙상 알림처럼 반드시 보여야 하는 경우용).
+/* 손목과 무관하게 강제로 켠다 (낙상 알림처럼 반드시 보여야 하는 경우용 —
+ * 현재 호출하는 곳은 없다).
  * 켜진 뒤의 소등 규칙은 평소와 같다 — 타임아웃 또는 손목 내림. */
 void DisplayService_Wake(void);
 

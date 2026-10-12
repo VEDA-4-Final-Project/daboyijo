@@ -1,0 +1,2047 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3680" height="6820" viewBox="0 0 3680 6820">
+<defs id="화살표 마커">
+  <marker id="arrow-099268" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#099268"/></marker>
+  <marker id="arrow-0CA678" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0CA678"/></marker>
+  <marker id="arrow-1098AD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1098AD"/></marker>
+  <marker id="arrow-1864AB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1864AB"/></marker>
+  <marker id="arrow-3B5BDB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3B5BDB"/></marker>
+  <marker id="arrow-495057" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#495057"/></marker>
+  <marker id="arrow-5F3DC4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5F3DC4"/></marker>
+  <marker id="arrow-7048E8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7048E8"/></marker>
+  <marker id="arrow-AD6800" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#AD6800"/></marker>
+  <marker id="arrow-C2255C" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#C2255C"/></marker>
+  <marker id="arrow-D6336C" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#D6336C"/></marker>
+  <marker id="arrow-E8590C" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#E8590C"/></marker>
+</defs>
+<rect id="Canvas" x="0" y="0" width="3680" height="6820" fill="#FFFFFF"/>
+<g id="00 · 표지">
+  <text x="64" y="66" font-family="Noto Sans KR" font-size="40" font-weight="800" fill="#1A1D23" text-anchor="start" xml:space="preserve">다보이조 — 코드 구조 · 실행 흐름 다이어그램</text>
+  <text x="64" y="100" font-family="Noto Sans KR" font-size="15" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">요양원 어르신 안전 모니터링 시스템 · 실제 소스코드 기준 (추정 없음) · 기준 커밋 2ba2b2d</text>
+  <text x="2760" y="66" font-family="Noto Sans KR" font-size="15" font-weight="700" fill="#5B6472" text-anchor="start" xml:space="preserve">5개 독립 프로세스 · 3개 통신 경로</text>
+  <text x="2760" y="90" font-family="JetBrains Mono" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">firmware / relay-node / server / alert-node / client</text>
+  <g id="범례">
+    <rect x="64" y="118" width="16" height="16" rx="4" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+    <text x="86" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">펌웨어</text>
+    <rect x="143" y="118" width="16" height="16" rx="4" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+    <text x="165" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">중계</text>
+    <rect x="209" y="118" width="16" height="16" rx="4" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+    <text x="231" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">서버</text>
+    <rect x="275" y="118" width="16" height="16" rx="4" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+    <text x="297" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">AI·판정</text>
+    <rect x="380" y="118" width="16" height="16" rx="4" fill="#E6FCF5" stroke="#0CA678" stroke-width="2"/>
+    <text x="402" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">신원귀속</text>
+    <rect x="472" y="118" width="16" height="16" rx="4" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+    <text x="494" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">관제 UI</text>
+    <rect x="577" y="118" width="16" height="16" rx="4" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+    <text x="599" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">알림</text>
+    <rect x="643" y="118" width="16" height="16" rx="4" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+    <text x="665" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">저장소</text>
+    <rect x="722" y="118" width="16" height="16" rx="4" fill="#FFF9DB" stroke="#F08C00" stroke-width="2"/>
+    <text x="744" y="131" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">분기·예외</text>
+  </g>
+</g>
+<g id="01 · 실행 진입점">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="160" width="3560" height="300" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="160" width="10" height="300" rx="5" fill="#0B7285"/>
+    <text id="Section Title" x="94" y="206" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#0B7285" text-anchor="start" xml:space="preserve">① 실행 진입점 — 프로그램은 어디서 시작되는가</text>
+    <text id="Section Subtitle" x="94" y="234" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">5개 프로세스가 서로 다른 하드웨어에서 독립 실행된다. 공유되는 것은 protocol/ 헤더와 MQTT JSON 계약(veda_messages.hpp)뿐이다.</text>
+  </g>
+  <g id="컴포넌트">
+    <g id="ENTRY/firmware">
+      <g id="도형">
+        <rect x="94" y="270" width="676" height="111" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="94" y="270" width="676" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="108" y="299" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">웨어러블 펌웨어</text>
+        <text x="108" y="314" font-family="JetBrains Mono" font-size="11" font-weight="500" fill="#5B6472" text-anchor="start" xml:space="preserve">firmware/Core/Src/main.c : main()</text>
+        <text x="108" y="337" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HAL_Init() → 센서 초기화 → IWDG_Start()</text>
+        <text x="108" y="353" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">while(1) 8단계 루프 (인터럽트 기동)</text>
+        <text x="108" y="369" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">STM32F4 · BMI270 · MAX30102 · HM-10</text>
+      </g>
+    </g>
+    <g id="ENTRY/relay">
+      <g id="도형">
+        <rect x="798" y="270" width="676" height="111" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="798" y="270" width="676" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="812" y="299" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">중계 노드</text>
+        <text x="812" y="314" font-family="JetBrains Mono" font-size="11" font-weight="500" fill="#5B6472" text-anchor="start" xml:space="preserve">relay-node/src/main_relay.cpp : main()</text>
+        <text x="812" y="337" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">loadConfig → MQTT(TLS) → BLE 어댑터</text>
+        <text x="812" y="353" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">while(g_running) { runOnce(...) }</text>
+        <text x="812" y="369" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Raspberry Pi 4</text>
+      </g>
+    </g>
+    <g id="ENTRY/server">
+      <g id="도형">
+        <rect x="1502" y="270" width="676" height="111" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="1502" y="270" width="676" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1516" y="299" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">중앙 서버</text>
+        <text x="1516" y="314" font-family="JetBrains Mono" font-size="11" font-weight="500" fill="#5B6472" text-anchor="start" xml:space="preserve">server/src/main.cpp : main()</text>
+        <text x="1516" y="337" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">설정 → 모듈 생성 → 콜백 배선 → 기동</text>
+        <text x="1516" y="353" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">pipeline.run(g_stop) 에서 블로킹</text>
+        <text x="1516" y="369" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Raspberry Pi 4 × 2대 (채널 2+2 분할)</text>
+      </g>
+    </g>
+    <g id="ENTRY/alert">
+      <g id="도형">
+        <rect x="2206" y="270" width="676" height="111" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="2206" y="270" width="676" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="2220" y="299" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">알림 노드</text>
+        <text x="2220" y="314" font-family="JetBrains Mono" font-size="11" font-weight="500" fill="#5B6472" text-anchor="start" xml:space="preserve">alert-node/app/main.cpp : main()</text>
+        <text x="2220" y="337" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MQTT 구독 → 큐 → while(running)</text>
+        <text x="2220" y="353" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">오디오(ALSA/wm8960) · LED(hub75)</text>
+        <text x="2220" y="369" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Raspberry Pi 4 + 커널 드라이버</text>
+      </g>
+    </g>
+    <g id="ENTRY/client">
+      <g id="도형">
+        <rect x="2910" y="270" width="676" height="111" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2910" y="270" width="676" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2924" y="299" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">Qt 관제 클라이언트</text>
+        <text x="2924" y="314" font-family="JetBrains Mono" font-size="11" font-weight="500" fill="#5B6472" text-anchor="start" xml:space="preserve">client/main.cpp : main()</text>
+        <text x="2924" y="337" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">QApplication → QSqlDatabase(QMARIADB)</text>
+        <text x="2924" y="353" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">LoginDialog → MainWindow → a.exec()</text>
+        <text x="2924" y="369" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Windows / Linux</text>
+      </g>
+    </g>
+  </g>
+</g>
+<g id="02 · 웨어러블 펌웨어 (STM32)">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="490" width="3560" height="1250" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="490" width="10" height="1250" rx="5" fill="#E8590C"/>
+    <text id="Section Title" x="94" y="536" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#E8590C" text-anchor="start" xml:space="preserve">② 웨어러블 펌웨어 — 부팅 → 메인 루프 → 인터럽트 → 판정 알고리즘</text>
+    <text id="Section Subtitle" x="94" y="564" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">센서가 인터럽트로 깨우면 그때만 FIFO 블록을 수거한다. 알고리즘은 샘플이 아니라 배열(블록)을 받는다.</text>
+  </g>
+    <g id="레인/부팅">
+      <rect x="90" y="568" width="860" height="1100" rx="12" fill="#FFFFFF" stroke="#E8590C" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="104" y="592" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#E8590C" text-anchor="start" xml:space="preserve">부팅 시퀀스 (1회)</text>
+    </g>
+    <g id="레인/메인루프">
+      <rect x="970" y="568" width="860" height="1100" rx="12" fill="#FFFFFF" stroke="#E8590C" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="984" y="592" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#E8590C" text-anchor="start" xml:space="preserve">메인 루프  while(1)</text>
+    </g>
+    <g id="레인/ISR">
+      <rect x="1850" y="568" width="860" height="470" rx="12" fill="#FFFFFF" stroke="#AD6800" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="1864" y="592" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#AD6800" text-anchor="start" xml:space="preserve">인터럽트 컨텍스트 (ISR)</text>
+    </g>
+    <g id="레인/펌웨어알고리즘">
+      <rect x="1850" y="1062" width="860" height="606" rx="12" fill="#FFFFFF" stroke="#7048E8" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="1864" y="1086" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#7048E8" text-anchor="start" xml:space="preserve">판정 알고리즘</text>
+    </g>
+    <g id="레인/송신">
+      <rect x="2730" y="568" width="860" height="1100" rx="12" fill="#FFFFFF" stroke="#1098AD" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="2744" y="592" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#1098AD" text-anchor="start" xml:space="preserve">출력 · 안전장치</text>
+    </g>
+  <g id="컴포넌트">
+    <g id="FW/HAL">
+      <g id="도형">
+        <rect x="110" y="602" width="820" height="64" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="602" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="631" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">HAL_Init() · SystemClock_Config()</text>
+        <text x="124" y="654" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HSE + PLL (M25 N192 P2)</text>
+      </g>
+    </g>
+    <g id="FW/BUS">
+      <g id="도형">
+        <rect x="110" y="682" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="682" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="711" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">I2C1_BusRecovery()</text>
+        <text x="124" y="734" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MX_I2C1_Init() 보다 먼저 호출한다</text>
+        <text x="124" y="750" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">SDA가 물려 있으면 SCL 최대 9회 토글 → STOP 조건 생성</text>
+      </g>
+    </g>
+    <g id="FW/PERIPH">
+      <g id="도형">
+        <rect x="110" y="778" width="820" height="64" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="778" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="807" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">MX_GPIO/DMA/I2C1/SPI2/USART1·2/USB_DEVICE_Init()</text>
+        <text x="124" y="830" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">USART2 = HM-10 BLE, USB CDC = printf 로그</text>
+      </g>
+    </g>
+    <g id="FW/HM10">
+      <g id="도형">
+        <rect x="110" y="858" width="820" height="64" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="858" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="887" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">hm10_init(&amp;huart2) · HAL_Delay(2500)</text>
+        <text x="124" y="910" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">센서 전원·아날로그 회로 안정화 대기</text>
+      </g>
+    </g>
+    <g id="FW/SENSOR">
+      <g id="도형">
+        <rect x="110" y="938" width="820" height="96" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="938" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="967" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">BMI270_Init() / MAX30102_Init()</text>
+        <text x="124" y="990" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">각 3회 재시도 (SENSOR_INIT_RETRY)</text>
+        <text x="124" y="1006" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">실패해도 멈추지 않음 → 그 센서만 OFF 하고 계속</text>
+        <text x="124" y="1022" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Blink_Error_Code(2=IMU, 3=PPG, 4=FIFO구성)</text>
+      </g>
+    </g>
+    <g id="FW/ALGOINIT">
+      <g id="도형">
+        <rect x="110" y="1050" width="820" height="112" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="1050" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="1079" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">알고리즘 · 서비스 초기화</text>
+        <text x="124" y="1102" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FallDetection_Init() — SVM 링버퍼를 1.0g로 채움</text>
+        <text x="124" y="1118" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HeartRateCalc_Init()</text>
+        <text x="124" y="1134" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">StepCounter_Init() — 만보기</text>
+        <text x="124" y="1150" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">AppClock_Init() — 빌드 시각을 씨앗으로 벽시계 시작</text>
+      </g>
+    </g>
+    <g id="FW/FIFO">
+      <g id="도형">
+        <rect x="110" y="1178" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="1178" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="1207" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">BMI270_ConfigFifoAndInterrupts()</text>
+        <text x="124" y="1230" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FIFO 워터마크 INT1 구성</text>
+        <text x="124" y="1246" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ConfigAnyMotion(300,100) — 절전 게이트(실패해도 무해)</text>
+      </g>
+    </g>
+    <g id="FW/IWDG">
+      <g id="도형">
+        <rect x="110" y="1274" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="110" y="1274" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="1303" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">IWDG_Start()</text>
+        <text x="124" y="1326" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">★ 부팅 시퀀스가 끝난 뒤에 켠다 (앞에서 켜면 재부팅 루프)</text>
+        <text x="124" y="1342" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">LSI 기준 약 8초 — 어느 단계든 멎으면 리셋</text>
+      </g>
+    </g>
+    <g id="LOOP/WDT">
+      <g id="도형">
+        <rect x="990" y="602" width="820" height="64" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="602" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="631" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">① IWDG-&gt;KR = 0xAAAA</text>
+        <text x="1004" y="654" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">루프가 한 바퀴 돌았다는 증거</text>
+      </g>
+    </g>
+    <g id="LOOP/I2CFAULT">
+      <g id="도형">
+        <rect x="990" y="680" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="680" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="709" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">② Service_I2C_Fault()</text>
+        <text x="1004" y="732" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ISR이 세운 g_i2c_fault를 여기서 처리 (ISR엔 HAL_Delay 금지)</text>
+        <text x="1004" y="748" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">DeInit → BusRecovery → Init → (BUSY면 SWRST)</text>
+      </g>
+    </g>
+    <g id="LOOP/COLIMU">
+      <g id="도형">
+        <rect x="990" y="774" width="820" height="96" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="774" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="803" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">③ Collect_IMU_Block()</text>
+        <text x="1004" y="826" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FIFO 길이 조회 → 프레임 경계로 내림 정렬</text>
+        <text x="1004" y="842" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BMI270_StartFifoRead_DMA(bmi_fifo_rx, n)</text>
+        <text x="1004" y="858" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">폴백: 700ms 무소식이면 스스로 재무장</text>
+      </g>
+    </g>
+    <g id="LOOP/PROCIMU">
+      <g id="도형">
+        <rect x="990" y="884" width="820" height="96" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="884" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="913" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">④ Process_IMU_Block()</text>
+        <text x="1004" y="936" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BMI270_ParseFifoBlock → bmi_accel[]</text>
+        <text x="1004" y="952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FallDetection_ProcessBlock(accel, frames, is_worn)</text>
+        <text x="1004" y="968" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">StepCounter_ProcessBlock(accel, frames) — 착용 판정 무관</text>
+      </g>
+    </g>
+    <g id="LOOP/COLPPG">
+      <g id="도형">
+        <rect x="990" y="994" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="994" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="1023" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">⑤ Collect_PPG_Block()</text>
+        <text x="1004" y="1046" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">EXTI 하강엣지 유실 복구 — 1.5초 무소식이면 직접 수거</text>
+        <text x="1004" y="1062" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">I2C가 3초 이상 BUSY면 g_i2c_fault=1 (교착 해제)</text>
+      </g>
+    </g>
+    <g id="LOOP/PROCPPG">
+      <g id="도형">
+        <rect x="990" y="1088" width="820" height="112" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="1088" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="1117" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">⑥ Process_PPG_Block()</text>
+        <text x="1004" y="1140" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MAX30102_ParseBlock → ppg_samples[]</text>
+        <text x="1004" y="1156" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HeartRateCalc_ProcessBlock(samples, n, motion)</text>
+        <text x="1004" y="1172" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">그 다음에 MAX30102_AutoGain (순서가 중요)</text>
+        <text x="1004" y="1188" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">g_ppg_block_ready = 0  ← 핸들 잠금 해제</text>
+      </g>
+    </g>
+    <g id="LOOP/CLOCK">
+      <g id="도형">
+        <rect x="990" y="1214" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="1214" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="1243" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">⑦ AppClock_Service() · ConsumeMidnight()</text>
+        <text x="1004" y="1266" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">1초마다 벽시계 진행, 자정을 넘으면 플래그</text>
+        <text x="1004" y="1282" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">자정이면 StepCounter_SetSteps(0) — 누적값만 지운다</text>
+      </g>
+    </g>
+    <g id="LOOP/SEND">
+      <g id="도형">
+        <rect x="990" y="1308" width="820" height="96" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="1308" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="1337" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">⑧ HM10_Send_Now()</text>
+        <text x="1004" y="1360" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HM10_VITAL_PERIOD_MS = 1000 주기</text>
+        <text x="1004" y="1376" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">g_fall_flag는 5초(HM10_FALL_HOLD_MS) 유지 후 자동 해제</text>
+        <text x="1004" y="1392" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">기준점을 &#x27;지금&#x27;으로 갱신 → 밀린 패킷을 몰아 보내지 않음</text>
+      </g>
+    </g>
+    <g id="LOOP/IDLE">
+      <g id="도형">
+        <rect x="990" y="1418" width="820" height="80" rx="10" fill="#FFF4E6" stroke="#E8590C" stroke-width="2"/>
+        <rect x="990" y="1418" width="820" height="4" rx="2" fill="#E8590C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="1447" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#E8590C" text-anchor="start" xml:space="preserve">⑨ Enter_Idle()</text>
+        <text x="1004" y="1470" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">__disable_irq() → 플래그 확인 → __WFI()</text>
+        <text x="1004" y="1486" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">센서 EXTI 또는 DMA 완료가 곧 기상 신호</text>
+      </g>
+    </g>
+    <g id="ISR/EXTI">
+      <g id="도형">
+        <rect x="1870" y="602" width="820" height="112" rx="10" fill="#FFF9DB" stroke="#AD6800" stroke-width="2"/>
+        <rect x="1870" y="602" width="820" height="4" rx="2" fill="#AD6800"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="631" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#AD6800" text-anchor="start" xml:space="preserve">HAL_GPIO_EXTI_Callback(GPIO_Pin)</text>
+        <text x="1884" y="654" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">PB0 = MAX30102 FIFO Almost Full (25샘플·0.5초)</text>
+        <text x="1884" y="670" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  → hi2c1.State == READY 일 때만 DMA 시작</text>
+        <text x="1884" y="686" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">PA5 = BMI270 INT1 → g_imu_fwm_pending = 1</text>
+        <text x="1884" y="702" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">PA6 = BMI270 INT2 (any-motion, 소비만 함)</text>
+      </g>
+    </g>
+    <g id="ISR/I2CRX">
+      <g id="도형">
+        <rect x="1870" y="728" width="820" height="64" rx="10" fill="#FFF9DB" stroke="#AD6800" stroke-width="2"/>
+        <rect x="1870" y="728" width="820" height="4" rx="2" fill="#AD6800"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="757" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#AD6800" text-anchor="start" xml:space="preserve">HAL_I2C_MemRxCpltCallback()</text>
+        <text x="1884" y="780" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">g_ppg_block_ready = 1</text>
+      </g>
+    </g>
+    <g id="ISR/SPIRX">
+      <g id="도형">
+        <rect x="1870" y="806" width="820" height="64" rx="10" fill="#FFF9DB" stroke="#AD6800" stroke-width="2"/>
+        <rect x="1870" y="806" width="820" height="4" rx="2" fill="#AD6800"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="835" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#AD6800" text-anchor="start" xml:space="preserve">HAL_SPI_TxRxCpltCallback()</text>
+        <text x="1884" y="858" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">CS High → g_imu_block_ready = 1</text>
+      </g>
+    </g>
+    <g id="ISR/ERR">
+      <g id="도형">
+        <rect x="1870" y="884" width="820" height="80" rx="10" fill="#FFF9DB" stroke="#AD6800" stroke-width="2"/>
+        <rect x="1870" y="884" width="820" height="4" rx="2" fill="#AD6800"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="913" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#AD6800" text-anchor="start" xml:space="preserve">HAL_I2C_ErrorCallback / HAL_SPI_ErrorCallback</text>
+        <text x="1884" y="936" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">I2C: g_i2c_fault = 1 만 세우고 즉시 반환</text>
+        <text x="1884" y="952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">SPI: SPI2_DMA_Reset_Unlock() — 데드락 탈출</text>
+      </g>
+    </g>
+    <g id="ALG/FALL">
+      <g id="도형">
+        <rect x="1870" y="1102" width="820" height="80" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="1102" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="1131" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">FallDetection_ProcessBlock()</text>
+        <text x="1884" y="1154" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">SVM = sqrt(x²+y²+z²) · Welford 온라인 분산</text>
+        <text x="1884" y="1170" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">블록 표준편차 → s_block_motion (PPG가 참조)</text>
+      </g>
+    </g>
+    <g id="ALG/FSM">
+      <g id="도형">
+        <rect x="1870" y="1196" width="820" height="112" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="1196" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="1225" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">3단계 백트래킹 상태머신</text>
+        <text x="1884" y="1248" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MONITORING : SVM &gt; 10.0g 충격 포착</text>
+        <text x="1884" y="1264" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  → 과거 120샘플에 &lt;0.75g 가 3연속 있었는가?</text>
+        <text x="1884" y="1280" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">INACTIVITY_CHECK : 500샘플(5초) 정지 검증</text>
+        <text x="1884" y="1296" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  움직임 150샘플 미만 AND is_worn → 낙상 확정</text>
+      </g>
+    </g>
+    <g id="ALG/STEP">
+      <g id="도형">
+        <rect x="1870" y="1322" width="820" height="80" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="1322" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="1351" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">StepCounter_ProcessBlock()</text>
+        <text x="1884" y="1374" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">착용 판정을 쓰지 않는다 — IMU만으로 성립</text>
+        <text x="1884" y="1390" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">누적 걸음 + 케이던스, 자정에 0으로 리셋</text>
+      </g>
+    </g>
+    <g id="ALG/HR">
+      <g id="도형">
+        <rect x="1870" y="1416" width="820" height="80" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="1416" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="1445" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">HeartRateCalc_ProcessBlock(samples, n, motion_g)</text>
+        <text x="1884" y="1468" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">모션 블랭킹 0.05g / SpO2 정지 판정 0.008g</text>
+        <text x="1884" y="1484" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">GetBPM() · GetSpO2() · IsWorn() · HasContact()</text>
+      </g>
+    </g>
+    <g id="OUT/ALERT">
+      <g id="도형">
+        <rect x="2750" y="602" width="820" height="96" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="2750" y="602" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="631" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">Send_Fall_Alert_Hardware()</text>
+        <text x="2764" y="654" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fall_detection.c가 확정 시 호출 (extern)</text>
+        <text x="2764" y="670" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">g_fall_flag = 1 · g_fall_flag_ms = 지금</text>
+        <text x="2764" y="686" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HM10_Send_Now() 즉시 1회 + 주기 기준점 리셋</text>
+      </g>
+    </g>
+    <g id="OUT/PKT">
+      <g id="도형">
+        <rect x="2750" y="714" width="820" height="112" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="2750" y="714" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="743" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">hm10_send_packet(hr, spo2, fall, steps16)</text>
+        <text x="2764" y="766" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">7바이트: [0]0xAA [1]심박 [2]SpO2 [3]낙상</text>
+        <text x="2764" y="782" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">         [4]걸음lo [5]걸음hi [6]XOR 체크섬</text>
+        <text x="2764" y="798" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">체크섬은 오류검출이 아니라 &#x27;가짜 0xAA 헤더&#x27; 구분용</text>
+        <text x="2764" y="814" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">★ 릴레이 PKT_LEN과 반드시 동시에 배포할 것</text>
+      </g>
+    </g>
+    <g id="OUT/BLE">
+      <g id="도형">
+        <rect x="2750" y="842" width="820" height="80" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="2750" y="842" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="871" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">HM-10 BLE (USART2 투과 모드)</text>
+        <text x="2764" y="894" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Service FFE0 / Characteristic FFE1</text>
+        <text x="2764" y="910" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">1초 주기 notify → 중계 노드가 구독</text>
+      </g>
+    </g>
+    <g id="주석">
+      <rect x="2750" y="962" width="820" height="87" rx="8" fill="#FFFFFF" stroke="#868E96" stroke-width="1" stroke-dasharray="4 4"/>
+      <text x="2762" y="983" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">◆ 엣지 인터럽트 폴백 (한 번 놓치면 스스로 복구 못 함)</text>
+      <text x="2762" y="998" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   BMI270 INT1 미배선/유실 → 700ms 폴링</text>
+      <text x="2762" y="1013" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   MAX30102 EXTI 유실       → 1.5초 폴링</text>
+      <text x="2762" y="1028" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   I2C 핸들 BUSY 고착        → 3초 후 강제 복구</text>
+      <text x="2762" y="1043" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   그 위에 IWDG 8초          → 어느 단계든 멎으면 재부팅</text>
+    </g>
+    <g id="주석">
+      <rect x="2750" y="1071" width="820" height="72" rx="8" fill="#FFFFFF" stroke="#868E96" stroke-width="1" stroke-dasharray="4 4"/>
+      <text x="2762" y="1092" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">◆ ISR 안에서 하면 안 되는 것</text>
+      <text x="2762" y="1107" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   HAL_Delay() — SysTick(우선순위 15) 선점 불가로 영구 정지</text>
+      <text x="2762" y="1122" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   같은 핸들에 블로킹/DMA 혼용 — 상태머신 붕괴</text>
+      <text x="2762" y="1137" font-family="Noto Sans KR" font-size="11" font-weight="400" fill="#868E96" text-anchor="start" xml:space="preserve">   g_ppg_block_ready 가 hi2c1 잠금 역할을 겸한다</text>
+    </g>
+  </g>
+  <g id="연결">
+    <g id="화살표">
+      <path d="M 520.0 666 L 520.0 676" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 762 L 520.0 772" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 842 L 520.0 852" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 922 L 520.0 932" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 1034 L 520.0 1044" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 1162 L 520.0 1172" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 1258 L 520.0 1268" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 666 L 1400.0 674" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 760 L 1400.0 768" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 870 L 1400.0 878" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 980 L 1400.0 988" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 1074 L 1400.0 1082" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 1200 L 1400.0 1208" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 1294 L 1400.0 1302" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 1404 L 1400.0 1412" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 930 1314.0 L 960.0 1314.0 L 960.0 634.0 L 984 634.0" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-E8590C)"/>
+      <rect x="946.5" y="615.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#E8590C" stroke-width="1"/>
+      <text x="972.0" y="627.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#E8590C" text-anchor="middle" xml:space="preserve">부팅 완료</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1770 1498 L 1816 1498 L 1816 580 L 1770 580 L 1770 596" fill="none" stroke="#E8590C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-E8590C)"/>
+      <rect x="1756.2" y="569.0" width="27.6" height="17" rx="6" fill="#FFFFFF" stroke="#E8590C" stroke-width="1"/>
+      <text x="1770.0" y="581.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#E8590C" text-anchor="middle" xml:space="preserve">반복</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 658.0 L 2720.0 658.0 L 2720.0 650.0 L 2744 650.0" fill="none" stroke="#AD6800" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-AD6800)"/>
+      <rect x="2706.5" y="631.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#AD6800" stroke-width="1"/>
+      <text x="2732.0" y="643.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#AD6800" text-anchor="middle" xml:space="preserve">기상 신호</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 932.0 L 1840.0 932.0 L 1840.0 658.0 L 1864 658.0" fill="none" stroke="#AD6800" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-AD6800)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 1252.0 L 2720.0 1252.0 L 2720.0 650.0 L 2744 650.0" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+      <rect x="2706.5" y="631.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#D6336C" stroke-width="1"/>
+      <text x="2732.0" y="643.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#D6336C" text-anchor="middle" xml:space="preserve">낙상 확정</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 1456.0 L 2720.0 1456.0 L 2720.0 770.0 L 2744 770.0" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+      <rect x="2683.1" y="751.0" width="97.8" height="17" rx="6" fill="#FFFFFF" stroke="#7048E8" stroke-width="1"/>
+      <text x="2732.0" y="763.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#7048E8" text-anchor="middle" xml:space="preserve">BPM/SpO2/걸음</text>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 698 L 3160.0 708" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 826 L 3160.0 836" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 924 L 1830 924 L 1830 1132 L 1864 1132" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+      <rect x="1821.5" y="1113.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#7048E8" stroke-width="1"/>
+      <text x="1847.0" y="1125.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#7048E8" text-anchor="middle" xml:space="preserve">블록 전달</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 1138 L 1844 1138 L 1844 1446 L 1864 1446" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+      <rect x="1828.5" y="1427.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#7048E8" stroke-width="1"/>
+      <text x="1854.0" y="1439.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#7048E8" text-anchor="middle" xml:space="preserve">블록 전달</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 1182 L 2280.0 1190" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 1308 L 2280.0 1316" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 1402 L 2280.0 1410" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-7048E8)"/>
+    </g>
+  </g>
+</g>
+<g id="03 · MQTT 경로 (중계 → 브로커 → 서버 · 알림 · 관제)">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="1780" width="3560" height="860" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="1780" width="10" height="860" rx="5" fill="#1098AD"/>
+    <text id="Section Title" x="94" y="1826" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#1098AD" text-anchor="start" xml:space="preserve">③ MQTT 경로 — 웨어러블 값이 브로커를 지나 소리·LED·화면·DB가 되기까지</text>
+    <text id="Section Subtitle" x="94" y="1854" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">브로커는 TLS(8883). 서버는 veda/wearable/data를 구독하고 veda/alarm/control을 발행한다.</text>
+  </g>
+  <g id="컴포넌트">
+    <g id="RLY/MAIN">
+      <g id="도형">
+        <rect x="110" y="1892" width="820" height="112" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="110" y="1892" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="1921" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">main() — main_relay.cpp</text>
+        <text x="124" y="1944" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">exeDir()/relay-node.conf 로드 (오타는 기본값 유지)</text>
+        <text x="124" y="1960" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MqttClient_veda(&quot;relay_&quot; + device_id) — id 충돌 방지</text>
+        <text x="124" y="1976" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ca_path 있으면 TLS, 비면 평문 폴백</text>
+        <text x="124" y="1992" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">connectToBroker 실패해도 종료하지 않음(재접속 대기)</text>
+      </g>
+    </g>
+    <g id="RLY/LOOP">
+      <g id="도형">
+        <rect x="110" y="2018" width="820" height="96" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="110" y="2018" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="2047" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">while(g_running) { runOnce(adapter, client) }</text>
+        <text x="124" y="2070" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">findDevice(): scan_ms(8초) 동안 MAC 일치 탐색</text>
+        <text x="124" y="2086" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">peripheral.connect() → notify(FFE0/FFE1) 등록</text>
+        <text x="124" y="2102" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">끊기면 unsubscribe·disconnect 후 reconnect_ms 뒤 재스캔</text>
+      </g>
+    </g>
+    <g id="RLY/CB">
+      <g id="도형">
+        <rect x="110" y="2128" width="820" height="96" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="110" y="2128" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="2157" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">[BLE 콜백] g_rx_buffer += bytes</text>
+        <text x="124" y="2180" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">consumeBuffer(): 0xAA 헤더 탐색 → 7바이트 재조립</text>
+        <text x="124" y="2196" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">XOR 체크섬 + 필드 범위 검증</text>
+        <text x="124" y="2212" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">실패하면 1바이트 밀고 재동기</text>
+      </g>
+    </g>
+    <g id="RLY/PUB">
+      <g id="도형">
+        <rect x="110" y="2238" width="820" height="96" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="110" y="2238" width="820" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="2267" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">publishPacket() → WearableData → JSON</text>
+        <text x="124" y="2290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">낙상은 상승엣지에서만 (펌웨어가 5초 레벨 유지하므로)</text>
+        <text x="124" y="2306" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">QoS: 낙상 1 / 바이탈 0</text>
+        <text x="124" y="2322" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">publish(&quot;veda/wearable/data&quot;, payload)</text>
+      </g>
+    </g>
+    <g id="MQ/BROKER">
+      <g id="도형">
+        <rect x="990" y="1892" width="820" height="96" rx="10" fill="#F1F3F5" stroke="#495057" stroke-width="2"/>
+        <rect x="990" y="1892" width="820" height="4" rx="2" fill="#495057"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="1921" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#495057" text-anchor="start" xml:space="preserve">MQTT 브로커 (mosquitto · TLS 8883)</text>
+        <text x="1004" y="1944" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">veda/wearable/data      — 중계 → 서버·관제</text>
+        <text x="1004" y="1960" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">veda/alarm/control      — 서버·관제 → 알림 노드</text>
+        <text x="1004" y="1976" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">veda/alarm/&lt;node&gt;/status — 알림 노드 생존 (retain + Will)</text>
+      </g>
+    </g>
+    <g id="MQ/CONTRACT">
+      <g id="도형">
+        <rect x="990" y="2002" width="820" height="128" rx="10" fill="#F1F3F5" stroke="#495057" stroke-width="2"/>
+        <rect x="990" y="2002" width="820" height="4" rx="2" fill="#495057"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="2031" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#495057" text-anchor="start" xml:space="preserve">MQTT/MQTT_prod/veda_messages.hpp — JSON 계약</text>
+        <text x="1004" y="2054" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">WearableData { device_id, is_fall_detected,</text>
+        <text x="1004" y="2070" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  heart_rate, spo2, steps, timestamp }</text>
+        <text x="1004" y="2086" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">AlarmCommand { target_device, room(int), type, message,</text>
+        <text x="1004" y="2102" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  audio_*, matrix_*, brightness, timestamp, is_test }</text>
+        <text x="1004" y="2118" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">is_test 만 j.value(...,false) — 구버전 발신자 호환</text>
+      </g>
+    </g>
+    <g id="MQ/CLIENTLIB">
+      <g id="도형">
+        <rect x="990" y="2144" width="820" height="112" rx="10" fill="#F1F3F5" stroke="#495057" stroke-width="2"/>
+        <rect x="990" y="2144" width="820" height="4" rx="2" fill="#495057"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="2173" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#495057" text-anchor="start" xml:space="preserve">MqttClient_veda (libmosquitto 래퍼)</text>
+        <text x="1004" y="2196" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Pi 노드 + 서버 공용 · Qt만 QMqttClient 사용</text>
+        <text x="1004" y="2212" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setTlsConfig(ca) / setWill(topic, payload, qos, retain)</text>
+        <text x="1004" y="2228" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">publish() → PublishResult { Sent | Queued | Failed }</text>
+        <text x="1004" y="2244" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">구독 목록을 기억했다가 on_connect 마다 재구독</text>
+      </g>
+    </g>
+    <g id="MQ/MASTER">
+      <g id="도형">
+        <rect x="990" y="2270" width="820" height="144" rx="10" fill="#F1F3F5" stroke="#495057" stroke-width="2"/>
+        <rect x="990" y="2270" width="820" height="4" rx="2" fill="#495057"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="2299" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#495057" text-anchor="start" xml:space="preserve">MqttMasterManager — 서버 안에 있다</text>
+        <text x="1004" y="2322" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">onMessageReceived(): JSON → WearableData</text>
+        <text x="1004" y="2338" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">① wearable_data_callback_ → ActivityModule (항상)</text>
+        <text x="1004" y="2354" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">② 낙상: false→true 엣지에서만 1회 (래치)</text>
+        <text x="1004" y="2370" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">③ 생체이상: HR&gt;180 / SpO2&lt;90 → 진입 시 1회</text>
+        <text x="1004" y="2386" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">   복귀는 175/93 + 3회 연속(히스테리시스)</text>
+        <text x="1004" y="2402" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">   0은 &#x27;값 없음&#x27; — 미착용이 이상으로 안 잡히게</text>
+      </g>
+    </g>
+    <g id="ALT/BOOT">
+      <g id="도형">
+        <rect x="1870" y="1892" width="820" height="112" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="1870" y="1892" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="1921" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">main() — alert-node/app/main.cpp</text>
+        <text x="1884" y="1944" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">AlertDisplay::open(): /dev/fb0~31 중 fix.id==&quot;hub75&quot;</text>
+        <text x="1884" y="1960" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">VedaAudioPlayer(ALSA) · ThreadSafeQueue&lt;AlarmCommand&gt;</text>
+        <text x="1884" y="1976" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setWill(&quot;veda/alarm/&lt;id&gt;/status&quot;, &quot;offline&quot;, 1, retain)</text>
+        <text x="1884" y="1992" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">구독 실패/최초 연결 실패 시 종료 → systemd 재시작</text>
+      </g>
+    </g>
+    <g id="ALT/CB">
+      <g id="도형">
+        <rect x="1870" y="2018" width="820" height="96" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="1870" y="2018" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="2047" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">[MQTT 콜백] JSON → AlarmCommand</text>
+        <text x="1884" y="2070" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">cmd.target_device != node_id 면 무시</text>
+        <text x="1884" y="2086" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">audio_action==&quot;STOP&quot; 은 큐를 건너뛰고 즉시 player.stop()</text>
+        <text x="1884" y="2102" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">그 외에는 queue.push(cmd) 후 바로 반환</text>
+      </g>
+    </g>
+    <g id="ALT/LOOP">
+      <g id="도형">
+        <rect x="1870" y="2128" width="820" height="112" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="1870" y="2128" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="2157" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">while(running) — 메인 루프</text>
+        <text x="1884" y="2180" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">tryPop 실패 → showStatic(&quot;감시 중&quot;) 후 100ms 대기</text>
+        <text x="1884" y="2196" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">PLAY: setVolume → playWav(경로, loop) [비동기]</text>
+        <text x="1884" y="2212" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">SHOW: blinkCue(sev) → show(문구, sev, passes, aborted)</text>
+        <text x="1884" y="2228" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">is_test 면 스크롤 후 idle 밝기·음량으로 복귀</text>
+      </g>
+    </g>
+    <g id="ALT/POLICY">
+      <g id="도형">
+        <rect x="1870" y="2254" width="820" height="112" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="1870" y="2254" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="2283" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">표시 정책은 노드가 정한다</text>
+        <text x="1884" y="2306" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">toSeverity(): FALL·EGRESS→CRIT, VITAL/CONTROL→WARN</text>
+        <text x="1884" y="2322" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">toText(): room이 1~9999일 때만 &quot;201호 낙상 발생&quot; 조립</text>
+        <text x="1884" y="2338" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  (범위 밖이면 서버 message 그대로 — 쓰레기 정수 방어)</text>
+        <text x="1884" y="2354" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">aborted(): 1회는 끝까지 흘리고 대기 중이면 다음으로</text>
+      </g>
+    </g>
+    <g id="DRV/HUB75">
+      <g id="도형">
+        <rect x="2750" y="1892" width="820" height="96" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="2750" y="1892" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="1921" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">drivers/hub75/hub75.c (커널 모듈)</text>
+        <text x="2764" y="1944" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BCM2711 GPIO/PWM 직접 제어 · kthread 리프레시</text>
+        <text x="2764" y="1960" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fbdev(24bpp) + mmap · FBIO_WAITFORVSYNC</text>
+        <text x="2764" y="1976" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">sysfs: /sys/module/hub75/parameters/brightness</text>
+      </g>
+    </g>
+    <g id="DRV/DISPLAY">
+      <g id="도형">
+        <rect x="2750" y="2002" width="820" height="96" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="2750" y="2002" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="2031" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">AlertDisplay (app/matrix/alert-display.cpp)</text>
+        <text x="2764" y="2054" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">scratch_에 그리고 flush()가 vsync에 맞춰 한 번에 복사</text>
+        <text x="2764" y="2070" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">UTF-8 디코드 → font16 이진탐색 → drawText</text>
+        <text x="2764" y="2086" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">show(): 프레임당 1px 스크롤(30ms), CRIT은 테두리 점멸</text>
+      </g>
+    </g>
+    <g id="DRV/WM8960">
+      <g id="도형">
+        <rect x="2750" y="2112" width="820" height="80" rx="10" fill="#FFF0F6" stroke="#C2255C" stroke-width="2"/>
+        <rect x="2750" y="2112" width="820" height="4" rx="2" fill="#C2255C"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="2141" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#C2255C" text-anchor="start" xml:space="preserve">drivers/wm8960 + VedaAudioPlayer</text>
+        <text x="2764" y="2164" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">snd_pcm_open → setHardwareParams → 재생 스레드</text>
+        <text x="2764" y="2180" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">initMixer(&quot;Speaker&quot;) · getVolume/setVolume</text>
+      </g>
+    </g>
+    <g id="MQ/QT">
+      <g id="도형">
+        <rect x="2750" y="2206" width="820" height="112" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2750" y="2206" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="2235" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">Qt 관제 (MqttQtManager · QMqttClient)</text>
+        <text x="2764" y="2258" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">구독: veda/wearable/data → onWearableData()</text>
+        <text x="2764" y="2274" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">      veda/alarm/+/status → 알림 노드 온라인 배지</text>
+        <text x="2764" y="2290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">발행: veda/alarm/control ← 경보 해제 / LED 테스트</text>
+        <text x="2764" y="2306" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">5초 재연결 타이머 · 연결될 때마다 subscribeAll()</text>
+      </g>
+    </g>
+  </g>
+  <g id="연결">
+    <g id="화살표">
+      <path d="M 520.0 2004 L 520.0 2012" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 2114 L 520.0 2122" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 2224 L 520.0 2232" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 930 2286.0 L 960.0 2286.0 L 960.0 1940.0 L 984 1940.0" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1098AD)"/>
+      <rect x="938.7" y="1921.0" width="66.6" height="17" rx="6" fill="#FFFFFF" stroke="#1098AD" stroke-width="1"/>
+      <text x="972.0" y="1933.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#1098AD" text-anchor="middle" xml:space="preserve">publish</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 1988 L 1400.0 1996" fill="none" stroke="#495057" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-495057)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 2130 L 1400.0 2138" fill="none" stroke="#495057" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-495057)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 2256 L 1400.0 2264" fill="none" stroke="#495057" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-495057)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 1940.0 L 1840.0 1940.0 L 1840.0 2066.0 L 1864 2066.0" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+      <rect x="1775.8" y="2047.0" width="152.4" height="17" rx="6" fill="#FFFFFF" stroke="#C2255C" stroke-width="1"/>
+      <text x="1852.0" y="2059.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#C2255C" text-anchor="middle" xml:space="preserve">veda/alarm/control</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 2200.0 L 2280.0 2200.0 L 2280.0 2262.0 L 2744 2262.0" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-099268)"/>
+      <rect x="2435.8" y="2243.0" width="152.4" height="17" rx="6" fill="#FFFFFF" stroke="#099268" stroke-width="1"/>
+      <text x="2512.0" y="2255.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#099268" text-anchor="middle" xml:space="preserve">veda/wearable/data</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 2004 L 2280.0 2012" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 2114 L 2280.0 2122" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+      <rect x="2258.4" y="2099.0" width="43.2" height="17" rx="6" fill="#FFFFFF" stroke="#C2255C" stroke-width="1"/>
+      <text x="2280.0" y="2111.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#C2255C" text-anchor="middle" xml:space="preserve">큐 경유</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 2240 L 2280.0 2248" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 2184.0 L 2720.0 2184.0 L 2720.0 2050.0 L 2744 2050.0" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+      <rect x="2687.0" y="2031.0" width="90.0" height="17" rx="6" fill="#FFFFFF" stroke="#C2255C" stroke-width="1"/>
+      <text x="2732.0" y="2043.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#C2255C" text-anchor="middle" xml:space="preserve">SHOW/CLEAR</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 2310.0 L 2720.0 2310.0 L 2720.0 2152.0 L 2744 2152.0" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+      <rect x="2690.9" y="2133.0" width="82.2" height="17" rx="6" fill="#FFFFFF" stroke="#C2255C" stroke-width="1"/>
+      <text x="2732.0" y="2145.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#C2255C" text-anchor="middle" xml:space="preserve">PLAY/STOP</text>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 1988 L 3160.0 1996" fill="none" stroke="#C2255C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-C2255C)"/>
+      <rect x="3134.5" y="1973.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#C2255C" stroke-width="1"/>
+      <text x="3160.0" y="1985.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#C2255C" text-anchor="middle" xml:space="preserve">fbdev</text>
+    </g>
+  </g>
+</g>
+<g id="04 · 중앙 영상 서버 (C++ / RPi)">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="2680" width="3560" height="1880" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="2680" width="10" height="1880" rx="5" fill="#3B5BDB"/>
+    <text id="Section Title" x="94" y="2726" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#3B5BDB" text-anchor="start" xml:space="preserve">④ 중앙 서버 — main.cpp는 &#x27;조립도&#x27;, 실제 처리는 채널당 3종 스레드가 나눠 맡는다</text>
+    <text id="Section Subtitle" x="94" y="2754" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">RTSP 수신 스레드 → FrameQueue → VideoPipeline 스레드 → AiWorker 스레드 → StreamServer 송출. 모두 채널당 1개씩.</text>
+  </g>
+    <g id="레인/조립도">
+      <rect x="90" y="2756" width="860" height="1720" rx="12" fill="#FFFFFF" stroke="#3B5BDB" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="104" y="2780" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#3B5BDB" text-anchor="start" xml:space="preserve">main.cpp — 조립도 (배선만)</text>
+    </g>
+    <g id="레인/T1">
+      <rect x="970" y="2756" width="860" height="800" rx="12" fill="#FFFFFF" stroke="#1864AB" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="984" y="2780" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#1864AB" text-anchor="start" xml:space="preserve">[T1] RTSP 수신 스레드 · 채널당 1개</text>
+    </g>
+    <g id="레인/T2">
+      <rect x="970" y="3580" width="860" height="896" rx="12" fill="#FFFFFF" stroke="#1864AB" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="984" y="3604" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#1864AB" text-anchor="start" xml:space="preserve">[T2] VideoPipeline 스레드 · 채널당 1개</text>
+    </g>
+    <g id="레인/T3">
+      <rect x="1850" y="2756" width="860" height="520" rx="12" fill="#FFFFFF" stroke="#7048E8" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="1864" y="2780" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#7048E8" text-anchor="start" xml:space="preserve">[T3] AiWorker 스레드 · 채널당 1개</text>
+    </g>
+    <g id="레인/판정">
+      <rect x="1850" y="3300" width="860" height="1176" rx="12" fill="#FFFFFF" stroke="#7048E8" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="1864" y="3324" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#7048E8" text-anchor="start" xml:space="preserve">판정 · 귀속 엔진 (저수준 부품)</text>
+    </g>
+    <g id="레인/T4">
+      <rect x="2730" y="2756" width="860" height="800" rx="12" fill="#FFFFFF" stroke="#099268" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="2744" y="2780" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#099268" text-anchor="start" xml:space="preserve">[T4] StreamServer — Qt 제어/송출</text>
+    </g>
+    <g id="레인/T5">
+      <rect x="2730" y="3580" width="860" height="896" rx="12" fill="#FFFFFF" stroke="#5F3DC4" stroke-width="1.5" stroke-dasharray="8 6"/>
+      <text x="2744" y="3604" font-family="Noto Sans KR" font-size="15" font-weight="800" fill="#5F3DC4" text-anchor="start" xml:space="preserve">[T5] 부가 스레드 · 외부 연동 · 저장</text>
+    </g>
+  <g id="컴포넌트">
+    <g id="SRV/CFG">
+      <g id="도형">
+        <rect x="110" y="2790" width="820" height="96" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="2790" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="2819" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">loadServerConfig(&quot;config/cameras.conf&quot;)</text>
+        <text x="124" y="2842" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">숫자 키 = 이 Pi가 담당할 채널 슬롯 (URL이 비어도 만든다)</text>
+        <text x="124" y="2858" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">stream_port / db_host / telegram_* / gemini_* / care_contact_*</text>
+        <text x="124" y="2874" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">cameras 비면 즉시 return 1 (설정 오류)</text>
+      </g>
+    </g>
+    <g id="SRV/SIG">
+      <g id="도형">
+        <rect x="110" y="2900" width="820" height="64" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="2900" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="2929" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">signal(SIGINT/SIGTERM) → g_stop · curl_global_init()</text>
+        <text x="124" y="2952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">알림 스레드가 생기기 전에 curl을 1회 명시 초기화</text>
+      </g>
+    </g>
+    <g id="SRV/INFRA">
+      <g id="도형">
+        <rect x="110" y="2978" width="820" height="96" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="2978" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3007" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">공용 인프라 생성</text>
+        <text x="124" y="3030" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">StreamServer · map&lt;int, FrameQueue&gt; · RtspAvClient[]</text>
+        <text x="124" y="3046" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">DetectionStore · SnapshotBuffer A(전원블러)/B(낙상선택)</text>
+        <text x="124" y="3062" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">AiWorker · Database</text>
+      </g>
+    </g>
+    <g id="SRV/ZONES">
+      <g id="도형">
+        <rect x="110" y="3088" width="820" height="80" rx="10" fill="#E6FCF5" stroke="#0CA678" stroke-width="2"/>
+        <rect x="110" y="3088" width="820" height="4" rx="2" fill="#0CA678"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3117" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#0CA678" text-anchor="start" xml:space="preserve">BedZoneStore · IdentityTracker 생성</text>
+        <text x="124" y="3140" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">침대 ROI는 낙상·이탈·귀속이 같은 값을 봐야 해서 한 곳에만 둔다</text>
+        <text x="124" y="3156" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fall.setBedZones(&amp;bed_zones) / bed_egress.setBedZones(...)</text>
+      </g>
+    </g>
+    <g id="SRV/MOD">
+      <g id="도형">
+        <rect x="110" y="3182" width="820" height="112" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="3182" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3211" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">기능 모듈 생성</text>
+        <text x="124" y="3234" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FallModule · BedEgressModule · PrivacyMasker</text>
+        <text x="124" y="3250" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">CaregiverModule(db) · BlackboxModule · TelegramModule</text>
+        <text x="124" y="3266" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ActivityModule(db) · MqttMasterManager</text>
+        <text x="124" y="3282" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">GeminiClient → CareQaModule(snapA, snapB, vlm, telegram)</text>
+      </g>
+    </g>
+    <g id="SRV/MQTTINIT">
+      <g id="도형">
+        <rect x="110" y="3308" width="820" height="80" rx="10" fill="#F1F3F5" stroke="#495057" stroke-width="2"/>
+        <rect x="110" y="3308" width="820" height="4" rx="2" fill="#495057"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3337" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#495057" text-anchor="start" xml:space="preserve">mqtt.init(&quot;dabo.local&quot;, 8883)</text>
+        <text x="124" y="3360" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">실패해도 서버는 계속 뜬다 (영상·낙상 판정은 MQTT와 무관)</text>
+        <text x="124" y="3376" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">네트워크 루프는 반드시 띄운다 — 재접속이 그 안에서 돈다</text>
+      </g>
+    </g>
+    <g id="SRV/WIRE">
+      <g id="도형">
+        <rect x="110" y="3402" width="820" height="208" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="3402" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3431" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">모듈 간 배선 (콜백 등록)</text>
+        <text x="124" y="3454" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setRoiCallback     → bed_zones.update + db.saveRoiZone</text>
+        <text x="124" y="3470" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setRoiBindCallback → bed_zones.bind + 위험도 재적용</text>
+        <text x="124" y="3486" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setConfirmCallback → privacy_masker.clearFall</text>
+        <text x="124" y="3502" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setRiskLevelCallback → bed_egress.updatePatientStatus</text>
+        <text x="124" y="3518" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setCameraSet/Clear → client-&gt;reconnect / disconnect</text>
+        <text x="124" y="3534" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setImageSet / setFocus → detached 스레드</text>
+        <text x="124" y="3550" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fall.setFallCallback / bed_egress.setAlarmCallback</text>
+        <text x="124" y="3566" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">caregiver.setCaregiverIdsCallback → identity.markCaregivers</text>
+        <text x="124" y="3582" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">mqtt.setWearableCallback / setWearableDataCallback</text>
+        <text x="124" y="3598" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ai_worker.addProcessor(caregiver) → addProcessor(fall)</text>
+      </g>
+    </g>
+    <g id="SRV/START">
+      <g id="도형">
+        <rect x="110" y="3624" width="820" height="128" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="3624" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3653" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">서버 기동</text>
+        <text x="124" y="3676" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">stream_server.start() 실패 시 return 1</text>
+        <text x="124" y="3692" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">blackbox.startHttp() · telegram.startPolling()</text>
+        <text x="124" y="3708" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">db.connect(...)</text>
+        <text x="124" y="3724" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">db.loadRoiZones() → bed_zones 복원 (위험도 로드보다 먼저)</text>
+        <text x="124" y="3740" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">bed_egress.initializeFromDb(db)</text>
+      </g>
+    </g>
+    <g id="SRV/CHLOOP">
+      <g id="도형">
+        <rect x="110" y="3766" width="820" height="144" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="3766" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3795" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">for (cam : config.cameras) — 채널 슬롯 구성</text>
+        <text x="124" y="3818" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FrameQueue(8) → RtspAvClient(ch, url, queue)</text>
+        <text x="124" y="3834" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setDetectionCallback: identity.update → fall.onMetadata</text>
+        <text x="124" y="3850" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  → bed_egress.processDetections → detections.push</text>
+        <text x="124" y="3866" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">blackbox.attachChannel / caregiver.addChannel</text>
+        <text x="124" y="3882" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fall.addChannel(MoveNet 로드) / ai_worker.addChannel</text>
+        <text x="124" y="3898" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">client-&gt;start()</text>
+      </g>
+    </g>
+    <g id="SRV/RUN">
+      <g id="도형">
+        <rect x="110" y="3924" width="820" height="96" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="3924" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="3953" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">ai_worker.start() → pipeline.run(g_stop)</text>
+        <text x="124" y="3976" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">StatsReporter · VideoPipeline 생성</text>
+        <text x="124" y="3992" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">setFallVariant(...) / addStage(privacy_masker.process)</text>
+        <text x="124" y="4008" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">채널별 큐 등록 후 run() — 전체 join 까지 블로킹</text>
+      </g>
+    </g>
+    <g id="SRV/EXIT">
+      <g id="도형">
+        <rect x="110" y="4034" width="820" height="112" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="110" y="4034" width="820" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="4063" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">종료 (역순 정리)</text>
+        <text x="124" y="4086" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">telegram.stopPolling → ai_worker.stop</text>
+        <text x="124" y="4102" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">caregiver.flush (열린 케어 세션 DB 기록)</text>
+        <text x="124" y="4118" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">activity.flushAll (마지막 1분치 저장)</text>
+        <text x="124" y="4134" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">blackbox.flushAll → client-&gt;stop → stream_server.stop</text>
+      </g>
+    </g>
+    <g id="T1/RUN">
+      <g id="도형">
+        <rect x="990" y="2790" width="820" height="96" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="2790" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="2819" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">RtspAvClient::run()</text>
+        <text x="1004" y="2842" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">url_ 비어 있으면 500ms 대기 (Qt의 &#x27;카메라 연결&#x27; 대기)</text>
+        <text x="1004" y="2858" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">openAndStream(url) 실패 → 3초 백오프 후 재연결</text>
+        <text x="1004" y="2874" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">reload_로 끊긴 경우엔 백오프 없이 즉시 새 URL</text>
+      </g>
+    </g>
+    <g id="T1/OPEN">
+      <g id="도형">
+        <rect x="990" y="2900" width="820" height="112" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="2900" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="2929" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">openAndStream() — 연결 · 트랙 식별</text>
+        <text x="1004" y="2952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">rtsp_transport=tcp 시도 → 실패 시 옵션 없이 재시도</text>
+        <text x="1004" y="2968" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">interrupt_callback 으로 블로킹 I/O 즉시 중단</text>
+        <text x="1004" y="2984" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">video 트랙 + data(메타) 트랙 인덱스 확보</text>
+        <text x="1004" y="3000" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">on_stream_ready_ → BlackboxRecorder::setStreamInfo</text>
+      </g>
+    </g>
+    <g id="T1/READ">
+      <g id="도형">
+        <rect x="990" y="3026" width="820" height="64" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3026" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3055" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">while(running) av_read_frame(fmt, pkt)</text>
+        <text x="1004" y="3078" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">rc &lt; 0 → 스트림 끊김 → 재연결</text>
+      </g>
+    </g>
+    <g id="T1/VIDEO">
+      <g id="도형">
+        <rect x="990" y="3104" width="820" height="128" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3104" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3133" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">◆ 영상 패킷 (video_idx)</text>
+        <text x="1004" y="3156" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">on_packet_(pkt) → 블랙박스에 압축 그대로 (전 패킷)</text>
+        <text x="1004" y="3172" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">avcodec_send_packet / receive_frame</text>
+        <text x="1004" y="3188" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">PTS 게이트: kMaxConvertFps 60fps 초과분만 스킵</text>
+        <text x="1004" y="3204" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">sws_scale → BGR 원본 + view(1280×720) 동시 생성</text>
+        <text x="1004" y="3220" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">queue_.push(Frame{ch, img, gate_ts, view})</text>
+      </g>
+    </g>
+    <g id="T1/META">
+      <g id="도형">
+        <rect x="990" y="3246" width="820" height="96" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3246" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3275" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">◆ 메타데이터 패킷 (data_idx)</text>
+        <text x="1004" y="3298" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">meta_buf_에 append → &quot;&lt;/tt:MetadataStream&gt;&quot; 까지 대기</text>
+        <text x="1004" y="3314" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">완성된 문서만 MetadataParser::parse() 로 넘김</text>
+        <text x="1004" y="3330" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">256KB 넘으면 버퍼 폐기 (비정상 스트림 방어)</text>
+      </g>
+    </g>
+    <g id="T1/PARSE">
+      <g id="도형">
+        <rect x="990" y="3356" width="820" height="96" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3356" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3385" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">MetadataParser::parse(xml) → vector&lt;Detection&gt;</text>
+        <text x="1004" y="3408" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">tt:Transformation 없으면 전체 스킵 (좌표 뭉개짐 방지)</text>
+        <text x="1004" y="3424" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ONVIF [-1,1] → 화면 [0,1] 변환 (y축 반전)</text>
+        <text x="1004" y="3440" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ObjectId / Parent / BoundingBox / CenterOfGravity / Type</text>
+      </g>
+    </g>
+    <g id="T2/POP">
+      <g id="도형">
+        <rect x="990" y="3616" width="820" height="80" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3616" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3645" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">VideoPipeline::runChannel()</text>
+        <text x="1004" y="3668" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">queue.pop(200ms) — 채널 전용 큐</text>
+        <text x="1004" y="3684" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">촬영시각(PTS) 기준 40fps 게이트 (폭주 차단)</text>
+      </g>
+    </g>
+    <g id="T2/PREP">
+      <g id="도형">
+        <rect x="990" y="3710" width="820" height="96" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3710" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3739" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">프레임 준비</text>
+        <text x="1004" y="3762" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">raw = 원본 해상도 (AI 크롭용)</text>
+        <text x="1004" y="3778" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">small = frame-&gt;view (없으면 cv::resize 폴백)</text>
+        <text x="1004" y="3794" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">clean = small.clone() — 블러 전 원본 보관</text>
+      </g>
+    </g>
+    <g id="T2/MATCH">
+      <g id="도형">
+        <rect x="990" y="3820" width="820" height="80" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3820" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3849" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">store_.closestTo(ch, received_at − 200ms)</text>
+        <text x="1004" y="3872" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">PTS 타임라인에서 가장 가까운 감지 좌표 선택</text>
+        <text x="1004" y="3888" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">1초 이상 벌어지면 빈 결과 (잔상 제거)</text>
+      </g>
+    </g>
+    <g id="T2/STAGE">
+      <g id="도형">
+        <rect x="990" y="3914" width="820" height="96" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="3914" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="3943" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">stages_ 실행 → PrivacyMasker::process()</text>
+        <text x="1004" y="3966" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Head/Face 만 타원 마스크 + GaussianBlur</text>
+        <text x="1004" y="3982" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">감지가 비면 마지막 좌표 5프레임 유지(깜빡임 방지)</text>
+        <text x="1004" y="3998" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">결과 = &#x27;전원 블러본&#x27;</text>
+      </g>
+    </g>
+    <g id="T2/VARIANT">
+      <g id="도형">
+        <rect x="990" y="4024" width="820" height="80" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="4024" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="4053" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">fall_variant_ → PrivacyMasker::restoreFallen()</text>
+        <text x="1004" y="4076" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">hasFall(ch) 일 때만 &#x27;낙상자만 노출한 선택본&#x27; 생성</text>
+        <text x="1004" y="4092" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">① parent_id 매칭 ② 낙상자 bbox 내부 ③ 무게중심 최근접</text>
+      </g>
+    </g>
+    <g id="T2/OUT">
+      <g id="도형">
+        <rect x="990" y="4118" width="820" height="112" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="990" y="4118" width="820" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="4147" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">인코딩 · 송출 (필요한 소비자에게만)</text>
+        <text x="1004" y="4170" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ai_.submit({raw, clean, ch, dets}) — 최신 1장 덮어쓰기</text>
+        <text x="1004" y="4186" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">snapshot_due(2fps) 또는 클라 접속 중일 때만 imencode</text>
+        <text x="1004" y="4202" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">snapshots_.put(A) / snapshots_fall_.put(B)</text>
+        <text x="1004" y="4218" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">server_.broadcast(ch, jpeg) → stats_.onFrameSent()</text>
+      </g>
+    </g>
+    <g id="T3/RUN">
+      <g id="도형">
+        <rect x="1870" y="2790" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="2790" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="2819" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">AiWorker::run(slot)</text>
+        <text x="1884" y="2842" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">kMinJobIntervalSec = 0.25 → 채널당 최대 4회/초</text>
+        <text x="1884" y="2858" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">slot.pending 에 최신 1장만 남으므로 밀리지 않음</text>
+        <text x="1884" y="2874" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">processors_ 를 등록 순서대로 실행</text>
+      </g>
+    </g>
+    <g id="T3/CARE">
+      <g id="도형">
+        <rect x="1870" y="2900" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="2900" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="2929" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">① CaregiverModule::processFrame(job)</text>
+        <text x="1884" y="2952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">detector_.detectInFrame(raw_frame, df, &amp;caregiver_ids)</text>
+        <text x="1884" y="2968" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">판정된 id 목록 → identity.markCaregivers(ch, ids)</text>
+        <text x="1884" y="2984" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">결과를 채널별 CareTimer::update(present) 로 전달</text>
+      </g>
+    </g>
+    <g id="T3/POSE">
+      <g id="도형">
+        <rect x="1870" y="3010" width="820" height="112" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="3010" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="3039" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">② FallModule::processFrame(job)</text>
+        <text x="1884" y="3062" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fall_detector_.observedTracks(ch) — 침대 밖 객체만</text>
+        <text x="1884" y="3078" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">객체당 kPoseIntervalSec = 2초 주기로만 추론</text>
+        <text x="1884" y="3094" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">원본 해상도에서 bbox 크롭(+8% 마진)</text>
+        <text x="1884" y="3110" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">estimator.isLyingDown(crop) → reportPose(ch, id, lying)</text>
+      </g>
+    </g>
+    <g id="ENG/POSE">
+      <g id="도형">
+        <rect x="1870" y="3336" width="820" height="128" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="3336" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="3365" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">PoseEstimator (MoveNet Thunder int8)</text>
+        <text x="1884" y="3388" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">레터박스 리사이즈 + 감마 1.15 → XNNPACK Invoke</text>
+        <text x="1884" y="3404" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">17 keypoint (y, x, score)</text>
+        <text x="1884" y="3420" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">isLyingPose = ① OR ② OR ③</text>
+        <text x="1884" y="3436" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  ① 몸통 기울기 ≥65°  ② 상하 반전  ③ 원근 단축</text>
+        <text x="1884" y="3452" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  다리 veto: 하체가 40° 미만이면 ①②를 거부</text>
+      </g>
+    </g>
+    <g id="ENG/FALL">
+      <g id="도형">
+        <rect x="1870" y="3478" width="820" height="112" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="3478" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="3507" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">FallDetector (core/fall_detector.cpp)</text>
+        <text x="1884" y="3530" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">update(): 침대 ROI 게이팅 — 기준점은 bbox 하단 중앙(발끝)</text>
+        <text x="1884" y="3546" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  in_bed면 관찰 중단 + 상태 리셋 / 6초 미관측 추적 폐기</text>
+        <text x="1884" y="3562" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">reportPose(): 누움이 2초 연속되면 on_fall_ 1회 발화</text>
+        <text x="1884" y="3578" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  (tr.fired로 중복 방지, 침대 복귀 시 무시)</text>
+      </g>
+    </g>
+    <g id="ENG/ZONES">
+      <g id="도형">
+        <rect x="1870" y="3604" width="820" height="96" rx="10" fill="#E6FCF5" stroke="#0CA678" stroke-width="2"/>
+        <rect x="1870" y="3604" width="820" height="4" rx="2" fill="#0CA678"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="3633" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#0CA678" text-anchor="start" xml:space="preserve">BedZoneStore (채널당 침대 여러 개)</text>
+        <text x="1884" y="3656" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BedZone { roi_id, resident_id, points }</text>
+        <text x="1884" y="3672" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">feetInWhichZone(det, zones) → roi_id 또는 kNoZone</text>
+        <text x="1884" y="3688" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">겹쳐 그렸으면 roi_id가 작은 쪽이 이긴다 (map 오름차순)</text>
+      </g>
+    </g>
+    <g id="ENG/ID">
+      <g id="도형">
+        <rect x="1870" y="3714" width="820" height="144" rx="10" fill="#E6FCF5" stroke="#0CA678" stroke-width="2"/>
+        <rect x="1870" y="3714" width="820" height="4" rx="2" fill="#0CA678"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="3743" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#0CA678" text-anchor="start" xml:space="preserve">IdentityTracker — 트랙 ↔ 침대 ↔ 입소자</text>
+        <text x="1884" y="3766" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">① 귀속: 처음 보인 자리가 침대 안이면 그 입소자 (0.90)</text>
+        <text x="1884" y="3782" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  밖에서 걸어 들어오면 0.75 / 다른 침대로 이동하면 0.45</text>
+        <text x="1884" y="3798" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">② 유지: 침대 밖에서도 라벨 유지, 초당 0.002 감쇠(바닥 0.55)</text>
+        <text x="1884" y="3814" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">③ 인계: 5초·화면 18% 안에 새 ID가 뜨면 라벨 승계 ×0.8</text>
+        <text x="1884" y="3830" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">④ 제외: 보호사 판정 트랙은 침대에 들어가도 귀속 안 함</text>
+        <text x="1884" y="3846" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">confidence &lt; 0.5 이면 이름 대신 &#x27;미상&#x27;으로 알린다</text>
+      </g>
+    </g>
+    <g id="ENG/CARE">
+      <g id="도형">
+        <rect x="1870" y="3872" width="820" height="128" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="3872" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="3901" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">CaregiverDetector + CareTimer</text>
+        <text x="1884" y="3924" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">HSV inRange(5,50,50)~(28,255,255) → MORPH_CLOSE</text>
+        <text x="1884" y="3940" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">최대 덩어리만: ratio ≥0.05 AND 평균S ≥140</text>
+        <text x="1884" y="3956" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">CareTimer: 3초 부재 → 세션 종료, 5초 미만은 폐기</text>
+        <text x="1884" y="3972" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">종료 후 3분 내 복귀면 addCareLogDuration 으로 합산</text>
+        <text x="1884" y="3988" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">아니면 insertCareLogs — 그 방 재원자 전원에게 1행씩</text>
+      </g>
+    </g>
+    <g id="ENG/EGRESS">
+      <g id="도형">
+        <rect x="1870" y="4014" width="820" height="128" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1870" y="4014" width="820" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="4043" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">BedEgressModule::processDetections()</text>
+        <text x="1884" y="4066" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">그려진 침대가 하나도 없으면 상태만 비우고 return</text>
+        <text x="1884" y="4082" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">침대A → 침대B 이동은 경보 아님(로그만)</text>
+        <text x="1884" y="4098" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">위험도(침대별): 하=차단 / 중=야간(22~06시)만 / 상=즉시</text>
+        <text x="1884" y="4114" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">객체당 10초 쿨다운 · 사라진 ID는 맵에서 제거</text>
+        <text x="1884" y="4130" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">EgressEvent{channel, object_id, roi_id, resident_id, x, y}</text>
+      </g>
+    </g>
+    <g id="T4/ACCEPT">
+      <g id="도형">
+        <rect x="2750" y="2790" width="820" height="80" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2750" y="2790" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="2819" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">StreamServer::acceptLoop()</text>
+        <text x="2764" y="2842" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">클라이언트마다 sender/receiver 스레드 2개 생성</text>
+        <text x="2764" y="2858" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">TCP_NODELAY 설정</text>
+      </g>
+    </g>
+    <g id="T4/RECV">
+      <g id="도형">
+        <rect x="2750" y="2884" width="820" height="96" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2750" y="2884" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="2913" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">receiverLoop() — Qt 제어 메시지 파싱</text>
+        <text x="2764" y="2936" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">magic 0xDB4C 확인 (어긋나면 1바이트씩 재동기)</text>
+        <text x="2764" y="2952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ROI_SET/CLEAR(roi_id) · ROI_BIND · RISK_UPDATE</text>
+        <text x="2764" y="2968" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ALARM_CONFIRM · CAMERA_SET/CLEAR · IMAGE_SET · FOCUS_SET</text>
+      </g>
+    </g>
+    <g id="T4/SEND">
+      <g id="도형">
+        <rect x="2750" y="2994" width="820" height="80" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2750" y="2994" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="3023" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">senderLoop() + enqueueAll()</text>
+        <text x="2764" y="3046" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">outbox 상한 8 — 넘치면 오래된 &#x27;영상&#x27; 부터 드롭</text>
+        <text x="2764" y="3062" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">이벤트 패킷(0xDB4D)은 절대 버리지 않는다</text>
+      </g>
+    </g>
+    <g id="T4/PROTO">
+      <g id="도형">
+        <rect x="2750" y="3088" width="820" height="112" rx="10" fill="#F1F3F5" stroke="#495057" stroke-width="2"/>
+        <rect x="2750" y="3088" width="820" height="4" rx="2" fill="#495057"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="3117" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#495057" text-anchor="start" xml:space="preserve">protocol/video_stream.h (공유 계약)</text>
+        <text x="2764" y="3140" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">dbj_vs_header_t 16B + JPEG      (magic 0xDB4B)</text>
+        <text x="2764" y="3156" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">dbj_evt_header_t 18B + roi_id   (magic 0xDB4D)</text>
+        <text x="2764" y="3172" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">dbj_ctrl_header_t 8B (+점/URL/파라미터, magic 0xDB4C)</text>
+        <text x="2764" y="3188" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">roi_id는 reserved 하위 8비트에 실어 하위호환 유지</text>
+      </g>
+    </g>
+    <g id="T5/BB">
+      <g id="도형">
+        <rect x="2750" y="3616" width="820" height="112" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="3616" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="3645" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">BlackboxRecorder + watchdog(1초)</text>
+        <text x="2764" y="3668" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">평시: 압축 패킷을 pre 5초 + GOP 여유만 유지</text>
+        <text x="2764" y="3684" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">trigger(type): post 5초 연장, armed 상한 60초</text>
+        <text x="2764" y="3700" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">종류가 다른 이벤트가 겹치면 먼저 끊어 저장</text>
+        <text x="2764" y="3716" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">첫 키프레임부터 mp4 remux → .part → rename(원자적)</text>
+      </g>
+    </g>
+    <g id="T5/HTTP">
+      <g id="도형">
+        <rect x="2750" y="3742" width="820" height="80" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="3742" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="3771" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">ClipHttpServer (5501)</text>
+        <text x="2764" y="3794" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">GET /&lt;파일명&gt; 만 처리 · Range 요청 지원(seek 필수)</text>
+        <text x="2764" y="3810" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">파일명 검증(경로 이동 차단) · inflight 카운트로 안전 종료</text>
+      </g>
+    </g>
+    <g id="T5/TG">
+      <g id="도형">
+        <rect x="2750" y="3836" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="3836" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="3865" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">TelegramModule::pollLoop() — getUpdates 25초</text>
+        <text x="2764" y="3888" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">isAuthorized(chat_id) 아니면 무시</text>
+        <text x="2764" y="3904" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">callback_query → CareQaModule::handleCallback()</text>
+        <text x="2764" y="3920" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">message → handleMessage() → 버튼 메뉴</text>
+      </g>
+    </g>
+    <g id="T5/CARE">
+      <g id="도형">
+        <rect x="2750" y="3946" width="820" height="112" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="3946" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="3975" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">CareQaModule (케어봇)</text>
+        <text x="2764" y="3998" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">&#x27;📷 지금 상황&#x27;: recentKeyframes(3장/5초) → Gemini</text>
+        <text x="2764" y="4014" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">reportFall(): 채널당 60초 쿨다운</text>
+        <text x="2764" y="4030" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  ① 선택본 폴링(15×100ms) → sendPhoto (먼저)</text>
+        <text x="2764" y="4046" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">  ② 전원 블러본 3장 → GeminiClient::describe → 전송</text>
+      </g>
+    </g>
+    <g id="T5/ACT">
+      <g id="도형">
+        <rect x="2750" y="4072" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="4072" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="4101" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">ActivityModule (만보기 집계)</text>
+        <text x="2764" y="4124" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">패킷마다 걸음 차분 — 역행은 0, +20 초과는 20으로 제한</text>
+        <text x="2764" y="4140" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">0인 심박·SpO2는 &#x27;값 없음&#x27;이라 평균에서 제외</text>
+        <text x="2764" y="4156" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">분이 바뀌면 db.upsertActivityMinute(1분치)</text>
+      </g>
+    </g>
+    <g id="T5/DB">
+      <g id="도형">
+        <rect x="2750" y="4182" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="4182" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="4211" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">Database (MariaDB · 뮤텍스 1개로 직렬화)</text>
+        <text x="2764" y="4234" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">residents / care_logs / roi_zones (schema.sql)</text>
+        <text x="2764" y="4250" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">events / bed_sessions / activity_minute / daily_reports</text>
+        <text x="2764" y="4266" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">insertEvent(type, source, ch, ms, clip, resident_id)</text>
+      </g>
+    </g>
+  </g>
+  <g id="연결">
+    <g id="화살표">
+      <path d="M 520.0 2886 L 520.0 2894" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 2964 L 520.0 2972" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3074 L 520.0 3082" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3168 L 520.0 3176" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3294 L 520.0 3302" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3388 L 520.0 3396" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3610 L 520.0 3618" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3752 L 520.0 3760" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 3910 L 520.0 3918" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 4020 L 520.0 4028" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 2886 L 1400.0 2894" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3012 L 1400.0 3020" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3090 L 1400.0 3098" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3232 L 1400.0 3240" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3342 L 1400.0 3350" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3696 L 1400.0 3704" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3806 L 1400.0 3814" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 3900 L 1400.0 3908" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 4010 L 1400.0 4018" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 4104 L 1400.0 4112" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 2886 L 2280.0 2894" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 2996 L 2280.0 3004" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 3464 L 2280.0 3472" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 3700 L 2280.0 3708" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 3858 L 2280.0 3866" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 4000 L 2280.0 4008" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-7048E8)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 2870 L 3160.0 2878" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 2980 L 3160.0 2988" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 3074 L 3160.0 3082" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 3728 L 3160.0 3736" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 3822 L 3160.0 3830" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 3932 L 3160.0 3940" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 4058 L 3160.0 4066" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 4168 L 3160.0 4176" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 930 3838.0 L 960.0 3838.0 L 960.0 2838.0 L 984 2838.0" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+      <rect x="907.5" y="2819.0" width="129.0" height="17" rx="6" fill="#FFFFFF" stroke="#1864AB" stroke-width="1"/>
+      <text x="972.0" y="2831.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#1864AB" text-anchor="middle" xml:space="preserve">client-&gt;start()</text>
+    </g>
+    <g id="화살표">
+      <path d="M 930 3972.0 L 960.0 3972.0 L 960.0 3656.0 L 984 3656.0" fill="none" stroke="#1864AB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-1864AB)"/>
+      <rect x="911.4" y="3637.0" width="121.2" height="17" rx="6" fill="#FFFFFF" stroke="#1864AB" stroke-width="1"/>
+      <text x="972.0" y="3649.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#1864AB" text-anchor="middle" xml:space="preserve">pipeline.run()</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 3066.0 L 2280.0 3066.0 L 2280.0 3400.0 L 1864 3400.0" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+      <rect x="2046.5" y="3381.0" width="51.0" height="17" rx="6" fill="#FFFFFF" stroke="#7048E8" stroke-width="1"/>
+      <text x="2072.0" y="3393.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#7048E8" text-anchor="middle" xml:space="preserve">추론 요청</text>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 2948.0 L 2280.0 2948.0 L 2280.0 3786.0 L 1864 3786.0" fill="none" stroke="#0CA678" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-0CA678)"/>
+      <rect x="2011.4" y="3767.0" width="121.2" height="17" rx="6" fill="#FFFFFF" stroke="#0CA678" stroke-width="1"/>
+      <text x="2072.0" y="3779.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#0CA678" text-anchor="middle" xml:space="preserve">markCaregivers</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 3404.0 L 1840.0 3404.0 L 1840.0 3652.0 L 1864 3652.0" fill="none" stroke="#0CA678" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-0CA678)"/>
+      <rect x="1787.5" y="3633.0" width="129.0" height="17" rx="6" fill="#FFFFFF" stroke="#0CA678" stroke-width="1"/>
+      <text x="1852.0" y="3645.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#0CA678" text-anchor="middle" xml:space="preserve">identity.update</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 3404.0 L 1840.0 3404.0 L 1840.0 4078.0 L 1864 4078.0" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+      <rect x="1779.7" y="4059.0" width="144.6" height="17" rx="6" fill="#FFFFFF" stroke="#7048E8" stroke-width="1"/>
+      <text x="1852.0" y="4071.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#7048E8" text-anchor="middle" xml:space="preserve">processDetections</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 4174.0 L 2280.0 4174.0 L 2280.0 3034.0 L 2744 3034.0" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+      <rect x="2447.5" y="3015.0" width="129.0" height="17" rx="6" fill="#FFFFFF" stroke="#099268" stroke-width="1"/>
+      <text x="2512.0" y="3027.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#099268" text-anchor="middle" xml:space="preserve">broadcast(JPEG)</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 4174.0 L 1840.0 4174.0 L 1840.0 2838.0 L 1864 2838.0" fill="none" stroke="#7048E8" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-7048E8)"/>
+      <rect x="1799.2" y="2819.0" width="105.6" height="17" rx="6" fill="#FFFFFF" stroke="#7048E8" stroke-width="1"/>
+      <text x="1852.0" y="2831.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#7048E8" text-anchor="middle" xml:space="preserve">ai_.submit()</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 3168.0 L 2280.0 3168.0 L 2280.0 3672.0 L 2744 3672.0" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+      <rect x="2467.0" y="3653.0" width="90.0" height="17" rx="6" fill="#FFFFFF" stroke="#5F3DC4" stroke-width="1"/>
+      <text x="2512.0" y="3665.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#5F3DC4" text-anchor="middle" xml:space="preserve">on_packet_</text>
+    </g>
+    <g id="화살표">
+      <path d="M 3570 2932.0 L 1840.0 2932.0 L 1840.0 3506.0 L 104 3506.0" fill="none" stroke="#3B5BDB" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-3B5BDB)"/>
+    </g>
+  </g>
+</g>
+<g id="05 · 이벤트 확정 팬아웃">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="4600" width="3560" height="620" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="4600" width="10" height="620" rx="5" fill="#D6336C"/>
+    <text id="Section Title" x="94" y="4646" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#D6336C" text-anchor="start" xml:space="preserve">⑤ 낙상/이탈/생체이상이 확정된 뒤 — 한 콜백 안에서 여러 방향으로 퍼진다</text>
+    <text id="Section Subtitle" x="94" y="4674" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">main.cpp 의 fall.setFallCallback / bed_egress.setAlarmCallback / mqtt.setWearableCallback 안에서 순서대로 실행된다.</text>
+  </g>
+  <g id="컴포넌트">
+    <g id="FAN/CAM">
+      <g id="도형">
+        <rect x="110" y="4712" width="700" height="96" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="110" y="4712" width="700" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="4741" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">CCTV 판정</text>
+        <text x="124" y="4764" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FallDetector → on_fall_(ch, Detection)</text>
+        <text x="124" y="4780" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BedEgress → alarm_cb_(EgressEvent)</text>
+        <text x="124" y="4796" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">identity.identify(ch, object_id) 로 &#x27;누구&#x27;를 먼저 확인</text>
+      </g>
+    </g>
+    <g id="FAN/WEAR">
+      <g id="도형">
+        <rect x="110" y="4852" width="700" height="112" rx="10" fill="#E3FAFC" stroke="#1098AD" stroke-width="2"/>
+        <rect x="110" y="4852" width="700" height="4" rx="2" fill="#1098AD"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="4881" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1098AD" text-anchor="start" xml:space="preserve">웨어러블 판정</text>
+        <text x="124" y="4904" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MqttMasterManager → wearable_callback_</text>
+        <text x="124" y="4920" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FALL / VITAL_ABNORMAL (래치로 1회만)</text>
+        <text x="124" y="4936" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">db.getCHById / getRoomById / getResidentByWearable</text>
+        <text x="124" y="4952" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">handlesChannel(ch) — 내 Pi 담당 채널만 처리</text>
+      </g>
+    </g>
+    <g id="FAN/MASK">
+      <g id="도형">
+        <rect x="900" y="4712" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="900" y="4712" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="914" y="4741" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">privacy_masker.reportFall()</text>
+        <text x="914" y="4764" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">해당 채널 블러 부분 해제</text>
+        <text x="914" y="4780" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">낙상자 얼굴만 선택 노출</text>
+      </g>
+    </g>
+    <g id="FAN/BB">
+      <g id="도형">
+        <rect x="1452" y="4712" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="1452" y="4712" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1466" y="4741" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">blackbox.trigger(ch, type)</text>
+        <text x="1466" y="4764" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">pre 5초 + post 5초 클립 저장</text>
+        <text x="1466" y="4780" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">반환 evt_ms = 파일명 키</text>
+      </g>
+    </g>
+    <g id="FAN/EVT">
+      <g id="도형">
+        <rect x="2004" y="4712" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="2004" y="4712" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="2018" y="4741" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">stream_server.broadcastEvent()</text>
+        <text x="2018" y="4764" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FALL / EGRESS / VITAL 18B</text>
+        <text x="2018" y="4780" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">roi_id 로 &#x27;어느 침대&#x27;까지</text>
+      </g>
+    </g>
+    <g id="FAN/TG">
+      <g id="도형">
+        <rect x="2556" y="4712" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="2556" y="4712" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="2570" y="4741" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">telegram.notify*()</text>
+        <text x="2570" y="4764" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">낙상은 무음이어도 항상 전송</text>
+        <text x="2570" y="4780" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">이탈·생체이상은 무음 존중</text>
+      </g>
+    </g>
+    <g id="FAN/QA">
+      <g id="도형">
+        <rect x="900" y="4852" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="900" y="4852" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="914" y="4881" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">care_qa.reportFall(ch)</text>
+        <text x="914" y="4904" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">스냅샷 + Gemini 상황 설명</text>
+        <text x="914" y="4920" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">채널당 60초 쿨다운</text>
+      </g>
+    </g>
+    <g id="FAN/MQTT">
+      <g id="도형">
+        <rect x="1452" y="4852" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="1452" y="4852" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="1466" y="4881" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">mqtt.sendAlarmCommand(type, room)</text>
+        <text x="1466" y="4904" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">veda/alarm/control 발행</text>
+        <text x="1466" y="4920" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Queued면 &#x27;안 울렸다&#x27;고 경고</text>
+      </g>
+    </g>
+    <g id="FAN/DB">
+      <g id="도형">
+        <rect x="2004" y="4852" width="528" height="80" rx="10" fill="#EDF2FF" stroke="#3B5BDB" stroke-width="2"/>
+        <rect x="2004" y="4852" width="528" height="4" rx="2" fill="#3B5BDB"/>
+      </g>
+      <g id="텍스트">
+        <text x="2018" y="4881" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#3B5BDB" text-anchor="start" xml:space="preserve">db.insertEvent(...)</text>
+        <text x="2018" y="4904" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">events 원장에 1건</text>
+        <text x="2018" y="4920" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">clip 파일명 · resident_id 스냅샷</text>
+      </g>
+    </g>
+  </g>
+  <g id="연결">
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4814 L 1164.0 4814 L 1164.0 4798" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4814 L 1716.0 4814 L 1716.0 4798" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4814 L 2268.0 4814 L 2268.0 4798" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4814 L 2820.0 4814 L 2820.0 4798" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4954 L 1164.0 4954 L 1164.0 4938" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4954 L 1716.0 4954 L 1716.0 4938" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4760.0 L 834 4760.0 L 834 4954 L 2268.0 4954 L 2268.0 4938" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4908.0 L 820 4908.0 L 820 4802 L 1492 4802 L 1492 4798" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4908.0 L 820 4908.0 L 820 4802 L 2044 4802 L 2044 4798" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4908.0 L 820 4908.0 L 820 4802 L 2596 4802 L 2596 4798" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4908.0 L 820 4908.0 L 820 4942 L 1492 4942 L 1492 4938" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-1098AD)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 810 4908.0 L 820 4908.0 L 820 4942 L 2044 4942 L 2044 4938" fill="none" stroke="#1098AD" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-1098AD)"/>
+    </g>
+  </g>
+</g>
+<g id="06 · Qt 관제 클라이언트">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="5270" width="3560" height="800" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="5270" width="10" height="800" rx="5" fill="#099268"/>
+    <text id="Section Title" x="94" y="5316" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#099268" text-anchor="start" xml:space="preserve">⑥ 관제 클라이언트 — 수신(영상·이벤트·MQTT) / 송신(제어) / DB·리포트</text>
+    <text id="Section Subtitle" x="94" y="5344" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">채널 0·1은 Pi A, 채널 2·3은 Pi B. 소켓과 수신 버퍼를 서버마다 따로 둔다 (kNumServers=2).</text>
+  </g>
+  <g id="컴포넌트">
+    <g id="QT/BOOT">
+      <g id="도형">
+        <rect x="110" y="5382" width="820" height="96" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="110" y="5382" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="5411" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">main() → LoginDialog → MainWindow</text>
+        <text x="124" y="5434" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">QSqlDatabase(QMARIADB) 연결 + Auth::ensureSchema()</text>
+        <text x="124" y="5450" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">로그아웃하면 MainWindow를 통째로 새로 만든다</text>
+        <text x="124" y="5466" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">while(true) { 로그인 → 관제 → 로그아웃? }</text>
+      </g>
+    </g>
+    <g id="QT/SOCK">
+      <g id="도형">
+        <rect x="110" y="5492" width="820" height="96" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="110" y="5492" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="5521" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">connectToServer() · 재접속 타이머</text>
+        <text x="124" y="5544" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">sockets[2] / buffers[2] — serverForChannel(ch)=ch&lt;2?0:1</text>
+        <text x="124" y="5560" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">재접속 시 resendCamerasForServer()로 URL 자동 재전송</text>
+        <text x="124" y="5576" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">restoreCameraActive() — QSettings 비트마스크(URL은 저장 안 함)</text>
+      </g>
+    </g>
+    <g id="QT/NAV">
+      <g id="도형">
+        <rect x="110" y="5602" width="820" height="80" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="110" y="5602" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="5631" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">화면 구성</text>
+        <text x="124" y="5654" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">NavRail · 알람 배너/토스트 · 도움말</text>
+        <text x="124" y="5670" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">관제(4분할) / 이벤트 로그 / 일일 리포트 / 입소자 DB / 설정</text>
+      </g>
+    </g>
+    <g id="QT/READ">
+      <g id="도형">
+        <rect x="990" y="5382" width="820" height="112" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="990" y="5382" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="5411" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">onReadyRead() — 스트림 파싱</text>
+        <text x="1004" y="5434" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">buffer.append(readAll()) 후 매직으로 종류 판별</text>
+        <text x="1004" y="5450" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">0xDB4D 이벤트: 스킵 금지, 즉시 처리</text>
+        <text x="1004" y="5466" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">0xDB4B 영상: 채널별 &#x27;최신 1장&#x27;만 남기고 나머지 버림</text>
+        <text x="1004" y="5482" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">magic 불일치/payload_len 초과 → clear() + abort() 후 재접속</text>
+      </g>
+    </g>
+    <g id="QT/EVENT">
+      <g id="도형">
+        <rect x="990" y="5508" width="820" height="112" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="990" y="5508" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="5537" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">handleFallEvent / handleBedEgress / handleVitalAbnormal</text>
+        <text x="1004" y="5560" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">VideoView::setAlert(...) 빨간 테두리 + 조준점</text>
+        <text x="1004" y="5576" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">eventWhoLabel(ch, roi_id) — 침대 매핑으로 이름, 없으면 &#x27;미상&#x27;</text>
+        <text x="1004" y="5592" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">로그 행 + 클립 URL(UserRole)</text>
+        <text x="1004" y="5608" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">http://&lt;host&gt;:5501/ch{N}_{ts}_{FALL|EGRESS|...}.mp4</text>
+      </g>
+    </g>
+    <g id="QT/CTRL">
+      <g id="도형">
+        <rect x="1870" y="5382" width="820" height="112" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="1870" y="5382" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="5411" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">제어 송신 (같은 TCP, 역방향)</text>
+        <text x="1884" y="5434" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">sendRoi(ch, roi_id, 다각형) / sendRoiBind(ch, roi_id, 입소자)</text>
+        <text x="1884" y="5450" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">sendCamera() / sendCameraClear() — RTSP URL 등록·해제</text>
+        <text x="1884" y="5466" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">sendImageParams() / sendFocus() — ONVIF · SUNAPI</text>
+        <text x="1884" y="5482" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">onAlarmClearClicked() → ALARM_CONFIRM + MQTT STOP</text>
+      </g>
+    </g>
+    <g id="QT/UI">
+      <g id="도형">
+        <rect x="1870" y="5508" width="820" height="96" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="1870" y="5508" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="5537" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">주기 갱신 타이머</text>
+        <text x="1884" y="5560" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">clockTimer / vitalsTimer / careTimeTimer / reconnectTimer</text>
+        <text x="1884" y="5576" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">updateVitals(): kVitalStaleMs 지나면 &#x27;신호 끊김&#x27;</text>
+        <text x="1884" y="5592" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">updateCareTime(): 선택 입소자·날짜로 집계 재조회</text>
+      </g>
+    </g>
+    <g id="QT/MQTT">
+      <g id="도형">
+        <rect x="2750" y="5382" width="820" height="112" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2750" y="5382" width="820" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="5411" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">MqttQtManager (QMqttClient)</text>
+        <text x="2764" y="5434" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">onWearableData(): device_id → wearableToChannel 매핑</text>
+        <text x="2764" y="5450" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">미등록 기기는 버린다 (엉뚱한 채널 표시 방지)</text>
+        <text x="2764" y="5466" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">veda/alarm/+/status → 알림 노드 온라인 배지</text>
+        <text x="2764" y="5482" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">AlertMatrixPreview — LED 패널 WYSIWYG 미리보기</text>
+      </g>
+    </g>
+    <g id="QT/REPORT">
+      <g id="도형">
+        <rect x="2750" y="5508" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="5508" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="5537" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">일일 리포트 (읽기 전용)</text>
+        <text x="2764" y="5560" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">residents 탭 + 날짜 선택 → 그 사람·그 날 집계</text>
+        <text x="2764" y="5576" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">events / activity_minute / bed_sessions / care_logs 조회</text>
+        <text x="2764" y="5592" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ActivityChart: 걸음=막대, 심박=꺾은선 (24시간)</text>
+      </g>
+    </g>
+    <g id="QT/DB">
+      <g id="도형">
+        <rect x="2750" y="5618" width="820" height="96" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2750" y="5618" width="820" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="5647" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">MariaDB — daboijo</text>
+        <text x="2764" y="5670" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">residents · admissions · resident_changes · users</text>
+        <text x="2764" y="5686" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">roi_zones (침대 ↔ 입소자) · care_logs</text>
+        <text x="2764" y="5702" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">쓰기 주체는 서버 — Qt는 입소자·ROI 관리와 조회 담당</text>
+      </g>
+    </g>
+  </g>
+  <g id="연결">
+    <g id="화살표">
+      <path d="M 520.0 5478 L 520.0 5486" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 520.0 5588 L 520.0 5596" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 930 5540.0 L 960.0 5540.0 L 960.0 5438.0 L 984 5438.0" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+      <rect x="930.9" y="5419.0" width="82.2" height="17" rx="6" fill="#FFFFFF" stroke="#099268" stroke-width="1"/>
+      <text x="972.0" y="5431.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#099268" text-anchor="middle" xml:space="preserve">readyRead</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1400.0 5494 L 1400.0 5502" fill="none" stroke="#D6336C" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-D6336C)"/>
+      <rect x="1370.6" y="5479.0" width="58.8" height="17" rx="6" fill="#FFFFFF" stroke="#D6336C" stroke-width="1"/>
+      <text x="1400.0" y="5491.0" font-family="Noto Sans KR" font-size="10" font-weight="600" fill="#D6336C" text-anchor="middle" xml:space="preserve">0xDB4D</text>
+    </g>
+    <g id="화살표">
+      <path d="M 1810 5438.0 L 1864 5438.0" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2280.0 5494 L 2280.0 5502" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2690 5438.0 L 2744 5438.0" fill="none" stroke="#099268" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 6" marker-end="url(#arrow-099268)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 5494 L 3160.0 5502" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 3160.0 5604 L 3160.0 5612" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+  </g>
+</g>
+<g id="07 · 데이터 흐름 (Input → Processing → Model/Logic → Output)">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="6110" width="3560" height="250" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="6110" width="10" height="250" rx="5" fill="#5F3DC4"/>
+    <text id="Section Title" x="94" y="6156" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#5F3DC4" text-anchor="start" xml:space="preserve">⑦ 데이터 흐름 — 영상 계통과 웨어러블 계통이 서버 안에서 합류한다</text>
+    <text id="Section Subtitle" x="94" y="6184" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">합류 지점은 server/src/main.cpp — 두 계통이 같은 blackbox/broadcastEvent/telegram/MQTT/DB 경로로 나간다.</text>
+  </g>
+  <g id="컴포넌트">
+    <g id="DF/IN">
+      <g id="도형">
+        <rect x="110" y="6222" width="650" height="80" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="110" y="6222" width="650" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="6251" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">INPUT</text>
+        <text x="124" y="6274" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">RTSP H.264 + ONVIF 메타(WiseAI)</text>
+        <text x="124" y="6290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BMI270 / MAX30102 FIFO 블록</text>
+      </g>
+    </g>
+    <g id="DF/PROC">
+      <g id="도형">
+        <rect x="802" y="6222" width="650" height="80" rx="10" fill="#E7F5FF" stroke="#1864AB" stroke-width="2"/>
+        <rect x="802" y="6222" width="650" height="4" rx="2" fill="#1864AB"/>
+      </g>
+      <g id="텍스트">
+        <text x="816" y="6251" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#1864AB" text-anchor="start" xml:space="preserve">PROCESSING</text>
+        <text x="816" y="6274" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">디코딩 · PTS 정렬 · 좌표 정규화</text>
+        <text x="816" y="6290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">SVM · Welford · PPG 블록 처리</text>
+      </g>
+    </g>
+    <g id="DF/MODEL">
+      <g id="도형">
+        <rect x="1494" y="6222" width="650" height="96" rx="10" fill="#F3F0FF" stroke="#7048E8" stroke-width="2"/>
+        <rect x="1494" y="6222" width="650" height="4" rx="2" fill="#7048E8"/>
+      </g>
+      <g id="텍스트">
+        <text x="1508" y="6251" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#7048E8" text-anchor="start" xml:space="preserve">MODEL / LOGIC</text>
+        <text x="1508" y="6274" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MoveNet + FallDetector(2초 연속)</text>
+        <text x="1508" y="6290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BedZone + IdentityTracker</text>
+        <text x="1508" y="6306" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">3단계 낙상 상태머신 / HSV 조끼</text>
+      </g>
+    </g>
+    <g id="DF/STORE">
+      <g id="도형">
+        <rect x="2186" y="6222" width="650" height="96" rx="10" fill="#F3F0FF" stroke="#5F3DC4" stroke-width="2"/>
+        <rect x="2186" y="6222" width="650" height="4" rx="2" fill="#5F3DC4"/>
+      </g>
+      <g id="텍스트">
+        <text x="2200" y="6251" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#5F3DC4" text-anchor="start" xml:space="preserve">STORE</text>
+        <text x="2200" y="6274" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">DetectionStore / SnapshotBuffer</text>
+        <text x="2200" y="6290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BlackboxRecorder(mp4)</text>
+        <text x="2200" y="6306" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MariaDB events·care_logs·activity</text>
+      </g>
+    </g>
+    <g id="DF/OUT">
+      <g id="도형">
+        <rect x="2878" y="6222" width="650" height="96" rx="10" fill="#E6FCF5" stroke="#099268" stroke-width="2"/>
+        <rect x="2878" y="6222" width="650" height="4" rx="2" fill="#099268"/>
+      </g>
+      <g id="텍스트">
+        <text x="2892" y="6251" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#099268" text-anchor="start" xml:space="preserve">OUTPUT</text>
+        <text x="2892" y="6274" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">JPEG 송출 + 이벤트 패킷 → Qt</text>
+        <text x="2892" y="6290" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">텔레그램 사진 · Gemini 설명</text>
+        <text x="2892" y="6306" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">LED 스크롤 + 사이렌 (MQTT)</text>
+      </g>
+    </g>
+  </g>
+  <g id="연결">
+    <g id="화살표">
+      <path d="M 760 6262.0 L 796 6262.0" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 1452 6262.0 L 1473.0 6262.0 L 1473.0 6270.0 L 1488 6270.0" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2144 6270.0 L 2180 6270.0" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+    <g id="화살표">
+      <path d="M 2836 6270.0 L 2872 6270.0" fill="none" stroke="#5F3DC4" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow-5F3DC4)"/>
+    </g>
+  </g>
+</g>
+<g id="08 · 주요 분기 · 반복 · 예외 처리">
+  <g id="배경">
+    <rect id="Section BG" x="60" y="6400" width="3560" height="340" rx="20" fill="#F7F8FA" stroke="#E2E6EC" stroke-width="2"/>
+    <rect id="Accent Bar" x="60" y="6400" width="10" height="340" rx="5" fill="#F08C00"/>
+    <text id="Section Title" x="94" y="6446" font-family="Noto Sans KR" font-size="26" font-weight="800" fill="#F08C00" text-anchor="start" xml:space="preserve">⑧ 중요한 분기와 반복 — 코드에 실제로 있는 조건만</text>
+    <text id="Section Subtitle" x="94" y="6474" font-family="Noto Sans KR" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start" xml:space="preserve">각 항목은 해당 파일의 실제 조건문 / 루프 / 방어 코드를 옮긴 것이다.</text>
+  </g>
+  <g id="컴포넌트">
+    <g id="BR/COND">
+      <g id="도형">
+        <rect x="110" y="6512" width="820" height="192" rx="10" fill="#FFF9DB" stroke="#F08C00" stroke-width="2"/>
+        <rect x="110" y="6512" width="820" height="4" rx="2" fill="#F08C00"/>
+      </g>
+      <g id="텍스트">
+        <text x="124" y="6541" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#F08C00" text-anchor="start" xml:space="preserve">핵심 조건 분기</text>
+        <text x="124" y="6564" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">fall_detector: in_bed면 관찰 중단 · lying 2초 연속만 확정</text>
+        <text x="124" y="6580" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">bed_egress: 하→차단 / 중→야간만 / 상→즉시 (+10초 쿨다운)</text>
+        <text x="124" y="6596" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">bed_egress: 침대A→침대B 이동은 경보 아님 (로그만)</text>
+        <text x="124" y="6612" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">identity: confidence &lt; 0.5 면 이름 대신 &#x27;미상&#x27;</text>
+        <text x="124" y="6628" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">pose: 다리가 안 보이거나 서 있으면 낙상 신호 거부</text>
+        <text x="124" y="6644" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">pipeline: has_selective ? 낙상 선택본 : 전원 블러본</text>
+        <text x="124" y="6660" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">pipeline: 클라 접속 중이거나 스냅샷 주기일 때만 imencode</text>
+        <text x="124" y="6676" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">mqtt: 0인 심박·SpO2는 &#x27;값 없음&#x27; — 이상으로 치지 않음</text>
+        <text x="124" y="6692" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">main: handlesChannel(ch) — 내 Pi 담당 채널만 처리</text>
+      </g>
+    </g>
+    <g id="BR/LOOP">
+      <g id="도형">
+        <rect x="990" y="6512" width="820" height="192" rx="10" fill="#FFF9DB" stroke="#F08C00" stroke-width="2"/>
+        <rect x="990" y="6512" width="820" height="4" rx="2" fill="#F08C00"/>
+      </g>
+      <g id="텍스트">
+        <text x="1004" y="6541" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#F08C00" text-anchor="start" xml:space="preserve">반복 구조</text>
+        <text x="1004" y="6564" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">firmware: while(1) 9단계 루프 + __WFI() 취침</text>
+        <text x="1004" y="6580" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">rtsp: while(running) av_read_frame → 끊기면 3초 후 재연결</text>
+        <text x="1004" y="6596" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">pipeline: 채널당 스레드 while(!stop) queue.pop(200ms)</text>
+        <text x="1004" y="6612" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">ai_worker: 0.25초 하한 루프, 일감 없으면 10ms sleep</text>
+        <text x="1004" y="6628" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">telegram: getUpdates 25초 롱폴링 무한 루프</text>
+        <text x="1004" y="6644" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">blackbox: 1초 주기 watchdog → flushIfDue()</text>
+        <text x="1004" y="6660" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">alert-node: tryPop 실패 시 100ms 대기 후 재시도</text>
+        <text x="1004" y="6676" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">relay: runOnce 반복 (끊기면 reconnect_ms 후 재스캔)</text>
+        <text x="1004" y="6692" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">activity: 분이 바뀔 때마다 1분치 flush</text>
+      </g>
+    </g>
+    <g id="BR/EXC">
+      <g id="도형">
+        <rect x="1870" y="6512" width="820" height="208" rx="10" fill="#FFF9DB" stroke="#F08C00" stroke-width="2"/>
+        <rect x="1870" y="6512" width="820" height="4" rx="2" fill="#F08C00"/>
+      </g>
+      <g id="텍스트">
+        <text x="1884" y="6541" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#F08C00" text-anchor="start" xml:space="preserve">예외 · 복구</text>
+        <text x="1884" y="6564" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">I2C 버스 락업 → SCL 9회 토글 + STOP (부팅 전 선복구)</text>
+        <text x="1884" y="6580" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">EXTI 유실 → 시간 기반 폴백 (IMU 700ms / PPG 1.5초)</text>
+        <text x="1884" y="6596" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">IWDG 8초 — 어느 단계든 멎으면 재부팅</text>
+        <text x="1884" y="6612" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BLE 패킷: XOR 체크섬 실패 → 1바이트 밀고 재동기</text>
+        <text x="1884" y="6628" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">RTSP tcp 옵션 실패 → 옵션 없이 1회 재시도</text>
+        <text x="1884" y="6644" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">메타 버퍼 256KB 초과 → 폐기 (종료 태그 미수신 방어)</text>
+        <text x="1884" y="6660" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">제어 스트림 어긋남 → 1바이트씩 재동기 / 64KB면 리셋</text>
+        <text x="1884" y="6676" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">mp4 타임스탬프 누락·역행 → 단조 증가 강제 후 저장</text>
+        <text x="1884" y="6692" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">MQTT publish가 Queued면 &#x27;안 울렸다&#x27;고 크게 남긴다</text>
+        <text x="1884" y="6708" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Gemini/Telegram 실패 → 로그만 남기고 파이프라인 유지</text>
+      </g>
+    </g>
+    <g id="BR/DROP">
+      <g id="도형">
+        <rect x="2750" y="6512" width="820" height="176" rx="10" fill="#FFF9DB" stroke="#F08C00" stroke-width="2"/>
+        <rect x="2750" y="6512" width="820" height="4" rx="2" fill="#F08C00"/>
+      </g>
+      <g id="텍스트">
+        <text x="2764" y="6541" font-family="Noto Sans KR" font-size="14" font-weight="700" fill="#F08C00" text-anchor="start" xml:space="preserve">과부하 방어 (버리는 규칙)</text>
+        <text x="2764" y="6564" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">FrameQueue(8): 가득 차면 가장 오래된 프레임 폐기</text>
+        <text x="2764" y="6580" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">AiWorker: 일감함에 최신 1장만 (덮어쓰기)</text>
+        <text x="2764" y="6596" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">StreamServer outbox 8: 영상만 드롭, 이벤트는 보존</text>
+        <text x="2764" y="6612" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">Qt onReadyRead: 채널별 최신 1장만 디코드</text>
+        <text x="2764" y="6628" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">BlackboxRecorder: armed 60초 상한으로 강제 마감</text>
+        <text x="2764" y="6644" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">care_qa: 낙상 리포트 채널당 60초 쿨다운</text>
+        <text x="2764" y="6660" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">activity: 1패킷 +20걸음 초과는 값 튐으로 보고 잘라냄</text>
+        <text x="2764" y="6676" font-family="Noto Sans KR" font-size="12" font-weight="400" fill="#1A1D23" text-anchor="start" xml:space="preserve">alert-node: room이 1~9999 밖이면 서버 문구로 대체</text>
+      </g>
+    </g>
+  </g>
+</g>
+</svg>
