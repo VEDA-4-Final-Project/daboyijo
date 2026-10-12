@@ -2,7 +2,8 @@
  * hm10.c — HM-10 BLE 송수신 모듈 (구현)
  *
  * 투과모드라 STM32는 UART로 7바이트 패킷만 보내면 HM-10이 BLE로 넘겨줌.
- * 패킷 구조는 이 파일 안에만 있음 → 나중에 바뀌면 여기 hm10_send_packet만 수정.
+ * 패킷 조립은 이 파일의 hm10_send_packet 한 곳뿐이다 (규격 설명·상수는 hm10.h).
+ * 바뀌면 여기와 hm10.h 를 함께 고친다.
  * (단, 수신 측 relay-node 도 함께 고쳐야 한다 — hm10.h 의 경고 참조)
  *
  * 반대 방향도 같은 UART 를 쓴다. RPi 가 FFE1 에 write 하면 HM-10 이 UART TX 로
