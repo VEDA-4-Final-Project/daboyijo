@@ -9,7 +9,7 @@
 #define BMI270_REG_INT_STATUS_1  0x1D   // 데이터 인터럽트 상태 (FIFO watermark/full)
 #define BMI270_REG_INTERNAL_STAT 0x21   // 내부 동작 상태 확인 레지스터
 #define BMI270_REG_FIFO_LENGTH_0 0x24   // FIFO 적재 바이트 수 (LSB)
-#define BMI270_REG_FIFO_LENGTH_1 0x25   // FIFO 적재 바이트 수 (MSB, 상위 6비트만 유효)
+#define BMI270_REG_FIFO_LENGTH_1 0x25   // FIFO 적재 바이트 수 (MSB, bit[5:0] 유효 — FIFO 가 2KB 라 GetFifoLength 는 bit[4:0] 만 읽는다)
 #define BMI270_REG_FIFO_DATA     0x26   // FIFO 버스트 판독 창구
 #define BMI270_REG_FEAT_PAGE     0x2F   // 피처 엔진 페이지 선택
 #define BMI270_REG_FEATURES      0x30   // 피처 엔진 16바이트 창구 시작 (0x30~0x3F)
@@ -65,15 +65,16 @@
 #define BMI270_STATUS_ANY_MOT    0x40   // bmi270.h: BMI270_ANY_MOT_STATUS_MASK
 
 /* INT_STATUS_1 비트 */
-#define BMI270_STATUS_FWM        0x40
+#define BMI270_STATUS_FWM        0x02   // bit1 fwm_int (0x40 은 gyr_drdy 다)
 #define BMI270_STATUS_FFULL      0x01
 
 /* INTx_IO_CTRL: output_en(bit3) | lvl=active-high(bit1) → push-pull, 상승엣지 */
 #define BMI270_INT_IO_PUSHPULL_AH  0x0A
 
 /* --- [ 동작 설정 상수 ] --- */
-/* 가속도 ±16g. 낙상 충격은 3~6g에 달하므로 ±2g로는 축마다 클리핑되어
- * 충격 크기를 신뢰할 수 없다. 낙상 판별의 전제 조건이라 범위를 넓게 잡는다. */
+/* 가속도 ±16g. 낙상 충격 임계가 10g(fall_detection.c FALL_IMPACT_THRESHOLD_G)라
+ * ±2g로는 축마다 클리핑되어 충격 크기를 신뢰할 수 없다. 낙상 판별의 전제
+ * 조건이라 범위를 넓게 잡는다. */
 #define BMI270_ACC_RANGE_16G     0x03
 #define BMI270_ACC_SENS_LSB_PER_G 2048.0f   // 32768 / 16
 

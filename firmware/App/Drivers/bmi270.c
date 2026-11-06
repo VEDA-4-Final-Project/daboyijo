@@ -224,7 +224,7 @@ HAL_StatusTypeDef BMI270_Init(void)
         HAL_Delay(10);
 
         /* 하드웨어 풀스케일 범위 지정 (가속도: ±16g, 자이로: ±2000dps)
-         * ±2g 로는 낙상 충격(3~6g)이 축마다 포화되어 충격 크기 자체를 신뢰할 수 없다.
+         * ±2g 로는 낙상 충격(판정 임계 10g)이 축마다 포화되어 충격 크기 자체를 신뢰할 수 없다.
          * 임계값 비교가 성립하려면 범위부터 넓어야 한다. */
         if (BMI270_WriteRegister(BMI270_REG_ACC_RANGE, BMI270_ACC_RANGE_16G) != HAL_OK) return HAL_ERROR;
         if (BMI270_WriteRegister(BMI270_REG_GYR_RANGE, BMI270_GYR_RANGE_2000DPS) != HAL_OK) return HAL_ERROR;
@@ -397,15 +397,16 @@ static HAL_StatusTypeDef bmi270_feature_page_write(uint8_t page, const uint8_t *
 }
 
 /**
-  * @brief  any-motion 피처 구성 (웨이크업 게이트 전용)
+  * @brief  any-motion 피처 구성 (웨이크업 게이트용 — 게이트 자체는 미구현)
   *
   * 피처 엔진 페이지 1, 오프셋 0x0C → 레지스터 0x3C~0x3F 에 16비트 워드 2개가 놓인다.
   *   anymo_1 (0x3C/0x3D) : bit[12:0] duration(20ms 단위) | x_sel<<13 | y_sel<<14 | z_sel<<15
   *   anymo_2 (0x3E/0x3F) : bit[10:0] threshold(5.11 형식, 1/2048 g 단위) | enable<<15
   *
   * @note  임계값은 하드웨어상 최대 약 1g 이다. 이 기능은 "완전 정지 시 웨이크업을
-  *        생략"하는 절전 게이트일 뿐, 충격 판별 자체는 FIFO 블록 소프트웨어가 담당한다.
-  *        따라서 이 구성이 실패해도 낙상 감지 정확도에는 영향이 없다.
+  *        생략"하는 절전 게이트로 쓰려던 것이며, 현재 main.c 는 INT2 를 받아도 아무것도
+  *        하지 않는다(게이트 미구현). 충격 판별 자체는 FIFO 블록 소프트웨어가 담당하므로
+  *        이 구성이 실패해도 낙상 감지에는 영향이 없다.
   * @retval HAL_ERROR 는 통신 실패 또는 기록값 검증 불일치를 뜻한다.
   */
 HAL_StatusTypeDef BMI270_ConfigAnyMotion(uint16_t threshold_mg, uint16_t duration_ms)
@@ -447,12 +448,12 @@ HAL_StatusTypeDef BMI270_ConfigAnyMotion(uint16_t threshold_mg, uint16_t duratio
 
     if (rb1 != anymo_1 || rb2 != anymo_2)
     {
-        printf("[ WARN ] any-motion 검증 실패 (w:%04X/%04X r:%04X/%04X) — 절전 게이트만 비활성, 감지는 정상\r\n",
+        printf("[ WARN ] any-motion 검증 실패 (w:%04X/%04X r:%04X/%04X) — 미사용 기능이라 감지는 정상\r\n",
                anymo_1, anymo_2, rb1, rb2);
         return HAL_ERROR;
     }
 
-    printf("[ SUCCESS ] any-motion 게이트 구성 완료 (%umg / %ums)\r\n",
+    printf("[ SUCCESS ] any-motion 구성 완료 (%umg / %ums)\r\n",
            (unsigned)threshold_mg, (unsigned)duration_ms);
     return HAL_OK;
 }
@@ -466,7 +467,8 @@ HAL_StatusTypeDef BMI270_FifoFlush(void)
 }
 
 /**
-  * @brief  현재 FIFO 에 적재된 바이트 수 조회 (13비트 유효)
+  * @brief  현재 FIFO 에 적재된 바이트 수 조회
+  *         (레지스터 필드는 14비트지만 FIFO 가 2KB 라 하위 13비트만 읽는다)
   */
 HAL_StatusTypeDef BMI270_GetFifoLength(uint16_t *bytes)
 {

@@ -28,7 +28,8 @@ static void disp_flush(lv_display_t * disp, const lv_area_t * area, uint8_t * px
     uint32_t len = (uint32_t)w * h;
 
     // 💡 16비트 바이트 스왑 (상위/하위 바이트 교체)
-    // SPI 전송 전 픽셀 데이터의 바이트 순서를 뒤집어 폰트 잔영/노이즈를 제거합니다.
+    // LVGL 은 RGB565 를 리틀엔디언으로 버퍼에 두지만 ST7789 는 상위 바이트를 먼저
+    // 받는다. 바이트 단위 SPI 로 그대로 보내면 색이 깨지므로 전송 전에 뒤집는다.
     uint16_t * buf16 = (uint16_t *)px_map;
     for (uint32_t i = 0; i < len; i++) {
         buf16[i] = (buf16[i] >> 8) | (buf16[i] << 8);

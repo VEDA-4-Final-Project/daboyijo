@@ -54,7 +54,7 @@ uint8_t MAX30102_AutoGain(uint32_t ir_dc, uint8_t is_worn)
     {
         if (s_led_current != MAX30102_LED_CURRENT)
         {
-            /* 위와 같은 이유로 쓰기 성공을 확인하고서 갱신한다 */
+            /* 아래 정상 경로와 같은 이유로 쓰기 성공을 확인하고서 갱신한다 */
             if (MAX30102_WriteRegister(MAX30102_REG_LED1_PA, MAX30102_LED_CURRENT) != HAL_OK) return 0;
             if (MAX30102_WriteRegister(MAX30102_REG_LED2_PA, MAX30102_LED_CURRENT) != HAL_OK) return 0;
 
@@ -212,8 +212,9 @@ HAL_StatusTypeDef MAX30102_Init(void)
 /**
   * @brief  FIFO 블록을 I2C DMA 로 일괄 수거 시작 (비블로킹)
   *
-  * FIFO_DATA 를 연속 판독하면 센서가 RD_PTR 을 자동 전진시키고 A_FULL
-  * 플래그도 함께 해제한다. 별도의 상태 레지스터 클리어가 필요 없다.
+  * FIFO_DATA 를 연속 판독하면 센서가 RD_PTR 을 자동 전진시킨다.
+  * A_FULL 해제는 이것에 기대지 않는다 — INT 핀이 눌린 채 남는 경우가 있어
+  * main.c Process_PPG_Block() 이 블록마다 INT_STAT_1 을 읽어 명시적으로 푼다.
   */
 HAL_StatusTypeDef MAX30102_StartBlockRead_DMA(uint8_t *rx_buf, uint16_t bytes)
 {

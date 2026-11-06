@@ -79,7 +79,7 @@
  * 어차피 아래 저역통과 필터가 시간축으로 한 번 더 평균한다. */
 #define BATTERY_OVERSAMPLE   8
 
-/* ADC 폴링 타임아웃. 20.5us x 8 = 164us 면 끝나므로 10ms 는 충분한 여유다. */
+/* ADC 폴링 타임아웃 (변환 1회 기준). 한 변환이 20.5us 면 끝나므로 10ms 는 충분한 여유다. */
 #define BATTERY_ADC_TIMEOUT  10
 
 /* 이 값보다 낮으면 측정이 유효하지 않다고 본다.
@@ -243,7 +243,7 @@ void Battery_Init(void)
      * 한 번 버리고 나면 TSVREFE 는 계속 켜진 채라 이후로는 문제없다. */
     (void)adc_accumulate(ADC_CHANNEL_VREFINT);
 
-    update_once();          /* 첫 표시가 0% 에서 기어 올라가지 않도록 시드 */
+    update_once();          /* 첫 화면이 켜지기 전에 유효값을 채워 둔다 */
     s_last_ms = HAL_GetTick();
 }
 

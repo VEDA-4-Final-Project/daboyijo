@@ -17,7 +17,8 @@ void FallDetection_Init(void);
   *
   * @param accel   가속도 배열 (g 단위), BMI270 FIFO 한 블록
   * @param count   배열 유효 길이
-  * @param is_worn 착용 여부 (PPG 기반). 미착용 시 낙상 확정을 보류한다.
+  * @param is_worn 광학 접촉 여부 (HeartRateCalc_HasContact). 맥박 확인 착용(IsWorn)이
+  *                아니다. 0 이면 낙상 확정을 보류한다.
   * @return        블록 처리 중 낙상이 확정되면 FALL_DETECTED
   */
 FallState_t FallDetection_ProcessBlock(const BMI270_Data_t *accel, uint16_t count, uint8_t is_worn);
