@@ -1,0 +1,21 @@
+singleton Theme 1.0 Theme.qml
+FlatButton 1.0 FlatButton.qml
+PanelTitle 1.0 PanelTitle.qml
+VideoTile 1.0 VideoTile.qml
+VitalCard 1.0 VitalCard.qml
+MonitorPage 1.0 MonitorPage.qml
+PendingPage 1.0 PendingPage.qml
+EventPanel 1.0 EventPanel.qml
+SearchPanel 1.0 SearchPanel.qml
+FormEdit 1.0 FormEdit.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
+ResidentPage 1.0 ResidentPage.qml
+DropBox 1.0 DropBox.qml
+EventLogPage 1.0 EventLogPage.qml
+ReportPage 1.0 ReportPage.qml
+SegTrack 1.0 SegTrack.qml
+SliderRow 1.0 SliderRow.qml
+DevicePage 1.0 DevicePage.qml
+LoginPage 1.0 LoginPage.qml
+AuthField 1.0 AuthField.qml
+HelpDialog 1.0 HelpDialog.qml

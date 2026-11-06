@@ -20,7 +20,21 @@ qt_add_executable(daboyijo
     main.cpp
     mainwindow.cpp
     mainwindow.h
+    mainwindow_p.h
+    uiicons.h
+    mainwindow_monitor.cpp
+    mainwindow_eventlog.cpp
+    mainwindow_search.cpp
+    mainwindow_residents.cpp
+    mainwindow_vitals.cpp
+    mainwindow_report.cpp
+    mainwindow_roi.cpp
+    mainwindow_camera.cpp
+    mainwindow_help.cpp
     mainwindow.ui
+    streamprotocol.h
+    streamclient.h
+    streamclient.cpp
     videoview.cpp
     videoview.h
     theme.h
@@ -134,3 +148,47 @@ qt_generate_deploy_app_script(
     NO_UNSUPPORTED_PLATFORM_ERROR
 )
 install(SCRIPT ${deploy_script})
+
+# ═══════════════════════════════════════════════════════════
+#  QML 관제 앱 (daboyijo_qml) — 위젯 앱을 한 페이지씩 QML로 옮기는 중.
+#  통신(StreamClient)은 위젯 앱과 같은 소스를 쓴다. Qt Quick이 설치돼 있을 때만 만든다.
+# ═══════════════════════════════════════════════════════════
+find_package(Qt6 6.5 QUIET COMPONENTS Quick QuickControls2)
+if(Qt6Quick_FOUND AND Qt6QuickControls2_FOUND)
+    qt_add_executable(daboyijo_qml
+        WIN32 MACOSX_BUNDLE
+        main_qml.cpp
+        streamprotocol.h
+        streamclient.h streamclient.cpp
+        frameprovider.h frameprovider.cpp
+        monitorbackend.h monitorbackend.cpp
+        qmlitems.h qmlitems.cpp
+        theme.h uiicons.h
+        appbackend.h appbackend.cpp
+        caredirectory.h caredirectory.cpp
+        vitalsbackend.h vitalsbackend.cpp vitalrules.h
+        residentbackend.h residentbackend.cpp
+        eventlogbackend.h eventlogbackend.cpp
+        reportbackend.h reportbackend.cpp
+        devicebackend.h devicebackend.cpp
+        alertmatrixitem.h alertmatrixitem.cpp
+        auth.h auth.cpp
+        mqttqtmanager.h mqttqtmanager.cpp
+        audiotransmitter.h audiotransmitter.cpp
+    )
+    target_include_directories(daboyijo_qml PRIVATE
+        ${VEDA_MSG_DIR} ${VEDA_THIRDPARTY} ${VEDA_FONT_DIR})
+    target_compile_definitions(daboyijo_qml PRIVATE
+        DABOYIJO_GEMINI_KEY="${DABOYIJO_GEMINI_KEY}")
+    # qrc:/qml/Main.qml 로 읽는다 (qmldir 덕분에 Theme 싱글턴·컴포넌트를 import 없이 씀)
+    file(GLOB DABOYIJO_QML_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/*.qml qml/qmldir)
+    qt_add_resources(daboyijo_qml "qmlui"
+        PREFIX "/"
+        FILES ${DABOYIJO_QML_FILES}
+    )
+    target_link_libraries(daboyijo_qml PRIVATE
+        Qt::Core Qt::Gui Qt::Network Qt::Qml Qt::Quick Qt::QuickControls2
+        Qt::Sql Qt::Multimedia Qt::Mqtt)
+else()
+    message(STATUS "Qt Quick 없음 — daboyijo_qml(QML 관제 앱)은 건너뜀")
+endif()
