@@ -34,6 +34,7 @@
 #include "config.hpp"
 #include "database.hpp"
 #include "detection_store.hpp"
+#include "event_frames.hpp"
 #include "fall_module.hpp"
 #include "identity_tracker.hpp"
 #include "frame_queue.hpp"
@@ -167,7 +168,10 @@ int main(int argc, char* argv[]) {
     GeminiClient vlm(config.gemini_api_key, config.gemini_model);
     // [영상검색] 🔍 버튼이 위임하는 자연어 질의 처리기. vlm(GeminiClient)을 그대로
     // 재사용 — 질의 파싱은 이미지가 필요 없는 텍스트 전용 VlmClient::ask() 사용.
-    VideoSearchModule video_search(vlm, db, config.public_host);
+    // [영상검색] 사건 시점 블러 프레임 보관소 — 블랙박스 trigger마다 버퍼 A(전원
+    // 블러본)에서 사건 전후 8장을 클립 옆에 저장하고, 검색이 그걸 VLM에 보낸다.
+    EventFrameStore event_frames(snapshots);
+    VideoSearchModule video_search(vlm, db, config.public_host, &event_frames);
     CareQaModule care_qa(snapshots, snapshots_fall, vlm, telegram, video_search,
                          db);
     care_qa.setContacts(config.care_contact_caregiver, config.care_contact_manager);
@@ -328,6 +332,7 @@ int main(int argc, char* argv[]) {
 
         privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy);
         int64_t evt_ms = blackbox.trigger(ch, "FALL");
+        event_frames.captureAsync(ch, evt_ms, "FALL");
         stream_server.broadcastEvent(ch, DBJ_EVT_FALL, at.cx, at.cy, roi_id, evt_ms);
         // ★ 누가 넘어졌는지는 바로 위에서 IdentityTracker 로 이미 풀었다. 그대로
         //   넘겨야 (1) 그 입소자의 보호자에게만 가고 (2) 메시지에 이름·침대가 붙는다.
@@ -365,6 +370,7 @@ int main(int argc, char* argv[]) {
                      name.empty() ? "미지정 입소자" : name.c_str(), e.object_id);
 
         int64_t evt_ms = blackbox.trigger(e.channel, "EGRESS");
+        event_frames.captureAsync(e.channel, evt_ms, "EGRESS");
         stream_server.broadcastEvent(e.channel, DBJ_EVT_EGRESS, e.x, e.y, e.roi_id,
                                      evt_ms);
         telegram.notifyEgress(
@@ -419,6 +425,7 @@ int main(int argc, char* argv[]) {
                 std::fprintf(stderr, "🚨 [ch%d] 낙상 의심! (웨어러블 판정)\n", ch + 1);
                 // privacy_masker.reportFall(ch, at.object_id, at.cx, at.cy); 블러 해제(원본) 추가 예정
                 int64_t evt_ms = blackbox.trigger(ch, "FALL");
+                event_frames.captureAsync(ch, evt_ms, "FALL");
                 // 웨어러블은 화면 좌표도 침대 번호도 모른다 — 미상으로 내려보낸다
                 stream_server.broadcastEvent(ch, DBJ_EVT_FALL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
@@ -440,6 +447,7 @@ int main(int argc, char* argv[]) {
             else if(event == AlarmEventType::VITAL_ABNORMAL){
                 std::fprintf(stderr, "🚨 [ch%d] 생체데이터 이상!\n", ch + 1);
                 int64_t evt_ms = blackbox.trigger(ch, "VITAL_ABNORMAL");
+                event_frames.captureAsync(ch, evt_ms, "VITAL_ABNORMAL");
                 stream_server.broadcastEvent(ch, DBJ_EVT_VITAL_ABNORMAL, 0.0f, 0.0f,
                                              DBJ_ROI_ID_NONE, evt_ms);
                 telegram.notifyVitalAbnormal(

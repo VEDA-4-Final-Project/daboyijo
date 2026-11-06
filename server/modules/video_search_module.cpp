@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "database.hpp"
+#include "event_frames.hpp"
 
 namespace {
 
@@ -198,6 +199,30 @@ std::string VideoSearchModule::search(int channel, const std::string& query) {
         // 전체 건수 조회가 실패한 채로 상한까지 꽉 찼다 — 더 있는지 알 수 없으니
         // "N건뿐"이라고 단정하지 않는다.
         reply += "\n\n※ 더 있을 수 있어요. 시간대를 좁혀서 다시 물어봐 주세요.";
+    }
+
+    // ── 가장 최근 사건 1건: 사건 시점 블러 프레임 → VLM 상황 설명 ──
+    // rows는 최신순이라 앞에서부터 프레임이 저장된 첫 사건을 쓴다(오래된
+    // 사건이나 저장 실패한 사건은 프레임이 없을 수 있다). 설명이 실패해도
+    // 목록은 이미 완성돼 있으므로 설명만 조용히 빼고 보낸다.
+    if (frames_) {
+        for (const auto& r : rows) {
+            auto shots = frames_->load(r.clip_url);
+            if (shots.empty()) continue;
+            const std::string q =
+                "요양원 실내 CCTV에서 감지된 '" + typeLabel(r.type) +
+                "' 사건 전후의 사진들입니다(촬영 순서, 사생활 보호로 얼굴은 블러 "
+                "처리됨). 어르신이 어떤 동작을 하다가 어떻게 이 상황이 되었는지 "
+                "두세 문장으로 차분하게 설명해 주세요. 의학적 진단이나 부상 여부는 "
+                "단정하지 말고 사진에 보이는 것만 설명하세요.";
+            VlmError derr = VlmError::None;
+            const std::string desc = vlm_.describe(shots, q, &derr);
+            if (!desc.empty()) {
+                reply += "\n\n🎞 " + formatLocal(r.occurred_ms) + " " +
+                         typeLabel(r.type) + " 상황 (AI 설명)\n" + desc;
+            }
+            break;  // 한 건만 — 무료 티어 한도 절약
+        }
     }
     return reply;
 }

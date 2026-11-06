@@ -18,7 +18,10 @@ class Database;
 // [케어 봇] 보호자·요양사 상호작용 오케스트레이터.
 //
 // 텔레그램 동작은 "버튼 메뉴" 기반이다:
-//   · 무슨 메시지를 보내든 → 버튼 메뉴를 띄운다(handleMessage).
+//   · 메시지를 보내면 → LLM이 의도를 분류해 자연어로도 동작한다(handleMessage):
+//       "우리 엄마 지금 뭐해?" → 📷 지금 상황 보기와 같은 처리
+//       "어젯밤 낙상 있었어?"  → 🔍 영상 검색과 같은 처리
+//       그 외 / 방을 특정할 수 없음 → 버튼 메뉴를 띄운다.
 //   · 버튼 클릭(handleCallback) 처리:
 //       - "now:<ch>"     : 그 채널 최근 키프레임 → VLM → 상황 설명 회신(+스냅샷)
 //       - "search:<ch>"  : 다음 메시지를 그 채널 영상 검색 질의로 소비
@@ -82,6 +85,14 @@ public:
     void reportFall(int channel, const Subject& who);
 
 private:
+    // 자연어 메시지 의도. LLM은 이 세 값 중 하나만 고른다 — 사용자 문장은
+    // 분류할 데이터로만 쓰고 그대로 실행하지 않는다(프롬프트 인젝션 방어).
+    enum class Intent { Now, Search, Other };
+    Intent classifyIntent(const std::string& text);
+
+    // 📷 지금 상황 보기 본체 — 버튼과 자연어 두 경로가 공유. ch 권한 확인은 호출부 몫.
+    void requestNow(int ch, const std::string& chat_id, Role role);
+
     // 역할·채널 상태에 맞는 화면을 고른다(방 선택 or 동작 메뉴).
     void sendMenu(int channel, const std::string& chat_id, Role role);
     void sendRoomPicker(const std::string& chat_id, Role role,

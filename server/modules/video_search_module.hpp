@@ -5,6 +5,7 @@
 #include "vlm_client.hpp"
 
 class Database;
+class EventFrameStore;
 
 // [영상검색] 자연어 질의("어제 저녁에 낙상 있었어?")를 VLM으로 (사건유형,
 // 시간범위) 구조화한 뒤 events 테이블에서 찾아 클립 링크가 포함된 한국어
@@ -13,13 +14,20 @@ class Database;
 // NVR 연속녹화 세그먼트가 아니라 events.clip_url(블랙박스 클립, insertEvent
 // 시점에 이미 결정된 파일명)을 그대로 쓴다 — 이벤트 자체를 찾는 질의라
 // 별도로 NVR 세그먼트와 시간을 맞춰볼 필요가 없다.
+//
+// 찾은 사건 중 가장 최근 1건은 사건 시점 블러 프레임(EventFrameStore, 8장)을
+// VLM에 보내 "어떻게 일어났는지" 설명을 답변에 덧붙인다. 1건만 하는 이유는
+// 무료 티어 일일 호출 한도 — 결과 수만큼 부르면 검색 한 번에 한도가 마른다.
 class VideoSearchModule {
 public:
     // public_host: 클립 링크에 쓸 이 서버의 접속 주소(빈 값이면 링크 대신
     // 안내 문구). 서버는 자기 외부/LAN IP를 스스로 알 방법이 없어(config의
     // db_host와 같은 이유) 설정으로 받는다.
-    VideoSearchModule(VlmClient& vlm, Database& db, std::string public_host)
-        : vlm_(vlm), db_(db), public_host_(std::move(public_host)) {}
+    // frames: 사건 시점 블러 프레임 보관소. nullptr면 설명 없이 목록만 답한다.
+    VideoSearchModule(VlmClient& vlm, Database& db, std::string public_host,
+                      EventFrameStore* frames = nullptr)
+        : vlm_(vlm), db_(db), public_host_(std::move(public_host)),
+          frames_(frames) {}
 
     // channel: 검색 범위. 0~3이면 그 채널로만 제한, -1이면 전체 채널.
     // ⚠️ -1(전체)은 관제(Qt) 전용 개념이다 — 보호자용(텔레그램 케어봇) 호출부는
@@ -33,4 +41,5 @@ private:
     VlmClient& vlm_;
     Database& db_;
     std::string public_host_;
+    EventFrameStore* frames_;
 };
